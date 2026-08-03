@@ -20,7 +20,7 @@ _aletheon_cli_completion() {
   fi
   case ${words[2]:-} in
     config) _values 'action' effective layers ;;
-    extension) _values 'action' inspect validate install list show enable disable upgrade rollback remove purge doctor import-legacy ;;
+    extension) _values 'action' inspect validate install list show enable disable upgrade rollback remove purge doctor ;;
     memory-agent) _values 'action' serve run ;;
     memory)
       if (( CURRENT == 3 )); then

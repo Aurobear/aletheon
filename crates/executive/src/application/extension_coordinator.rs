@@ -69,6 +69,21 @@ impl ExtensionCoordinator {
         self.store()?.read_activation(package_id)
     }
 
+    pub fn list(&self) -> Result<Vec<InstalledPackageRecord>> {
+        self.install.list()
+    }
+
+    pub fn show(&self, package_id: &str) -> Result<Vec<InstalledPackageRecord>> {
+        self.install.show(package_id)
+    }
+
+    pub fn doctor(
+        &self,
+        package_id: &str,
+    ) -> Result<super::extension_manage::ExtensionDoctorResult> {
+        self.manage.doctor(package_id)
+    }
+
     pub async fn install(
         &self,
         actor: &str,

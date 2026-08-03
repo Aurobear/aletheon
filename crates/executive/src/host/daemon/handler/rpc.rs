@@ -6,6 +6,7 @@
 mod rpc_admin;
 mod rpc_approval;
 mod rpc_evaluation;
+mod rpc_extension;
 mod rpc_goal;
 mod rpc_google;
 mod rpc_health;
@@ -125,6 +126,14 @@ impl RequestHandler {
             "sub_agents" => self.handle_sub_agents(&id, &request).await,
             "agent.profile.list" => self.handle_agent_profile_list(&id, &request).await,
             "agent.profile.set" => self.handle_agent_profile_set(&id, &request).await,
+
+            // ── Extension package lifecycle ──────────────────────────
+            "extension.install" | "extension.enable" | "extension.disable"
+            | "extension.upgrade" | "extension.rollback" | "extension.remove"
+            | "extension.purge" | "extension.list" | "extension.show" | "extension.doctor" => {
+                self.handle_extension_rpc(connection, &id, &request, method)
+                    .await
+            }
 
             // ── Memory (fact store) ───────────────────────────────────
             "memory.add" => self.handle_memory_add(&id, &request).await,

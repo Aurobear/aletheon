@@ -48,7 +48,7 @@ pub(crate) struct HandlerPorts {
     pub(crate) memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
     pub(crate) inference: Arc<dyn crate::application::inference_port::InferencePort>,
     pub(crate) review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
-    pub(crate) _extensions: Arc<crate::application::extension_coordinator::ExtensionCoordinator>,
+    pub(crate) extensions: Arc<crate::application::extension_coordinator::ExtensionCoordinator>,
     pub(crate) transport: Arc<TransportPorts>,
 }
 
@@ -117,7 +117,7 @@ impl HandlerPorts {
             memory_health,
             inference,
             review,
-            _extensions: extensions,
+            extensions,
             transport,
         }
     }

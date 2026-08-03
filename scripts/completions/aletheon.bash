@@ -31,7 +31,7 @@ _aletheon_cli_completion() {
             ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "effective layers" -- "$cur"))
             ;;
         extension)
-            ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "inspect validate install list show enable disable upgrade rollback remove purge doctor import-legacy" -- "$cur"))
+            ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "inspect validate install list show enable disable upgrade rollback remove purge doctor" -- "$cur"))
             ;;
         memory-agent)
             ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "serve run" -- "$cur"))
