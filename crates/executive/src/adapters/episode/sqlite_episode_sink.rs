@@ -86,6 +86,57 @@ impl SqliteEpisodeSink {
             )
             .unwrap_or(0)
     }
+
+    /// Load an episode's attempts in order for report building.
+    pub fn load_attempts(
+        &self,
+        episode_id: &str,
+    ) -> Result<Vec<crate::application::episode_report::AttemptRecord>, String> {
+        let connection = self.connection.lock();
+        let mut statement = connection
+            .prepare(
+                "SELECT attempt, operation_id, expected_json, result_json, verification_json
+                 FROM episodes WHERE episode_id = ?1 ORDER BY attempt ASC",
+            )
+            .map_err(|e| format!("prepare load_attempts: {e}"))?;
+        let rows = statement
+            .query_map(params![episode_id], |row| {
+                let attempt: i64 = row.get(0)?;
+                let operation_id: String = row.get(1)?;
+                let expected_json: String = row.get(2)?;
+                let result_json: Option<String> = row.get(3)?;
+                let verification_json: Option<String> = row.get(4)?;
+                Ok((attempt, operation_id, expected_json, result_json, verification_json))
+            })
+            .map_err(|e| format!("query load_attempts: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("row load_attempts: {e}"))?;
+
+        rows.into_iter()
+            .map(|(attempt, operation_id, expected_json, result_json, verification_json)| {
+                let expected = serde_json::from_str(&expected_json)
+                    .map_err(|e| format!("expected deserialize: {e}"))?;
+                let result_outcome = result_json
+                    .map(|json| {
+                        serde_json::from_str::<SkillResult>(&json)
+                            .map(|result| format!("{:?}", result.outcome))
+                            .unwrap_or_else(|_| "unparsed".into())
+                    });
+                let verification = verification_json
+                    .map(|json| serde_json::from_str::<VerificationReport>(&json))
+                    .transpose()
+                    .map_err(|e| format!("verification deserialize: {e}"))?;
+                Ok(crate::application::episode_report::AttemptRecord::from_verification(
+                    attempt as u32,
+                    operation_id,
+                    expected,
+                    result_outcome,
+                    verification.as_ref(),
+                    None,
+                ))
+            })
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -265,5 +316,33 @@ mod tests {
             .unwrap();
         assert_eq!(status, "completed");
         assert!(settled > 0);
+    }
+
+    #[tokio::test]
+    async fn load_attempts_reconstructs_ordered_records() {
+        let sink = sink();
+        sink.append_attempt(
+            "ep-4",
+            1,
+            "00000000-0000-0000-0000-000000000001",
+            &expected(),
+            Some(&snapshot(0)),
+            Some(&snapshot(1)),
+            Some(&skill_result()),
+            Some(&report()),
+        )
+        .await
+        .unwrap();
+        sink.close_episode("ep-4", "completed").await.unwrap();
+
+        let attempts = sink.load_attempts("ep-4").unwrap();
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].attempt, 1);
+        assert_eq!(attempts[0].expected, expected());
+        assert_eq!(
+            attempts[0].verification_decision,
+            Some(VerificationDecision::Matched)
+        );
+        assert!(attempts[0].operation_id.parse::<fabric::OperationId>().is_ok());
     }
 }

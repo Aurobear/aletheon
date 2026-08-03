@@ -32,7 +32,7 @@
 | 6 | operation ID 用 `"op"` 占位 | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:215`；修复简单，因为 `SkillResult.operation_id: OperationId`（`fabric/src/types/embodiment.rs:84`）已存在 |
 | 7 | world-state ingest 无生产管道 | 🟡 核心已实现：`PollingWorldState` + `observation_to_snapshot` + `WorldStatePump`（`crates/executive/src/application/world_state.rs`，含单调/过期/低置信处理），接线到 daemon 在 PR4 composition |
 | 8 | progress 用 `NoopEmbodimentProgress` | ✅ 已实现：`EventEmbodimentProgress` 转发 `SkillProgress` → `TurnEvent::EmbodimentProgress`（带真实 operation_id）；request.rs 已替换；session/UI 投影为 composition tail |
-| 9 | report/artifact/rosbag 非端到端完成条件 | 🟡 持久化已实现：SQLite `SqliteEpisodeSink`（幂等 digest）；report builder 待 PR10 |
+| 9 | report/artifact/rosbag 非端到端完成条件 | ✅ 已实现：`SqliteEpisodeSink` + `EpisodeReport` builder + `load_attempts` + promotion 门禁（`can_promote` 仅 Matched+settled）；artifact 走 `EvidenceRef` 引用 |
 
 **因此本计划不新建另一个 `robot-runtime` crate，而是补齐现有 owner。** 剩余工作的主战场在
 Aletheon 侧（PR1–6、9、10 + simulator 升级），bridge 不是瓶颈。
@@ -1106,7 +1106,7 @@ propose 往返 conversion 测试（frame 摘要、expected_outcome 序列化）�
 
 ---
 
-### PR10 `robot-episode-report-and-artifacts`
+### PR10 `robot-episode-report-and-artifacts` —— ✅ 已实现
 
 **目标**：episode 报告 + artifact 引用（rosbag/log/plot），作为端到端完成条件。
 

@@ -74,6 +74,7 @@ pub mod verification;
 pub mod workspace_checkpoint;
 pub mod workspace_trust;
 pub mod deterministic_outcome_verifier;
+pub mod episode_report;
 pub mod world_state;
 
 pub use admin_service::{AdminService, AdminUseCases};
