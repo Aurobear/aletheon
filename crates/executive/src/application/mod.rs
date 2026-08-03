@@ -32,6 +32,7 @@ pub mod embodiment_service;
 pub mod evaluation;
 pub mod event_projection;
 pub mod evolution_proposer;
+pub mod extension_coordinator;
 pub mod extension_install;
 pub mod extension_manage;
 pub mod extension_runtime_router;
