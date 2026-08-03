@@ -537,32 +537,14 @@ impl RequestHandler {
         info!(len = cached_prefix.len(), "Cache-stable prefix built");
 
         let tools = Arc::new(Mutex::new(tools));
-        let extension_runtime_view =
-            crate::application::extension_snapshot::ExtensionRuntimeView::default();
-        let extension_publisher = Arc::new(
-            super::extension_publisher::DaemonExtensionRuntimePublisher::new(
+        let pending_extension_runtime =
+            super::extension_bootstrap::PendingExtensionRuntime::prepare(
                 tools.clone(),
                 hook_registry.clone(),
                 skills_snapshot,
-            ),
-        );
-        let extension_store_root =
-            crate::application::extension_install::ExtensionInstallService::configured_user_root();
-        let extension_compiler =
-            crate::application::extension_snapshot::ExtensionSnapshotCompiler::new(
                 config.mcp_servers.iter().map(|server| server.name.clone()),
-            );
-        let initial_extension_recovery = super::extensions::reconcile_extension_snapshot(
-            &extension_store_root,
-            &extension_compiler,
-            extension_publisher.as_ref(),
-            extension_runtime_view.load().await,
-        )
-        .await?;
-        let initial_extension_snapshot = initial_extension_recovery.snapshot;
-        extension_runtime_view
-            .publish(initial_extension_snapshot.clone())
-            .await;
+            )
+            .await?;
         if let Some(mcp) = retained_mcp.clone() {
             let registry = tools.clone();
             let registrations = Arc::new(Mutex::new(mcp_registration_ids));
@@ -1000,76 +982,19 @@ impl RequestHandler {
             )?;
             composition
         };
-        extension_publisher
-            .bind_profiles(super::extension_publisher::PackageProfileRuntime::new(
+        let extension_runtime = pending_extension_runtime
+            .finish(
+                &data_dir,
+                clock.clone(),
+                agent_runtimes.clone(),
                 agent_composition.profiles.clone(),
                 inference.clone(),
                 llm.clone(),
                 runtime_config_snapshot.clone(),
-            ))
-            .await?;
-        let extension_runtime_router = extension_publisher
-            .bind_executable_runtime(
-                &data_dir,
-                &corpus::extension::store::PackageStore::configured_user_root(),
-                clock.clone(),
-                agent_runtimes.clone(),
             )
             .await?;
-        let final_extension_recovery = super::extensions::reconcile_extension_snapshot(
-            &extension_store_root,
-            &extension_compiler,
-            extension_publisher.as_ref(),
-            extension_runtime_view.load().await,
-        )
-        .await?;
-        let final_extension_snapshot = final_extension_recovery.snapshot;
-        extension_runtime_view
-            .publish(final_extension_snapshot.clone())
-            .await;
-        let extension_coordinator = Arc::new(
-            crate::application::extension_coordinator::ExtensionCoordinator::new(
-                &extension_store_root,
-                extension_compiler,
-                extension_publisher,
-                extension_runtime_view.clone(),
-                clock.clone(),
-            )?,
-        );
-        let mut extension_runtime_quarantined_ids = initial_extension_recovery.quarantined;
-        extension_runtime_quarantined_ids.extend(final_extension_recovery.quarantined);
-        extension_runtime_quarantined_ids.sort();
-        extension_runtime_quarantined_ids.dedup();
-        let extension_runtime_quarantine_count = extension_runtime_quarantined_ids.len() as u64;
-        let extension_runtime_count = extension_runtime_router.registered().len() as u64;
-        let mut extension_runtime_rolled_back = initial_extension_recovery.rolled_back;
-        extension_runtime_rolled_back.extend(final_extension_recovery.rolled_back);
-        extension_runtime_rolled_back.sort();
-        extension_runtime_rolled_back.dedup();
-        let extension_package_count = final_extension_snapshot.package_digests.len() as u64;
-        let extension_snapshot_digest = final_extension_snapshot.digest.clone();
-        let extension_asset_counts = std::collections::BTreeMap::from([
-            (
-                "skills".to_owned(),
-                final_extension_snapshot.skills.len() as u64,
-            ),
-            (
-                "hooks".to_owned(),
-                final_extension_snapshot.hooks.len() as u64,
-            ),
-            (
-                "connectors".to_owned(),
-                final_extension_snapshot.connectors.len() as u64,
-            ),
-            (
-                "agent_profiles".to_owned(),
-                final_extension_snapshot.agent_profiles.len() as u64,
-            ),
-            (
-                "executables".to_owned(),
-                final_extension_snapshot.executable_assets.len() as u64,
-            ),
-        ]);
+        let extension_runtime_view = extension_runtime.view.clone();
+        let extension_coordinator = extension_runtime.coordinator.clone();
         let quarantined_profile_count = agent_composition.quarantined_profiles().len() as u64;
         let quarantined_profile_names: Vec<String> = agent_composition
             .quarantined_profiles()
@@ -1434,31 +1359,7 @@ impl RequestHandler {
                 crate::application::health::ComponentHealth::ready(),
             );
         }
-        let mut extension_runtimes = crate::application::health::ComponentHealth::ready();
-        extension_runtimes.count = Some(extension_runtime_count);
-        health_registry.set("extension_runtimes", extension_runtimes);
-        if extension_runtime_rolled_back.is_empty() {
-            health_registry.set(
-                "extension_rollbacks",
-                crate::application::health::ComponentHealth::ready(),
-            );
-        } else {
-            let mut health =
-                crate::application::health::ComponentHealth::degraded("extension_rolled_back");
-            health.count = Some(extension_runtime_rolled_back.len() as u64);
-            health.items = extension_runtime_rolled_back;
-            health_registry.set("extension_rollbacks", health);
-        }
-        let mut extension_packages = if extension_runtime_quarantine_count == 0 {
-            crate::application::health::ComponentHealth::ready()
-        } else {
-            crate::application::health::ComponentHealth::degraded("extension_packages_quarantined")
-        };
-        extension_packages.count = Some(extension_package_count);
-        extension_packages.items = extension_runtime_quarantined_ids;
-        extension_packages.snapshot_digest = Some(extension_snapshot_digest);
-        extension_packages.asset_counts = extension_asset_counts;
-        health_registry.set("extension_packages", extension_packages);
+        extension_runtime.publish_health(&health_registry);
         let channel_task = Arc::new(Mutex::new(None));
         let request_facades = RequestFacadePorts::new(
             runtime.clone(),

@@ -36,7 +36,7 @@ pub struct ExtensionCoordinator {
     manage: ExtensionManageService,
     store_root: std::path::PathBuf,
     compiler: ExtensionSnapshotCompiler,
-    runtime: Arc<dyn ExtensionRuntimePublisher>,
+    publisher: Arc<dyn ExtensionRuntimePublisher>,
     view: ExtensionRuntimeView,
     clock: Arc<dyn fabric::Clock>,
 }
@@ -45,7 +45,7 @@ impl ExtensionCoordinator {
     pub fn new(
         store_root: &Path,
         compiler: ExtensionSnapshotCompiler,
-        runtime: Arc<dyn ExtensionRuntimePublisher>,
+        publisher: Arc<dyn ExtensionRuntimePublisher>,
         view: ExtensionRuntimeView,
         clock: Arc<dyn fabric::Clock>,
     ) -> Result<Self> {
@@ -55,7 +55,7 @@ impl ExtensionCoordinator {
             manage: ExtensionManageService::new(store_root)?,
             store_root: store_root.to_owned(),
             compiler,
-            runtime,
+            publisher,
             view,
             clock,
         })
@@ -281,7 +281,7 @@ impl ExtensionCoordinator {
                 return Err(error).context("compiling extension snapshot");
             }
         };
-        if let Err(error) = self.runtime.probe(candidate.as_ref()).await {
+        if let Err(error) = self.publisher.probe(candidate.as_ref()).await {
             self.restore_activation(&old_activation)?;
             self.record_failure(operation, package_id, None, &error)?;
             return Err(error).context("probing extension runtime candidate");
@@ -313,12 +313,12 @@ impl ExtensionCoordinator {
         };
 
         if let Err(error) = self
-            .runtime
+            .publisher
             .publish(previous.clone(), candidate.clone())
             .await
         {
             let runtime_rollback = self
-                .runtime
+                .publisher
                 .publish(candidate.clone(), previous.clone())
                 .await;
             self.restore_activation(&old_activation)?;
@@ -347,7 +347,7 @@ impl ExtensionCoordinator {
             Ok(receipt) => Ok(receipt),
             Err(error) => {
                 let runtime_rollback = self
-                    .runtime
+                    .publisher
                     .publish(candidate.clone(), previous.clone())
                     .await;
                 self.view.publish(previous.as_ref().clone()).await;

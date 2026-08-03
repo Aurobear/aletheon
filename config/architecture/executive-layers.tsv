@@ -287,7 +287,6 @@ crates/executive/src/host/daemon/handler/rpc/rpc_goal.rs	host	executive	daemon, 
 crates/executive/src/host/daemon/handler/rpc/rpc_google.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_health.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_memory.rs	host	executive	daemon, transport, or process lifecycle
-crates/executive/src/host/daemon/handler/rpc/rpc_reflection.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_session.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_turn.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_workflow.rs	host	executive	daemon, transport, or process lifecycle
@@ -338,3 +337,9 @@ crates/executive/src/application/governed_review/service.rs	application	executiv
 crates/executive/src/application/governed_review/store.rs	application	executive	durable governed review authority
 crates/executive/src/composition/config/governed_review.rs	composition	executive	governed review configuration composition
 crates/executive/src/host/daemon/handler/rpc/rpc_review.rs	host	executive	governed review RPC transport
+crates/executive/src/application/extension_coordinator.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/extension_snapshot.rs	application	executive	use-case orchestration and ports
+crates/executive/src/host/daemon/bootstrap/extension_bootstrap.rs	composition	executive	daemon composition boundary
+crates/executive/src/host/daemon/bootstrap/extension_connectors.rs	composition	executive	daemon composition boundary
+crates/executive/src/host/daemon/bootstrap/extension_publisher.rs	composition	executive	daemon composition boundary
+crates/executive/src/host/daemon/handler/rpc/rpc_extension.rs	host	executive	transport and request handling

@@ -9,6 +9,7 @@ mod bundled_profiles;
 mod channels;
 mod cognition;
 pub(crate) mod embodiment;
+mod extension_bootstrap;
 pub mod extension_connectors;
 pub mod extension_publisher;
 pub mod extensions;
