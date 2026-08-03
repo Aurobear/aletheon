@@ -28,6 +28,7 @@ pub struct DaemonStreamingTurnContext<F> {
     pub session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
     pub prompt_queue_enabled: bool,
     pub capability_receipts: Arc<tokio::sync::Mutex<Vec<fabric::CapabilityTerminalReceipt>>>,
+    pub inference_items: Arc<tokio::sync::Mutex<Vec<fabric::ItemPayload>>>,
 }
 
 /// Submit one daemon turn through Cognit's authoritative session facade.
@@ -53,6 +54,7 @@ where
         session_input,
         prompt_queue_enabled,
         capability_receipts,
+        inference_items,
     } = context;
     let services = DaemonTurnServices {
         llm,
@@ -66,6 +68,7 @@ where
         thread_id: request.context.thread_id.clone(),
         receipt_prefix: request.operation_id.0.to_string(),
         capability_receipts,
+        inference_items,
     };
     let session_record = SessionRecord {
         schema_version: SESSION_SCHEMA_VERSION,
@@ -102,6 +105,7 @@ struct DaemonTurnServices<F> {
     thread_id: fabric::ThreadId,
     receipt_prefix: String,
     capability_receipts: Arc<tokio::sync::Mutex<Vec<fabric::CapabilityTerminalReceipt>>>,
+    inference_items: Arc<tokio::sync::Mutex<Vec<fabric::ItemPayload>>>,
 }
 
 #[async_trait]
@@ -138,6 +142,27 @@ where
 
     async fn record_capability_receipt(&self, receipt: fabric::CapabilityTerminalReceipt) {
         self.capability_receipts.lock().await.push(receipt);
+    }
+
+    async fn record_model_context_projection(
+        &self,
+        mut receipt: fabric::model_projection::ModelContextProjectionReceipt,
+    ) {
+        crate::composition::turn_service::materialize_projection_artifacts(&mut receipt);
+        self.inference_items
+            .lock()
+            .await
+            .push(fabric::ItemPayload::ModelContextProjection { receipt });
+    }
+
+    async fn record_inference_receipt(
+        &self,
+        receipt: fabric::types::inference_receipt::InferenceTerminalReceipt,
+    ) {
+        self.inference_items
+            .lock()
+            .await
+            .push(fabric::ItemPayload::InferenceReceipt { receipt });
     }
 
     async fn drain_interjections(&self) -> anyhow::Result<Vec<String>> {

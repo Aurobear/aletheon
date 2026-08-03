@@ -194,7 +194,7 @@ impl LlmProvider for MockLlmProvider {
                         StreamChunk::TextDelta { text } => text_buf.push_str(&text),
                         StreamChunk::ThinkingDelta { text } => thinking_buf.push_str(&text),
                         StreamChunk::Done { stop_reason: sr } => stop_reason = sr,
-                        StreamChunk::InferenceUsage { usage: observed } => usage = observed,
+                        StreamChunk::Usage { usage: observed } => usage = observed,
                         StreamChunk::ToolUseStart { .. }
                         | StreamChunk::ToolUseDelta { .. }
                         | StreamChunk::ToolUseComplete { .. } => {
@@ -276,7 +276,7 @@ impl LlmProvider for MockLlmProvider {
                         _ => {}
                     }
                 }
-                chunks.push(Ok(StreamChunk::InferenceUsage { usage }));
+                chunks.push(Ok(StreamChunk::Usage { usage }));
                 chunks.push(Ok(StreamChunk::Done {
                     stop_reason: stop_reason.clone(),
                 }));

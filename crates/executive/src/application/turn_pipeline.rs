@@ -971,6 +971,8 @@ impl TurnPipeline {
         let evaluation_diff_tracker = turn_diff_tracker.clone();
         let capability_receipts = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let evaluation_capability_receipts = capability_receipts.clone();
+        let inference_items = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let completed_inference_items = inference_items.clone();
         let diff_session_input = self.session_input.clone();
         let diff_principal = lifecycle_principal.clone();
         let diff_thread = lifecycle_thread.clone();
@@ -1065,6 +1067,7 @@ impl TurnPipeline {
                 session_input: self.session_input.clone(),
                 prompt_queue_enabled: self.prompt_queue_enabled,
                 capability_receipts,
+                inference_items,
                 },
             ))
         };
@@ -1354,6 +1357,9 @@ impl TurnPipeline {
         });
         let text = result.output;
         let metrics = result.metrics;
+        canonical_items.extend(
+            std::mem::take(&mut *completed_inference_items.lock().await),
+        );
         info!(len = text.len(), "ReAct loop completed");
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ExecutionFinished)?;
