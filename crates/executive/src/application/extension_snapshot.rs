@@ -12,12 +12,19 @@ use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
+pub struct ExtensionConnectorAsset {
+    pub package_id: String,
+    pub package_root: PathBuf,
+    pub manifest: McpConnectorManifestV1,
+}
+
+#[derive(Debug, Clone)]
 pub struct ExtensionRuntimeSnapshot {
     pub digest: String,
     pub skills: Arc<Vec<corpus::skill::loader::LoadedSkill>>,
     pub skill_plugins: Arc<Vec<corpus::skill::plugin::SkillPlugin>>,
     pub hooks: Arc<Vec<corpus::hook::loader::HookConfig>>,
-    pub connectors: Arc<Vec<McpConnectorManifestV1>>,
+    pub connectors: Arc<Vec<ExtensionConnectorAsset>>,
     pub agent_profile_paths: Arc<Vec<PathBuf>>,
     pub executable_assets: Arc<Vec<ResolvedPackageAsset>>,
     pub package_digests: Arc<BTreeMap<String, String>>,
@@ -181,7 +188,11 @@ impl ExtensionSnapshotCompiler {
                         "hash": resolved_asset.package_hash,
                         "connector": connector,
                     }));
-                    connectors.push(connector);
+                    connectors.push(ExtensionConnectorAsset {
+                        package_id: resolved_asset.package_id.clone(),
+                        package_root,
+                        manifest: connector,
+                    });
                 }
                 AssetKind::AgentProfile => {
                     let content = std::fs::read_to_string(&resolved_asset.absolute_path)?;
@@ -212,7 +223,7 @@ impl ExtensionSnapshotCompiler {
         skills.sort_by(|left, right| left.name.cmp(&right.name));
         skill_plugins.sort_by(|left, right| left.name.cmp(&right.name));
         hooks.sort_by(|left, right| left.name.cmp(&right.name));
-        connectors.sort_by(|left, right| left.id.cmp(&right.id));
+        connectors.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
         agent_profile_paths.sort();
         executable_assets.sort_by(|left, right| left.asset.id.cmp(&right.asset.id));
         let digest = digest_json(&serde_json::json!({

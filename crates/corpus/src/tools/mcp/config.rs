@@ -32,6 +32,10 @@ pub struct McpServerConfig {
     /// Tool names never exposed by this server. Deny entries take precedence.
     #[serde(default)]
     pub denylist: Vec<String>,
+    /// Advertised resource names or URIs exposed by this server. Empty means
+    /// all statically advertised resources.
+    #[serde(default)]
+    pub resource_allowlist: Vec<String>,
     /// Per-tool permission levels, keyed by the server-advertised tool name or
     /// its final registered name.
     #[serde(default)]
@@ -148,6 +152,8 @@ struct McpServerConfigWire {
     #[serde(default, alias = "denylist")]
     tool_denylist: Vec<String>,
     #[serde(default)]
+    resource_allowlist: Vec<String>,
+    #[serde(default)]
     permission_overrides: std::collections::HashMap<String, McpPermissionLevel>,
 }
 
@@ -185,6 +191,7 @@ impl From<McpServerConfigWire> for McpServerConfig {
             health_check_interval_sec: wire.health_check_interval_sec,
             allowlist: wire.tool_allowlist,
             denylist: wire.tool_denylist,
+            resource_allowlist: wire.resource_allowlist,
             permission_overrides: wire.permission_overrides,
         }
     }
@@ -206,6 +213,7 @@ impl Default for McpServerConfig {
             health_check_interval_sec: default_mcp_health_check_interval_sec(),
             allowlist: Vec::new(),
             denylist: Vec::new(),
+            resource_allowlist: Vec::new(),
             permission_overrides: std::collections::HashMap::new(),
         }
     }

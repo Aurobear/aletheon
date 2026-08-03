@@ -1342,6 +1342,21 @@ impl McpConnectionManager {
                 continue;
             };
             for resource in &client.resources {
+                let allowed = self
+                    .config
+                    .servers
+                    .iter()
+                    .find(|server| server.name == *server_name)
+                    .is_none_or(|server| {
+                        server.resource_allowlist.is_empty()
+                            || server
+                                .resource_allowlist
+                                .iter()
+                                .any(|entry| entry == &resource.name || entry == &resource.uri)
+                    });
+                if !allowed {
+                    continue;
+                }
                 let normalized_name = format!("mcp.{}.resource.{}", server_name, resource.name);
                 providers.push(McpResourceProvider {
                     uri: resource.uri.clone(),

@@ -15,10 +15,13 @@ use tokio::sync::Mutex;
 use crate::application::extension_coordinator::ExtensionRuntimePublisher;
 use crate::application::extension_snapshot::ExtensionRuntimeSnapshot;
 
+use super::extension_connectors::{connector_tool_owner, ExtensionConnectorRuntime};
+
 pub struct DaemonExtensionRuntimePublisher {
     tools: Arc<Mutex<ToolRegistry>>,
     hooks: Arc<Mutex<HookRegistry>>,
     skills: SharedSkills,
+    connectors: Arc<ExtensionConnectorRuntime>,
 }
 
 impl DaemonExtensionRuntimePublisher {
@@ -31,6 +34,7 @@ impl DaemonExtensionRuntimePublisher {
             tools,
             hooks,
             skills,
+            connectors: Arc::new(ExtensionConnectorRuntime::default()),
         }
     }
 }
@@ -38,7 +42,16 @@ impl DaemonExtensionRuntimePublisher {
 #[async_trait]
 impl ExtensionRuntimePublisher for DaemonExtensionRuntimePublisher {
     async fn probe(&self, candidate: &ExtensionRuntimeSnapshot) -> Result<()> {
-        let prepared = PreparedRuntime::build(candidate)?;
+        self.connectors.probe(candidate).await?;
+        let mut prepared = PreparedRuntime::build(candidate)?;
+        prepared
+            .tool_sets
+            .extend(self.connectors.tool_sets(candidate).await?);
+        prepared.tool_owners = prepared
+            .tool_sets
+            .iter()
+            .map(|(owner, _)| owner.clone())
+            .collect();
         self.skills.validate_extensions(candidate.skills.as_ref())?;
         self.tools
             .lock()
@@ -53,7 +66,11 @@ impl ExtensionRuntimePublisher for DaemonExtensionRuntimePublisher {
         previous: Arc<ExtensionRuntimeSnapshot>,
         candidate: Arc<ExtensionRuntimeSnapshot>,
     ) -> Result<()> {
-        let prepared = PreparedRuntime::build(&candidate)?;
+        self.connectors.probe(&candidate).await?;
+        let mut prepared = PreparedRuntime::build(&candidate)?;
+        prepared
+            .tool_sets
+            .extend(self.connectors.tool_sets(&candidate).await?);
         self.skills.validate_extensions(candidate.skills.as_ref())?;
 
         let previous_packages: BTreeSet<_> = previous.package_digests.keys().cloned().collect();
@@ -66,7 +83,14 @@ impl ExtensionRuntimePublisher for DaemonExtensionRuntimePublisher {
             .iter()
             .map(|owner| skill_tool_owner(owner))
             .collect();
-        tool_owners.extend(prepared.tool_owners.iter().cloned());
+        for connector in previous
+            .connectors
+            .iter()
+            .chain(candidate.connectors.iter())
+        {
+            tool_owners.insert(connector_tool_owner(&connector.package_id));
+        }
+        tool_owners.extend(prepared.tool_sets.iter().map(|(owner, _)| owner.clone()));
         let tool_owners: Vec<_> = tool_owners.into_iter().collect();
 
         let mut tools = self.tools.lock().await;
@@ -82,6 +106,9 @@ impl ExtensionRuntimePublisher for DaemonExtensionRuntimePublisher {
         }
         self.skills
             .replace_extensions(candidate.skills.as_ref().clone())?;
+        self.connectors
+            .publish(&previous.digest, &candidate.digest)
+            .await;
         Ok(())
     }
 }
