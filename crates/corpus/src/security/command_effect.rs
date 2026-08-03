@@ -48,20 +48,16 @@ pub(crate) fn classify_command(command: &str) -> CommandEffect {
     if invokes_program(
         &lower,
         &[
-            "sudo",
-            "su",
-            "doas",
-            "apt",
-            "apt-get",
-            "dpkg",
-            "rpm",
-            "dnf",
-            "yum",
-            "pacman",
-            "systemctl",
+            "sudo", "su", "doas", "apt", "apt-get", "dpkg", "rpm", "dnf", "yum", "pacman",
         ],
     ) {
         return CommandEffect::SystemChange;
+    }
+    if invokes_program(&lower, &["systemctl"]) {
+        let segments = split_shell_segments(&normalized);
+        if segments.is_empty() || !segments.iter().all(|segment| is_read_only_segment(segment)) {
+            return CommandEffect::SystemChange;
+        }
     }
     if is_read_only_glab_command(&normalized) {
         return CommandEffect::ReadOnlyNetwork;
@@ -200,15 +196,52 @@ fn is_read_only_segment(segment: &str) -> bool {
             )
         ),
         "glab" => glab_is_read_only(&words[1..]),
-        other => {
-            words
-                .iter()
-                .skip(1)
-                .all(|arg| matches!(*arg, "--version" | "-V" | "--help" | "-h"))
-                && words.len() > 1
-                && !other.contains('=')
-        }
+        "systemctl" => systemctl_is_read_only(&words[1..]),
+        other => is_help_or_version_probe(other, &words[1..]),
     }
+}
+
+fn is_help_or_version_probe(program: &str, args: &[&str]) -> bool {
+    if program.contains('=') || args.is_empty() {
+        return false;
+    }
+    if args.iter().any(|arg| {
+        matches!(
+            *arg,
+            "start"
+                | "stop"
+                | "restart"
+                | "enable"
+                | "disable"
+                | "install"
+                | "deploy"
+                | "remove"
+                | "delete"
+        )
+    }) {
+        return false;
+    }
+    matches!(args, ["--version" | "-V"])
+        || matches!(args.last(), Some(&("--help" | "-h")))
+            && args[..args.len() - 1]
+                .iter()
+                .all(|arg| !arg.starts_with('-'))
+}
+
+fn systemctl_is_read_only(args: &[&str]) -> bool {
+    let action = args.iter().copied().find(|arg| !arg.starts_with('-'));
+    matches!(
+        action,
+        Some(
+            "status"
+                | "show"
+                | "is-active"
+                | "is-enabled"
+                | "list-units"
+                | "list-unit-files"
+                | "show-environment"
+        )
+    )
 }
 
 fn glab_is_read_only(args: &[&str]) -> bool {
@@ -345,5 +378,39 @@ mod tests {
             classify_command("find crates -print0 | xargs -0 sh -c 'rm \"$1\"'"),
             CommandEffect::WorkspaceMutation
         );
+    }
+
+    #[test]
+    fn diagnostic_help_and_systemctl_reads_are_read_only() {
+        for command in [
+            "/usr/bin/aletheon --help",
+            "/usr/bin/aletheon memory --help",
+            "/usr/bin/aletheon memory-agent -h",
+            "systemctl --user status aletheon.service",
+            "systemctl show aletheon-core.service -p ActiveState",
+            "systemctl list-units --type=service",
+        ] {
+            assert_eq!(
+                classify_command(command),
+                CommandEffect::ReadOnly,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn systemctl_mutations_and_compound_help_fail_closed() {
+        for command in [
+            "systemctl restart aletheon.service",
+            "systemctl --user enable --now aletheon.socket",
+            "/usr/bin/aletheon --help; touch changed",
+            "/usr/bin/aletheon --help | sh",
+        ] {
+            assert_ne!(
+                classify_command(command),
+                CommandEffect::ReadOnly,
+                "{command}"
+            );
+        }
     }
 }
