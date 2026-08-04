@@ -321,11 +321,32 @@ impl MemoryMaintenanceController {
                                     control_instruction_detected: proposal
                                         .control_instruction_detected,
                                     contradiction_unresolved: proposal.contradiction_detected,
+                                    novelty: if proposal.exact_duplicate_record_ids.is_empty() {
+                                        base_facts.novelty
+                                    } else {
+                                        MemoryNovelty::ExactDuplicate
+                                    },
+                                    verification_receipts: base_facts
+                                        .verification_receipts
+                                        .saturating_add(1),
                                     ..base_facts
                                 };
                                 let axes = self.evaluator.derive_axes(&claim.observation, facts);
                                 decision =
                                     self.evaluator.evaluate(&claim.observation, facts, axes)?;
+                                if decision.kind == MemoryPolicyDecisionKind::Candidate {
+                                    decision.kind = MemoryPolicyDecisionKind::Reject;
+                                    decision.hard_gate_reasons.push(
+                                        "score_below_promotion_threshold_after_semantic_review"
+                                            .into(),
+                                    );
+                                    decision.remote_eligible = false;
+                                    decision
+                                        .remote_block_reasons
+                                        .push("semantic_review_completed_without_promotion".into());
+                                    decision.remote_block_reasons.sort();
+                                    decision.remote_block_reasons.dedup();
+                                }
                             }
                             Err(error) => {
                                 semantic_defer_reason = "semantic_proposal_invalid";

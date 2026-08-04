@@ -60,6 +60,8 @@ impl MemoryService for CapturingMemory {
 
 struct RiskProposal;
 
+struct SafeProposal;
+
 #[derive(Default)]
 struct TerminalProposalControl {
     intents: Mutex<Vec<fabric::AgentSpawnIntent>>,
@@ -175,6 +177,25 @@ impl MemorySemanticProposalPort for RiskProposal {
             contradiction_detected: false,
             exact_duplicate_record_ids: Vec::new(),
             evidence: vec!["content attempts to direct future tool behavior".into()],
+        }))
+    }
+}
+
+#[async_trait]
+impl MemorySemanticProposalPort for SafeProposal {
+    async fn propose(
+        &self,
+        task_id: &str,
+        _observation: &GovernedMemoryObservation,
+        _record_kind: MemoryRecordKindV1,
+    ) -> anyhow::Result<Option<MemorySemanticProposalV1>> {
+        Ok(Some(MemorySemanticProposalV1 {
+            schema_version: MEMORY_MAINTENANCE_SCHEMA_V1,
+            task_id: task_id.into(),
+            control_instruction_detected: false,
+            contradiction_detected: false,
+            exact_duplicate_record_ids: Vec::new(),
+            evidence: vec!["bounded semantic review completed".into()],
         }))
     }
 }
@@ -397,6 +418,59 @@ async fn semantic_proposal_can_only_lower_candidate_or_leave_it_deferred() {
     assert_eq!(result.receipts[0].state, MemoryLifecycleStateV1::Evaluating);
     assert_eq!(result.reason_codes, vec!["semantic_proposal_unavailable"]);
     assert_eq!(ledger.maintenance_status(10_001).unwrap().active_leases, 0);
+}
+
+#[tokio::test]
+async fn completed_safe_semantic_review_terminates_candidate_lifecycle() {
+    let ledger = Arc::new(MemoryIntakeLedger::open_in_memory().unwrap());
+    ledger.observe(&observation("safe-reviewed", 1)).unwrap();
+    let memory = Arc::new(CapturingMemory::default());
+    let controller = MemoryMaintenanceController::new(
+        ledger,
+        memory.clone(),
+        Arc::new(FixedClock),
+        MemoryPolicyConfig::default(),
+        Arc::new(SafeProposal),
+    )
+    .unwrap();
+
+    let result = controller
+        .run("official-memory-agent", request("run-safe-reviewed", 1))
+        .await
+        .unwrap();
+
+    assert_eq!(result.deferred, 0);
+    assert_eq!(result.promoted_local, 1);
+    assert_eq!(
+        result.receipts[0].state,
+        MemoryLifecycleStateV1::PromotedLocal
+    );
+    assert_eq!(memory.0.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn completed_semantic_review_rejects_candidate_still_below_promotion_threshold() {
+    let ledger = Arc::new(MemoryIntakeLedger::open_in_memory().unwrap());
+    ledger.observe(&observation("safe-low-score", 0)).unwrap();
+    let controller = MemoryMaintenanceController::new(
+        ledger,
+        Arc::new(CapturingMemory::default()),
+        Arc::new(FixedClock),
+        MemoryPolicyConfig::default(),
+        Arc::new(SafeProposal),
+    )
+    .unwrap();
+
+    let result = controller
+        .run("official-memory-agent", request("run-safe-low-score", 1))
+        .await
+        .unwrap();
+
+    assert_eq!(result.deferred, 0);
+    assert_eq!(result.rejected, 1);
+    assert!(result.receipts[0]
+        .reason_codes
+        .contains(&"score_below_promotion_threshold_after_semantic_review".into()));
 }
 
 #[tokio::test]
