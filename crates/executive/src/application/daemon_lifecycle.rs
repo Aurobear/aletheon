@@ -40,6 +40,9 @@ pub enum DaemonReadiness {
     Unready {
         detail: String,
     },
+    Failed {
+        detail: String,
+    },
     Ready {
         protocol_version: u16,
         runtime_version: String,
@@ -84,6 +87,8 @@ pub enum DaemonLifecycleError {
     StaleSocketRecovery(String),
     #[error("daemon activation failed: {0}")]
     Activation(String),
+    #[error("daemon bootstrap failed: {0}")]
+    BootstrapFailed(String),
     #[error("daemon protocol mismatch: client={expected}, daemon={actual}")]
     ProtocolMismatch { expected: u16, actual: u16 },
     #[error("daemon runtime version mismatch: client={expected}, daemon={actual}")]
@@ -150,13 +155,22 @@ impl DaemonLifecycleService {
     ) -> Result<DaemonReadyReceipt, DaemonLifecycleError> {
         let started = Instant::now();
         let deadline = started + request.startup_timeout;
-        if let Some(ready) = validate_ready(&request, self.backend.probe(&request.socket).await?)? {
+        let readiness = probe_before_deadline(&self.backend, &request.socket, deadline).await?;
+        fail_if_bootstrap_failed(&readiness)?;
+        if let Some(ready) = validate_ready(&request, readiness.clone())? {
             return Ok(receipt(
                 &request,
                 DaemonActivation::AlreadyRunning,
                 ready,
                 started,
             ));
+        }
+        if Instant::now() >= deadline {
+            return Err(DaemonLifecycleError::ReadinessTimeout {
+                timeout_ms: duration_ms(request.startup_timeout),
+                last_readiness: readiness,
+                diagnostic: self.backend.diagnose(&request.socket).await,
+            });
         }
 
         let lock_timeout = deadline.saturating_duration_since(Instant::now());
@@ -169,7 +183,8 @@ impl DaemonLifecycleService {
 
         // A second client may have completed activation while this client was
         // waiting for the startup lock. Re-probe before any mutation.
-        let readiness = self.backend.probe(&request.socket).await?;
+        let readiness = probe_before_deadline(&self.backend, &request.socket, deadline).await?;
+        fail_if_bootstrap_failed(&readiness)?;
         if let Some(ready) = validate_ready(&request, readiness.clone())? {
             return Ok(receipt(
                 &request,
@@ -187,15 +202,31 @@ impl DaemonLifecycleService {
         }
         let activation = match readiness {
             DaemonReadiness::StaleSocket { .. } => {
-                self.backend.recover_stale_socket(&request.socket).await?;
-                self.backend.activate(request.mode, &request.socket).await?
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                tokio::time::timeout(
+                    remaining,
+                    self.backend.recover_stale_socket(&request.socket),
+                )
+                .await
+                .map_err(|_| DaemonLifecycleError::ReadinessTimeout {
+                    timeout_ms: duration_ms(request.startup_timeout),
+                    last_readiness: readiness.clone(),
+                    diagnostic: "stale socket recovery exceeded the startup deadline".into(),
+                })??;
+                activate_before_deadline(&self.backend, &request, deadline, readiness.clone())
+                    .await?
             }
-            DaemonReadiness::Absent => self.backend.activate(request.mode, &request.socket).await?,
+            DaemonReadiness::Absent => {
+                activate_before_deadline(&self.backend, &request, deadline, readiness.clone())
+                    .await?
+            }
             DaemonReadiness::Unready { .. } => DaemonActivation::AlreadyRunning,
+            DaemonReadiness::Failed { .. } => unreachable!("failed state returned above"),
             DaemonReadiness::Ready { .. } => unreachable!("ready state returned above"),
         };
         loop {
-            let readiness = self.backend.probe(&request.socket).await?;
+            let readiness = probe_before_deadline(&self.backend, &request.socket, deadline).await?;
+            fail_if_bootstrap_failed(&readiness)?;
             if let Some(ready) = validate_ready(&request, readiness.clone())? {
                 return Ok(receipt(&request, activation, ready, started));
             }
@@ -211,6 +242,50 @@ impl DaemonLifecycleService {
             tokio::time::sleep(request.poll_interval.min(deadline - now)).await;
         }
     }
+}
+
+fn fail_if_bootstrap_failed(readiness: &DaemonReadiness) -> Result<(), DaemonLifecycleError> {
+    match readiness {
+        DaemonReadiness::Failed { detail } => {
+            Err(DaemonLifecycleError::BootstrapFailed(detail.clone()))
+        }
+        _ => Ok(()),
+    }
+}
+
+async fn probe_before_deadline(
+    backend: &Arc<dyn DaemonLifecycleBackend>,
+    socket: &std::path::Path,
+    deadline: Instant,
+) -> Result<DaemonReadiness, DaemonLifecycleError> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Ok(DaemonReadiness::Unready {
+            detail: "startup deadline elapsed before readiness probe".into(),
+        });
+    }
+    match tokio::time::timeout(remaining, backend.probe(socket)).await {
+        Ok(readiness) => readiness,
+        Err(_) => Ok(DaemonReadiness::Unready {
+            detail: "readiness probe exceeded the remaining startup deadline".into(),
+        }),
+    }
+}
+
+async fn activate_before_deadline(
+    backend: &Arc<dyn DaemonLifecycleBackend>,
+    request: &EnsureDaemonRequest,
+    deadline: Instant,
+    last_readiness: DaemonReadiness,
+) -> Result<DaemonActivation, DaemonLifecycleError> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    tokio::time::timeout(remaining, backend.activate(request.mode, &request.socket))
+        .await
+        .map_err(|_| DaemonLifecycleError::ReadinessTimeout {
+            timeout_ms: duration_ms(request.startup_timeout),
+            last_readiness,
+            diagnostic: "daemon activation exceeded the startup deadline".into(),
+        })?
 }
 
 fn validate_ready(

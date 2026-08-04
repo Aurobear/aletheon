@@ -46,6 +46,59 @@ struct FakeBackend {
     become_ready: bool,
 }
 
+struct SlowProbeBackend;
+
+struct FailedBootstrapBackend;
+
+#[async_trait::async_trait]
+impl DaemonLifecycleBackend for FailedBootstrapBackend {
+    async fn probe(&self, _socket: &Path) -> Result<DaemonReadiness, DaemonLifecycleError> {
+        Ok(DaemonReadiness::Failed {
+            detail: "configuration rejected before runtime bootstrap".into(),
+        })
+    }
+
+    async fn recover_stale_socket(&self, _socket: &Path) -> Result<(), DaemonLifecycleError> {
+        unreachable!("a failed bootstrap must not mutate the endpoint")
+    }
+
+    async fn activate(
+        &self,
+        _mode: DaemonInstallMode,
+        _socket: &Path,
+    ) -> Result<DaemonActivation, DaemonLifecycleError> {
+        unreachable!("a failed bootstrap must not be activated again")
+    }
+
+    async fn diagnose(&self, _socket: &Path) -> String {
+        unreachable!("a typed bootstrap failure does not need timeout diagnostics")
+    }
+}
+
+#[async_trait::async_trait]
+impl DaemonLifecycleBackend for SlowProbeBackend {
+    async fn probe(&self, _socket: &Path) -> Result<DaemonReadiness, DaemonLifecycleError> {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        Ok(DaemonReadiness::Absent)
+    }
+
+    async fn recover_stale_socket(&self, _socket: &Path) -> Result<(), DaemonLifecycleError> {
+        unreachable!("a timed-out probe must not mutate the endpoint")
+    }
+
+    async fn activate(
+        &self,
+        _mode: DaemonInstallMode,
+        _socket: &Path,
+    ) -> Result<DaemonActivation, DaemonLifecycleError> {
+        unreachable!("a timed-out probe must not activate a daemon")
+    }
+
+    async fn diagnose(&self, _socket: &Path) -> String {
+        "probe deadline exhausted".into()
+    }
+}
+
 impl FakeBackend {
     fn stale_then_ready() -> Self {
         Self {
@@ -204,14 +257,19 @@ async fn readiness_timeout_carries_typed_last_state_and_doctor_detail() {
     let mut request = request();
     request.startup_timeout = Duration::from_millis(20);
 
+    let Err(DaemonLifecycleError::ReadinessTimeout {
+        last_readiness,
+        diagnostic,
+        ..
+    }) = service.ensure_running(request).await
+    else {
+        panic!("expected a typed readiness timeout");
+    };
     assert!(matches!(
-        service.ensure_running(request).await,
-        Err(DaemonLifecycleError::ReadinessTimeout {
-            last_readiness: DaemonReadiness::Absent,
-            diagnostic,
-            ..
-        }) if diagnostic == "fake daemon remained unready"
+        last_readiness,
+        DaemonReadiness::Absent | DaemonReadiness::Unready { .. }
     ));
+    assert_eq!(diagnostic, "fake daemon remained unready");
 }
 
 #[tokio::test]
@@ -239,4 +297,44 @@ async fn unresponsive_existing_authority_is_not_replaced() {
         })
     ));
     assert_eq!(backend.activations.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn readiness_probe_cannot_overrun_the_monotonic_startup_deadline() {
+    let service = DaemonLifecycleService::new(
+        Arc::new(SlowProbeBackend),
+        Arc::new(TestStartupLock::default()),
+    );
+    let mut request = request();
+    request.startup_timeout = Duration::from_millis(20);
+    let started = std::time::Instant::now();
+
+    assert!(matches!(
+        service.ensure_running(request).await,
+        Err(DaemonLifecycleError::ReadinessTimeout {
+            last_readiness: DaemonReadiness::Unready { detail },
+            diagnostic,
+            ..
+        }) if detail.contains("remaining startup deadline")
+            && diagnostic == "probe deadline exhausted"
+    ));
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
+#[tokio::test]
+async fn u_boot_002_bootstrap_failure_returns_without_waiting_for_readiness_deadline() {
+    let service = DaemonLifecycleService::new(
+        Arc::new(FailedBootstrapBackend),
+        Arc::new(TestStartupLock::default()),
+    );
+    let mut request = request();
+    request.startup_timeout = Duration::from_secs(30);
+    let started = std::time::Instant::now();
+
+    assert!(matches!(
+        service.ensure_running(request).await,
+        Err(DaemonLifecycleError::BootstrapFailed(detail))
+            if detail.contains("configuration rejected")
+    ));
+    assert!(started.elapsed() < Duration::from_secs(1));
 }

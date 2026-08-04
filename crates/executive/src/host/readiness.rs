@@ -5,7 +5,8 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fabric::protocol::client::{
@@ -23,6 +24,8 @@ use crate::application::daemon_lifecycle::{
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(700);
+const SYSTEMD_QUERY_TIMEOUT: Duration = Duration::from_millis(200);
+const SYSTEMD_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 
 struct FileLease {
@@ -126,18 +129,50 @@ fn try_file_lock(path: &Path) -> io::Result<Option<File>> {
 
 pub struct ProcessDaemonLifecycleBackend {
     executable: PathBuf,
+    mode: DaemonInstallMode,
+    foreground_exit: Arc<Mutex<Option<ExitStatus>>>,
 }
 
 impl ProcessDaemonLifecycleBackend {
-    pub fn new(executable: PathBuf) -> Self {
-        Self { executable }
+    pub fn new(executable: PathBuf, mode: DaemonInstallMode) -> Self {
+        Self {
+            executable,
+            mode,
+            foreground_exit: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn bootstrap_failure(&self) -> Option<String> {
+        match self.mode {
+            DaemonInstallMode::SystemInstall | DaemonInstallMode::UserLocal => {
+                systemd_service_failure().await
+            }
+            DaemonInstallMode::DevForeground => self
+                .foreground_exit
+                .lock()
+                .ok()
+                .and_then(|status| *status)
+                .filter(|status| !status.success())
+                .map(|status| format!("foreground daemon exited with {status}")),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl DaemonLifecycleBackend for ProcessDaemonLifecycleBackend {
     async fn probe(&self, socket: &Path) -> Result<DaemonReadiness, DaemonLifecycleError> {
-        probe_daemon(socket).await
+        let readiness = probe_daemon(socket).await?;
+        if matches!(
+            readiness,
+            DaemonReadiness::Absent
+                | DaemonReadiness::StaleSocket { .. }
+                | DaemonReadiness::Unready { .. }
+        ) {
+            if let Some(detail) = self.bootstrap_failure().await {
+                return Ok(DaemonReadiness::Failed { detail });
+            }
+        }
+        Ok(readiness)
     }
 
     async fn recover_stale_socket(&self, socket: &Path) -> Result<(), DaemonLifecycleError> {
@@ -173,7 +208,8 @@ impl DaemonLifecycleBackend for ProcessDaemonLifecycleBackend {
                 Ok(DaemonActivation::ActivatedService)
             }
             DaemonInstallMode::DevForeground => {
-                spawn_foreground(&self.executable, socket).await?;
+                spawn_foreground(&self.executable, socket, Arc::clone(&self.foreground_exit))
+                    .await?;
                 Ok(DaemonActivation::SpawnedForeground)
             }
         }
@@ -188,7 +224,7 @@ impl DaemonLifecycleBackend for ProcessDaemonLifecycleBackend {
             "--property=LoadState,ActiveState,SubState,Result,NRestarts",
             "--no-pager",
         ]);
-        let output = command_output(command).await;
+        let output = command_output_with_timeout(command, SYSTEMD_QUERY_TIMEOUT).await;
         let service = match output {
             Ok(output) => {
                 let bytes = if output.status.success() {
@@ -209,7 +245,7 @@ impl DaemonLifecycleBackend for ProcessDaemonLifecycleBackend {
     }
 }
 
-pub async fn detect_install_mode() -> DaemonInstallMode {
+pub async fn detect_install_mode(requested_socket: &Path) -> DaemonInstallMode {
     let mut fragment_command = Command::new("systemctl");
     fragment_command.args([
         "--user",
@@ -218,7 +254,7 @@ pub async fn detect_install_mode() -> DaemonInstallMode {
         "--property=FragmentPath",
         "--value",
     ]);
-    let fragment = command_output(fragment_command)
+    let fragment = command_output_with_timeout(fragment_command, SYSTEMD_QUERY_TIMEOUT)
         .await
         .ok()
         .filter(|output| output.status.success())
@@ -232,7 +268,21 @@ pub async fn detect_install_mode() -> DaemonInstallMode {
         "--property=ExecStart",
         "--value",
     ]);
-    let exec_start = command_output(exec_command)
+    let exec_start = command_output_with_timeout(exec_command, SYSTEMD_QUERY_TIMEOUT)
+        .await
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| bounded(&output.stdout))
+        .unwrap_or_default();
+    let mut listen_command = Command::new("systemctl");
+    listen_command.args([
+        "--user",
+        "show",
+        "aletheon.socket",
+        "--property=Listen",
+        "--value",
+    ]);
+    let listen = command_output_with_timeout(listen_command, SYSTEMD_QUERY_TIMEOUT)
         .await
         .ok()
         .filter(|output| output.status.success())
@@ -241,6 +291,8 @@ pub async fn detect_install_mode() -> DaemonInstallMode {
     resolve_mode_from_systemd(
         &fragment,
         &exec_start,
+        &listen,
+        requested_socket,
         Path::new("/usr/bin/aletheon").is_file(),
     )
 }
@@ -248,10 +300,17 @@ pub async fn detect_install_mode() -> DaemonInstallMode {
 fn resolve_mode_from_systemd(
     fragment: &str,
     exec_start: &str,
+    listen: &str,
+    requested_socket: &Path,
     system_binary_available: bool,
 ) -> DaemonInstallMode {
     let fragment = Path::new(fragment.trim());
-    let service_available = !fragment.as_os_str().is_empty();
+    let socket_matches = listen.lines().any(|entry| {
+        let entry = entry.trim();
+        let path = entry.strip_suffix(" (Stream)").unwrap_or(entry);
+        Path::new(path) == requested_socket
+    });
+    let service_available = !fragment.as_os_str().is_empty() && socket_matches;
     let executable_known = !exec_start.trim().is_empty();
     let system_service = exec_start.contains("/usr/bin/aletheon");
     resolve_install_mode(InstallModeFacts {
@@ -266,7 +325,7 @@ fn resolve_mode_from_systemd(
 async fn activate_user_socket() -> Result<(), DaemonLifecycleError> {
     let mut command = Command::new("systemctl");
     command.args(["--user", "start", "aletheon.socket"]);
-    let output = command_output(command)
+    let output = command_output_with_timeout(command, SYSTEMD_ACTIVATION_TIMEOUT)
         .await
         .map_err(|error| DaemonLifecycleError::Activation(bounded(error.to_string().as_bytes())))?;
     if !output.status.success() {
@@ -275,7 +334,11 @@ async fn activate_user_socket() -> Result<(), DaemonLifecycleError> {
     Ok(())
 }
 
-async fn spawn_foreground(executable: &Path, socket: &Path) -> Result<(), DaemonLifecycleError> {
+async fn spawn_foreground(
+    executable: &Path,
+    socket: &Path,
+    exit: Arc<Mutex<Option<ExitStatus>>>,
+) -> Result<(), DaemonLifecycleError> {
     let mut command = Command::new(executable);
     command
         .arg("daemon")
@@ -291,19 +354,57 @@ async fn spawn_foreground(executable: &Path, socket: &Path) -> Result<(), Daemon
         .map_err(|error| DaemonLifecycleError::Activation(bounded(error.to_string().as_bytes())))?
         .map_err(|error| DaemonLifecycleError::Activation(bounded(error.to_string().as_bytes())))?;
     std::thread::spawn(move || match child.wait() {
-        Ok(status) if !status.success() => {
-            tracing::warn!(%status, "development daemon exited unsuccessfully")
+        Ok(status) => {
+            if !status.success() {
+                tracing::warn!(%status, "development daemon exited unsuccessfully");
+            }
+            if let Ok(mut recorded) = exit.lock() {
+                *recorded = Some(status);
+            }
         }
         Err(error) => tracing::warn!(%error, "failed to reap development daemon"),
-        _ => {}
     });
     Ok(())
+}
+
+async fn systemd_service_failure() -> Option<String> {
+    let mut command = Command::new("systemctl");
+    command.args([
+        "--user",
+        "show",
+        "aletheon.service",
+        "--property=LoadState,ActiveState,SubState,Result,ExecMainStatus",
+        "--no-pager",
+    ]);
+    let output = command_output_with_timeout(command, SYSTEMD_QUERY_TIMEOUT)
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let facts = bounded(&output.stdout);
+    systemd_failure_detail(&facts)
+}
+
+fn systemd_failure_detail(facts: &str) -> Option<String> {
+    let failed = facts.lines().any(|line| line == "ActiveState=failed")
+        || facts.lines().any(|line| {
+            line.strip_prefix("Result=")
+                .is_some_and(|result| !result.is_empty() && result != "success")
+        });
+    failed.then(|| facts.replace('\n', ", "))
 }
 
 async fn command_output(mut command: Command) -> io::Result<Output> {
     tokio::task::spawn_blocking(move || command.output())
         .await
         .map_err(io::Error::other)?
+}
+
+async fn command_output_with_timeout(command: Command, timeout: Duration) -> io::Result<Output> {
+    tokio::time::timeout(timeout, command_output(command))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "host command timed out"))?
 }
 
 async fn probe_daemon(socket: &Path) -> Result<DaemonReadiness, DaemonLifecycleError> {
@@ -426,6 +527,8 @@ mod tests {
             resolve_mode_from_systemd(
                 "/home/a/.config/systemd/user/aletheon.socket",
                 "{ path=/usr/bin/aletheon ; argv[]=/usr/bin/aletheon daemon ; }",
+                "/run/user/1000/aletheon/aletheon.sock (Stream)",
+                Path::new("/run/user/1000/aletheon/aletheon.sock"),
                 true,
             ),
             DaemonInstallMode::SystemInstall
@@ -434,18 +537,49 @@ mod tests {
             resolve_mode_from_systemd(
                 "/home/a/.config/systemd/user/aletheon.socket",
                 "{ path=/home/a/.local/bin/aletheon ; argv[]=/home/a/.local/bin/aletheon daemon ; }",
+                "/run/user/1000/aletheon/aletheon.sock (Stream)",
+                Path::new("/run/user/1000/aletheon/aletheon.sock"),
                 false,
             ),
             DaemonInstallMode::UserLocal
         );
         assert_eq!(
-            resolve_mode_from_systemd("", "", false),
+            resolve_mode_from_systemd("", "", "", Path::new("/tmp/daemon.sock"), false),
             DaemonInstallMode::DevForeground
         );
         assert_eq!(
-            resolve_mode_from_systemd("/home/a/.config/systemd/user/aletheon.socket", "", false,),
+            resolve_mode_from_systemd(
+                "/home/a/.config/systemd/user/aletheon.socket",
+                "",
+                "/run/user/1000/aletheon/aletheon.sock (Stream)",
+                Path::new("/run/user/1000/aletheon/aletheon.sock"),
+                false,
+            ),
             DaemonInstallMode::DevForeground
         );
+        assert_eq!(
+            resolve_mode_from_systemd(
+                "/home/a/.config/systemd/user/aletheon.socket",
+                "{ path=/usr/bin/aletheon ; argv[]=/usr/bin/aletheon daemon ; }",
+                "/run/user/1000/aletheon/aletheon.sock (Stream)",
+                Path::new("/tmp/isolated/aletheon.sock"),
+                true,
+            ),
+            DaemonInstallMode::DevForeground
+        );
+    }
+
+    #[test]
+    fn systemd_failure_is_distinct_from_a_healthy_boot_in_progress() {
+        assert!(systemd_failure_detail(
+            "LoadState=loaded\nActiveState=active\nSubState=running\nResult=success\n"
+        )
+        .is_none());
+        let detail = systemd_failure_detail(
+            "LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\nExecMainStatus=1\n",
+        )
+        .unwrap();
+        assert!(detail.contains("Result=exit-code"));
     }
 
     #[tokio::test]

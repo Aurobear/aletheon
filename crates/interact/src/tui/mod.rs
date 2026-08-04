@@ -147,7 +147,7 @@ pub async fn run_with_workspace_requirements_and_task_kind(
         Ok(s) => s,
         Err(e) => {
             return Err(anyhow::anyhow!(
-                "Cannot connect to daemon at {socket_path}: {e}\n\nStart the daemon first:\n  aletheon daemon &"
+                "daemon connection failed after readiness negotiation [socket_connect_failed] at {socket_path}: {e}; run `aletheon doctor --json`"
             ));
         }
     };

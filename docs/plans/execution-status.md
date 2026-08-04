@@ -126,25 +126,25 @@ MERGE_SHA: 58a136204bda2d4b8d719a6b06d9cb52c918433c
 ## X4a
 
 ```text
-STATUS: code_complete
+STATUS: accepted
 NODE: X4a
 BASE / BRANCH / PR / GOAL_ID: 58a136204bda2d4b8d719a6b06d9cb52c918433c / auro/feat/20260805-x4a-daemon-lifecycle-doctor / #169 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commits 5bca5e30 and 98be8a6b add the Executive daemon lifecycle contract, deterministic install-mode resolution, one monotonic startup deadline, cross-process startup and process-lifetime authority locks, owned stale-socket recovery, typed initialize version negotiation, bounded diagnostics, and the Executive doctor use case; U-BOOT-003 concurrent-client coverage proves one activation and one stale-socket recovery, while host tests cover lock recovery, typed readiness, fail-closed version skew, and refusal to replace an unresponsive authority; focused Executive/Aletheon tests, package Clippy -D warnings, architecture, formatting, and diff gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 ba445e151f4228358008422df247a646dadb62ae81d6e62f95bcd059815c131a, stable PIDs, zero restart counters, and an official-socket real LLM request; a second installed daemon exits nonzero on the authority fence and installed doctor JSON remains parseable
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 7ea6e66f226a0aa2628ad17292f85a2a72e23cc8
 ```
 
 ## X4b
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X4b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: 7ea6e66f226a0aa2628ad17292f85a2a72e23cc8 / auro/feat/20260805-x4b-interact-ensure-running / #170 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=2
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commits cde69177 and eb8d7a1d make Interact resolve the canonical user socket and invoke the Executive lifecycle before TUI or one-shot connection; system/user-local/dev-foreground mode selection, exact socket provenance, owned stale-socket recovery, typed protocol/runtime negotiation, and bounded JSON diagnostics are preserved; healthy durable-state cold starts have a 30-second readiness deadline while systemd and foreground bootstrap exits produce immediate daemon_bootstrap_failed diagnostics; focused Executive lifecycle/readiness/launcher and Interact host tests, package Clippy -D warnings, architecture, formatting, and diff gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 b66b7f576d666f34dcab084a76c9027fee28b10549c8531f9c50c68bfe6420fa; U-BOOT-001 installed cold start completed without manual daemon activation in 25068ms; U-BOOT-002 installed invalid-config test returned structured daemon_bootstrap_failed in 91ms; post-test official-socket real LLM request returned X4B_READY, services remained active with zero restarts
+FAILURES: attempt 1 used a single four-second readiness deadline and misclassified the installed daemon's approximately 21-second durable-state restore as a timeout; attempt 2 separated fast bootstrap-failure observation from healthy readiness waiting
 BLOCKER: none
 MERGE_SHA: pending
 ```
