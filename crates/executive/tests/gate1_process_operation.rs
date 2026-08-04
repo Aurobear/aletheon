@@ -79,6 +79,7 @@ fn stub_services() -> Arc<dyn TurnServices> {
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             }
         }
         fn llm_provider(&self) -> Option<&dyn LlmProvider> {
@@ -416,6 +417,7 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             }
         }
         fn llm_provider(&self) -> Option<&dyn LlmProvider> {

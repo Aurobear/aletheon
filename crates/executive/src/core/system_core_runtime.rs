@@ -58,6 +58,7 @@ impl RegistryInferencePort {
             max_context_length: None,
             pricing: None,
             backpressure: Default::default(),
+            cache: Default::default(),
         });
         config
             .model_aliases
@@ -79,7 +80,11 @@ impl InferencePort for RegistryInferencePort {
             .registry
             .create_provider(&config, &model)
             .map_err(InferenceError::from)?;
+        let runtime_facts = provider.runtime_facts();
         Ok(ModelCapabilities {
+            provider_id: Some(config.name.clone()),
+            transport: Some(format!("{:?}", config.transport).to_ascii_lowercase()),
+            cache_reporting: runtime_facts.cache_reporting,
             model_spec: format!("{}/{}", config.name, model),
             display_name: provider.name().to_string(),
             max_context_tokens: provider.max_context_length(),

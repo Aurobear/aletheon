@@ -116,6 +116,7 @@ impl CapabilityService for BoundaryCapability {
                 usage: UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             };
         }
         if call.name != "file_write" {
@@ -127,6 +128,7 @@ impl CapabilityService for BoundaryCapability {
                 usage: UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             };
         }
 
@@ -171,6 +173,7 @@ impl CapabilityService for BoundaryCapability {
             usage: UsageReport::default(),
             audit_id: None,
             patch_delta: result.metadata.patch_delta,
+            served_from_cache: false,
         }
     }
 }

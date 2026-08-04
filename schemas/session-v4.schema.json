@@ -1,14 +1,83 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionProtocolV4",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/SessionRecord"
+        },
+        "type": {
+          "type": "string",
+          "const": "session"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/TurnRecord"
+        },
+        "type": {
+          "type": "string",
+          "const": "turn"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ItemRecord"
+        },
+        "type": {
+          "type": "string",
+          "const": "item"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/SessionNotification"
+        },
+        "type": {
+          "type": "string",
+          "const": "notification"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    }
+  ],
   "$defs": {
     "CacheTelemetry": {
+      "type": "string",
       "enum": [
         "reported",
         "unsupported",
         "unknown"
-      ],
-      "type": "string"
+      ]
     },
     "CapabilityErrorClass": {
+      "type": "string",
       "enum": [
         "implementation",
         "environment",
@@ -19,32 +88,32 @@
         "concurrent_modification",
         "invalid_request",
         "unknown"
-      ],
-      "type": "string"
+      ]
     },
     "CapabilityRetryDisposition": {
+      "type": "string",
       "enum": [
         "never",
         "after_backoff",
         "after_correction"
-      ],
-      "type": "string"
+      ]
     },
     "CapabilityTerminalReceipt": {
       "description": "Authoritative terminal evidence projected by the host after a capability\ninvocation reaches a terminal state. Submission/progress events never\nconstruct this receipt.",
+      "type": "object",
       "properties": {
         "artifact_ids": {
+          "type": "array",
           "items": {
             "type": "string"
-          },
-          "type": "array"
+          }
         },
         "audit_id": {
-          "format": "uuid",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "format": "uuid"
         },
         "capability": {
           "type": "string"
@@ -60,22 +129,22 @@
           ]
         },
         "evidence_ids": {
+          "type": "array",
           "items": {
             "type": "string"
-          },
-          "type": "array"
+          }
         },
         "exit_code": {
-          "format": "int32",
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "int32"
         },
         "finished_at": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "invocation_id": {
           "type": "string"
@@ -90,16 +159,16 @@
           ]
         },
         "process_id": {
-          "format": "uuid",
-          "type": "string"
+          "type": "string",
+          "format": "uuid"
         },
         "retry_disposition": {
           "$ref": "#/$defs/CapabilityRetryDisposition"
         },
         "started_at": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "status": {
           "$ref": "#/$defs/CapabilityTerminalStatus"
@@ -120,68 +189,68 @@
         "evidence_ids",
         "truncated",
         "retry_disposition"
-      ],
-      "type": "object"
+      ]
     },
     "CapabilityTerminalStatus": {
+      "type": "string",
       "enum": [
         "succeeded",
         "failed",
         "cancelled",
         "timed_out"
-      ],
-      "type": "string"
+      ]
     },
     "EvaluationDecision": {
+      "type": "string",
       "enum": [
         "observed_pass",
         "observed_fail",
         "accepted",
         "rejected",
         "indeterminate"
-      ],
-      "type": "string"
+      ]
     },
     "EvaluationReceiptRef": {
+      "type": "object",
       "properties": {
         "confidence_millis": {
+          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "contract_id": {
-          "format": "uuid",
-          "type": "string"
+          "type": "string",
+          "format": "uuid"
         },
         "created_at_ms": {
-          "format": "int64",
-          "type": "integer"
+          "type": "integer",
+          "format": "int64"
         },
         "decision": {
           "$ref": "#/$defs/EvaluationDecision"
         },
         "evidence_coverage_millis": {
+          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "failed_gates": {
+          "type": "array",
           "items": {
             "type": "string"
-          },
-          "type": "array"
+          }
         },
         "receipt_id": {
-          "format": "uuid",
-          "type": "string"
+          "type": "string",
+          "format": "uuid"
         },
         "schema_version": {
+          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "subject_id": {
           "type": "string"
@@ -190,12 +259,12 @@
           "type": "string"
         },
         "weighted_total_millis": {
-          "format": "uint32",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "uint32",
+          "minimum": 0
         }
       },
       "required": [
@@ -209,10 +278,10 @@
         "confidence_millis",
         "failed_gates",
         "created_at_ms"
-      ],
-      "type": "object"
+      ]
     },
     "InferenceTerminalReceipt": {
+      "type": "object",
       "properties": {
         "failure_kind": {
           "type": [
@@ -223,19 +292,33 @@
         "inference_id": {
           "type": "string"
         },
+        "local_cache_miss_reason": {
+          "description": "Host-side explanation for a changed stable prefix, or the conservative\n`provider_miss_or_eviction` inference when the shape stayed identical.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "model_id": {
           "type": "string"
         },
         "operation_id": {
           "type": "string"
         },
+        "prefix_shape_digest": {
+          "description": "Diagnostic identity of the cache-relevant request prefix (see\n`executive::host::daemon::cache_shape::InferencePrefixShape::digest`).\nHost-side diagnostic only; never a correctness dependency and never a\nclaim that the provider hit or missed cache. `None` when the host did\nnot compute a shape for this turn.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "provider_id": {
           "type": "string"
         },
         "schema_version": {
+          "type": "integer",
           "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "status": {
           "$ref": "#/$defs/InferenceTerminalStatus"
@@ -260,77 +343,78 @@
         "tool_schema_digest",
         "status",
         "usage"
-      ],
-      "type": "object"
+      ]
     },
     "InferenceTerminalStatus": {
+      "type": "string",
       "enum": [
         "succeeded",
         "failed",
         "cancelled",
         "timed_out"
-      ],
-      "type": "string"
+      ]
     },
     "InferenceUsage": {
+      "type": "object",
       "properties": {
         "cache_read_tokens": {
-          "default": null,
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
         },
         "cache_telemetry": {
           "$ref": "#/$defs/CacheTelemetry",
           "default": "unknown"
         },
         "cache_write_tokens": {
-          "default": null,
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
         },
         "output_tokens": {
-          "default": null,
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
         },
         "total_input_tokens": {
-          "default": null,
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
         },
         "uncached_input_tokens": {
-          "default": null,
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
         }
-      },
-      "type": "object"
+      }
     },
     "ItemPayload": {
       "oneOf": [
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "content": {
                   "type": "string"
@@ -338,23 +422,23 @@
               },
               "required": [
                 "content"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "user_message",
-              "type": "string"
+              "type": "string",
+              "const": "user_message"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "content": {
                   "type": "string"
@@ -362,23 +446,23 @@
               },
               "required": [
                 "content"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "assistant_message",
-              "type": "string"
+              "type": "string",
+              "const": "assistant_message"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "call_id": {
                   "type": "string"
@@ -392,30 +476,30 @@
                 "call_id",
                 "name",
                 "input"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "tool_call",
-              "type": "string"
+              "type": "string",
+              "const": "tool_call"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "audit_id": {
-                  "format": "uuid",
                   "type": [
                     "string",
                     "null"
-                  ]
+                  ],
+                  "format": "uuid"
                 },
                 "call_id": {
                   "type": "string"
@@ -427,34 +511,34 @@
                   "type": "boolean"
                 },
                 "permit_id": {
-                  "format": "uuid",
                   "type": [
                     "string",
                     "null"
-                  ]
+                  ],
+                  "format": "uuid"
                 }
               },
               "required": [
                 "call_id",
                 "content",
                 "is_error"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "tool_result",
-              "type": "string"
+              "type": "string",
+              "const": "tool_result"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "receipt": {
                   "$ref": "#/$defs/CapabilityTerminalReceipt"
@@ -462,23 +546,23 @@
               },
               "required": [
                 "receipt"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "capability_receipt",
-              "type": "string"
+              "type": "string",
+              "const": "capability_receipt"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "receipt": {
                   "$ref": "#/$defs/EvaluationReceiptRef"
@@ -486,23 +570,23 @@
               },
               "required": [
                 "receipt"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "evaluation_receipt_ref",
-              "type": "string"
+              "type": "string",
+              "const": "evaluation_receipt_ref"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "receipt": {
                   "$ref": "#/$defs/ModelContextProjectionReceipt"
@@ -510,23 +594,23 @@
               },
               "required": [
                 "receipt"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "model_context_projection",
-              "type": "string"
+              "type": "string",
+              "const": "model_context_projection"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "receipt": {
                   "$ref": "#/$defs/InferenceTerminalReceipt"
@@ -534,76 +618,76 @@
               },
               "required": [
                 "receipt"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "inference_receipt",
-              "type": "string"
+              "type": "string",
+              "const": "inference_receipt"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "broadcast_epoch": {
-                  "format": "uint64",
-                  "minimum": 0,
                   "type": [
                     "integer",
                     "null"
-                  ]
+                  ],
+                  "format": "uint64",
+                  "minimum": 0
                 },
                 "content_ids": {
+                  "type": "array",
                   "items": {
                     "type": "string"
-                  },
-                  "type": "array"
+                  }
                 },
                 "dasein_version": {
+                  "type": "integer",
                   "format": "uint64",
-                  "minimum": 0,
-                  "type": "integer"
+                  "minimum": 0
                 },
                 "space": {
                   "type": "string"
                 },
                 "workspace_version": {
-                  "format": "uint64",
-                  "minimum": 0,
                   "type": [
                     "integer",
                     "null"
-                  ]
+                  ],
+                  "format": "uint64",
+                  "minimum": 0
                 }
               },
               "required": [
                 "space",
                 "dasein_version",
                 "content_ids"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "context_projection",
-              "type": "string"
+              "type": "string",
+              "const": "context_projection"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         },
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "content": {
                   "type": "string"
@@ -611,53 +695,52 @@
               },
               "required": [
                 "content"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "system_notice",
-              "type": "string"
+              "type": "string",
+              "const": "system_notice"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         }
       ]
     },
     "ItemRecord": {
+      "type": "object",
       "properties": {
         "created_at_ms": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "id": {
-          "format": "uuid",
-          "type": "string"
+          "type": "string",
+          "format": "uuid"
         },
         "payload": {
           "$ref": "#/$defs/ItemPayload"
         },
         "schema_version": {
+          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "sequence": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "session_id": {
           "type": "string"
         },
         "turn_id": {
-          "format": "uuid",
-          "type": "string"
+          "type": "string",
+          "format": "uuid"
         }
       },
       "required": [
@@ -668,20 +751,20 @@
         "sequence",
         "created_at_ms",
         "payload"
-      ],
-      "type": "object"
+      ]
     },
     "ModelContextClassification": {
+      "type": "string",
       "enum": [
         "instruction",
         "trusted_runtime",
         "untrusted_input",
         "model_history",
         "tool_evidence"
-      ],
-      "type": "string"
+      ]
     },
     "ModelContextFragmentReceipt": {
+      "type": "object",
       "properties": {
         "artifact_ref": {
           "type": [
@@ -690,9 +773,9 @@
           ]
         },
         "bytes": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "classification": {
           "$ref": "#/$defs/ModelContextClassification"
@@ -728,30 +811,30 @@
         "classification",
         "truncated",
         "bytes"
-      ],
-      "type": "object"
+      ]
     },
     "ModelContextProjectionReceipt": {
+      "type": "object",
       "properties": {
         "fragments": {
+          "type": "array",
           "items": {
             "$ref": "#/$defs/ModelContextFragmentReceipt"
-          },
-          "type": "array"
+          }
         },
         "inference_id": {
           "type": "string"
         },
         "message_bytes": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "omitted_fragment_ids": {
+          "type": "array",
           "items": {
             "type": "string"
-          },
-          "type": "array"
+          }
         },
         "operation_id": {
           "type": "string"
@@ -772,9 +855,9 @@
           ]
         },
         "tool_schema_bytes": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "tool_schema_digest": {
           "type": "string"
@@ -791,71 +874,71 @@
         "omitted_fragment_ids",
         "message_bytes",
         "tool_schema_bytes"
-      ],
-      "type": "object"
+      ]
     },
     "OperationId": {
-      "format": "uuid",
-      "type": "string"
+      "type": "string",
+      "format": "uuid"
     },
     "SessionFork": {
+      "type": "object",
       "properties": {
         "session_id": {
           "type": "string"
         },
         "through_sequence": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         }
       },
       "required": [
         "session_id",
         "through_sequence"
-      ],
-      "type": "object"
+      ]
     },
     "SessionNotification": {
       "oneOf": [
         {
+          "type": "object",
           "properties": {
             "data": {
+              "type": "object",
               "properties": {
                 "item": {
                   "$ref": "#/$defs/ItemRecord"
                 },
                 "schema_version": {
+                  "type": "integer",
                   "format": "uint16",
                   "maximum": 65535,
-                  "minimum": 0,
-                  "type": "integer"
+                  "minimum": 0
                 }
               },
               "required": [
                 "schema_version",
                 "item"
-              ],
-              "type": "object"
+              ]
             },
             "type": {
-              "const": "item_appended",
-              "type": "string"
+              "type": "string",
+              "const": "item_appended"
             }
           },
           "required": [
             "type",
             "data"
-          ],
-          "type": "object"
+          ]
         }
       ]
     },
     "SessionRecord": {
+      "type": "object",
       "properties": {
         "created_at_ms": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "id": {
           "type": "string"
@@ -871,10 +954,10 @@
           ]
         },
         "schema_version": {
+          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "status": {
           "$ref": "#/$defs/SessionStatus"
@@ -885,49 +968,49 @@
         "id",
         "created_at_ms",
         "status"
-      ],
-      "type": "object"
+      ]
     },
     "SessionStatus": {
+      "type": "string",
       "enum": [
         "active",
         "interrupted",
         "completed",
         "failed"
-      ],
-      "type": "string"
+      ]
     },
     "TurnRecord": {
+      "type": "object",
       "properties": {
         "completed_at_ms": {
-          "format": "uint64",
-          "minimum": 0,
           "type": [
             "integer",
             "null"
-          ]
+          ],
+          "format": "uint64",
+          "minimum": 0
         },
         "id": {
-          "format": "uuid",
-          "type": "string"
+          "type": "string",
+          "format": "uuid"
         },
         "operation_id": {
-          "format": "uuid",
-          "type": "string"
+          "type": "string",
+          "format": "uuid"
         },
         "schema_version": {
+          "type": "integer",
           "format": "uint16",
           "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "session_id": {
           "type": "string"
         },
         "started_at_ms": {
+          "type": "integer",
           "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "minimum": 0
         },
         "stop": {
           "anyOf": [
@@ -946,85 +1029,16 @@
         "session_id",
         "operation_id",
         "started_at_ms"
-      ],
-      "type": "object"
+      ]
     },
     "TurnStop": {
+      "type": "string",
       "enum": [
         "Completed",
         "Blocked",
         "Cancelled",
         "Failed"
-      ],
-      "type": "string"
+      ]
     }
-  },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "oneOf": [
-    {
-      "properties": {
-        "data": {
-          "$ref": "#/$defs/SessionRecord"
-        },
-        "type": {
-          "const": "session",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "data"
-      ],
-      "type": "object"
-    },
-    {
-      "properties": {
-        "data": {
-          "$ref": "#/$defs/TurnRecord"
-        },
-        "type": {
-          "const": "turn",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "data"
-      ],
-      "type": "object"
-    },
-    {
-      "properties": {
-        "data": {
-          "$ref": "#/$defs/ItemRecord"
-        },
-        "type": {
-          "const": "item",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "data"
-      ],
-      "type": "object"
-    },
-    {
-      "properties": {
-        "data": {
-          "$ref": "#/$defs/SessionNotification"
-        },
-        "type": {
-          "const": "notification",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "data"
-      ],
-      "type": "object"
-    }
-  ],
-  "title": "SessionProtocolV4"
+  }
 }

@@ -26,6 +26,8 @@ use fabric::{
     SandboxProfiles,
 };
 
+mod cache_hit;
+
 static SANDBOX_FS_VIOLATION_TOTAL: AtomicU64 = AtomicU64::new(0);
 static SANDBOX_GLOB_OVERFLOW_TOTAL: AtomicU64 = AtomicU64::new(0);
 

@@ -123,6 +123,11 @@ pub struct CapabilityResult {
     pub audit_id: Option<AuditEventId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch_delta: Option<crate::PatchDelta>,
+    /// True when the result was served from a read-only tool cache and the
+    /// underlying tool was NOT executed this call. The receipt is still
+    /// auditable; downstream evidence carries this marker.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub served_from_cache: bool,
 }
 
 /// Authoritative terminal evidence projected by the host after a capability
@@ -339,6 +344,7 @@ impl TurnServices for StubTurnServices {
             usage: UsageReport::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 }
@@ -367,6 +373,7 @@ mod terminal_receipt_tests {
             },
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         };
 
         let receipt = CapabilityTerminalReceipt::from_terminal_result(
@@ -405,6 +412,7 @@ mod terminal_receipt_tests {
             usage: UsageReport::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         };
         let receipt = CapabilityTerminalReceipt::from_terminal_result(
             &call,

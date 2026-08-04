@@ -5,6 +5,7 @@ pub mod capability_executor;
 pub mod google;
 pub mod mcp;
 pub(crate) mod outbound;
+pub mod read_only_cache;
 pub mod subagent;
 #[allow(clippy::module_inception)]
 pub mod tools;

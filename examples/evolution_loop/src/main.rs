@@ -44,6 +44,7 @@ fn build_scheduler() -> Result<Arc<LlmScheduler>> {
                 max_context_length: None,
                 pricing: None,
                 backpressure: Default::default(),
+                cache: Default::default(),
             },
             model: "deepseek-chat".to_string(),
         }],

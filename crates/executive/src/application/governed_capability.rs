@@ -326,6 +326,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                     usage: UsageReport::default(),
                     audit_id: None,
                     patch_delta: None,
+                    served_from_cache: false,
                 };
             }
         };
@@ -350,6 +351,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                                     usage: UsageReport::default(),
                                     audit_id: None,
                                     patch_delta: None,
+                                    served_from_cache: false,
                                 };
                             }
                             tracing::warn!(
@@ -378,6 +380,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                             usage: UsageReport::default(),
                             audit_id: None,
                             patch_delta: None,
+                            served_from_cache: false,
                         };
                     }
                     if let Err(error) = action_loop
@@ -394,6 +397,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                                 usage: UsageReport::default(),
                                 audit_id: None,
                                 patch_delta: None,
+                                served_from_cache: false,
                             };
                         }
                         tracing::warn!(
@@ -418,6 +422,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                             usage: UsageReport::default(),
                             audit_id: None,
                             patch_delta: None,
+                            served_from_cache: false,
                         };
                     }
                     None
@@ -430,6 +435,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                         usage: UsageReport::default(),
                         audit_id: None,
                         patch_delta: None,
+                        served_from_cache: false,
                     };
                 }
             }
@@ -482,6 +488,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                     usage: result.usage,
                     audit_id: result.audit_id,
                     patch_delta: None,
+                    served_from_cache: false,
                 };
             }
         }

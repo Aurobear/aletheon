@@ -50,6 +50,8 @@ fn terminal(
         status,
         usage: InferenceUsage::default(),
         failure_kind: failure_kind.map(str::to_owned),
+        prefix_shape_digest: None,
+        local_cache_miss_reason: None,
     }
 }
 
@@ -115,4 +117,135 @@ fn array_order_changes_digest_and_duplicate_names_fail() {
     assert!(
         canonicalize_tool_definitions(&[tool("dup", json!({})), tool("dup", json!({}))]).is_err()
     );
+}
+
+#[test]
+fn reported_sets_telemetry_reported() {
+    let usage = InferenceUsage::reported(256, 173, Some(156), Some(100), None);
+    assert_eq!(usage.cache_telemetry, CacheTelemetry::Reported);
+    assert_eq!(usage.total_input_tokens, Some(256));
+    assert_eq!(usage.output_tokens, Some(173));
+}
+
+#[test]
+fn unsupported_sets_telemetry_unsupported_and_zeroes_cache() {
+    let usage = InferenceUsage::unsupported(Some(256), Some(173));
+    assert_eq!(usage.cache_telemetry, CacheTelemetry::Unsupported);
+    assert_eq!(usage.cache_read_tokens, None);
+    assert_eq!(usage.cache_write_tokens, None);
+}
+
+#[test]
+fn default_telemetry_is_unknown_all_fields_none() {
+    let usage = InferenceUsage::default();
+    assert_eq!(usage.cache_telemetry, CacheTelemetry::Unknown);
+    assert_eq!(usage.total_input_tokens, None);
+    assert_eq!(usage.output_tokens, None);
+    assert_eq!(usage.uncached_input_tokens, None);
+    assert_eq!(usage.cache_read_tokens, None);
+    assert_eq!(usage.cache_write_tokens, None);
+}
+
+#[test]
+fn reported_preserves_none_not_zero() {
+    let usage = InferenceUsage::reported(256, 173, Some(256), None, None);
+    assert_eq!(usage.cache_read_tokens, None);
+    assert_eq!(usage.cache_write_tokens, None);
+    assert_eq!(usage.uncached_input_tokens, Some(256));
+}
+
+#[test]
+fn reported_explicit_zero_read_is_distinct_from_none() {
+    let zero = InferenceUsage::reported(256, 173, Some(256), Some(0), None);
+    assert_eq!(zero.cache_read_tokens, Some(0));
+    let none = InferenceUsage::reported(256, 173, Some(256), None, None);
+    assert_ne!(zero.cache_read_tokens, none.cache_read_tokens);
+}
+
+#[test]
+fn conservation_read_plus_uncached_equals_total_when_all_known() {
+    let usage = InferenceUsage::reported(256, 173, Some(156), Some(100), None);
+    assert_eq!(
+        usage.uncached_input_tokens.unwrap() + usage.cache_read_tokens.unwrap(),
+        usage.total_input_tokens.unwrap()
+    );
+}
+
+#[test]
+fn conservation_violation_is_constructible_but_rejected_by_validate() {
+    // InferenceUsage can be constructed with read + uncached != total, but
+    // validate() must reject that shape as a non-conserved cache report.
+    let usage = InferenceUsage::reported(256, 173, Some(300), Some(100), None);
+    assert_ne!(
+        usage.uncached_input_tokens.unwrap() + usage.cache_read_tokens.unwrap(),
+        usage.total_input_tokens.unwrap()
+    );
+    assert!(usage.validate().is_err());
+}
+
+#[test]
+fn validate_accepts_conserved_reported() {
+    let usage = InferenceUsage::reported(256, 173, Some(156), Some(100), None);
+    assert!(usage.validate().is_ok());
+}
+
+#[test]
+fn validate_accepts_explicit_zero_read() {
+    let usage = InferenceUsage::reported(256, 173, Some(256), Some(0), None);
+    assert!(usage.validate().is_ok());
+}
+
+#[test]
+fn validate_accepts_unknown_with_no_figures() {
+    assert!(InferenceUsage::default().validate().is_ok());
+}
+
+#[test]
+fn validate_accepts_missing_figures_kept_none() {
+    let usage = InferenceUsage::reported(256, 173, None, None, None);
+    assert!(usage.validate().is_ok());
+}
+
+#[test]
+fn validate_rejects_non_conserved() {
+    let usage = InferenceUsage::reported(256, 173, Some(300), Some(100), None);
+    assert!(usage.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_read_exceeding_total() {
+    let usage = InferenceUsage::reported(256, 173, Some(0), Some(300), None);
+    assert!(usage.validate().is_err());
+}
+
+#[test]
+fn validate_rejects_unsupported_with_cache_figures() {
+    let mut usage = InferenceUsage::unsupported(Some(256), Some(173));
+    usage.cache_read_tokens = Some(100);
+    assert!(usage.validate().is_err());
+}
+
+#[test]
+fn canonical_field_names_round_trip_stably() {
+    let usage = InferenceUsage::reported(256, 173, Some(156), Some(100), None);
+    let json = serde_json::to_value(&usage).unwrap();
+    let object = json.as_object().unwrap();
+    for key in [
+        "total_input_tokens",
+        "output_tokens",
+        "uncached_input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cache_telemetry",
+    ] {
+        assert!(object.contains_key(key), "missing canonical key {key}");
+    }
+    let back: InferenceUsage = serde_json::from_value(json).unwrap();
+    assert_eq!(back, usage);
+}
+
+#[test]
+fn canonical_alias_cache_read_tokens_parses() {
+    let usage: InferenceUsage = serde_json::from_value(json!({ "cache_read_tokens": 4 })).unwrap();
+    assert_eq!(usage.cache_read_tokens, Some(4));
 }

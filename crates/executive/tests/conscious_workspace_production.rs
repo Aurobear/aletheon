@@ -294,6 +294,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
                 },
                 audit_id: Some(fabric::AuditEventId(Uuid::from_u128(13))),
                 patch_delta: None,
+                served_from_cache: false,
             },
         )
         .await
@@ -355,6 +356,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
                 },
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             },
         )
         .await

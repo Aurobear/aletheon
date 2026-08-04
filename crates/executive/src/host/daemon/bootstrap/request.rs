@@ -724,7 +724,8 @@ impl RequestHandler {
                 }
             });
         }
-        let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(local_memory_service);
+        let local_memory =
+            super::memory::with_recall_cache(local_memory_service, &config.memory_policy);
         let supplemental_runtime =
             crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(
                 local_memory.clone(),

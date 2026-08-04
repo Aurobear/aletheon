@@ -39,6 +39,7 @@ fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
         max_context_length: Some(128_000),
         pricing: None,
         backpressure: Default::default(),
+        cache: Default::default(),
     };
     cognit::composition::inference_factory::create_provider(
         &config,

@@ -1044,6 +1044,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
                 usage: UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             },
         )
         .await
@@ -1076,6 +1077,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
                 },
                 audit_id: Some(fabric::AuditEventId(Uuid::from_u128(13))),
                 patch_delta: None,
+                served_from_cache: false,
             },
         )
         .await?;

@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+#
+# DeepSeek prompt-cache benchmark (Phase C5 of
+# docs/plans/deepseek-cache-and-message-optimization-plan.md).
+#
+# Sends REAL chat-completions requests and reports the provider's prompt-cache
+# figures (DeepSeek prompt_cache_hit/miss_tokens or OpenAI cached_tokens).
+# This is a diagnostic tool — it spends real tokens and is never part of the
+# product request path.
+#
+# Env:
+#   BENCH_BASE_URL  default $OPENAI_BASE_URL  (e.g. https://aiapi.lejurobot.com/v1)
+#   BENCH_API_KEY   default $OPENAI_API_KEY   (or the provider-specific key)
+#   BENCH_MODEL     default deepseek/deepseek-v4-flash[1m]
+#   BENCH_MAX_TOKENS default 64                (keeps output spend small)
+#   BENCH_SCENARIOS comma list to run (default: all)
+#   BENCH_ROUNDS    cold/hot repetitions per scenario (default: 2)
+#   BENCH_OUT       JSON output path (default /tmp/bench-deepseek-cache.json)
+#
+# Usage:
+#   set -a; source ~/.config/aletheon/daemon.env; set +a
+#   bash scripts/bench-deepseek-cache
+set -euo pipefail
+
+BASE_URL="${BENCH_BASE_URL:-${OPENAI_BASE_URL:-https://aiapi.lejurobot.com/v1}}"
+API_KEY="${BENCH_API_KEY:-${OPENAI_API_KEY:-}}"
+MODEL="${BENCH_MODEL:-deepseek/deepseek-v4-flash[1m]}"
+MAX_TOKENS="${BENCH_MAX_TOKENS:-64}"
+ROUNDS="${BENCH_ROUNDS:-2}"
+OUT="${BENCH_OUT:-/tmp/bench-deepseek-cache.json}"
+BASE_URL="${BASE_URL%/}"
+
+if [ -z "$API_KEY" ]; then
+  echo "error: BENCH_API_KEY / OPENAI_API_KEY required" >&2
+  exit 2
+fi
+command -v curl >/dev/null || { echo "error: curl required" >&2; exit 2; }
+command -v jq  >/dev/null || { echo "error: jq required" >&2; exit 2; }
+
+# A ~2KiB stable system prefix so the prefix is large enough for caching to matter.
+STABLE_SYSTEM="Aletheon cache benchmark. You are an assistant. Identity and security rules. Provide concise answers. $(python3 - <<'PY'
+print("stable identity rule; protocol note; scope guard; " * 80)
+PY
+)"
+
+TOOLS_BASE='[{"type":"function","function":{"name":"read_file","description":"Read a file from the workspace.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]'
+TOOLS_REORDERED='[{"type":"function","function":{"name":"list_dir","description":"List a directory.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},{"type":"function","function":{"name":"read_file","description":"Read a file from the workspace.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]'
+TOOLS_SCHEMA_CHANGED='[{"type":"function","function":{"name":"read_file","description":"Read a file from the workspace (v2, stricter).","parameters":{"type":"object","properties":{"path":{"type":"string"},"max_bytes":{"type":"integer"}},"required":["path"]}}}]'
+
+post_chat() {
+  local payload="$1"
+  curl -sS -m 90 -X POST "$BASE_URL/chat/completions" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "$payload"
+}
+
+# Extract total/hit/miss from a response. DeepSeek fields preferred; falls back
+# to OpenAI cached_tokens; miss derived from total when only hit is reported.
+usage_row() {
+  jq -r '
+    if (.usage == null) then "error: no usage (status=\(.error // "unknown"))"
+    else
+      [ .usage.prompt_tokens
+      , (.usage.prompt_cache_hit_tokens // .usage.prompt_tokens_details.cached_tokens // 0)
+      , (.usage.prompt_cache_miss_tokens // (.usage.prompt_tokens - (.usage.prompt_cache_hit_tokens // .usage.prompt_tokens_details.cached_tokens // 0)))
+      , .usage.completion_tokens
+      ] | @tsv
+    end' <<<"$1"
+}
+
+run_scenario() {
+  local name="$1" system="$2" user="$3" tools="$4" stream="$5"
+  local payload resp row results=() i
+  for ((i=1; i<=ROUNDS; i++)); do
+    payload=$(jq -nc --arg model "$MODEL" --argjson max "$MAX_TOKENS" --argjson stream "$stream" \
+      --arg system "$system" --arg user "$user" --argjson tools "$tools" \
+      '{model:$model, stream:$stream, max_tokens:$max, tools:$tools,
+        messages:[{role:"system",content:$system},{role:"user",content:$user}]}')
+    resp=$(post_chat "$payload")
+    if [ "$stream" = "true" ]; then
+      # SSE body: keep only the final usage-bearing data: chunk before [DONE].
+      resp=$(printf '%s' "$resp" | grep '^data:' | grep -v '\[DONE\]' | tail -1 | sed 's/^data: //')
+    fi
+    row=$(usage_row "$resp")
+    results+=("$row")
+  done
+  printf '%-22s' "$name"
+  for row in "${results[@]}"; do
+    printf '  %s' "$row"
+  done
+  printf '\n'
+}
+
+# Each scenario returns (name, system, user, tools, stream). Scenarios build on
+# the previous hot request to expose which change breaks the cached prefix.
+declare -a ALL_SCENARIOS=(identical last_message_changed system_char_changed tools_reordered tool_schema_changed memory_added streaming)
+
+SYS_LAST="$STABLE_SYSTEM"
+USER_BASE="Summarize the workspace layout and report the cache diagnosis."
+
+run_named() {
+  case "$1" in
+    identical)
+      run_scenario "identical" "$SYS_LAST" "$USER_BASE" "$TOOLS_BASE" false
+      ;;
+    last_message_changed)
+      run_scenario "last_msg_changed" "$SYS_LAST" "$USER_BASE another question" "$TOOLS_BASE" false
+      ;;
+    system_char_changed)
+      run_scenario "system_char_changed" "${SYS_LAST%?}X" "$USER_BASE" "$TOOLS_BASE" false
+      ;;
+    tools_reordered)
+      run_scenario "tools_reordered" "$SYS_LAST" "$USER_BASE" "$TOOLS_REORDERED" false
+      ;;
+    tool_schema_changed)
+      run_scenario "tool_schema_changed" "$SYS_LAST" "$USER_BASE" "$TOOLS_SCHEMA_CHANGED" false
+      ;;
+    memory_added)
+      run_scenario "memory_added" "$SYS_LAST" "<memory-context>\nrecalled fact\n</memory-context>\n$USER_BASE" "$TOOLS_BASE" false
+      ;;
+    streaming)
+      run_scenario "streaming" "$SYS_LAST" "$USER_BASE" "$TOOLS_BASE" true
+      ;;
+    *) echo "unknown scenario: $1" >&2; exit 2 ;;
+  esac
+}
+
+SCENARIOS="${BENCH_SCENARIOS:-$(IFS=,; echo "${ALL_SCENARIOS[*]}")}"
+IFS=',' read -ra SELECTED <<<"$SCENARIOS"
+
+echo "bench-deepseek-cache"
+echo "  base_url=$BASE_URL"
+echo "  model=$MODEL"
+echo "  max_tokens=$MAX_TOKENS rounds=$ROUNDS scenarios=${#SELECTED[@]}"
+echo "  columns: scenario total hit miss output (per run)"
+printf '%-22s\n' "---"
+for scenario in "${SELECTED[@]}"; do
+  run_named "$(echo "$scenario" | xargs)"
+done
+
+echo
+echo "Note: identical-shape turns with a non-zero miss after a warm prefix are"
+echo "ProviderMissOrEviction (cold cache/eviction/proxy behaviour), not a local"
+echo "shape change. See docs/testing/deepseek-cache.md for the shape digest method."

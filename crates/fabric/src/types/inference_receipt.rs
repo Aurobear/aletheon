@@ -26,6 +26,17 @@ pub struct InferenceTerminalReceipt {
     pub status: InferenceTerminalStatus,
     pub usage: InferenceUsage,
     pub failure_kind: Option<String>,
+    /// Diagnostic identity of the cache-relevant request prefix (see
+    /// `executive::host::daemon::cache_shape::InferencePrefixShape::digest`).
+    /// Host-side diagnostic only; never a correctness dependency and never a
+    /// claim that the provider hit or missed cache. `None` when the host did
+    /// not compute a shape for this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_shape_digest: Option<String>,
+    /// Host-side explanation for a changed stable prefix, or the conservative
+    /// `provider_miss_or_eviction` inference when the shape stayed identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_cache_miss_reason: Option<String>,
 }
 
 impl InferenceTerminalReceipt {
@@ -62,6 +73,20 @@ impl InferenceTerminalReceipt {
                     | "unknown"
             ) {
                 return Err("unsupported inference failure kind");
+            }
+        }
+        if let Some(reason) = &self.local_cache_miss_reason {
+            if !matches!(
+                reason.as_str(),
+                "provider_or_model_changed"
+                    | "transport_changed"
+                    | "system_changed"
+                    | "tool_schema_changed"
+                    | "profile_changed"
+                    | "compaction_or_rewrite"
+                    | "provider_miss_or_eviction"
+            ) {
+                return Err("unsupported local cache miss reason");
             }
         }
         Ok(())

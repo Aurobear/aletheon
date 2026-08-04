@@ -52,6 +52,16 @@ models = ["deepseek/deepseek-v4-flash[1m]"]
 # not independently burst the same endpoint/model.
 min_request_interval_ms = 15000
 
+[providers.cache]
+# How this provider's usage telemetry cache figures are interpreted. `auto`
+# inspects the wire fields themselves and never fabricates a hit/miss. Values:
+# auto | deepseek_chat | openai_cached_tokens | unsupported. This only explains
+# telemetry; it does not turn server-side caching on or off.
+reporting = "auto"
+# Whether the endpoint supports provider-side prefix caching. `auto` leaves the
+# decision to runtime facts/benchmarks rather than model-name guessing.
+prefix_cache = "auto"
+
 # Official DeepSeek endpoint. Its unprefixed model IDs are distinct from the
 # LejuRobot proxy namespace above. Set DEEPSEEK_API_KEY to select this provider.
 [[providers]]
@@ -60,6 +70,10 @@ base_url = "https://api.deepseek.com"
 api_key = ""
 transport = "openai"
 models = ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
+
+[providers.cache]
+reporting = "auto"
+prefix_cache = "auto"
 
 # Optional local/offline fallback provider.
 # The LLM scheduler fails over to the next configured provider when the primary

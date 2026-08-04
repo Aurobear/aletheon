@@ -121,6 +121,46 @@ async fn fragments_have_one_deterministic_order_before_raw_input() {
 }
 
 #[tokio::test]
+async fn partition_profile_covers_tool_memory_and_compacted_history_without_raw_content() {
+    use executive::application::prompt_partition::PromptRegion;
+
+    let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {
+        system_prefix: "stable-secret-prefix".into(),
+        skills: String::new(),
+        conscious: None,
+        memory_context: "recalled-secret-memory".into(),
+    })));
+    let history = vec![
+        Message::assistant("compacted-secret-summary"),
+        Message::tool_result("tool-1", "tool-secret-result", false),
+    ];
+    let assembled = assembler
+        .assemble(&request("current-secret-input"), &history, 1_000)
+        .await
+        .unwrap();
+
+    for region in [
+        PromptRegion::StablePrefix,
+        PromptRegion::Conversation,
+        PromptRegion::DynamicContext,
+        PromptRegion::CurrentInput,
+    ] {
+        assert!(assembled.profile.region_bytes(region) > 0);
+    }
+    let debug = format!("{:?}", assembled.profile);
+    for raw in [
+        "stable-secret-prefix",
+        "recalled-secret-memory",
+        "compacted-secret-summary",
+        "tool-secret-result",
+        "current-secret-input",
+    ] {
+        assert!(!debug.contains(raw), "profile leaked raw content: {raw}");
+    }
+    assert!(debug.contains("sha256:"));
+}
+
+#[tokio::test]
 async fn fragments_and_history_are_bounded_and_utf8_safe() {
     let huge = "界".repeat(200_000);
     let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {

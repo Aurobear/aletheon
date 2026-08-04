@@ -47,6 +47,26 @@ pub(super) fn compose(input: MemoryCompositionInput<'_>) -> anyhow::Result<Memor
     })
 }
 
+pub(super) fn with_recall_cache(
+    service: mnemosyne::DefaultMemoryService,
+    config: &MemoryConfig,
+) -> Arc<dyn mnemosyne::MemoryService> {
+    let metrics = service.metrics().clone();
+    Arc::new(
+        mnemosyne::CachingMemoryService::new(
+            Arc::new(service),
+            config.policy.version.clone(),
+            config
+                .embedding
+                .enabled
+                .then(|| config.embedding.model.clone()),
+            512,
+            std::time::Duration::from_secs(30),
+        )
+        .with_metrics(metrics),
+    )
+}
+
 pub(super) fn compose_gateway(
     data_dir: &Path,
     memory: &MemoryGroup,

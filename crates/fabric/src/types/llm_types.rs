@@ -126,9 +126,21 @@ pub struct InferenceCapabilities {
 /// These values are runtime metadata, not claims made by the model itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRuntimeFacts {
+    /// Configured provider identity at the routing boundary. `None` only for
+    /// legacy/in-process providers that cannot expose their route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    /// Concrete adapter-defined wire transport identifier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
     pub effective_model_id: String,
     pub display_name: String,
     pub max_context_tokens: usize,
+    /// Provider cache-reporting mode as a stable adapter-defined diagnostic label.
+    /// `None` when the adapter does not report cache capability. This is
+    /// host-owned configuration, never a model claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_reporting: Option<String>,
 }
 
 /// Canonical LlmProvider trait. See shared/traits.md.
@@ -164,9 +176,12 @@ pub trait LlmProvider: Send + Sync {
     /// adapters should override this with the resolved model specification.
     fn runtime_facts(&self) -> ModelRuntimeFacts {
         ModelRuntimeFacts {
+            provider_id: None,
+            transport: None,
             effective_model_id: self.name().to_string(),
             display_name: self.name().to_string(),
             max_context_tokens: self.max_context_length(),
+            cache_reporting: None,
         }
     }
 
@@ -252,6 +267,95 @@ impl InferenceUsage {
             ..Self::default()
         }
     }
+
+    /// Validate cache-accounting invariants. Provider-neutral: applies to any
+    /// cache reporting the runtime can observe, independent of the wire format.
+    ///
+    /// Rules:
+    /// - when read, uncached and total are all known, `read + uncached == total`;
+    /// - a known cache figure may never exceed `total_input_tokens`;
+    /// - explicit `Some(0)` is meaningful and distinct from a missing value (`None`);
+    /// - `Unsupported` telemetry must not carry cache figures (no invented hit/miss);
+    /// - missing figures stay `None` and are never coerced to zero.
+    pub fn validate(&self) -> Result<(), InferenceUsageError> {
+        if self.cache_telemetry == CacheTelemetry::Unsupported
+            && (self.cache_read_tokens.is_some() || self.cache_write_tokens.is_some())
+        {
+            return Err(InferenceUsageError::UnsupportedWithCache {
+                read: self.cache_read_tokens,
+                write: self.cache_write_tokens,
+            });
+        }
+        let Some(total) = self.total_input_tokens else {
+            return Ok(());
+        };
+        if let Some(read) = self.cache_read_tokens {
+            if read > total {
+                return Err(InferenceUsageError::ExceedsTotal {
+                    field: "cache_read_tokens",
+                    value: read,
+                    total,
+                });
+            }
+        }
+        if let Some(uncached) = self.uncached_input_tokens {
+            if uncached > total {
+                return Err(InferenceUsageError::ExceedsTotal {
+                    field: "uncached_input_tokens",
+                    value: uncached,
+                    total,
+                });
+            }
+        }
+        if let (Some(read), Some(uncached)) = (self.cache_read_tokens, self.uncached_input_tokens) {
+            let sum = read
+                .checked_add(uncached)
+                .ok_or(InferenceUsageError::NonConserved {
+                    read,
+                    uncached,
+                    total,
+                })?;
+            if sum != total {
+                return Err(InferenceUsageError::NonConserved {
+                    read,
+                    uncached,
+                    total,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InferenceUsageError {
+    #[error("cache_read_tokens {read} plus uncached_input_tokens {uncached} does not equal total_input_tokens {total}")]
+    NonConserved {
+        read: u64,
+        uncached: u64,
+        total: u64,
+    },
+    #[error("{field} {value} exceeds total_input_tokens {total}")]
+    ExceedsTotal {
+        field: &'static str,
+        value: u64,
+        total: u64,
+    },
+    #[error(
+        "Unsupported cache telemetry must not carry cache figures (read={read:?}, write={write:?})"
+    )]
+    UnsupportedWithCache {
+        read: Option<u64>,
+        write: Option<u64>,
+    },
+    #[error("conflicting cache reporting formats: primary hit {primary_hit} / miss {primary_miss} disagree with nested cached {nested_cached}")]
+    FormatConflict {
+        primary_hit: u64,
+        primary_miss: u64,
+        nested_cached: u64,
+    },
+    #[error("invalid cache reporting: {0}")]
+    Invalid(String),
 }
 
 #[cfg(test)]

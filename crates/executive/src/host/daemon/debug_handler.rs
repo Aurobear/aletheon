@@ -399,6 +399,7 @@ impl DebugHandler {
 
     async fn handle_perf(&self, id: &Value) -> Value {
         let snap = self.perf.snapshot();
+        let prefix_cache = crate::application::cache_shape::prefix_shape_metrics();
         let tool_calls = {
             let map = self.perf.tool_calls.lock().await;
             map.clone()
@@ -416,6 +417,15 @@ impl DebugHandler {
                     "turn_count": snap.turn_count,
                     "error_count": snap.error_count,
                     "tool_calls": tool_calls_json,
+                    "inference_prefix_shape_changes_total": {
+                        "provider_or_model_changed": prefix_cache.provider_or_model_changed_total,
+                        "transport_changed": prefix_cache.transport_changed_total,
+                        "system_changed": prefix_cache.system_changed_total,
+                        "tool_schema_changed": prefix_cache.tool_schema_changed_total,
+                        "profile_changed": prefix_cache.profile_changed_total,
+                        "compaction_or_rewrite": prefix_cache.compaction_or_rewrite_total,
+                        "provider_miss_or_eviction": prefix_cache.provider_miss_or_eviction_total,
+                    },
                 }
             }
         })

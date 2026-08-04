@@ -250,6 +250,9 @@ mod tests {
             model_spec: &str,
         ) -> Result<ModelCapabilities, InferenceError> {
             Ok(ModelCapabilities {
+                provider_id: None,
+                transport: None,
+                cache_reporting: None,
                 model_spec: model_spec.into(),
                 display_name: model_spec.into(),
                 max_context_tokens: 128_000,
@@ -288,6 +291,9 @@ mod tests {
         let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(
             inference.clone(),
             ModelCapabilities {
+                provider_id: None,
+                transport: None,
+                cache_reporting: None,
                 model_spec: "test/model".into(),
                 display_name: "test/model".into(),
                 max_context_tokens: 128_000,

@@ -622,6 +622,10 @@ pub struct ProviderConfig {
     /// endpoint and model.
     #[serde(default)]
     pub backpressure: ProviderBackpressureConfig,
+    /// Cache behavior hints. Default is `Auto` — the wire fields are inspected
+    /// directly and `Auto` never fabricates a cache figure.
+    #[serde(default)]
+    pub cache: ProviderCacheConfig,
 }
 
 /// Provider-level backpressure. Unlike turn admission this coordinates all
@@ -660,6 +664,75 @@ impl Default for ProviderBackpressureConfig {
 pub struct ProviderPricing {
     pub input_per_1k: f64,
     pub output_per_1k: f64,
+}
+
+/// How a provider reports cache usage in its usage telemetry. Used only to
+/// interpret the wire fields; it does not enable or disable server-side
+/// caching and never claims whether the endpoint actually hits cache.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheReportingMode {
+    /// Inspect the returned wire fields themselves (DeepSeek hit/miss, then
+    /// OpenAI `cached_tokens`, else `Unknown`). Default; never fabricates.
+    #[default]
+    Auto,
+    /// Provider emits DeepSeek `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`.
+    DeepSeekChat,
+    /// Provider emits OpenAI `prompt_tokens_details.cached_tokens`.
+    OpenAiCachedTokens,
+    /// Provider has no cache reporting; usage telemetry must be `Unsupported`.
+    Unsupported,
+}
+
+impl CacheReportingMode {
+    /// Stable snake_case diagnostic label used in host-owned runtime facts.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::DeepSeekChat => "deepseek_chat",
+            Self::OpenAiCachedTokens => "openai_cached_tokens",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+/// Whether the endpoint supports provider-side prefix caching. `Auto` leaves
+/// the decision to runtime facts/diagnostics rather than model-name guessing.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PrefixCacheCapability {
+    #[default]
+    Auto,
+    Supported,
+    Unsupported,
+}
+
+impl PrefixCacheCapability {
+    /// Stable snake_case diagnostic label used in host-owned runtime facts.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Supported => "supported",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+/// Per-provider cache behavior hints. These only interpret telemetry and shape
+/// tracking; they do not turn caching on or off and never become correctness
+/// dependencies.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProviderCacheConfig {
+    /// How usage telemetry's cache figures should be interpreted.
+    pub reporting: CacheReportingMode,
+    /// Whether the endpoint supports prefix caching (used for diagnostics and
+    /// shape accounting, not for request correctness).
+    pub prefix_cache: PrefixCacheCapability,
 }
 
 // ---------------------------------------------------------------------------

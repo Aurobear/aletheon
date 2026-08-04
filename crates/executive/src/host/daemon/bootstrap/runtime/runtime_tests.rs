@@ -23,6 +23,9 @@ mod goal_runtime_tests {
             crate::application::inference_port::InferenceError,
         > {
             Ok(crate::application::inference_port::ModelCapabilities {
+                provider_id: None,
+                transport: None,
+                cache_reporting: None,
                 model_spec: model_spec.into(),
                 display_name: model_spec.into(),
                 max_context_tokens: 128_000,
@@ -60,6 +63,7 @@ mod goal_runtime_tests {
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             }
         }
     }
@@ -74,6 +78,7 @@ mod goal_runtime_tests {
             max_context_length: None,
             pricing: None,
             backpressure: Default::default(),
+            cache: Default::default(),
         }
     }
 

@@ -124,6 +124,7 @@ impl ToolExecutor for EmbodimentCapabilityExecutor {
                         usage,
                         audit_id: None,
                         patch_delta: None,
+                        served_from_cache: false,
                     }
                 }
                 Err(error) => capability_error(call_id, error.to_string()),
@@ -141,6 +142,7 @@ fn capability_error(call_id: String, output: String) -> CapabilityResult {
         usage: UsageReport::default(),
         audit_id: None,
         patch_delta: None,
+        served_from_cache: false,
     }
 }
 

@@ -163,6 +163,14 @@ pub struct MemoryMetricsSnapshot {
     pub recall_vector_used_total: u64,
     pub embedding_credential_rejected_total: u64,
     pub recall_prefilter_excluded_total: u64,
+    /// Recall requests served by the bounded local recall cache.
+    pub memory_recall_cache_hit_total: u64,
+    /// Recall requests that were not present in the bounded local recall cache.
+    pub memory_recall_cache_miss_total: u64,
+    /// Cache misses coalesced behind an already-running authoritative recall.
+    pub memory_recall_cache_singleflight_wait_total: u64,
+    /// Authoritative recalls that failed after a cache miss.
+    pub memory_recall_cache_load_error_total: u64,
 }
 
 /// Cloneable metrics handle shared by all memory pipeline components.
@@ -258,6 +266,30 @@ impl MemoryMetrics {
         guard.recall_prefilter_excluded_total = guard
             .recall_prefilter_excluded_total
             .saturating_add(count as u64);
+    }
+
+    pub fn recall_cache_hit(&self) {
+        let mut guard = self.lock();
+        guard.memory_recall_cache_hit_total = guard.memory_recall_cache_hit_total.saturating_add(1);
+    }
+
+    pub fn recall_cache_miss(&self) {
+        let mut guard = self.lock();
+        guard.memory_recall_cache_miss_total =
+            guard.memory_recall_cache_miss_total.saturating_add(1);
+    }
+
+    pub fn recall_cache_singleflight_wait(&self) {
+        let mut guard = self.lock();
+        guard.memory_recall_cache_singleflight_wait_total = guard
+            .memory_recall_cache_singleflight_wait_total
+            .saturating_add(1);
+    }
+
+    pub fn recall_cache_load_error(&self) {
+        let mut guard = self.lock();
+        guard.memory_recall_cache_load_error_total =
+            guard.memory_recall_cache_load_error_total.saturating_add(1);
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, MemoryMetricsSnapshot> {

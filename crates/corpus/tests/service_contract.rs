@@ -80,6 +80,7 @@ impl ToolExecutor for RecordingExecutor {
             },
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 }

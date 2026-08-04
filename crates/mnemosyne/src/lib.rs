@@ -26,6 +26,7 @@ pub mod ops;
 pub mod projection;
 pub mod promotion;
 mod recall;
+pub mod recall_cache;
 pub mod retention;
 pub mod service;
 pub mod workspace;
@@ -81,6 +82,7 @@ pub use recall::pipeline::{
     RankedRecallItem, RecallPreFilter, RecallSearchBackend, RecallSearchParams, ScopePredicate,
     SearchOutcome,
 };
+pub use recall_cache::CachingMemoryService;
 pub use retention::{
     RetentionCompactionPolicy, RetentionCompactionReport, RetentionCompactor, RetentionRepository,
 };

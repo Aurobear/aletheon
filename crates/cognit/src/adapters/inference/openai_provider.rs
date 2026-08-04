@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use super::provider::*;
-use crate::config::ProviderTimeoutConfig;
+use crate::config::{CacheReportingMode, ProviderTimeoutConfig};
+use fabric::llm_types::{InferenceUsageError, ModelRuntimeFacts};
 use fabric::message::{ContentBlock, ImageSource, Message, Role};
 
 /// OpenAI-compatible provider (chat/completions).
@@ -19,6 +20,8 @@ pub struct OpenAiProvider {
     max_tokens: u32,
     request_timeout: Duration,
     stream_idle_timeout: Duration,
+    /// How usage telemetry cache figures are interpreted (from provider config).
+    cache_reporting: CacheReportingMode,
 }
 
 impl OpenAiProvider {
@@ -37,6 +40,7 @@ impl OpenAiProvider {
             max_tokens: 4096,
             request_timeout: Duration::from_millis(timeouts.request_timeout_ms),
             stream_idle_timeout: Duration::from_millis(timeouts.stream_idle_timeout_ms),
+            cache_reporting: CacheReportingMode::Auto,
         }
     }
 
@@ -64,6 +68,14 @@ impl OpenAiProvider {
 
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = max_tokens;
+        self
+    }
+
+    /// Declare how this provider reports cache usage in its usage telemetry.
+    /// Defaults to `Auto` (inspect the wire fields); only config-derived hints
+    /// set this, never model-name guesses.
+    pub fn with_cache_reporting(mut self, mode: CacheReportingMode) -> Self {
+        self.cache_reporting = mode;
         self
     }
 }
@@ -157,34 +169,100 @@ struct ChatResponseMessage {
 #[derive(Deserialize)]
 struct PromptTokensDetails {
     #[serde(default)]
-    cached_tokens: Option<u32>,
+    cached_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
 struct ApiUsage {
-    prompt_tokens: u32,
-    completion_tokens: u32,
+    prompt_tokens: u64,
+    completion_tokens: u64,
     #[serde(default)]
     prompt_tokens_details: Option<PromptTokensDetails>,
+    /// DeepSeek-style prompt cache accounting. Hit + miss should equal
+    /// `prompt_tokens`; either may be absent on proxies that strip them.
+    #[serde(default)]
+    prompt_cache_hit_tokens: Option<u64>,
+    #[serde(default)]
+    prompt_cache_miss_tokens: Option<u64>,
 }
 
-fn openai_usage(usage: &ApiUsage) -> anyhow::Result<InferenceUsage> {
-    let total = u64::from(usage.prompt_tokens);
-    let read = usage
+/// Resolve OpenAI/DeepSeek cache-reporting wire fields into a single
+/// `InferenceUsage`. Pure: never keys off the model name (proxies may rewrite
+/// it), only off the configured `reporting` mode and which fields the provider
+/// actually returned.
+///
+/// Priority (mirrors docs/plans/deepseek-cache-and-message-optimization-plan.md §3.2):
+/// 0. `reporting == Unsupported` -> `CacheTelemetry::Unsupported`, no cache figures;
+/// 1. DeepSeek hit + miss both present -> use both, validate conservation;
+/// 2. only DeepSeek hit + total known -> miss = total - hit;
+/// 3. OpenAI `cached_tokens` present -> read = cached, uncached = total - cached;
+/// 4. both formats present and agree -> unified result;
+/// 5. both formats present and conflict -> typed protocol error, never silently pick;
+/// 7. no cache fields and capability unknown -> `CacheTelemetry::Unknown`.
+fn openai_usage(usage: &ApiUsage, reporting: CacheReportingMode) -> anyhow::Result<InferenceUsage> {
+    let total = usage.prompt_tokens;
+    // A provider declared without cache reporting never carries cache figures,
+    // even if it sends them: telemetry must stay Unsupported, not a fabricated
+    // hit or miss.
+    if reporting == CacheReportingMode::Unsupported {
+        return Ok(InferenceUsage::unsupported(
+            Some(total),
+            Some(usage.completion_tokens),
+        ));
+    }
+    let openai_cached = usage
         .prompt_tokens_details
         .as_ref()
-        .and_then(|details| details.cached_tokens)
-        .map(u64::from);
-    if read.is_some_and(|cached| cached > total) {
-        anyhow::bail!("OpenAI cached input exceeds total prompt input");
+        .and_then(|details| details.cached_tokens);
+    let deepseek_hit = usage.prompt_cache_hit_tokens;
+    let deepseek_miss = usage.prompt_cache_miss_tokens;
+
+    // Both formats present: they must agree, otherwise this is a protocol
+    // error (never silently prefer one wire format over the other).
+    if let (Some(hit), Some(openai)) = (deepseek_hit, openai_cached) {
+        if hit != openai {
+            return Err(InferenceUsageError::FormatConflict {
+                primary_hit: hit,
+                primary_miss: deepseek_miss.unwrap_or_else(|| total.saturating_sub(hit)),
+                nested_cached: openai,
+            }
+            .into());
+        }
     }
-    Ok(InferenceUsage::reported(
-        total,
-        u64::from(usage.completion_tokens),
-        read.map(|cached| total.saturating_sub(cached)),
-        read,
-        None,
-    ))
+
+    let (read, uncached, telemetry) = match (deepseek_hit, deepseek_miss) {
+        (Some(hit), Some(miss)) => (Some(hit), Some(miss), CacheTelemetry::Reported),
+        (Some(hit), None) => (
+            Some(hit),
+            Some(total.saturating_sub(hit)),
+            CacheTelemetry::Reported,
+        ),
+        (None, Some(_)) => {
+            return Err(InferenceUsageError::Invalid(
+                "prompt_cache_miss_tokens reported without prompt_cache_hit_tokens".into(),
+            )
+            .into());
+        }
+        (None, None) => match openai_cached {
+            Some(cached) => (
+                Some(cached),
+                Some(total.saturating_sub(cached)),
+                CacheTelemetry::Reported,
+            ),
+            None => (None, None, CacheTelemetry::Unknown),
+        },
+    };
+
+    let resolved = InferenceUsage {
+        total_input_tokens: Some(total),
+        output_tokens: Some(usage.completion_tokens),
+        uncached_input_tokens: uncached,
+        cache_read_tokens: read,
+        cache_write_tokens: None,
+        cache_telemetry: telemetry,
+    };
+    resolved.validate()?;
+    Ok(resolved)
 }
 
 /// SSE streaming response structures
@@ -408,6 +486,20 @@ fn tools_to_chat(tools: &[ToolDefinition]) -> Vec<ChatTool> {
 
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
+    fn runtime_facts(&self) -> ModelRuntimeFacts {
+        // Mirrors the trait default plus the config-declared cache reporting
+        // mode. Built directly to keep the async_trait block free of
+        // self-recursive fully-qualified calls.
+        ModelRuntimeFacts {
+            provider_id: None,
+            transport: Some("openai".into()),
+            effective_model_id: self.name().to_string(),
+            display_name: self.name().to_string(),
+            max_context_tokens: self.max_context_length(),
+            cache_reporting: Some(self.cache_reporting.as_str().to_string()),
+        }
+    }
+
     async fn complete(
         &self,
         messages: &[Message],
@@ -498,7 +590,7 @@ impl LlmProvider for OpenAiProvider {
         };
 
         let usage = if let Some(u) = api_resp.usage {
-            openai_usage(&u)?
+            openai_usage(&u, self.cache_reporting)?
         } else {
             InferenceUsage::default()
         };
@@ -577,6 +669,9 @@ impl LlmProvider for OpenAiProvider {
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));
         let stream_idle_timeout = self.stream_idle_timeout;
+        // Copied before the `move` closure so the returned `'static` stream does
+        // not borrow `self` (CacheReportingMode is Copy).
+        let cache_reporting = self.cache_reporting;
 
         let stream = futures::stream::unfold(
             (
@@ -628,7 +723,7 @@ impl LlmProvider for OpenAiProvider {
                                 Ok(resp) => {
                                     if let Some(usage) = &resp.usage {
                                         return Some((
-                                            openai_usage(usage)
+                                            openai_usage(usage, cache_reporting)
                                                 .map(|usage| StreamChunk::Usage { usage }),
                                             (byte_stream, buffer, tool_state),
                                         ));
@@ -951,5 +1046,157 @@ mod tests {
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["text"], "first");
         assert_eq!(arr[1]["text"], "second");
+    }
+
+    mod usage_fixtures {
+        use super::*;
+        use fabric::llm_types::CacheTelemetry;
+
+        const DEEPSEEK_HIT_MISS: &str =
+            include_str!("../../../tests/fixtures/usage/deepseek_hit_miss.json");
+        const DEEPSEEK_HIT_ONLY: &str =
+            include_str!("../../../tests/fixtures/usage/deepseek_hit_only.json");
+        const DEEPSEEK_EXPLICIT_ZERO_HIT: &str =
+            include_str!("../../../tests/fixtures/usage/deepseek_explicit_zero_hit.json");
+        const OPENAI_CACHED_TOKENS: &str =
+            include_str!("../../../tests/fixtures/usage/openai_cached_tokens.json");
+        const OPENAI_EXPLICIT_ZERO_CACHED: &str =
+            include_str!("../../../tests/fixtures/usage/openai_explicit_zero_cached.json");
+        const NEITHER: &str = include_str!("../../../tests/fixtures/usage/neither.json");
+        const DEEPSEEK_HIT_GREATER_THAN_TOTAL: &str =
+            include_str!("../../../tests/fixtures/usage/deepseek_hit_greater_than_total.json");
+        const DEEPSEEK_MISS_NOT_CONSERVED: &str =
+            include_str!("../../../tests/fixtures/usage/deepseek_miss_not_conserved.json");
+        const FORMAT_CONFLICT: &str =
+            include_str!("../../../tests/fixtures/usage/format_conflict.json");
+
+        fn parse_result(json: &str) -> anyhow::Result<InferenceUsage> {
+            let usage: ApiUsage = serde_json::from_str(json).unwrap();
+            openai_usage(&usage, CacheReportingMode::Auto)
+        }
+
+        fn parse(json: &str) -> InferenceUsage {
+            parse_result(json).unwrap()
+        }
+
+        // ---- Current behavior locked (green against today's parser) ----
+
+        #[test]
+        fn openai_cached_tokens_parse() {
+            let usage = parse(OPENAI_CACHED_TOKENS);
+            assert_eq!(usage.cache_read_tokens, Some(100));
+            assert_eq!(usage.uncached_input_tokens, Some(156));
+            assert_eq!(usage.cache_telemetry, CacheTelemetry::Reported);
+        }
+
+        #[test]
+        fn openai_explicit_zero_cached_is_distinct_from_none() {
+            let usage = parse(OPENAI_EXPLICIT_ZERO_CACHED);
+            assert_eq!(usage.cache_read_tokens, Some(0));
+            assert_eq!(usage.uncached_input_tokens, Some(256));
+            assert_eq!(usage.cache_telemetry, CacheTelemetry::Reported);
+        }
+
+        #[test]
+        fn no_cache_fields_reports_unknown() {
+            // No cache-reporting fields at all: the parser cannot know whether
+            // the provider supports caching, so telemetry must stay Unknown
+            // rather than inventing a Reported zero hit.
+            let usage = parse(NEITHER);
+            assert_eq!(usage.cache_read_tokens, None);
+            assert_eq!(usage.uncached_input_tokens, None);
+            assert_eq!(usage.cache_telemetry, CacheTelemetry::Unknown);
+        }
+
+        #[test]
+        fn streaming_final_usage_chunk_openai_parses() {
+            let envelope = format!(r#"{{"choices":[],"usage":{OPENAI_CACHED_TOKENS}}}"#);
+            let response: StreamResponse = serde_json::from_str(&envelope).unwrap();
+            let usage =
+                openai_usage(response.usage.as_ref().unwrap(), CacheReportingMode::Auto).unwrap();
+            assert_eq!(usage.cache_read_tokens, Some(100));
+        }
+
+        // ---- Gap evidence (red until C1 parses DeepSeek fields) ----
+
+        #[test]
+        fn deepseek_hit_miss_parse() {
+            let usage = parse(DEEPSEEK_HIT_MISS);
+            assert_eq!(usage.cache_read_tokens, Some(100));
+            assert_eq!(usage.uncached_input_tokens, Some(156));
+            assert_eq!(usage.cache_telemetry, CacheTelemetry::Reported);
+        }
+
+        #[test]
+        fn deepseek_hit_only_derives_miss_from_total() {
+            let usage = parse(DEEPSEEK_HIT_ONLY);
+            assert_eq!(usage.cache_read_tokens, Some(100));
+            assert_eq!(usage.uncached_input_tokens, Some(156));
+        }
+
+        #[test]
+        fn deepseek_explicit_zero_hit_is_distinct_from_none() {
+            let usage = parse(DEEPSEEK_EXPLICIT_ZERO_HIT);
+            assert_eq!(usage.cache_read_tokens, Some(0));
+            assert_eq!(usage.uncached_input_tokens, Some(256));
+        }
+
+        #[test]
+        fn deepseek_hit_greater_than_total_is_protocol_error() {
+            assert!(parse_result(DEEPSEEK_HIT_GREATER_THAN_TOTAL).is_err());
+        }
+
+        #[test]
+        fn deepseek_hit_plus_miss_not_conserved_is_protocol_error() {
+            assert!(parse_result(DEEPSEEK_MISS_NOT_CONSERVED).is_err());
+        }
+
+        #[test]
+        fn conflicting_cache_formats_is_protocol_error() {
+            assert!(parse_result(FORMAT_CONFLICT).is_err());
+        }
+
+        #[test]
+        fn streaming_final_usage_chunk_deepseek_parses() {
+            let envelope = format!(r#"{{"choices":[],"usage":{DEEPSEEK_HIT_MISS}}}"#);
+            let response: StreamResponse = serde_json::from_str(&envelope).unwrap();
+            let usage =
+                openai_usage(response.usage.as_ref().unwrap(), CacheReportingMode::Auto).unwrap();
+            assert_eq!(usage.cache_read_tokens, Some(100));
+        }
+
+        // ---- C2: config-declared reporting modes gate telemetry interpretation ----
+
+        fn parse_with(json: &str, mode: CacheReportingMode) -> InferenceUsage {
+            let usage: ApiUsage = serde_json::from_str(json).unwrap();
+            openai_usage(&usage, mode).unwrap()
+        }
+
+        #[test]
+        fn unsupported_reporting_never_carries_cache_figures() {
+            // A provider declared without cache reporting must not surface a
+            // fabricated hit/miss even when the wire carries DeepSeek fields.
+            let usage = parse_with(DEEPSEEK_HIT_MISS, CacheReportingMode::Unsupported);
+            assert_eq!(usage.cache_telemetry, CacheTelemetry::Unsupported);
+            assert_eq!(usage.cache_read_tokens, None);
+            assert_eq!(usage.uncached_input_tokens, None);
+            assert_eq!(usage.cache_write_tokens, None);
+        }
+
+        #[test]
+        fn deepseek_chat_mode_parses_hit_miss_like_auto() {
+            let usage = parse_with(DEEPSEEK_HIT_MISS, CacheReportingMode::DeepSeekChat);
+            assert_eq!(usage.cache_read_tokens, Some(100));
+            assert_eq!(usage.uncached_input_tokens, Some(156));
+            assert_eq!(usage.cache_telemetry, CacheTelemetry::Reported);
+        }
+
+        #[test]
+        fn openai_cached_mode_parses_cached_like_auto() {
+            let usage = parse_with(OPENAI_CACHED_TOKENS, CacheReportingMode::OpenAiCachedTokens);
+            assert_eq!(usage.cache_read_tokens, Some(100));
+            assert_eq!(usage.uncached_input_tokens, Some(156));
+            assert_eq!(usage.cache_telemetry, CacheTelemetry::Reported);
+        }
     }
 }

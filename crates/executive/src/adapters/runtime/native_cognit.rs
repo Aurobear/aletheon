@@ -668,6 +668,7 @@ impl TurnServices for NativeTurnServices {
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             };
             self.record_tool_result(&name, &result).await;
             return result;
@@ -680,6 +681,7 @@ impl TurnServices for NativeTurnServices {
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             },
             result = self.capabilities.invoke(
                 Some(self.execution.clone()),

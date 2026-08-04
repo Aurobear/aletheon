@@ -233,6 +233,7 @@ impl ToolExecutor for ErrorToolExecutor {
             },
             audit_id: Some(fabric::AuditEventId::new()),
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 }

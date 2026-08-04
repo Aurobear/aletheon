@@ -327,6 +327,11 @@ mod tests {
             assert_eq!(tool.name(), name);
             assert_eq!(tool.permission_level(), permission);
             assert_eq!(tool.concurrency_class(), concurrency);
+            assert_eq!(
+                tool.cache_policy(),
+                fabric::tool::ToolCachePolicy::Never,
+                "robot state and actions must never opt into the generic tool result cache"
+            );
             let schema = tool.input_schema().to_string();
             for forbidden in ["topic", "service", "joint", "bus"] {
                 assert!(!schema.contains(forbidden), "{name} exposed {forbidden}");

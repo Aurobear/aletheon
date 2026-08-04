@@ -64,6 +64,9 @@ fn context(
         prompt_queue_enabled: false,
         capability_receipts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         inference_items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        prefix_shape_digest: None,
+        local_cache_miss_reason: None,
+        provider_miss_inference_allowed: false,
     }
 }
 

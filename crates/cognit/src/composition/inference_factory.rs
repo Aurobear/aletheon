@@ -103,7 +103,8 @@ pub fn create_provider(
             let provider = OpenAiProvider::new(&api_key, &model_spec.wire_id, &config.base_url)
                 .with_timeouts(options.timeouts)
                 .with_max_tokens(max_tokens)
-                .with_max_context(model_spec.context_window_tokens);
+                .with_max_context(model_spec.context_window_tokens)
+                .with_cache_reporting(config.cache.reporting);
             Arc::new(provider)
         }
         ProviderKind::Ollama => {
@@ -228,6 +229,7 @@ mod tests {
                 output_per_1k: 0.2,
             }),
             backpressure: Default::default(),
+            cache: Default::default(),
         }
     }
 

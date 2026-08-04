@@ -5,7 +5,7 @@ use std::sync::{
 
 use async_trait::async_trait;
 use corpus::{security::AuditLogger, CorpusToolExecutor, ToolRegistry, ToolRunnerWithGuard};
-use fabric::tool::PermissionLevel;
+use fabric::tool::{PermissionLevel, ToolCachePolicy};
 use fabric::types::admission::RiskLevel;
 use fabric::{
     BudgetRequest, CapabilityAuthority, CapabilityCall, CapabilityId, CapabilityRequest,
@@ -19,6 +19,8 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 struct CountingTool {
     calls: Arc<AtomicUsize>,
+    cache_enabled: bool,
+    emits_patch: bool,
 }
 
 #[derive(Clone)]
@@ -67,6 +69,13 @@ impl Tool for CountingTool {
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::L0
     }
+    fn cache_policy(&self) -> ToolCachePolicy {
+        if self.cache_enabled {
+            ToolCachePolicy::PerTurn
+        } else {
+            ToolCachePolicy::Never
+        }
+    }
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         self.calls.fetch_add(1, Ordering::SeqCst);
         ToolResult {
@@ -75,7 +84,7 @@ impl Tool for CountingTool {
             metadata: ToolResultMeta {
                 execution_time_ms: 7,
                 truncated: false,
-                patch_delta: Some(fabric::PatchDelta {
+                patch_delta: self.emits_patch.then(|| fabric::PatchDelta {
                     applied: vec![],
                     failed: vec![],
                     files_changed: vec![],
@@ -141,7 +150,10 @@ fn permit(operation_id: OperationId, process_id: ProcessId) -> ExecutionPermit {
     }
 }
 
-async fn fixture() -> (
+async fn fixture_with_options(
+    cache_enabled: bool,
+    emits_patch: bool,
+) -> (
     CorpusToolExecutor,
     CapabilityRequest,
     ExecutionPermit,
@@ -155,6 +167,8 @@ async fn fixture() -> (
     registry
         .register(Arc::new(CountingTool {
             calls: calls.clone(),
+            cache_enabled,
+            emits_patch,
         }))
         .unwrap();
     let runner = ToolRunnerWithGuard::with_default_sandbox(
@@ -175,6 +189,28 @@ async fn fixture() -> (
         calls,
         temp,
     )
+}
+
+async fn fixture_with_cache(
+    cache_enabled: bool,
+) -> (
+    CorpusToolExecutor,
+    CapabilityRequest,
+    ExecutionPermit,
+    Arc<AtomicUsize>,
+    tempfile::TempDir,
+) {
+    fixture_with_options(cache_enabled, !cache_enabled).await
+}
+
+async fn fixture() -> (
+    CorpusToolExecutor,
+    CapabilityRequest,
+    ExecutionPermit,
+    Arc<AtomicUsize>,
+    tempfile::TempDir,
+) {
+    fixture_with_cache(false).await
 }
 
 #[tokio::test]
@@ -257,6 +293,8 @@ async fn unwritable_audit_path_fails_execution() {
     let calls = Arc::new(AtomicUsize::new(0));
     let tool = CountingTool {
         calls: calls.clone(),
+        cache_enabled: false,
+        emits_patch: true,
     };
     let mut runner = ToolRunnerWithGuard::with_default_sandbox(
         AuditLogger::new(temp.path().to_path_buf()).unwrap(),
@@ -278,4 +316,61 @@ async fn unwritable_audit_path_fails_execution() {
         Err(corpus::security::runner::ToolError::AuditFailed(_))
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn declared_read_only_cache_reauthorizes_audits_and_matches_streaming() {
+    let (executor, request, permit, calls, temp) = fixture_with_cache(true).await;
+    let first = executor.execute_with_permit(&request, &permit).await;
+    assert!(!first.is_error, "{}", first.output);
+    assert!(!first.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let mut second_request = request.clone();
+    second_request.call.call_id = "call-2".into();
+    let (mut sink, mut events) = fabric::tool_event_channel();
+    let second = executor
+        .execute_streaming_with_permit(&second_request, &permit, &mut sink)
+        .await;
+    assert!(!second.is_error, "{}", second.output);
+    assert!(second.served_from_cache);
+    assert_eq!(second.call_id, "call-2");
+    assert_eq!(second.usage.permit_id, permit.id);
+    assert_eq!(second.usage.wall_time_ms, 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        events.try_recv().unwrap(),
+        fabric::ToolExecutionEvent::Terminal(Ok(_))
+    ));
+
+    let audit_records = std::fs::read_to_string(temp.path().join("audit.jsonl")).unwrap();
+    let records = audit_records
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 2);
+    assert_ne!(records[0]["audit_id"], records[1]["audit_id"]);
+    assert!(records[1]["loop_verdict"]
+        .as_str()
+        .unwrap()
+        .starts_with("cache_hit:"));
+    assert_eq!(
+        second.audit_id.unwrap().0.to_string(),
+        records[1]["audit_id"]
+    );
+
+    let metrics = executor.read_only_cache_metrics();
+    let tool_metrics = metrics.get("counting_tool").unwrap();
+    assert_eq!(tool_metrics.miss_total, 1);
+    assert_eq!(tool_metrics.hit_total, 1);
+}
+
+#[tokio::test]
+async fn patch_producing_result_is_never_cached_even_if_tool_declares_policy() {
+    let (executor, request, permit, calls, _temp) = fixture_with_options(true, true).await;
+    let first = executor.execute_with_permit(&request, &permit).await;
+    let second = executor.execute_with_permit(&request, &permit).await;
+    assert!(!first.served_from_cache);
+    assert!(!second.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
