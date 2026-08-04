@@ -125,7 +125,7 @@ jobs:
         run: bash scripts/cargo-agent.sh +stable build --workspace --release
 
   strict-msrv:
-    name: Rust 1.85 MSRV
+    name: Rust 1.88 MSRV
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, Linux, X64, aletheon]
     timeout-minutes: 30
@@ -133,10 +133,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: 1.88.0
       - name: Verify preinstalled MSRV toolchain
-        run: rustup run 1.85.0 rustc --version
-      - run: bash scripts/cargo-agent.sh +1.85.0 check --workspace --all-targets
+        run: rustup run 1.88.0 rustc --version
+      - run: bash scripts/cargo-agent.sh +1.88.0 check --workspace --all-targets
 
   strict-pi-contract:
     name: Pinned Pi RPC contract

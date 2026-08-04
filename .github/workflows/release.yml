@@ -22,11 +22,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.85.0
+          toolchain: 1.88.0
       - name: Formatting
-        run: bash scripts/cargo-agent.sh +1.85.0 fmt --all -- --check
+        run: bash scripts/cargo-agent.sh +1.88.0 fmt --all -- --check
       - name: Assembly package tests
-        run: bash scripts/cargo-agent.sh +1.85.0 test -p aletheon --locked
+        run: bash scripts/cargo-agent.sh +1.88.0 test -p aletheon --locked
       - name: Release metadata tests
         run: python3 -m unittest scripts/tests/test_release_metadata.py
 
