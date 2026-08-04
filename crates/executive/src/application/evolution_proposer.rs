@@ -1,5 +1,6 @@
 //! Verify-only evolution proposal adapter. It can create pending approval but
 //! owns neither admission nor apply authority.
+#![allow(clippy::items_after_test_module)]
 
 use crate::application::{
     approval::{ApprovalCreate, ApprovalRepository},

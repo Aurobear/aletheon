@@ -167,7 +167,7 @@ kind = "agent_runtime_provider"
 risk = "Sandboxed"
 "#;
     let script = b"#!/bin/sh\nexit 1\n";
-    let package = archive(
+    archive(
         root,
         "failing-runtime",
         &[
@@ -175,8 +175,7 @@ risk = "Sandboxed"
             ("assets/executables/runtime.toml", runtime),
             ("payload/runtime", script),
         ],
-    );
-    package
+    )
 }
 
 fn publisher(tools: Arc<Mutex<corpus::ToolRegistry>>) -> Arc<DaemonExtensionRuntimePublisher> {

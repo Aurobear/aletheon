@@ -55,15 +55,13 @@ pub fn resolve_spec(model: &str, configured_context: Option<usize>) -> Result<Re
         .or(catalog_context)
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "model '{}' is absent from the model catalog and has no explicit context length",
-                wire_id
+                "model '{wire_id}' is absent from the model catalog and has no explicit context length"
             )
         })?;
     if let Some(actual) = catalog_context {
         anyhow::ensure!(
             context_window_tokens == actual,
-            "configured context length for model '{}' conflicts with the model catalog",
-            wire_id
+            "configured context length for model '{wire_id}' conflicts with the model catalog"
         );
     }
     Ok(ResolvedModelSpec {
@@ -86,7 +84,7 @@ fn parse_context_suffix(model: &str) -> Result<(&str, Option<usize>)> {
     } else if let Some(value) = raw_capacity.strip_suffix('k') {
         (value, 1_000usize)
     } else {
-        anyhow::bail!("unsupported model context suffix '[{}]'", raw_capacity);
+        anyhow::bail!("unsupported model context suffix '[{raw_capacity}]'");
     };
     let capacity = digits
         .parse::<usize>()

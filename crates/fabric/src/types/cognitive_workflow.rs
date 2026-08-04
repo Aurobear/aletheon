@@ -209,7 +209,7 @@ impl CognitiveRoleProfile {
                 ],
             ),
         };
-        let name = format!("{:?}", role).to_ascii_lowercase();
+        let name = format!("{role:?}").to_ascii_lowercase();
         Self {
             reference: CognitiveRoleProfileRef {
                 id: format!("aletheon.cognitive.{name}"),

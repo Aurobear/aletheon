@@ -1,4 +1,5 @@
 //! Endpoint-pinned remote embedding adapters.
+#![allow(clippy::items_after_test_module)]
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,6 +51,7 @@ pub struct RemoteEmbeddingProvider {
 }
 
 impl RemoteEmbeddingProvider {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         transport: EmbeddingTransport,
         base_url: impl Into<String>,

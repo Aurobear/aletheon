@@ -2,6 +2,10 @@
 
 use executive::composition::config::EmbodimentProviderConfig;
 
+fn resolve(config: Option<EmbodimentProviderConfig>) -> EmbodimentProviderConfig {
+    config.unwrap_or_default()
+}
+
 #[test]
 fn grpc_config_is_preserved_with_endpoint_and_device() {
     let config = EmbodimentProviderConfig::Grpc {
@@ -30,7 +34,7 @@ fn grpc_config_is_preserved_with_endpoint_and_device() {
 fn missing_embodiment_config_defaults_to_simulator() {
     // Verify that Option::None unwrap_or_default gives Simulator
     let config: Option<EmbodimentProviderConfig> = None;
-    let resolved = config.unwrap_or_default();
+    let resolved = resolve(config);
     assert!(matches!(
         resolved,
         EmbodimentProviderConfig::Simulator { .. }
@@ -46,6 +50,6 @@ fn explicit_grpc_overrides_default() {
         connect_timeout_ms: 500,
         request_timeout_ms: 3000,
     });
-    let resolved = config.unwrap_or_default();
+    let resolved = resolve(config);
     assert!(matches!(resolved, EmbodimentProviderConfig::Grpc { .. }));
 }

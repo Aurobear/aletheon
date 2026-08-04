@@ -369,8 +369,10 @@ impl App {
         let mut status = StatusBar::new(caps.clone());
         status.connected = true;
         status.model_name = model_name.clone();
-        let mut app_state = AppState::default();
-        app_state.model_name = model_name.clone();
+        let app_state = AppState {
+            model_name: model_name.clone(),
+            ..Default::default()
+        };
 
         Self {
             workspace,

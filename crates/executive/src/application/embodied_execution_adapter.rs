@@ -35,12 +35,12 @@ impl EmbodiedExecutionPort for EmbodiedExecutionAdapter {
             .execute_skill(request)
             .await
             .map_err(|error| error.to_string())?;
-        *self.last_operation.lock().unwrap() = Some(result.operation_id.clone());
+        *self.last_operation.lock().unwrap() = Some(result.operation_id);
         Ok(result)
     }
 
     async fn cancel(&self, _device: &DeviceId) -> Result<(), String> {
-        let operation = self.last_operation.lock().unwrap().clone();
+        let operation = *self.last_operation.lock().unwrap();
         if let Some(operation) = operation {
             self.inner
                 .cancel(&operation)

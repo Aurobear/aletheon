@@ -89,8 +89,10 @@ impl DaemonTurnTestBuilder {
             store.clone(),
             Arc::new(Mutex::new(Default::default())),
         ));
-        let mut grok_hardening = crate::composition::config::GrokHardeningConfig::default();
-        grok_hardening.prompt_queue = self.prompt_queue;
+        let grok_hardening = crate::composition::config::GrokHardeningConfig {
+            prompt_queue: self.prompt_queue,
+            ..Default::default()
+        };
         let orchestrator = DaemonTurnOrchestrator {
             kernel: kernel.clone(),
             notify_tx: Arc::new(Mutex::new(None::<mpsc::Sender<String>>)),

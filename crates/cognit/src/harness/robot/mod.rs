@@ -293,8 +293,8 @@ impl RobotHarness {
                 let before_snap = harness_state.latest_snapshot.clone();
                 match self.executor.execute(request).await {
                     Ok(result) => {
-                        let operation_id = result.operation_id.clone();
-                        harness_state.latest_operation_id = Some(operation_id.clone());
+                        let operation_id = result.operation_id;
+                        harness_state.latest_operation_id = Some(operation_id);
                         harness_state.latest_skill_result = Some(result);
                         let expected = match self.resolve_expected(&harness_state) {
                             Ok(e) => e,

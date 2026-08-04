@@ -1,5 +1,6 @@
 //! Kernel process-management methods on `DaemonTurnOrchestrator`.
 //! TurnPipeline turn-token methods.
+#![allow(clippy::items_after_test_module)]
 
 use super::orchestrator::DaemonTurnOrchestrator;
 use fabric::{

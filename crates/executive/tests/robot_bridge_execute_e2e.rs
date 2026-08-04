@@ -47,15 +47,14 @@ async fn connect_service() -> EmbodimentService {
         vec![],
     )
     .unwrap();
-    let service = EmbodimentService::new(
+    EmbodimentService::new(
         broker,
         invoker,
         active,
         fabric::ProcessId::new(),
         fabric::PrincipalId("operator".into()),
         workspace,
-    );
-    service
+    )
 }
 
 #[ignore]

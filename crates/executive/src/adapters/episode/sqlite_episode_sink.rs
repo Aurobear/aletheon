@@ -181,19 +181,19 @@ impl EpisodeSink for SqliteEpisodeSink {
         let expected_json =
             serde_json::to_string(expected).map_err(|e| format!("expected serde: {e}"))?;
         let before_json = before
-            .map(|snapshot| serde_json::to_string(snapshot))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| format!("before serde: {e}"))?;
         let after_json = after
-            .map(|snapshot| serde_json::to_string(snapshot))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| format!("after serde: {e}"))?;
         let result_json = result
-            .map(|snapshot| serde_json::to_string(snapshot))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| format!("result serde: {e}"))?;
         let verification_json = verification
-            .map(|report| serde_json::to_string(report))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| format!("verification serde: {e}"))?;
 

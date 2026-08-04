@@ -147,14 +147,18 @@ mod tests {
 
     #[test]
     fn rejects_invalid_weights_thresholds_and_run_budgets() {
-        let mut policy = MemoryPolicyConfig::default();
-        policy.future_utility_weight = 19;
+        let policy = MemoryPolicyConfig {
+            future_utility_weight: 19,
+            ..Default::default()
+        };
         assert!(policy.validate().is_err());
         let mut policy = MemoryPolicyConfig::default();
         policy.candidate_threshold = policy.promote_local_threshold;
         assert!(policy.validate().is_err());
-        let mut policy = MemoryPolicyConfig::default();
-        policy.max_items_per_run = 0;
+        let policy = MemoryPolicyConfig {
+            max_items_per_run: 0,
+            ..Default::default()
+        };
         assert!(policy.validate().is_err());
     }
 }

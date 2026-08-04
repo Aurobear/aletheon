@@ -98,7 +98,7 @@ fn is_read_only_glab_command(command: &str) -> bool {
 
 fn invokes_program(command: &str, programs: &[&str]) -> bool {
     command
-        .split(|ch: char| matches!(ch, ';' | '|' | '&' | '(' | ')'))
+        .split([';', '|', '&', '(', ')'])
         .filter_map(|segment| segment.split_whitespace().next())
         .any(|program| programs.contains(&program))
 }

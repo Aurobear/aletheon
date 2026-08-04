@@ -98,7 +98,7 @@ impl ProgressDecision {
                 .collect(),
             Self::WaitingForTerminalEvidence { operations } => operations
                 .iter()
-                .map(|id| format!("- terminal evidence for operation `{:?}` is missing", id))
+                .map(|id| format!("- terminal evidence for operation `{id:?}` is missing"))
                 .collect(),
             Self::Blocked { reason } => vec![format!("- blocked: {reason}")],
         };

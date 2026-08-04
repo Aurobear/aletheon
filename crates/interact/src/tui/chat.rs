@@ -402,6 +402,7 @@ fn truncate_args(args: &str, max: usize) -> String {
 use ratatui::style::Color;
 
 /// A single entry in the chat history — either a text message or a tool execution.
+#[allow(clippy::large_enum_variant)]
 pub enum ChatEntry {
     Text(ChatMessage),
     Exec(ExecEntry),
