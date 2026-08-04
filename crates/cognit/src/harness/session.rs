@@ -1110,6 +1110,7 @@ mod context_tests {
             usage: fabric::UsageReport::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         };
         assert!(terminal_receipt_details("exec_command", &result).is_none());
     }
@@ -1143,6 +1144,7 @@ mod context_tests {
             usage: fabric::UsageReport::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         };
         let details = terminal_receipt_details("validation_run", &result).unwrap();
         assert_eq!(details.status, Some(CapabilityTerminalStatus::Succeeded));
@@ -1164,6 +1166,7 @@ mod context_tests {
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             },
             receipts: StdMutex::new(Vec::new()),
         };

@@ -328,6 +328,7 @@ impl TurnToolExecutor {
             },
             audit_id: Some(AuditEventId::new()),
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 }
@@ -412,6 +413,7 @@ impl ProductionCapabilityService {
             usage: UsageReport::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 }

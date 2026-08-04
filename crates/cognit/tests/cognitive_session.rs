@@ -181,6 +181,7 @@ impl TurnServices for ScriptedTurnServices {
             usage: fabric::UsageReport::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 
@@ -252,6 +253,7 @@ impl TurnServices for StreamingServices {
             usage: Default::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 
@@ -373,6 +375,7 @@ impl TurnServices for CodingContractServices {
             usage: Default::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 
@@ -543,6 +546,7 @@ impl TurnServices for RequiredCapabilityServices {
             usage: Default::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 
@@ -680,6 +684,7 @@ impl TurnServices for InterjectingServices {
             usage: Default::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 

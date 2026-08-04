@@ -7,6 +7,9 @@ use fabric::{
 };
 use kernel::capability::ToolExecutor;
 
+use crate::tools::read_only_cache::{
+    cache_ttl, is_cacheable, read_only_cache_key, ReadOnlyToolResultCache,
+};
 use crate::{CorpusError, ExtensionDescriptor, ExtensionKind};
 use crate::{ToolRegistry, ToolRunnerWithGuard};
 
@@ -80,6 +83,9 @@ pub struct CorpusToolExecutor {
     registry: Arc<tokio::sync::Mutex<ToolRegistry>>,
     runner: Arc<tokio::sync::Mutex<ToolRunnerWithGuard>>,
     clock: Arc<dyn Clock>,
+    /// Bounded read-only result cache (Phase C7). Only tools that declare a
+    /// non-`Never` policy AND are L0 are consulted; see `read_only_cache`.
+    read_only_cache: Arc<ReadOnlyToolResultCache>,
 }
 
 impl CorpusToolExecutor {
@@ -92,6 +98,7 @@ impl CorpusToolExecutor {
             registry,
             runner,
             clock,
+            read_only_cache: Arc::new(ReadOnlyToolResultCache::new(256)),
         }
     }
 
@@ -112,6 +119,7 @@ impl CorpusToolExecutor {
             },
             audit_id: Some(audit_id),
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 
@@ -175,6 +183,32 @@ impl ToolExecutor for CorpusToolExecutor {
             clock: self.clock.clone(),
             turn_event_sender: request.control.turn_event_sender.clone(),
         };
+        // Phase C7 read-only result cache. Only consulted for tools that
+        // explicitly declare a non-`Never` policy AND are L0 — the permission
+        // gate above already ran, and this cache never bypasses it. A hit is
+        // returned as an auditable CapabilityResult marked served_from_cache.
+        let cache_policy = tool.cache_policy();
+        let cache_key = is_cacheable(cache_policy, tool.permission_level()).then(|| {
+            read_only_cache_key(
+                tool.name(),
+                env!("CARGO_PKG_VERSION"),
+                &request.call.input,
+                &format!("{:?}", request.authority.workspace),
+                &format!("{:?}", request.authority.principal),
+                cache_policy,
+            )
+        });
+        if let Some(key) = &cache_key {
+            if let Some(mut hit) = self.read_only_cache.get(key) {
+                hit.call_id = request.call.call_id.clone();
+                hit.served_from_cache = true;
+                tracing::info!(
+                    tool = tool.name(),
+                    "read-only tool result served from cache (underlying tool not executed)"
+                );
+                return hit;
+            }
+        }
         let started = self.clock.mono_now();
         let report = self
             .runner
@@ -196,7 +230,7 @@ impl ToolExecutor for CorpusToolExecutor {
                     result.metadata.execution_time_ms
                 };
                 let output_bytes = result.content.len() as u64;
-                CapabilityResult {
+                let capability = CapabilityResult {
                     call_id: request.call.call_id.clone(),
                     output: result.content,
                     is_error: result.is_error,
@@ -209,7 +243,18 @@ impl ToolExecutor for CorpusToolExecutor {
                     },
                     audit_id: Some(report.audit_id),
                     patch_delta: result.metadata.patch_delta,
+                    served_from_cache: false,
+                };
+                // Store successful read-only results under their cache key so a
+                // later identical call is served without executing the tool.
+                if let Some(key) = cache_key {
+                    if let Some(ttl) = cache_ttl(cache_policy) {
+                        let mut cached = capability.clone();
+                        cached.served_from_cache = true;
+                        self.read_only_cache.insert(key, cached, ttl);
+                    }
                 }
+                capability
             }
             Err(error) => Self::error_result(request, permit, error.to_string(), report.audit_id),
         }
@@ -289,6 +334,7 @@ impl ToolExecutor for CorpusToolExecutor {
                     },
                     audit_id: Some(report.audit_id),
                     patch_delta: result.metadata.patch_delta,
+                    served_from_cache: false,
                 }
             }
             Err(error) => Self::error_result(request, permit, error.to_string(), report.audit_id),

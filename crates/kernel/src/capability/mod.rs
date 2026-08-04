@@ -141,6 +141,7 @@ where
                     usage: UsageReport::default(),
                     audit_id: None,
                     patch_delta: None,
+                    served_from_cache: false,
                 };
             }
         };
@@ -166,6 +167,7 @@ where
                 },
                 audit_id: Some(AuditEventId::new()),
                 patch_delta: None,
+                served_from_cache: false,
             };
         }
 
@@ -194,6 +196,7 @@ where
                     usage: UsageReport { permit_id: permit.id, ..Default::default() },
                     audit_id: Some(AuditEventId::new()),
                     patch_delta: None,
+                    served_from_cache: false,
                 };
             }
         };
@@ -227,6 +230,7 @@ where
                 usage: result.usage,
                 audit_id: result.audit_id,
                 patch_delta: result.patch_delta,
+                served_from_cache: false,
             };
         }
 
@@ -262,6 +266,7 @@ impl ToolExecutor for StubToolExecutor {
             },
             audit_id: Some(AuditEventId::new()),
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 }

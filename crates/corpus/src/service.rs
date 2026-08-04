@@ -414,6 +414,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                     usage: Default::default(),
                     audit_id: None,
                     patch_delta: None,
+                    served_from_cache: false,
                 };
             }
         };
@@ -432,6 +433,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                 usage: Default::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             })
     }
 
@@ -451,6 +453,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                     usage: Default::default(),
                     audit_id: None,
                     patch_delta: None,
+                    served_from_cache: false,
                 };
             }
         };
@@ -472,6 +475,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                 usage: Default::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             })
     }
 }

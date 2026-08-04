@@ -137,6 +137,7 @@ where
             usage: fabric::UsageReport::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 

@@ -222,6 +222,30 @@ pub enum ConcurrencyClass {
     SideEffect,
 }
 
+/// Explicit tool-result cache policy. Default is `Never` — only a tool that
+/// declares a non-`Never` policy **and** is read-only
+/// (`permission_level() == L0`) can ever serve a cached result. The host
+/// enforces the L0 gate, so a mutating tool cannot be misconfigured into
+/// caching. A cache hit still yields an auditable `CapabilityResult` marked
+/// `served_from_cache` and never bypasses the permission/approval gate (the
+/// gate runs before the cache is consulted).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCachePolicy {
+    /// Never cache (default for every tool).
+    #[default]
+    Never,
+    /// Cache the result for the remainder of the current turn.
+    PerTurn,
+    /// Cache for the session with an explicit TTL.
+    Session { ttl_ms: u64 },
+    /// Share a read-only result across sessions/principals with an explicit TTL.
+    SharedReadOnly {
+        ttl_ms: u64,
+        vary_by_principal: bool,
+    },
+}
+
 /// Host-authored execution identity for structured tools.
 ///
 /// This value is obtained from the registered `Tool` implementation, never
@@ -268,6 +292,14 @@ pub trait Tool: Send + Sync {
 
     fn input_schema(&self) -> serde_json::Value;
     fn permission_level(&self) -> PermissionLevel;
+
+    /// Explicit cache policy for this tool's results. Defaults to `Never`.
+    /// Only read-only tools (`permission_level() == L0`) that declare a
+    /// non-`Never` policy are ever served from the result cache, and the cache
+    /// never bypasses permission checks.
+    fn cache_policy(&self) -> ToolCachePolicy {
+        ToolCachePolicy::Never
+    }
 
     /// Trusted, host-only execution identity for isolated structured dispatch.
     /// Read-only and legacy tools inherit `None` and remain unaffected.

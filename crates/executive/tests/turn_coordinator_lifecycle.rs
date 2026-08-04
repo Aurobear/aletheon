@@ -287,6 +287,7 @@ impl fabric::TurnServices for EmptyServices {
             usage: Default::default(),
             audit_id: None,
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 }

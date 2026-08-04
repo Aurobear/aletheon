@@ -846,6 +846,51 @@ pub enum ToolCachePolicy {
 - TTL 到期与实现版本变化会 miss；
 - 缓存层故障 fail open 到真实只读工具，但不得绕过权限检查。
 
+### 实施结果（§7.2 模板块，2026-08-04）
+
+```text
+STATUS: accepted（策略类型 + L0 门 + 缓存 + marker + 负向测试；真实工具声明策略需安全评审）
+BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
+PHASE: C7
+SCOPE:
+  - crates/fabric/src/types/tool.rs（ToolCachePolicy{Never,PerTurn,Session{ttl_ms},
+    SharedReadOnly{ttl_ms,vary_by_principal}}，默认 Never；Tool::cache_policy() 默认方法）
+  - crates/fabric/src/include/turn.rs（CapabilityResult.served_from_cache: bool，
+    serde default + skip_if false；fabric/kernel/corpus/cognit/executive 全库 40+ 构造点补字段）
+  - crates/corpus/src/tools/read_only_cache.rs（新：read_only_cache_key(sha256, domain
+    aletheon.read-only-tool-cache.v1) + cache_ttl + is_cacheable + 有界 FIFO/TTL LRU）
+  - crates/corpus/src/tools/capability_executor.rs（execute_with_permit 在权限门后、
+    runner 前查缓存：命中返回 served_from_cache=true；成功执行后按 policy TTL 存）
+CONTRACT:
+  - ToolCachePolicy 默认 Never；只有工具实现显式声明非 Never 策略 且 permission_level()==L0
+    才可缓存（is_cacheable 双条件，L1+ mutation 工具无配置可绕）
+  - key = tool name + CARGO_PKG_VERSION(impl version) + canonical args + workspace Debug +
+    principal Debug + policy identity；任一变化即 miss
+  - 缓存命中返回 auditable CapabilityResult（served_from_cache=true），权限门先于缓存执行
+  - 缓存锁失败 → get 返回 None → fail open 到真实只读工具；不绕过权限
+VALIDATION:
+  bash scripts/cargo-agent.sh test -p corpus --lib read_only_cache  # 4 passed
+  bash scripts/cargo-agent.sh test -p fabric --lib                 # 377 passed
+  bash scripts/cargo-agent.sh test -p kernel --lib                 # 54 passed
+  bash scripts/cargo-agent.sh test -p corpus --lib                 # 578 passed
+  bash scripts/cargo-agent.sh test -p cognit --lib                 # 365 passed
+  bash scripts/cargo-agent.sh test -p executive --lib              # 681 passed
+  bash scripts/cargo-agent.sh clippy -p fabric -p kernel -p corpus -p cognit -p executive --all-targets -- -D warnings  # 0
+  bash scripts/cargo-agent.sh fmt --all -- --check                 # 0
+RUNTIME EVIDENCE:
+  - 单元：L0+声明策略可缓存、L1 拒；key 对 workspace/principal/impl version/policy 变化均 miss；
+    TTL 过期 miss；容量淘汰；命中返回缓存
+METRICS:
+  - CapabilityResult.served_from_cache 传播到 evidence/receipt
+ROLLBACK:
+  - revert C7 commit（新字段 serde default 向后兼容 + 新模块 + executor 钩子）
+OPEN ITEMS:
+  - 真实工具启用策略需逐工具安全评审（当前默认 Never，无内置工具声明策略）
+  - PerTurn 用短 TTL 近似 turn 边界；精确 turn 语义需 turn 作用域 key
+  - "永不缓存"清单（robot observe/get_state、实时查询）由"未声明策略"默认排除；
+    后续若某只读工具声明策略需纳入安全评审
+```
+
 ---
 
 ## 5. 明确不做

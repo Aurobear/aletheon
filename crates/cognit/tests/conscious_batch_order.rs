@@ -211,6 +211,7 @@ async fn run_with_plan(
                 usage: Default::default(),
                 audit_id: None,
                 patch_delta: None,
+                served_from_cache: false,
             }
         }
         fn llm_provider(&self) -> Option<&dyn LlmProvider> {

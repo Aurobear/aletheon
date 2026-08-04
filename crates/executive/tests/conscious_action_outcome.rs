@@ -107,6 +107,7 @@ impl CapabilityInvoker for PermittedInner {
             },
             audit_id: Some(fabric::AuditEventId(Uuid::from_u128(700))),
             patch_delta: None,
+            served_from_cache: false,
         }
     }
 }
@@ -302,6 +303,7 @@ async fn forged_stale_and_cross_process_outcomes_cannot_create_a_broadcast() {
         },
         audit_id: None,
         patch_delta: None,
+        served_from_cache: false,
     };
     let forged = [
         SelectedActionContext {
