@@ -103,7 +103,7 @@ impl Default for EnsureUserDaemon {
     fn default() -> Self {
         Self {
             socket: None,
-            startup_timeout: Duration::from_secs(10),
+            startup_timeout: Duration::from_secs(5),
         }
     }
 }
@@ -118,6 +118,28 @@ pub enum EnsureUserDaemonError {
     Lifecycle(#[from] crate::application::daemon_lifecycle::DaemonLifecycleError),
 }
 
+impl EnsureUserDaemonError {
+    /// Stable machine-readable category projected by user-facing adapters.
+    pub fn diagnostic_code(&self) -> &'static str {
+        use crate::application::daemon_lifecycle::DaemonLifecycleError;
+
+        match self {
+            Self::Paths(_) => "runtime_path_resolution_failed",
+            Self::CurrentExecutable(_) => "current_executable_resolution_failed",
+            Self::Lifecycle(error) => match error {
+                DaemonLifecycleError::Lock(_) => "startup_lock_failed",
+                DaemonLifecycleError::LockTimeout { .. } => "startup_lock_timeout",
+                DaemonLifecycleError::Probe(_) => "readiness_probe_failed",
+                DaemonLifecycleError::StaleSocketRecovery(_) => "stale_socket_recovery_failed",
+                DaemonLifecycleError::Activation(_) => "daemon_activation_failed",
+                DaemonLifecycleError::ProtocolMismatch { .. } => "protocol_version_mismatch",
+                DaemonLifecycleError::RuntimeVersionMismatch { .. } => "runtime_version_mismatch",
+                DaemonLifecycleError::ReadinessTimeout { .. } => "daemon_readiness_timeout",
+            },
+        }
+    }
+}
+
 pub async fn ensure_user_daemon(
     request: EnsureUserDaemon,
 ) -> Result<crate::application::daemon_lifecycle::DaemonReadyReceipt, EnsureUserDaemonError> {
@@ -126,7 +148,10 @@ pub async fn ensure_user_daemon(
     paths.prepare()?;
     let socket = request.socket.unwrap_or_else(|| paths.socket_path());
     let executable = std::env::current_exe().map_err(EnsureUserDaemonError::CurrentExecutable)?;
-    let mode = detect_install_mode().await;
+    // Unit activation is valid only when the installed socket listens on the
+    // exact requested endpoint. Isolated or custom endpoints use foreground
+    // development activation instead of waiting on an unrelated unit.
+    let mode = detect_install_mode(&socket).await;
     let backend = Arc::new(ProcessDaemonLifecycleBackend::new(executable));
     let startup_lock = Arc::new(FileStartupLock::new(
         paths.runtime_root.join("daemon-startup.lock"),
@@ -262,7 +287,15 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_exec_json, select_daemon_socket};
+    use super::{render_exec_json, select_daemon_socket, EnsureUserDaemon};
+
+    #[test]
+    fn user_daemon_startup_budget_is_bounded_to_five_seconds() {
+        assert_eq!(
+            EnsureUserDaemon::default().startup_timeout,
+            std::time::Duration::from_secs(5)
+        );
+    }
 
     #[test]
     fn exec_json_preserves_authoritative_stop_and_separate_metrics() {

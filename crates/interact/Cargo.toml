@@ -8,6 +8,7 @@ description = "User interaction: TUI, CLI, and ACIX"
 
 [dependencies]
 fabric = { path = "../fabric" }
+executive = { path = "../executive" }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -28,6 +29,5 @@ uuid = { version = "1", features = ["v4"] }
 nix = { workspace = true }
 
 [dev-dependencies]
-executive = { path = "../executive" }
 tempfile = "3"
 tokio-util = { workspace = true }

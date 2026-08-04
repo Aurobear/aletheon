@@ -1,8 +1,79 @@
 //! Client host requests kept above the typed protocol and TUI implementation.
 
+use std::error::Error;
+use std::fmt;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use fabric::paths::{ProcessRuntimeEnvironment, RuntimeEnvironment, UserRuntimePaths};
+
+// Reserve one second of the five-second user-facing budget for install-mode
+// discovery, error projection, and process teardown around the lifecycle call.
+const CLIENT_STARTUP_TIMEOUT: Duration = Duration::from_secs(4);
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DaemonStartupDiagnostic {
+    pub schema_version: u16,
+    pub code: &'static str,
+    pub socket: String,
+    pub timeout_ms: u64,
+    pub detail: String,
+    pub recovery: &'static str,
+}
+
+#[derive(Debug)]
+pub struct DaemonStartupError {
+    diagnostic: DaemonStartupDiagnostic,
+    source: executive::host::launcher::EnsureUserDaemonError,
+}
+
+impl DaemonStartupError {
+    pub fn diagnostic(&self) -> &DaemonStartupDiagnostic {
+        &self.diagnostic
+    }
+}
+
+impl fmt::Display for DaemonStartupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "daemon startup failed: ")?;
+        match serde_json::to_string(&self.diagnostic) {
+            Ok(json) => formatter.write_str(&json),
+            Err(_) => formatter.write_str(&self.diagnostic.detail),
+        }
+    }
+}
+
+impl Error for DaemonStartupError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+#[async_trait::async_trait]
+trait DaemonEnsurer: Send + Sync {
+    async fn ensure(
+        &self,
+        request: executive::host::launcher::EnsureUserDaemon,
+    ) -> Result<
+        executive::application::daemon_lifecycle::DaemonReadyReceipt,
+        executive::host::launcher::EnsureUserDaemonError,
+    >;
+}
+
+struct ExecutiveDaemonEnsurer;
+
+#[async_trait::async_trait]
+impl DaemonEnsurer for ExecutiveDaemonEnsurer {
+    async fn ensure(
+        &self,
+        request: executive::host::launcher::EnsureUserDaemon,
+    ) -> Result<
+        executive::application::daemon_lifecycle::DaemonReadyReceipt,
+        executive::host::launcher::EnsureUserDaemonError,
+    > {
+        executive::host::launcher::ensure_user_daemon(request).await
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspaceLaunch {
@@ -57,6 +128,30 @@ pub(crate) fn resolve_user_socket(explicit: Option<PathBuf>) -> anyhow::Result<P
     resolve_socket_with(explicit, &ProcessRuntimeEnvironment)
 }
 
+async fn ensure_resolved_user_socket(
+    socket: &std::path::Path,
+    ensurer: &dyn DaemonEnsurer,
+) -> Result<(), DaemonStartupError> {
+    ensurer
+        .ensure(executive::host::launcher::EnsureUserDaemon {
+            socket: Some(socket.to_path_buf()),
+            startup_timeout: CLIENT_STARTUP_TIMEOUT,
+        })
+        .await
+        .map(|_| ())
+        .map_err(|source| DaemonStartupError {
+            diagnostic: DaemonStartupDiagnostic {
+                schema_version: 1,
+                code: source.diagnostic_code(),
+                socket: socket.to_string_lossy().into_owned(),
+                timeout_ms: CLIENT_STARTUP_TIMEOUT.as_millis() as u64,
+                detail: source.to_string(),
+                recovery: "run `aletheon doctor --json` and inspect the daemon service",
+            },
+            source,
+        })
+}
+
 fn resolve_workspace(selection: WorkspaceLaunch) -> anyhow::Result<fabric::WorkspacePolicy> {
     let process_cwd = std::env::current_dir()
         .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
@@ -90,6 +185,7 @@ pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
+    ensure_resolved_user_socket(&socket, &ExecutiveDaemonEnsurer).await?;
     crate::single_message::run(
         &socket,
         &request.message,
@@ -104,6 +200,7 @@ pub async fn run_tui(request: TuiLaunch, config: crate::tui::TestConfig) -> anyh
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
+    ensure_resolved_user_socket(&socket, &ExecutiveDaemonEnsurer).await?;
     crate::tui::run_with_workspace_requirements_and_task_kind(
         socket.to_string_lossy().as_ref(),
         config,
@@ -121,6 +218,56 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+
+    struct RecordingEnsurer {
+        request: std::sync::Mutex<Option<executive::host::launcher::EnsureUserDaemon>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DaemonEnsurer for RecordingEnsurer {
+        async fn ensure(
+            &self,
+            request: executive::host::launcher::EnsureUserDaemon,
+        ) -> Result<
+            executive::application::daemon_lifecycle::DaemonReadyReceipt,
+            executive::host::launcher::EnsureUserDaemonError,
+        > {
+            *self.request.lock().unwrap() = Some(request);
+            Ok(
+                executive::application::daemon_lifecycle::DaemonReadyReceipt {
+                    mode:
+                        executive::application::daemon_lifecycle::DaemonInstallMode::SystemInstall,
+                    activation:
+                        executive::application::daemon_lifecycle::DaemonActivation::ActivatedService,
+                    protocol_version: fabric::CLIENT_PROTOCOL_VERSION,
+                    runtime_version: env!("CARGO_PKG_VERSION").into(),
+                    waited_ms: 4,
+                },
+            )
+        }
+    }
+
+    struct FailingEnsurer;
+
+    #[async_trait::async_trait]
+    impl DaemonEnsurer for FailingEnsurer {
+        async fn ensure(
+            &self,
+            _request: executive::host::launcher::EnsureUserDaemon,
+        ) -> Result<
+            executive::application::daemon_lifecycle::DaemonReadyReceipt,
+            executive::host::launcher::EnsureUserDaemonError,
+        > {
+            Err(executive::host::launcher::EnsureUserDaemonError::Lifecycle(
+                executive::application::daemon_lifecycle::DaemonLifecycleError::ReadinessTimeout {
+                    timeout_ms: 4_000,
+                    last_readiness:
+                        executive::application::daemon_lifecycle::DaemonReadiness::Absent,
+                    diagnostic: "service configuration rejected startup".into(),
+                },
+            ))
+        }
+    }
 
     #[derive(Default)]
     struct FakeEnvironment(BTreeMap<String, OsString>);
@@ -172,6 +319,46 @@ mod tests {
                     runtime_id: "native-cognit".into(),
                 },
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn u_boot_001_absent_socket_runs_ensure_before_client_connection() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("not-started.sock");
+        assert!(!socket.exists());
+        let ensurer = RecordingEnsurer {
+            request: std::sync::Mutex::new(None),
+        };
+
+        ensure_resolved_user_socket(&socket, &ensurer)
+            .await
+            .unwrap();
+
+        let request = ensurer.request.lock().unwrap();
+        let request = request.as_ref().unwrap();
+        assert_eq!(request.socket.as_deref(), Some(socket.as_path()));
+        assert_eq!(request.startup_timeout, Duration::from_secs(4));
+    }
+
+    #[tokio::test]
+    async fn u_boot_002_startup_failure_has_bounded_structured_diagnostic() {
+        let socket = std::path::Path::new("/tmp/config-error.sock");
+        let error = ensure_resolved_user_socket(socket, &FailingEnsurer)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.diagnostic().schema_version, 1);
+        assert_eq!(error.diagnostic().code, "daemon_readiness_timeout");
+        assert_eq!(error.diagnostic().socket, "/tmp/config-error.sock");
+        assert_eq!(error.diagnostic().timeout_ms, 4_000);
+        assert!(error
+            .diagnostic()
+            .detail
+            .contains("service configuration rejected startup"));
+        assert_eq!(
+            serde_json::to_value(error.diagnostic()).unwrap()["code"],
+            "daemon_readiness_timeout"
         );
     }
 }

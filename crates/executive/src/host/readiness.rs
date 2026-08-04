@@ -23,6 +23,8 @@ use crate::application::daemon_lifecycle::{
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(700);
+const SYSTEMD_QUERY_TIMEOUT: Duration = Duration::from_millis(200);
+const SYSTEMD_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 
 struct FileLease {
@@ -188,7 +190,7 @@ impl DaemonLifecycleBackend for ProcessDaemonLifecycleBackend {
             "--property=LoadState,ActiveState,SubState,Result,NRestarts",
             "--no-pager",
         ]);
-        let output = command_output(command).await;
+        let output = command_output_with_timeout(command, SYSTEMD_QUERY_TIMEOUT).await;
         let service = match output {
             Ok(output) => {
                 let bytes = if output.status.success() {
@@ -209,7 +211,7 @@ impl DaemonLifecycleBackend for ProcessDaemonLifecycleBackend {
     }
 }
 
-pub async fn detect_install_mode() -> DaemonInstallMode {
+pub async fn detect_install_mode(requested_socket: &Path) -> DaemonInstallMode {
     let mut fragment_command = Command::new("systemctl");
     fragment_command.args([
         "--user",
@@ -218,7 +220,7 @@ pub async fn detect_install_mode() -> DaemonInstallMode {
         "--property=FragmentPath",
         "--value",
     ]);
-    let fragment = command_output(fragment_command)
+    let fragment = command_output_with_timeout(fragment_command, SYSTEMD_QUERY_TIMEOUT)
         .await
         .ok()
         .filter(|output| output.status.success())
@@ -232,7 +234,21 @@ pub async fn detect_install_mode() -> DaemonInstallMode {
         "--property=ExecStart",
         "--value",
     ]);
-    let exec_start = command_output(exec_command)
+    let exec_start = command_output_with_timeout(exec_command, SYSTEMD_QUERY_TIMEOUT)
+        .await
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| bounded(&output.stdout))
+        .unwrap_or_default();
+    let mut listen_command = Command::new("systemctl");
+    listen_command.args([
+        "--user",
+        "show",
+        "aletheon.socket",
+        "--property=Listen",
+        "--value",
+    ]);
+    let listen = command_output_with_timeout(listen_command, SYSTEMD_QUERY_TIMEOUT)
         .await
         .ok()
         .filter(|output| output.status.success())
@@ -241,6 +257,8 @@ pub async fn detect_install_mode() -> DaemonInstallMode {
     resolve_mode_from_systemd(
         &fragment,
         &exec_start,
+        &listen,
+        requested_socket,
         Path::new("/usr/bin/aletheon").is_file(),
     )
 }
@@ -248,10 +266,17 @@ pub async fn detect_install_mode() -> DaemonInstallMode {
 fn resolve_mode_from_systemd(
     fragment: &str,
     exec_start: &str,
+    listen: &str,
+    requested_socket: &Path,
     system_binary_available: bool,
 ) -> DaemonInstallMode {
     let fragment = Path::new(fragment.trim());
-    let service_available = !fragment.as_os_str().is_empty();
+    let socket_matches = listen.lines().any(|entry| {
+        let entry = entry.trim();
+        let path = entry.strip_suffix(" (Stream)").unwrap_or(entry);
+        Path::new(path) == requested_socket
+    });
+    let service_available = !fragment.as_os_str().is_empty() && socket_matches;
     let executable_known = !exec_start.trim().is_empty();
     let system_service = exec_start.contains("/usr/bin/aletheon");
     resolve_install_mode(InstallModeFacts {
@@ -266,7 +291,7 @@ fn resolve_mode_from_systemd(
 async fn activate_user_socket() -> Result<(), DaemonLifecycleError> {
     let mut command = Command::new("systemctl");
     command.args(["--user", "start", "aletheon.socket"]);
-    let output = command_output(command)
+    let output = command_output_with_timeout(command, SYSTEMD_ACTIVATION_TIMEOUT)
         .await
         .map_err(|error| DaemonLifecycleError::Activation(bounded(error.to_string().as_bytes())))?;
     if !output.status.success() {
@@ -304,6 +329,12 @@ async fn command_output(mut command: Command) -> io::Result<Output> {
     tokio::task::spawn_blocking(move || command.output())
         .await
         .map_err(io::Error::other)?
+}
+
+async fn command_output_with_timeout(command: Command, timeout: Duration) -> io::Result<Output> {
+    tokio::time::timeout(timeout, command_output(command))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "host command timed out"))?
 }
 
 async fn probe_daemon(socket: &Path) -> Result<DaemonReadiness, DaemonLifecycleError> {
@@ -426,6 +457,8 @@ mod tests {
             resolve_mode_from_systemd(
                 "/home/a/.config/systemd/user/aletheon.socket",
                 "{ path=/usr/bin/aletheon ; argv[]=/usr/bin/aletheon daemon ; }",
+                "/run/user/1000/aletheon/aletheon.sock (Stream)",
+                Path::new("/run/user/1000/aletheon/aletheon.sock"),
                 true,
             ),
             DaemonInstallMode::SystemInstall
@@ -434,16 +467,34 @@ mod tests {
             resolve_mode_from_systemd(
                 "/home/a/.config/systemd/user/aletheon.socket",
                 "{ path=/home/a/.local/bin/aletheon ; argv[]=/home/a/.local/bin/aletheon daemon ; }",
+                "/run/user/1000/aletheon/aletheon.sock (Stream)",
+                Path::new("/run/user/1000/aletheon/aletheon.sock"),
                 false,
             ),
             DaemonInstallMode::UserLocal
         );
         assert_eq!(
-            resolve_mode_from_systemd("", "", false),
+            resolve_mode_from_systemd("", "", "", Path::new("/tmp/daemon.sock"), false),
             DaemonInstallMode::DevForeground
         );
         assert_eq!(
-            resolve_mode_from_systemd("/home/a/.config/systemd/user/aletheon.socket", "", false,),
+            resolve_mode_from_systemd(
+                "/home/a/.config/systemd/user/aletheon.socket",
+                "",
+                "/run/user/1000/aletheon/aletheon.sock (Stream)",
+                Path::new("/run/user/1000/aletheon/aletheon.sock"),
+                false,
+            ),
+            DaemonInstallMode::DevForeground
+        );
+        assert_eq!(
+            resolve_mode_from_systemd(
+                "/home/a/.config/systemd/user/aletheon.socket",
+                "{ path=/usr/bin/aletheon ; argv[]=/usr/bin/aletheon daemon ; }",
+                "/run/user/1000/aletheon/aletheon.sock (Stream)",
+                Path::new("/tmp/isolated/aletheon.sock"),
+                true,
+            ),
             DaemonInstallMode::DevForeground
         );
     }
