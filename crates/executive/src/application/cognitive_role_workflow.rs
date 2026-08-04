@@ -584,7 +584,11 @@ impl CognitiveRoleWorkflow {
                 )
                 .await?;
             version = repair.bound_version;
-            validate_fixer_artifact(&repair.packet, &repair.envelope, &[finding.clone()])?;
+            validate_fixer_artifact(
+                &repair.packet,
+                &repair.envelope,
+                std::slice::from_ref(&finding),
+            )?;
             let repair_id = repair.envelope.id.clone();
             version = self
                 .workspace

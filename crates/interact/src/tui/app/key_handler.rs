@@ -100,14 +100,14 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         };
         return;
     }
-    if app.detail.is_some() {
+    if let Some(detail) = app.detail.as_mut() {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
-                app.detail.as_mut().expect("checked detail").scroll_down();
+                detail.scroll_down();
                 return;
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                app.detail.as_mut().expect("checked detail").scroll_up();
+                detail.scroll_up();
                 return;
             }
             KeyCode::Char('f') => {
