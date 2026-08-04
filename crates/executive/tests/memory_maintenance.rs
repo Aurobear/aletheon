@@ -64,6 +64,7 @@ struct RiskProposal;
 struct TerminalProposalControl {
     intents: Mutex<Vec<fabric::AgentSpawnIntent>>,
     waits: Mutex<u32>,
+    failure: Option<String>,
 }
 
 #[async_trait]
@@ -95,6 +96,7 @@ impl fabric::AgentControlPort for TerminalProposalControl {
         request: fabric::AgentWaitRequest,
     ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
         *self.waits.lock().unwrap() += 1;
+        let failure = self.failure.clone();
         Ok(fabric::AgentSnapshot {
             handle: fabric::AgentHandle {
                 agent_id: request.agent_id,
@@ -105,8 +107,12 @@ impl fabric::AgentControlPort for TerminalProposalControl {
                 runtime_id: fabric::RuntimeId("native-cognit".into()),
                 profile_id: fabric::AgentProfileId("safe-agent".into()),
             },
-            status: fabric::AgentRunStatus::Succeeded,
-            result: Some(fabric::AgentResult {
+            status: if failure.is_some() {
+                fabric::AgentRunStatus::Failed
+            } else {
+                fabric::AgentRunStatus::Succeeded
+            },
+            result: failure.is_none().then_some(fabric::AgentResult {
                 output: serde_json::json!({
                     "schema_version": 1,
                     "task_id": "task-a",
@@ -123,7 +129,7 @@ impl fabric::AgentControlPort for TerminalProposalControl {
             created_at_ms: 1,
             started_at_ms: Some(2),
             ended_at_ms: Some(3),
-            last_error: None,
+            last_error: failure,
         })
     }
     async fn send(
@@ -389,6 +395,7 @@ async fn semantic_proposal_can_only_lower_candidate_or_leave_it_deferred() {
         .unwrap();
     assert_eq!(result.deferred, 1);
     assert_eq!(result.receipts[0].state, MemoryLifecycleStateV1::Evaluating);
+    assert_eq!(result.reason_codes, vec!["semantic_proposal_unavailable"]);
     assert_eq!(ledger.maintenance_status(10_001).unwrap().active_leases, 0);
 }
 
@@ -460,4 +467,29 @@ async fn agent_runtime_proposal_has_no_tools_or_workspace_and_waits_for_terminal
         intents[0].required_capabilities,
         vec![fabric::AgentRuntimeCapability::MemoryProposal]
     );
+}
+
+#[tokio::test]
+async fn agent_runtime_proposal_surfaces_terminal_failure_detail() {
+    let control = Arc::new(TerminalProposalControl {
+        failure: Some(
+            "cognitive session TerminalRuntime: inference provider failed: core RPC closed".into(),
+        ),
+        ..TerminalProposalControl::default()
+    });
+    let proposer =
+        AgentControlMemorySemanticProposal::new(control, MemoryPolicyConfig::default()).unwrap();
+
+    let error = proposer
+        .propose(
+            "task-failed",
+            &observation("proposal-failed", 0),
+            MemoryRecordKindV1::SemanticFact,
+        )
+        .await
+        .unwrap_err();
+
+    let message = error.to_string();
+    assert!(message.contains("runtime ended as Failed"));
+    assert!(message.contains("core RPC closed"));
 }

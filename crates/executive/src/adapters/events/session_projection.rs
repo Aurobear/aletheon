@@ -58,9 +58,7 @@ impl SessionProjection {
                 // non-item payload (e.g. admin profile switches). Tolerate them
                 // instead of poisoning the whole public-session projection: skip
                 // the event with a warning, keep processing the rest.
-                let item = match decode_inline_anyhow::<ItemRecord>(event)
-                    .and_then(current_item)
-                {
+                let item = match decode_inline_anyhow::<ItemRecord>(event).and_then(current_item) {
                     Ok(item) => item,
                     Err(error) => {
                         tracing::warn!(
