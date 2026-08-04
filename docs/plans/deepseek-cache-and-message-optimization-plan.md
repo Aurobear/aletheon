@@ -671,6 +671,45 @@ HTTP status/request id（若 provider 提供）
 - 观察到字段缺失时报告 Unknown，而不是失败或零命中；
 - 结果记录模型版本、日期和 endpoint identity，不记录 key。
 
+### 实施结果（§7.2 模板块，2026-08-04）
+
+```text
+STATUS: accepted（lejurobot 代理侧全部场景真实命中证据）；官方 deepseek.com = externally_blocked
+        （无 DEEPSEEK_API_KEY）
+BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
+PHASE: C5
+SCOPE:
+  - scripts/bench-deepseek-cache（新：真实 chat-completions 诊断工具，环境变量配置
+    BENCH_BASE_URL/API_KEY/MODEL/MAX_TOKENS/ROUNDS/SCENARIOS；解析 DeepSeek
+    prompt_cache_hit/miss_tokens 或 OpenAI cached_tokens；SSE 取最终 usage chunk；
+    含 7 场景：identical/last_msg_changed/system_char_changed/tools_reordered/
+    tool_schema_changed/memory_added/streaming）
+  - docs/testing/deepseek-cache.md（方法 + 版本化结果）
+CONTRACT:
+  - 无产品契约变化；工具独立于产品请求路径；模型需用代理可路由 id（去 `[1m]` 后缀）
+VALIDATION（真实证据，lejurobot 代理 https://aiapi.lejurobot.com/v1，model
+  deepseek/deepseek-v4-flash 与 -pro，max_tokens=24，2026-08-04）：
+  - identical：冷 hit0 → 热 1152/1183（97.4%），3 连稳 97.4%
+  - last_msg_changed：1152/1185（97.2%）—— 改最后 user 消息保留前缀
+  - system_char_changed：改一个字符首次 0 hit（前缀从第 0 token 失效），重跑 1152
+  - tools_reordered：896/1227（73%）→ 1152/1227（94%）
+  - tool_schema_changed：1024/1199（85%）→ 1152/1199（96%）
+  - memory_added：1152/1199（96%）—— memory 在 user 尾部，前缀保留
+  - streaming：1152/1183（97.4%）
+  - pro identical/streaming：1024/1104（92.8%）
+RUNTIME EVIDENCE:
+  - 真实请求 3+ 冷/热重复；命中率证明代理 DeepSeek prefix cache 生效、稳定前缀决定命中、
+    动态尾部不破坏前缀；官方端点无 key 未测
+METRICS:
+  - 命中率 per scenario（见 docs/testing/deepseek-cache.md）；字段缺失报 Unknown（脚本列 error）
+ROLLBACK:
+  - revert C5 commit（独立脚本 + 文档，无产品路径影响）
+OPEN ITEMS:
+  - 官方 deepseek.com benchmark：配 DEEPSEEK_API_KEY 后跑 BENCH_BASE_URL=api.deepseek.com
+  - 可把代理 `[providers.cache] reporting` 置 deepseek_chat（测量已证实返回 DeepSeek 字段）
+  - C6 recall cache；C7 tool cache
+```
+
 ## Phase C6：Mnemosyne Recall Cache（P1）
 
 ### 修改范围
