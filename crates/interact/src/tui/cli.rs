@@ -515,7 +515,11 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
             None => (cmd, ""),
         };
         match name {
-            "status" | "st" => ClientRpcRequest::Status,
+            "status" | "st" => crate::intent::rpc(crate::intent::status(
+                fabric::contract::command::ClientSurface::Cli,
+                format!("cli-status:{}", uuid::Uuid::new_v4()),
+                None,
+            )),
             "cwd" => {
                 println!("{}", workspace.cwd().display());
                 return Ok(());
@@ -687,44 +691,38 @@ fn benchmark_chat_request(
     let explicit_session = std::env::var("ALETHEON_BENCHMARK_SESSION_ID")
         .ok()
         .filter(|session_id| !session_id.trim().is_empty());
-    single_message_chat_request(
+    crate::intent::rpc(single_message_prompt_intent(
         message,
         workspace,
         requirements,
         task_kind,
         permission_mode,
         explicit_session,
-    )
+    ))
 }
 
-fn single_message_chat_request(
+fn single_message_prompt_intent(
     message: &str,
     workspace: &fabric::WorkspacePolicy,
     requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
     permission_mode: fabric::permission::HostPermissionMode,
     explicit_session: Option<String>,
-) -> ClientRpcRequest {
-    let request = match explicit_session {
-        Some(session_id) => ClientRpcRequest::chat_with_task_kind(
-            message,
-            Some(fabric::SessionId(session_id)),
-            workspace,
-            requirements,
-            task_kind,
-        ),
-        _ => ClientRpcRequest::chat_with_task_kind(
-            message,
-            Some(fabric::SessionId(format!(
-                "message-{}",
-                uuid::Uuid::new_v4()
-            ))),
-            workspace,
-            requirements,
-            task_kind,
-        ),
-    };
-    request.chat_with_permission_mode(permission_mode)
+) -> fabric::contract::command::ClientIntent {
+    let session_id = explicit_session.map_or_else(
+        || fabric::SessionId(format!("message-{}", uuid::Uuid::new_v4())),
+        fabric::SessionId,
+    );
+    crate::intent::submit_prompt(crate::intent::PromptIntent {
+        surface: fabric::contract::command::ClientSurface::Cli,
+        correlation_id: format!("cli-message:{}", uuid::Uuid::new_v4()),
+        content: message,
+        session_id: Some(session_id),
+        workspace,
+        requirements,
+        task_kind,
+        permission_mode,
+    })
 }
 
 #[cfg(test)]
@@ -744,7 +742,7 @@ mod workflow_cli_tests {
     fn one_shot_messages_use_fresh_sessions_unless_explicitly_overridden() {
         let workspace =
             fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), Vec::new()).unwrap();
-        let fresh = single_message_chat_request(
+        let fresh = single_message_prompt_intent(
             "hello",
             &workspace,
             Vec::new(),
@@ -752,7 +750,7 @@ mod workflow_cli_tests {
             fabric::permission::HostPermissionMode::Safe,
             None,
         );
-        let explicit = single_message_chat_request(
+        let explicit = single_message_prompt_intent(
             "hello",
             &workspace,
             Vec::new(),
@@ -763,17 +761,27 @@ mod workflow_cli_tests {
 
         assert!(matches!(
             fresh,
-            ClientRpcRequest::Chat(fabric::protocol::client::ChatParams {
-                session_id: Some(fabric::SessionId(id)),
+            fabric::contract::command::ClientIntent {
+                command: fabric::contract::command::ClientCommand::SubmitPrompt(
+                    fabric::contract::command::SubmitPromptIntent {
+                        session_id: Some(fabric::SessionId(id)),
+                        ..
+                    }
+                ),
                 ..
-            }) if id.starts_with("message-")
+            } if id.starts_with("message-")
         ));
         assert!(matches!(
             explicit,
-            ClientRpcRequest::Chat(fabric::protocol::client::ChatParams {
-                session_id: Some(fabric::SessionId(id)),
+            fabric::contract::command::ClientIntent {
+                command: fabric::contract::command::ClientCommand::SubmitPrompt(
+                    fabric::contract::command::SubmitPromptIntent {
+                        session_id: Some(fabric::SessionId(id)),
+                        ..
+                    }
+                ),
                 ..
-            }) if id == "shared-session"
+            } if id == "shared-session"
         ));
     }
 

@@ -64,15 +64,13 @@ pub struct ProviderEnvelope {
 /// and extracts either the `result` text or a stable error.
 #[async_trait::async_trait]
 pub trait ChannelTurnExecutor: Send + Sync {
-    /// Execute a turn given the text input and a correlation id.
+    /// Execute one canonical client intent.
     ///
     /// Returns the result text on success or a stable error string on
     /// failure.
     async fn execute(
         &self,
-        principal: &str,
-        message: &str,
-        correlation_id: &str,
+        intent: &fabric::contract::command::ClientIntent,
     ) -> anyhow::Result<String>;
 }
 
@@ -177,8 +175,19 @@ impl ChannelDispatcher {
     /// capability is registered — use [`Self::with_registry`] or the
     /// `with_*` builders to add more.
     pub fn new(store: ChannelStore, turn_executor: Arc<dyn ChannelTurnExecutor>) -> Self {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(cwd, Vec::new())
+            .expect("the process working directory is an absolute workspace");
+        Self::new_with_workspace(store, turn_executor, workspace)
+    }
+
+    pub fn new_with_workspace(
+        store: ChannelStore,
+        turn_executor: Arc<dyn ChannelTurnExecutor>,
+        workspace: fabric::WorkspacePolicy,
+    ) -> Self {
         let mut registry = CapabilityRegistry::new();
-        registry.register(Arc::new(ChatHandler::new(turn_executor, None)));
+        registry.register(Arc::new(ChatHandler::new(turn_executor, None, workspace)));
         registry.register(Arc::new(GreetingHandler));
         Self::with_registry(store, registry)
     }

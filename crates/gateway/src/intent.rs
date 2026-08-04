@@ -4,6 +4,7 @@
 //! isolation from the rest of the channel stack.
 
 use fabric::channel::MessageContent;
+use fabric::contract::command::{resolve_command, CommandSurface};
 
 /// Classification of an inbound message for routing purposes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,17 +24,27 @@ pub enum Intent {
 /// This is a pure function with no side-effects or async — easy to test.
 pub fn classify_intent(content: &MessageContent) -> Intent {
     match content {
-        MessageContent::Command { command, args } => match command.as_str() {
-            "/start" => Intent::Greeting,
-            "/chat" => Intent::Chat(args.clone()),
-            "/goal" | "/goals" | "/status" | "/pause" | "/resume" | "/cancel" | "/edit" => {
-                Intent::GoalCommand {
+        MessageContent::Command { command, args } => {
+            let name = command.trim_start_matches('/');
+            match resolve_command(CommandSurface::Gateway, None, name).map(|spec| spec.key.as_str())
+            {
+                Some("gateway.start") => Intent::Greeting,
+                Some("gateway.chat") => Intent::Chat(args.clone()),
+                Some(
+                    "gateway.goal_create"
+                    | "gateway.goal_list"
+                    | "gateway.goal_status"
+                    | "gateway.goal_pause"
+                    | "gateway.goal_resume"
+                    | "gateway.goal_cancel"
+                    | "gateway.goal_edit",
+                ) => Intent::GoalCommand {
                     command: command.clone(),
                     args: args.clone(),
-                }
+                },
+                _ => Intent::Unsupported(command.clone()),
             }
-            _ => Intent::Unsupported(command.clone()),
-        },
+        }
         MessageContent::Text { text } => {
             if text.trim().is_empty() {
                 Intent::Unsupported(String::new())

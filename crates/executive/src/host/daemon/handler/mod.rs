@@ -14,6 +14,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::application::{CommandDispatcher, CommandOutput, CommandUseCases};
 use crate::composition::config::GrokHardeningConfig;
 
 #[derive(Clone)]
@@ -34,6 +35,70 @@ pub struct RequestHandler {
     pub(crate) workspace_trust: Arc<crate::application::workspace_trust::WorkspaceTrustResolver>,
     /// Retained optional MCP runtime for health projection and bounded shutdown.
     pub(crate) mcp: Option<Arc<corpus::tools::mcp::manager::McpManager>>,
+}
+
+struct DaemonCommandUseCases {
+    handler: RequestHandler,
+    connection: super::server::ConnectionContext,
+    rpc_id: serde_json::Value,
+}
+
+#[async_trait::async_trait]
+impl CommandUseCases for DaemonCommandUseCases {
+    async fn submit_prompt(
+        &self,
+        intent: &fabric::contract::command::ClientIntent,
+        prompt: &fabric::contract::command::SubmitPromptIntent,
+    ) -> anyhow::Result<CommandOutput> {
+        let thread_id = match &prompt.session_id {
+            Some(session_id) => fabric::ThreadId(session_id.0.clone()),
+            None => {
+                self.handler
+                    .select_workspace_session(prompt.workspace.cwd())
+                    .await?
+            }
+        };
+        let response = self
+            .handler
+            .execute_explicit_chat(
+                &self.connection,
+                self.rpc_id.clone(),
+                prompt.content.clone(),
+                thread_id,
+                prompt.workspace.clone(),
+                prompt.requirements.clone(),
+                prompt.task_kind,
+                prompt.permission_mode,
+            )
+            .await;
+        if let Some((code, message)) = rpc_error_parts(&response) {
+            return Ok(CommandOutput::Rejected { code, message });
+        }
+        Ok(CommandOutput::PromptCompleted {
+            correlation_id: intent.correlation_id.clone(),
+            result: take_rpc_result(response)?,
+        })
+    }
+
+    async fn status(
+        &self,
+        intent: &fabric::contract::command::ClientIntent,
+        status: &fabric::contract::command::StatusIntent,
+    ) -> anyhow::Result<CommandOutput> {
+        let request = serde_json::json!({
+            "params": {
+                "session_id": status.session_id.as_ref().map(|value| value.0.as_str())
+            }
+        });
+        let response = self.handler.handle_status(&self.rpc_id, &request).await;
+        if let Some((code, message)) = rpc_error_parts(&response) {
+            return Ok(CommandOutput::Rejected { code, message });
+        }
+        Ok(CommandOutput::StatusProjected {
+            correlation_id: intent.correlation_id.clone(),
+            result: take_rpc_result(response)?,
+        })
+    }
 }
 
 impl RequestHandler {
@@ -379,9 +444,85 @@ impl RequestHandler {
         }
 
         match method.as_str() {
+            "client.intent" => self.handle_client_intent(connection, id, params).await,
             "chat" => self.handle_chat(connection, id, request).await,
             _ => self.handle_rpc(connection, &method, id, request).await,
         }
+    }
+
+    async fn handle_client_intent(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: serde_json::Value,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        let intent = match serde_json::from_value::<fabric::contract::command::ClientIntent>(params)
+        {
+            Ok(intent) => intent,
+            Err(error) => return rpc_error(&id, -32602, format!("invalid ClientIntent: {error}")),
+        };
+        self.dispatch_client_intent(connection, id, intent).await
+    }
+
+    async fn dispatch_client_intent(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: serde_json::Value,
+        intent: fabric::contract::command::ClientIntent,
+    ) -> serde_json::Value {
+        if intent.principal != connection.principal_id {
+            return rpc_error(
+                &id,
+                -32602,
+                "ClientIntent principal does not match the authenticated transport principal",
+            );
+        }
+        if let Err(error) = intent.validate() {
+            return rpc_error(&id, -32602, error.to_string());
+        }
+        let dispatcher = CommandDispatcher::new(Arc::new(DaemonCommandUseCases {
+            handler: self.clone(),
+            connection: connection.clone(),
+            rpc_id: id.clone(),
+        }));
+        match dispatcher.dispatch(intent).await {
+            Ok(CommandOutput::PromptCompleted { result, .. })
+            | Ok(CommandOutput::StatusProjected { result, .. }) => {
+                serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result})
+            }
+            Ok(CommandOutput::PromptAccepted { correlation_id }) => serde_json::json!({
+                "jsonrpc":"2.0", "id":id,
+                "result":{"status":"accepted", "correlation_id":correlation_id}
+            }),
+            Ok(CommandOutput::Status { ready, summary }) => serde_json::json!({
+                "jsonrpc":"2.0", "id":id,
+                "result":{"ready":ready, "summary":summary}
+            }),
+            Ok(CommandOutput::Rejected { code, message }) => rpc_error(&id, code, message),
+            Err(error) => rpc_error(&id, -32603, error.to_string()),
+        }
+    }
+
+    pub(super) async fn handle_legacy_status(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: serde_json::Value,
+        request: serde_json::Value,
+    ) -> serde_json::Value {
+        let session_id = request["params"]
+            .get("session_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| fabric::SessionId(value.to_owned()));
+        let intent = fabric::contract::command::ClientIntent::v1(
+            fabric::contract::command::ClientSurface::Tui,
+            connection.principal_id.clone(),
+            format!("legacy-status:{}", rpc_id_fragment(&id)),
+            fabric::contract::command::ClientCommand::Status(
+                fabric::contract::command::StatusIntent { session_id },
+            ),
+        );
+        self.dispatch_client_intent(connection, id, intent).await
     }
 
     /// Thin delegation to the macro-kernel turn orchestrator.
@@ -429,17 +570,22 @@ impl RequestHandler {
                 }
             }
         };
-        self.execute_explicit_chat(
-            connection,
-            id,
-            message.to_owned(),
-            thread_id,
-            workspace,
-            requirements,
-            task_kind,
-            permission_mode,
-        )
-        .await
+        let intent = fabric::contract::command::ClientIntent::v1(
+            fabric::contract::command::ClientSurface::Tui,
+            connection.principal_id.clone(),
+            format!("legacy-chat:{}", rpc_id_fragment(&id)),
+            fabric::contract::command::ClientCommand::SubmitPrompt(
+                fabric::contract::command::SubmitPromptIntent {
+                    content: message.to_owned(),
+                    session_id: Some(fabric::SessionId(thread_id.0)),
+                    workspace,
+                    requirements,
+                    task_kind,
+                    permission_mode,
+                },
+            ),
+        );
+        self.dispatch_client_intent(connection, id, intent).await
     }
 
     /// Versioned chat boundary. `thread_id` is protocol data in its own right;
@@ -548,6 +694,42 @@ impl RequestHandler {
         let key = ThreadAuthorityKey::new(context.principal_id.clone(), context.thread_id.clone());
         self.thread_authority
             .bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))
+    }
+}
+
+fn take_rpc_result(response: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    if let Some(error) = response.get("error") {
+        let message = error
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("command execution failed");
+        anyhow::bail!(message.to_owned());
+    }
+    response
+        .get("result")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("command handler returned no result"))
+}
+
+fn rpc_error_parts(response: &serde_json::Value) -> Option<(i64, String)> {
+    let error = response.get("error")?;
+    Some((
+        error
+            .get("code")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(-32603),
+        error
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("command execution failed")
+            .to_owned(),
+    ))
+}
+
+fn rpc_id_fragment(id: &serde_json::Value) -> String {
+    match id {
+        serde_json::Value::String(value) => value.clone(),
+        other => other.to_string(),
     }
 }
 

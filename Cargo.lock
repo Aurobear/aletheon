@@ -2073,6 +2073,7 @@ dependencies = [
  "dirs-next",
  "executive",
  "fabric",
+ "nix 0.29.0",
  "pulldown-cmark",
  "ratatui",
  "serde",

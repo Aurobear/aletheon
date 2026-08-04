@@ -6,6 +6,7 @@
 
 use std::fmt;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -34,34 +35,164 @@ pub enum CommandId {
     Status,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommandSpec {
-    pub id: CommandId,
-    pub name: &'static str,
-    pub aliases: &'static [&'static str],
-    pub summary: &'static str,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CommandSurface {
+    Cli,
+    Tui,
+    Gateway,
 }
 
-pub const COMMAND_SPECS: &[CommandSpec] = &[
-    CommandSpec {
-        id: CommandId::SubmitPrompt,
-        name: "chat",
-        aliases: &[],
-        summary: "Submit a prompt to the active session",
-    },
-    CommandSpec {
-        id: CommandId::Status,
-        name: "status",
-        aliases: &["st"],
-        summary: "Show runtime status",
-    },
-];
+impl CommandSurface {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "cli" => Some(Self::Cli),
+            "tui" => Some(Self::Tui),
+            "gateway" => Some(Self::Gateway),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandExecution {
+    Local,
+    Application,
+    Compatibility,
+}
+
+impl CommandExecution {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "local" => Some(Self::Local),
+            "application" => Some(Self::Application),
+            "compatibility" => Some(Self::Compatibility),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandAvailability {
+    Always,
+    IdleOnly,
+    ActiveTurnOnly,
+}
+
+impl CommandAvailability {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "always" => Some(Self::Always),
+            "idle_only" => Some(Self::IdleOnly),
+            "active_turn_only" => Some(Self::ActiveTurnOnly),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandVisibility {
+    Public,
+    Internal,
+    Compatibility,
+}
+
+impl CommandVisibility {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "public" => Some(Self::Public),
+            "internal" => Some(Self::Internal),
+            "compatibility" => Some(Self::Compatibility),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandSpec {
+    pub key: String,
+    pub surface: CommandSurface,
+    pub parent: Option<String>,
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub summary: String,
+    pub category: String,
+    pub usage: String,
+    pub execution: CommandExecution,
+    pub availability: CommandAvailability,
+    pub visibility: CommandVisibility,
+    pub intent: Option<CommandId>,
+}
+
+pub static COMMAND_SPECS: LazyLock<Vec<CommandSpec>> =
+    LazyLock::new(|| parse_command_specs(include_str!("command-specs.tsv")));
+
+pub fn command_specs(surface: CommandSurface) -> impl Iterator<Item = &'static CommandSpec> {
+    COMMAND_SPECS
+        .iter()
+        .filter(move |spec| spec.surface == surface)
+}
+
+pub fn resolve_command(
+    surface: CommandSurface,
+    parent: Option<&str>,
+    name: &str,
+) -> Option<&'static CommandSpec> {
+    command_specs(surface).find(|spec| {
+        spec.parent.as_deref() == parent
+            && (spec.name == name || spec.aliases.iter().any(|alias| alias == name))
+    })
+}
 
 pub fn command_spec(id: CommandId) -> &'static CommandSpec {
     COMMAND_SPECS
         .iter()
-        .find(|spec| spec.id == id)
+        .find(|spec| spec.intent == Some(id))
         .expect("every CommandId must have one CommandSpec")
+}
+
+fn parse_command_specs(input: &str) -> Vec<CommandSpec> {
+    let mut specs = Vec::new();
+    for (index, line) in input.lines().enumerate() {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let columns = line.split('\t').collect::<Vec<_>>();
+        assert_eq!(
+            columns.len(),
+            12,
+            "invalid command spec column count at line {}",
+            index + 1
+        );
+        let intent = match columns[11] {
+            "-" => None,
+            "submit_prompt" => Some(CommandId::SubmitPrompt),
+            "status" => Some(CommandId::Status),
+            other => panic!("invalid intent {other} at line {}", index + 1),
+        };
+        specs.push(CommandSpec {
+            key: columns[0].to_owned(),
+            surface: CommandSurface::parse(columns[1])
+                .unwrap_or_else(|| panic!("invalid surface at line {}", index + 1)),
+            parent: (columns[2] != "-").then(|| columns[2].to_owned()),
+            name: columns[3].to_owned(),
+            aliases: if columns[4] == "-" {
+                Vec::new()
+            } else {
+                columns[4].split(',').map(str::to_owned).collect()
+            },
+            summary: columns[5].to_owned(),
+            category: columns[6].to_owned(),
+            usage: columns[7].to_owned(),
+            execution: CommandExecution::parse(columns[8])
+                .unwrap_or_else(|| panic!("invalid execution at line {}", index + 1)),
+            availability: CommandAvailability::parse(columns[9])
+                .unwrap_or_else(|| panic!("invalid availability at line {}", index + 1)),
+            visibility: CommandVisibility::parse(columns[10])
+                .unwrap_or_else(|| panic!("invalid visibility at line {}", index + 1)),
+            intent,
+        });
+    }
+    specs
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,18 +205,23 @@ pub struct SubmitPromptIntent {
     pub permission_mode: HostPermissionMode,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct StatusIntent {
+    pub session_id: Option<SessionId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", content = "arguments", rename_all = "snake_case")]
 pub enum ClientCommand {
     SubmitPrompt(SubmitPromptIntent),
-    Status,
+    Status(StatusIntent),
 }
 
 impl ClientCommand {
     pub const fn id(&self) -> CommandId {
         match self {
             Self::SubmitPrompt(_) => CommandId::SubmitPrompt,
-            Self::Status => CommandId::Status,
+            Self::Status(_) => CommandId::Status,
         }
     }
 }
@@ -199,8 +335,52 @@ mod tests {
     #[test]
     fn command_specs_cover_each_command_once() {
         assert_eq!(command_spec(CommandId::SubmitPrompt).name, "chat");
-        assert_eq!(command_spec(CommandId::Status).aliases, &["st"]);
-        assert_ne!(COMMAND_SPECS[0].id, COMMAND_SPECS[1].id);
+        assert_eq!(command_spec(CommandId::Status).aliases, ["st"]);
+
+        let mut keys = std::collections::BTreeSet::new();
+        let mut spellings = std::collections::BTreeSet::new();
+        for spec in COMMAND_SPECS.iter() {
+            assert!(keys.insert(spec.key.as_str()), "duplicate key {}", spec.key);
+            let scope = (spec.surface, spec.parent.as_deref());
+            assert!(
+                spellings.insert((scope, spec.name.as_str())),
+                "duplicate command spelling {}",
+                spec.name
+            );
+            for alias in &spec.aliases {
+                assert!(
+                    spellings.insert((scope, alias.as_str())),
+                    "duplicate command alias {alias}"
+                );
+            }
+        }
+        for id in [CommandId::SubmitPrompt, CommandId::Status] {
+            assert_eq!(
+                COMMAND_SPECS
+                    .iter()
+                    .filter(|spec| spec.intent == Some(id))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn command_resolution_is_surface_and_parent_scoped() {
+        assert_eq!(
+            resolve_command(CommandSurface::Gateway, None, "chat").map(|spec| spec.key.as_str()),
+            Some("gateway.chat")
+        );
+        assert_eq!(
+            resolve_command(CommandSurface::Tui, None, "st").map(|spec| spec.key.as_str()),
+            Some("tui.status")
+        );
+        assert_eq!(
+            resolve_command(CommandSurface::Cli, Some("memory.workspace"), "bind")
+                .map(|spec| spec.key.as_str()),
+            Some("cli.memory.workspace.bind")
+        );
+        assert!(resolve_command(CommandSurface::Gateway, None, "st").is_none());
     }
 
     #[test]

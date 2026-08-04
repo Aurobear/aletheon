@@ -80,8 +80,17 @@ pub(super) fn init_telegram_channel(
         let accounts = g as Arc<dyn ExternalAccountDirectory>;
         Arc::new(ExternalReadPreprocessor::new(accounts)) as Arc<dyn ChatPreprocessor>
     });
+    let channel_workspace = fabric::WorkspacePolicy::from_resolved_roots(
+        std::path::PathBuf::from("/var/lib/aletheon"),
+        Vec::new(),
+    )
+    .expect("the absolute daemon channel workspace is valid");
     let mut registry = CapabilityRegistry::new();
-    registry.register(Arc::new(ChatHandler::new(turn_executor, chat_preprocessor)));
+    registry.register(Arc::new(ChatHandler::new(
+        turn_executor,
+        chat_preprocessor,
+        channel_workspace,
+    )));
     registry.register(Arc::new(GreetingHandler));
 
     let approval_port: Arc<dyn gateway::ports::ChannelApprovalPort> =

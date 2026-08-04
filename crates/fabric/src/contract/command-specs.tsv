@@ -1,0 +1,66 @@
+# key\tsurface\tparent\tname\taliases\tsummary\tcategory\tusage\texecution\tavailability\tvisibility\tintent
+cli.core	cli	-	core	-	Start the machine-scoped inference core	internal	aletheon core	compatibility	always	internal	-
+cli.daemon	cli	-	daemon	-	Start daemon (auto-detects systemd/container/foreground)	operations	aletheon daemon	compatibility	always	public	-
+cli.exec	cli	-	exec	-	Non-interactive execution	task	aletheon exec --prompt <PROMPT>	compatibility	always	public	-
+cli.version	cli	-	version	-	Print version	information	aletheon version	local	always	public	-
+cli.restore-terminal	cli	-	restore-terminal	-	Restore terminal modes after an interrupted TUI session	internal	aletheon restore-terminal	local	always	internal	-
+cli.config	cli	-	config	-	Inspect effective configuration (merged layers)	configuration	aletheon config <ACTION>	compatibility	always	public	-
+cli.config.effective	cli	config	effective	-	Print the fully merged effective configuration (secrets redacted)	configuration	aletheon config effective	compatibility	always	public	-
+cli.config.layers	cli	config	layers	-	Show each config layer source and its overrides	configuration	aletheon config layers	compatibility	always	public	-
+cli.doctor	cli	-	doctor	-	Run diagnostics and print a health report	operations	aletheon doctor	compatibility	always	public	-
+cli.extension	cli	-	extension	-	Manage extension packages	extension	aletheon extension <ACTION>	compatibility	always	public	-
+cli.extension.inspect	cli	extension	inspect	-	Inspect an extension package archive	extension	aletheon extension inspect <PATH>	compatibility	always	public	-
+cli.extension.validate	cli	extension	validate	-	Validate an extension package without installing	extension	aletheon extension validate <PATH>	compatibility	always	public	-
+cli.extension.install	cli	extension	install	-	Install an extension package	extension	aletheon extension install <PATH>	compatibility	always	public	-
+cli.extension.list	cli	extension	list	-	List installed extensions	extension	aletheon extension list	compatibility	always	public	-
+cli.extension.show	cli	extension	show	-	Show details for an installed extension	extension	aletheon extension show <ID>	compatibility	always	public	-
+cli.extension.enable	cli	extension	enable	-	Enable an installed extension	extension	aletheon extension enable <ID>	compatibility	always	public	-
+cli.extension.disable	cli	extension	disable	-	Disable an active extension	extension	aletheon extension disable <ID>	compatibility	always	public	-
+cli.extension.upgrade	cli	extension	upgrade	-	Upgrade an extension to a newer package	extension	aletheon extension upgrade <PATH>	compatibility	always	public	-
+cli.extension.rollback	cli	extension	rollback	-	Rollback to the previous known-good version	extension	aletheon extension rollback <ID>	compatibility	always	public	-
+cli.extension.remove	cli	extension	remove	-	Remove an extension (deactivate but keep package)	extension	aletheon extension remove <ID>	compatibility	always	public	-
+cli.extension.purge	cli	extension	purge	-	Purge an inactive extension and its stored package state	extension	aletheon extension purge <ID>	compatibility	always	public	-
+cli.extension.doctor	cli	extension	doctor	-	Run diagnostics on an extension	extension	aletheon extension doctor <ID>	compatibility	always	public	-
+cli.memory-agent	cli	-	memory-agent	-	Run the Aletheon-managed memory maintenance client	internal	aletheon memory-agent <ACTION>	compatibility	always	internal	-
+cli.memory-agent.serve	cli	memory-agent	serve	-	Continuously maintain memory through the official user socket	internal	aletheon memory-agent serve	compatibility	always	internal	-
+cli.memory-agent.run	cli	memory-agent	run	-	Run one bounded maintenance cycle through an authenticated child	internal	aletheon memory-agent run	compatibility	always	internal	-
+cli.memory	cli	-	memory	-	Use the governed Memory Gateway through the official user socket	memory	aletheon memory <ACTION>	compatibility	always	public	-
+cli.memory.observe	cli	memory	observe	-	Submit a bounded observation to the governed intake journal	memory	aletheon memory observe	compatibility	always	public	-
+cli.memory.recall	cli	memory	recall	-	Recall governed local and bound supplemental memory	memory	aletheon memory recall <QUERY>	compatibility	always	public	-
+cli.memory.receipt	cli	memory	receipt	-	Read the authoritative lifecycle receipt for an observation	memory	aletheon memory receipt <ID>	compatibility	always	public	-
+cli.memory.workspace	cli	memory	workspace	-	Administer the current workspace supplemental-memory binding	memory	aletheon memory workspace <ACTION>	compatibility	always	public	-
+cli.memory.workspace.preview-bind	cli	memory.workspace	preview-bind	-	Negotiate backend grants without changing durable authority	memory	aletheon memory workspace preview-bind	compatibility	always	public	-
+cli.memory.workspace.bind	cli	memory.workspace	bind	-	Repeat negotiation and activate a previewed binding	memory	aletheon memory workspace bind	compatibility	always	public	-
+cli.memory.workspace.unbind	cli	memory.workspace	unbind	-	Revoke remote authority for this workspace	memory	aletheon memory workspace unbind	compatibility	always	public	-
+tui.help	tui	-	help	-	显示帮助信息	会话	/help	local	always	public	-
+tui.new	tui	-	new	-	创建并切换到新会话	会话	/new	compatibility	idle_only	public	-
+tui.clear	tui	-	clear	-	创建新会话并清屏	会话	/clear	compatibility	idle_only	public	-
+tui.status	tui	-	status	st	查看运行时状态	会话	/status	application	always	public	status
+tui.compact	tui	-	compact	cmp	压缩上下文	会话	/compact	compatibility	idle_only	public	-
+tui.sessions	tui	-	sessions	sess	列出历史会话	会话	/sessions	compatibility	always	public	-
+tui.resume	tui	-	resume	-	选择历史会话，或按 ID 恢复	会话	/resume <id>	compatibility	idle_only	public	-
+tui.fork	tui	-	fork	-	从当前会话创建分支	会话	/fork	compatibility	idle_only	public	-
+tui.model	tui	-	model	m	查询或切换模型	会话	/model	compatibility	always	public	-
+tui.permissions	tui	-	permissions	-	查看权限与审批策略	会话	/permissions	local	always	public	-
+tui.context	tui	-	context	ctx	显示当前上下文信息	会话	/context	local	always	public	-
+tui.interrupt	tui	-	interrupt	int	中断当前操作	会话	/interrupt	compatibility	active_turn_only	public	-
+tui.copy	tui	-	copy	cp	复制最后回复到剪贴板	动作	/copy	local	always	public	-
+tui.mode	tui	-	mode	-	切换协作模式	动作	/mode [plan|auto|sandbox]	compatibility	idle_only	public	-
+tui.quit	tui	-	quit	exit	退出	动作	/quit	local	always	public	-
+tui.agents	tui	-	agents	ag	列出活跃子 Agent	信息	/agents	local	always	public	-
+tui.agent	tui	-	agent	-	查看子 Agent 详情	信息	/agent <id>	local	always	public	-
+tui.skills	tui	-	skills	sk	列出可用 Skill	信息	/skills	compatibility	always	public	-
+tui.profile	tui	-	profile	prof	查询或切换 Agent Profile	信息	/profile [name]	compatibility	idle_only	public	-
+tui.diff	tui	-	diff	-	显示当前工作区差异	信息	/diff	local	always	public	-
+tui.mention	tui	-	mention	-	向输入加入文件引用	信息	/mention <path>	local	always	public	-
+tui.input	tui	-	input	i	打开多行输入	动作	/input	local	always	public	-
+tui.memory	tui	-	memory	-	查看会话记忆（核心记忆块、近期事实、回忆记录）	信息	/memory	compatibility	always	public	-
+gateway.start	gateway	-	start	-	Start the channel conversation	channel	/start	local	always	public	-
+gateway.chat	gateway	-	chat	-	Submit a prompt to the active session	channel	/chat <PROMPT>	application	always	public	submit_prompt
+gateway.goal_create	gateway	-	goal	-	Create a Goal draft	goal	/goal <INTENT>	compatibility	always	public	-
+gateway.goal_list	gateway	-	goals	-	List Goals	goal	/goals	compatibility	always	public	-
+gateway.goal_status	gateway	-	status	-	Show Goal status	goal	/status <ID>	compatibility	always	public	-
+gateway.goal_pause	gateway	-	pause	-	Pause a Goal	goal	/pause <ID>	compatibility	always	public	-
+gateway.goal_resume	gateway	-	resume	-	Resume a Goal	goal	/resume <ID>	compatibility	always	public	-
+gateway.goal_cancel	gateway	-	cancel	-	Cancel a Goal	goal	/cancel <ID>	compatibility	always	public	-
+gateway.goal_edit	gateway	-	edit	-	Edit a Goal draft	goal	/edit <ID> <INTENT>	compatibility	always	public	-

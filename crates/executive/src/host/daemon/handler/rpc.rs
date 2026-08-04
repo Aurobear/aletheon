@@ -45,7 +45,7 @@ impl RequestHandler {
             "session.switch" => self.handle_session_switch(&id, &request).await,
 
             // ── Health / status ───────────────────────────────────────
-            "status" => self.handle_status(&id, &request).await,
+            "status" => self.handle_legacy_status(connection, id, request).await,
             "health" => self.handle_health(&id, &request).await,
             "evaluation.get" => self.handle_evaluation_get(connection, &id, &request).await,
             "evaluation.latest" => {

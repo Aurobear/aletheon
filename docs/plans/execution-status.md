@@ -87,24 +87,24 @@ MERGE_SHA: b126e07d902d55a95d7387290d787c4d4c539757
 ## X3a
 
 ```text
-STATUS: code_complete
+STATUS: accepted
 NODE: X3a
 BASE / BRANCH / PR / GOAL_ID: b126e07d902d55a95d7387290d787c4d4c539757 / auro/feat/20260805-x3a-command-dispatch / #166 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: versioned ClientIntent preserves principal, workspace, permission, requirements, task kind and session authority; canonical CommandSpec added without presentation dependencies; Executive CommandDispatcher is the unique typed command-to-use-case handler; A-ENTRY-001 application test proves CLI/TUI/gateway surfaces select the same use case; focused Fabric/Executive tests, package checks, architecture acceptance and doc-path checks passed
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: versioned ClientIntent preserves principal, workspace, permission, requirements, task kind and session authority; canonical CommandSpec added without presentation dependencies; Executive CommandDispatcher is the unique typed command-to-use-case handler; A-ENTRY-001 application test proves CLI/TUI/gateway surfaces select the same use case; focused Fabric/Executive tests, package checks, architecture acceptance and doc-path checks passed; GitHub CI 5 passed and 4 skipped
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 0652e70ec4a0140101b67d81885a664ee57996f0
 ```
 
 ## X3b
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X3b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: 0652e70ec4a0140101b67d81885a664ee57996f0 / auro/feat/20260805-x3b-user-command-adapters / #167 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: one Fabric CommandSpec catalog now materializes top-level Clap help, TUI slash metadata, Gateway command resolution, and generated Bash/Zsh completion trees; TUI, line mode, one-shot CLI, canonical local RPC, legacy chat/status, and Gateway prompt routes converge on ClientIntent and Executive CommandDispatcher; U-CLI-001/002 and PRODUCTION_CLI_PARSERS=0 gates pass; Fabric/Gateway/Interact/Aletheon and affected Executive tests, package Clippy -D warnings, architecture, formatting, completion, diff, and doc-path checks pass; system deploy passed with release/installed/machine-core/user-daemon SHA-256 cfbfb6127f6a9fa64c4487ae136307bdc988371c1c581e9bafbdaa894d2eb9a5, zero restart counters, stable services, and an official-socket real LLM request
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending

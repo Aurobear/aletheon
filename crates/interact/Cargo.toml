@@ -26,6 +26,7 @@ which = "7"
 chrono = { version = "0.4", features = ["serde"] }
 ctrlc = "3"
 uuid = { version = "1", features = ["v4"] }
+nix = { workspace = true }
 
 [dev-dependencies]
 executive = { path = "../executive" }

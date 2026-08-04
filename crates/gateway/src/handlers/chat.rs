@@ -10,6 +10,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::channel::{InboundMessage, MessageContent, OutboundMessage};
+use fabric::contract::command::{ClientCommand, ClientIntent, ClientSurface, SubmitPromptIntent};
+use fabric::permission::HostPermissionMode;
+use fabric::{PrincipalId, SessionId, WorkspacePolicy};
 
 use crate::dispatcher::ChannelTurnExecutor;
 use crate::effect::OutboundEffect;
@@ -20,16 +23,19 @@ use crate::registry::{CapabilityHandler, HandlerContext, IntentKind};
 pub struct ChatHandler {
     turn_executor: Arc<dyn ChannelTurnExecutor>,
     preprocessor: Option<Arc<dyn ChatPreprocessor>>,
+    workspace: WorkspacePolicy,
 }
 
 impl ChatHandler {
     pub fn new(
         turn_executor: Arc<dyn ChannelTurnExecutor>,
         preprocessor: Option<Arc<dyn ChatPreprocessor>>,
+        workspace: WorkspacePolicy,
     ) -> Self {
         Self {
             turn_executor,
             preprocessor,
+            workspace,
         }
     }
 
@@ -71,10 +77,20 @@ impl CapabilityHandler for ChatHandler {
             text.clone()
         };
 
-        let reply = self
-            .turn_executor
-            .execute(principal, &query, &ctx.correlation_id)
-            .await?;
+        let client_intent = ClientIntent::v1(
+            ClientSurface::Gateway,
+            PrincipalId(principal.to_owned()),
+            ctx.correlation_id.clone(),
+            ClientCommand::SubmitPrompt(SubmitPromptIntent {
+                content: query,
+                session_id: Some(SessionId(principal.to_owned())),
+                workspace: self.workspace.clone(),
+                requirements: Vec::new(),
+                task_kind: None,
+                permission_mode: HostPermissionMode::Safe,
+            }),
+        );
+        let reply = self.turn_executor.execute(&client_intent).await?;
         Ok(vec![Self::reply(ctx, reply)])
     }
 }

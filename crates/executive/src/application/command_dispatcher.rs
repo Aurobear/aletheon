@@ -3,12 +3,35 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fabric::contract::command::{ClientCommand, ClientIntent, SubmitPromptIntent};
+use fabric::contract::command::{ClientCommand, ClientIntent, StatusIntent, SubmitPromptIntent};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutput {
-    PromptAccepted { correlation_id: String },
-    Status { ready: bool, summary: String },
+    PromptAccepted {
+        correlation_id: String,
+    },
+    /// Completed prompt result projected by a synchronous host adapter.
+    ///
+    /// `result` is the application result object, not a JSON-RPC envelope;
+    /// presentation transports remain responsible for their own framing.
+    PromptCompleted {
+        correlation_id: String,
+        result: serde_json::Value,
+    },
+    Status {
+        ready: bool,
+        summary: String,
+    },
+    /// Full status projection retained for compatibility clients while the
+    /// versioned read model is introduced by the later Session nodes.
+    StatusProjected {
+        correlation_id: String,
+        result: serde_json::Value,
+    },
+    Rejected {
+        code: i64,
+        message: String,
+    },
 }
 
 #[async_trait]
@@ -19,7 +42,11 @@ pub trait CommandUseCases: Send + Sync {
         prompt: &SubmitPromptIntent,
     ) -> anyhow::Result<CommandOutput>;
 
-    async fn status(&self, intent: &ClientIntent) -> anyhow::Result<CommandOutput>;
+    async fn status(
+        &self,
+        intent: &ClientIntent,
+        status: &StatusIntent,
+    ) -> anyhow::Result<CommandOutput>;
 }
 
 /// The sole application handler for [`ClientIntent`].
@@ -42,7 +69,7 @@ impl CommandDispatcher {
             ClientCommand::SubmitPrompt(prompt) => {
                 self.use_cases.submit_prompt(&intent, prompt).await
             }
-            ClientCommand::Status => self.use_cases.status(&intent).await,
+            ClientCommand::Status(status) => self.use_cases.status(&intent, status).await,
         }
     }
 }

@@ -37,14 +37,15 @@ struct Turn {
 impl ChannelTurnExecutor for Turn {
     async fn execute(
         &self,
-        principal: &str,
-        message: &str,
-        _correlation_id: &str,
+        intent: &fabric::contract::command::ClientIntent,
     ) -> anyhow::Result<String> {
+        let fabric::contract::command::ClientCommand::SubmitPrompt(prompt) = &intent.command else {
+            anyhow::bail!("expected prompt intent")
+        };
         self.calls
             .lock()
             .await
-            .push((principal.to_owned(), message.to_owned()));
+            .push((intent.principal.0.clone(), prompt.content.clone()));
         Ok("normal-react-response".into())
     }
 }
@@ -104,6 +105,7 @@ fn router(path: &std::path::Path, turn: Arc<Turn>, accounts: Vec<String>) -> Cha
         Some(Arc::new(ExternalReadPreprocessor::new(Arc::new(Accounts(
             accounts,
         ))))),
+        fabric::WorkspacePolicy::from_resolved_roots(path.to_path_buf(), Vec::new()).unwrap(),
     )));
     registry.register(Arc::new(GreetingHandler));
     ChannelDispatcher::with_registry(store, registry)

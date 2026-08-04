@@ -57,9 +57,7 @@ struct NoopTurn;
 impl ChannelTurnExecutor for NoopTurn {
     async fn execute(
         &self,
-        _principal: &str,
-        _message: &str,
-        _correlation_id: &str,
+        _intent: &fabric::contract::command::ClientIntent,
     ) -> anyhow::Result<String> {
         unreachable!("Goal progress does not execute a chat turn")
     }

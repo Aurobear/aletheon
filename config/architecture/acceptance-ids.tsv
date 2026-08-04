@@ -4,3 +4,5 @@ A-DEP-001	X1	test	crates/fabric/tests/architecture_contract.rs
 A-DEP-002	X1	test	crates/fabric/tests/architecture_contract.rs
 A-DEP-003	X1	test	crates/fabric/tests/architecture_contract.rs
 A-ENTRY-001	X3a	test	crates/executive/tests/command_dispatcher.rs
+U-CLI-001	X3b	test	crates/aletheon/src/main.rs
+U-CLI-002	X3b	test	crates/interact/src/tui/registry.rs

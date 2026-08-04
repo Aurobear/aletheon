@@ -51,7 +51,7 @@ impl RequestHandler {
         }
     }
 
-    pub(super) async fn handle_status(
+    pub(crate) async fn handle_status(
         &self,
         id: &serde_json::Value,
         request: &serde_json::Value,

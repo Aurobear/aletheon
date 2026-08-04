@@ -377,7 +377,7 @@ struct NoTurn;
 
 #[async_trait::async_trait]
 impl ChannelTurnExecutor for NoTurn {
-    async fn execute(&self, _: &str, _: &str, _: &str) -> anyhow::Result<String> {
+    async fn execute(&self, _: &fabric::contract::command::ClientIntent) -> anyhow::Result<String> {
         anyhow::bail!("approval must not invoke a model")
     }
 }

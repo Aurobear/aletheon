@@ -11,6 +11,7 @@ use super::extension::{
 };
 
 use crate::{
+    contract::command::ClientIntent,
     ui_event::{CollaborationMode, InterruptReason},
     AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord, LocalOsPrincipal, OperationId,
     PrincipalId, SessionId, ThreadId, TurnId, TurnStop, TurnTerminalStatus, WorkspacePolicy,
@@ -25,6 +26,10 @@ const SUPPORTED_CLIENT_PROTOCOL_VERSIONS: &[u16] = &[CLIENT_PROTOCOL_VERSION];
 /// than being re-created by each Interact entry point.
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub enum ClientRpcRequest {
+    /// Canonical user intent. The daemon validates the authenticated transport
+    /// principal before dispatching it through the Executive application
+    /// command boundary.
+    Intent(#[schemars(with = "serde_json::Value")] ClientIntent),
     Chat(ChatParams),
     Clear,
     Status,
@@ -680,6 +685,7 @@ impl ClientRpcRequest {
     /// contract.
     pub fn to_json_rpc(&self, id: Option<u64>) -> serde_json::Result<serde_json::Value> {
         let (method, params) = match self {
+            Self::Intent(intent) => ("client.intent", Some(serde_json::to_value(intent)?)),
             Self::Chat(params) => ("chat", Some(serde_json::to_value(params)?)),
             Self::Clear => ("clear", None),
             Self::Status => ("status", None),
@@ -1221,6 +1227,31 @@ pub fn client_schema() -> serde_json::Value {
 #[cfg(test)]
 mod request_tests {
     use super::*;
+
+    #[test]
+    fn canonical_client_intent_serializes_on_one_versioned_method() {
+        let intent = crate::contract::command::ClientIntent::v1(
+            crate::contract::command::ClientSurface::Tui,
+            crate::PrincipalId("local-uid:1000".into()),
+            "tui-status:9",
+            crate::contract::command::ClientCommand::Status(
+                crate::contract::command::StatusIntent {
+                    session_id: Some(SessionId("session-a".into())),
+                },
+            ),
+        );
+        let request = ClientRpcRequest::Intent(intent)
+            .to_json_rpc(Some(9))
+            .unwrap();
+
+        assert_eq!(request["method"], "client.intent");
+        assert_eq!(request["params"]["schema_version"], 1);
+        assert_eq!(request["params"]["principal"], "local-uid:1000");
+        assert_eq!(
+            request["params"]["command"]["arguments"]["session_id"],
+            "session-a"
+        );
+    }
 
     #[test]
     fn chat_serializes_explicit_typed_agent_requirement() {

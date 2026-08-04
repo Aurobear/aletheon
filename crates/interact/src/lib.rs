@@ -21,6 +21,7 @@
 pub mod acix;
 pub mod acp;
 pub mod host;
+mod intent;
 pub mod memory_client;
 pub mod tui;
 
