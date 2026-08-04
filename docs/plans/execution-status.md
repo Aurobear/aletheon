@@ -61,24 +61,24 @@ MERGE_SHA: 03d263d44f0277d883c24b1be0b98e3a48519291
 ## X1
 
 ```text
-STATUS: code_complete
+STATUS: accepted
 NODE: X1
 BASE / BRANCH / PR / GOAL_ID: 03d263d44f0277d883c24b1be0b98e3a48519291 / auro/feat/20260805-x1-contract-gates / #164 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: 22-row migration matrix; 1014-type Fabric public snapshot; 3 acceptance IDs bound to passing tests; forbidden-edge/parser/writer metrics; architecture and negative fixtures passed
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: 22-row migration matrix; 1014-type Fabric public snapshot; 3 acceptance IDs bound to passing tests; forbidden-edge/parser/writer metrics; architecture and negative fixtures passed; GitHub CI 5 passed and 4 skipped
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: cb2388e8c9af690a9ce3063472c7f2f3cd6bda99
 ```
 
 ## X2
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X2
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: cb2388e8c9af690a9ce3063472c7f2f3cd6bda99 / auro/refactor/20260805-x2-task-kind-contract / #165 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TaskKindArg and TaskKind conversion moved to fabric::contract::command without a Clap dependency; production interact::cli caller count is 0; focused Fabric/Aletheon/Interact tests and architecture gates passed
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
