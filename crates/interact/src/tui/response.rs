@@ -673,7 +673,7 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
 /// Some models repeat thinking/reasoning text twice.
 pub fn deduplicate_consecutive_text(text: &str) -> String {
     let midpoint = text.len() / 2;
-    if text.len() % 2 == 0 && text.is_char_boundary(midpoint) {
+    if text.len().is_multiple_of(2) && text.is_char_boundary(midpoint) {
         let (first, second) = text.split_at(midpoint);
         if first == second {
             return first.to_string();

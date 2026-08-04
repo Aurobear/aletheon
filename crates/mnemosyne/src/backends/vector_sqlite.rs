@@ -257,7 +257,7 @@ fn encode_vector(vector: &[f32]) -> Vec<u8> {
 }
 
 fn decode_vector(bytes: &[u8]) -> anyhow::Result<Vec<f32>> {
-    ensure!(bytes.len() % 4 == 0, "invalid vector blob");
+    ensure!(bytes.len().is_multiple_of(4), "invalid vector blob");
     Ok(bytes
         .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four-byte chunk")))

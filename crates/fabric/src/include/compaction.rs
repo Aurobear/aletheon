@@ -465,8 +465,8 @@ mod guardrail_tests {
                 for index in 0..len {
                     let message = match shape % 3 {
                         0 => Message::user(format!("text-{index}")),
-                        1 => tool_use(if index % 2 == 0 { "A" } else { "B" }),
-                        _ => tool_result(if index % 2 == 0 { "A" } else { "B" }),
+                        1 => tool_use(if index.is_multiple_of(2) { "A" } else { "B" }),
+                        _ => tool_result(if index.is_multiple_of(2) { "A" } else { "B" }),
                     };
                     messages.push(message);
                     shape /= 3;

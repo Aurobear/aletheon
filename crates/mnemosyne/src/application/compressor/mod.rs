@@ -1041,9 +1041,9 @@ mod tests {
     #[tokio::test]
     async fn full_replace_applies_good_summary_and_preserves_recent_tail() {
         let mut compressor = AdvancedCompressor::new(100, 200, 100_000);
-        let mut messages = (0..8)
+        let mut messages = (0_usize..8)
             .map(|index| {
-                if index % 2 == 0 {
+                if index.is_multiple_of(2) {
                     Message::user(format!("request {index} {}", "x".repeat(2_000)))
                 } else {
                     Message::assistant(format!("response {index} {}", "y".repeat(2_000)))
