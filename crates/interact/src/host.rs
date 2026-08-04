@@ -90,7 +90,7 @@ pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
-    crate::cli::single_message_with_workspace_requirements_and_task_kind(
+    crate::single_message::run(
         &socket,
         &request.message,
         &workspace,

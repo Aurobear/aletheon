@@ -32,16 +32,6 @@ pub mod streaming;
 pub mod subagent_view;
 pub mod term_compat;
 
-// CLI modules (formerly cli/)
-pub mod cli;
-pub mod debug;
-pub mod goal;
-pub mod rpc_client;
-pub mod workflow;
-
-// Re-export the main entry point
-pub use cli::run;
-
 /// Build the local chat envelope. Keeping this in one place prevents the TUI,
 /// line mode, and `-m` mode from silently diverging.
 pub fn chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> serde_json::Value {
