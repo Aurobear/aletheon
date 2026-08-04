@@ -1,5 +1,12 @@
 # frozen_commit=ca4b185
 # path	layer	owner	reason
+crates/executive/src/adapters/episode/mod.rs	adapter	executive	concrete durable episode integration
+crates/executive/src/adapters/episode/sqlite_episode_sink.rs	adapter	executive	concrete durable episode integration
+crates/executive/src/application/deterministic_outcome_verifier.rs	application	executive	deterministic embodied outcome policy
+crates/executive/src/application/embodied_execution_adapter.rs	application	executive	application port adaptation for embodiment execution
+crates/executive/src/application/robot_episode_promotion.rs	application	executive	governed settled episode promotion
+crates/executive/src/application/robot_harness_composition.rs	composition	executive	robot harness composition boundary
+crates/executive/src/host/daemon/bootstrap/robot.rs	host	executive	robot daemon bootstrap integration
 crates/executive/src/adapters/agent_control/mod.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/agent_control/sqlite_repository.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/artifact/mod.rs	adapter	executive	concrete infrastructure integration

@@ -42,6 +42,10 @@
 2. 本文档 — 架构总览、技术选型、设计原则
 3. [roadmap/phases.md](roadmap/phases.md) — 6 Phase 路线图
 
+> 需要源码级理解而不是只看概念时，先读
+> [`docs/guide/agent-runtime-technical-guide.md`](../guide/agent-runtime-technical-guide.md) ——
+> 一份从项目介绍到 Runtime 逐章对应源码的教程。
+
 **按 Crate 查阅（推荐）：**
 
 | Crate | 目录 | 核心内容 |

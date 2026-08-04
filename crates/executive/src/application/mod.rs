@@ -24,7 +24,9 @@ pub mod daemon_react;
 pub mod daemon_turn;
 pub mod daemon_turn_engine;
 pub mod dasein_workspace_adapter;
+pub mod deterministic_outcome_verifier;
 pub mod durable_write;
+pub mod embodied_execution_adapter;
 pub mod embodied_recovery;
 pub mod embodiment_authority;
 pub mod embodiment_progress;
@@ -56,6 +58,7 @@ pub mod metacog_approval;
 pub mod orchestration;
 pub mod post_turn;
 pub mod pre_turn;
+pub mod robot_harness_composition;
 pub mod session_input;
 pub mod session_projection;
 pub mod session_service;
@@ -93,5 +96,6 @@ pub mod post_turn_projection;
 pub mod request_use_cases;
 
 pub mod robot_audit;
+pub mod robot_episode_promotion;
 
 pub mod turn_runtime_ports;

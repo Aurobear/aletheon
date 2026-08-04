@@ -18,17 +18,26 @@ pub struct WorldSnapshot {
     pub stale: bool,
 }
 
+/// Sentinel schema selecting the freshest snapshot across a device's schemas.
+/// A device may expose several observation schemas (e.g. `base_pose`,
+/// `base_twist`, `ground_truth_pose`) with independent sequence counters, so
+/// ports are consulted per schema; `ANY_SCHEMA` asks for the freshest one.
+pub const ANY_SCHEMA: &str = "*";
+
 /// Read-only port for embodied world state observation.
 #[async_trait]
 pub trait WorldStatePort: Send + Sync {
-    /// Get the latest snapshot for a device.
-    async fn latest(&self, device: &DeviceId) -> Option<WorldSnapshot>;
+    /// Get the latest snapshot for a device and observation schema.
+    /// Pass [`ANY_SCHEMA`] to get the freshest snapshot across schemas.
+    async fn latest(&self, device: &DeviceId, schema: &str) -> Option<WorldSnapshot>;
 
-    /// Wait for an observation with sequence greater than the given value,
-    /// up to the deadline. Returns None on timeout.
+    /// Wait for a snapshot of `schema` with sequence greater than the given
+    /// value, up to the deadline. Pass [`ANY_SCHEMA`] to wait on any schema.
+    /// Returns None on timeout.
     async fn observe_until(
         &self,
         device: &DeviceId,
+        schema: &str,
         after_sequence: u64,
         deadline: crate::MonoDeadline,
     ) -> Option<WorldSnapshot>;

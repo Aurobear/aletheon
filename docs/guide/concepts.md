@@ -159,5 +159,6 @@ installed-runtime capabilities.
 ## Further Reading
 
 - [Architecture Overview](../design/architecture-overview.md) -- full system architecture with crate graph
+- [Agent Runtime Technical Guide](./agent-runtime-technical-guide.md) -- project intro + source-level tutorial: from model call to a full turn
 - [Hook System](../design/executive/hook-system.md) -- 21 event types for lifecycle hooks
 - [Security Model](../design/corpus/security.md) -- policy engine, sandboxing, rollback

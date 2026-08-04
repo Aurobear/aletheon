@@ -45,7 +45,7 @@ use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 use super::request_ports::{
     admin_runtime_port, initialize_self_field, retention_admin_port, RequestFacadePorts,
 };
-
+use super::robot::bind_robot_progress_spine as bind;
 impl RequestHandler {
     pub async fn new(
         config: &DaemonConfig,
@@ -98,29 +98,24 @@ impl RequestHandler {
             ..Default::default()
         };
         let mut self_field = SelfField::new(self_field_config);
-
         // SelfField owns the durable Dasein ledger. Restore its reducer version
         // before any turn can submit a transition against the persisted ledger.
         initialize_self_field(&mut self_field, &data_dir).await?;
-
         // Tier 2a: install the Runtime PermissionManager as the permission authority.
         {
             use crate::core::permission_manager::PermissionManager;
             self_field.set_permission_authority(std::sync::Arc::new(PermissionManager::new()));
         }
         let self_field = Arc::new(Mutex::new(self_field));
-
         // Wire DaseinEventBridge to canonical events if available.
         if let Some(ref bus) = event_bus {
             let sf = self_field.lock().await;
             sf.wire_dasein_event_bridge(bus).await?;
         }
-
         let memory = super::memory::compose(super::memory::MemoryCompositionInput {
             data_dir: &data_dir,
             clock: clock.clone(),
         })?;
-
         // Every durable user-runtime store is rooted in the injected state
         // directory. Never rediscover HOME or a machine deployment path here.
         let aletheon_dir = data_dir.clone();
@@ -148,7 +143,6 @@ impl RequestHandler {
             GmailGoalDraftCoordinator::open(&objective_db_path)
                 .context("opening Gmail Goal draft coordinator")?,
         ));
-
         // M3: terminalize stale runtime calls before making their Goals ready.
         // Recovery records cancellation evidence and never invokes a runtime.
         {
@@ -775,26 +769,19 @@ impl RequestHandler {
             clock.clone(),
             durable_budget,
         ));
-        let hardware_clock: Arc<dyn hardware::MonotonicClock> =
-            Arc::new(super::embodiment::HardwareClockAdapter(clock.clone()));
-        let embodiment_workspace =
-            fabric::WorkspacePolicy::from_resolved_roots(data_dir.clone(), Vec::new())
-                .map_err(anyhow::Error::msg)
-                .context("resolving embodiment workspace")?;
-        let embodiment_port = super::embodiment::build_embodiment_port(
-            hardware_clock,
+        // Robot progress is projected via a deferred sink bound to the session
+        // event spine once it exists (the embodiment port is built earlier).
+        let (embodiment_port, progress_sink) = super::robot::build_robot_embodiment_port(
+            clock.clone(),
             kernel.admission(),
-            Arc::new(crate::application::embodiment_progress::NoopEmbodimentProgress),
-            fabric::ProcessId::new(),
-            fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
-            embodiment_workspace,
-            Some(config.embodiment_provider.clone()),
+            &data_dir,
+            &config.embodiment_provider,
         )
         .await?;
         tools
             .lock()
             .await
-            .register_robot_tools(embodiment_port)
+            .register_robot_tools(embodiment_port.clone())
             .context("registering governed robot tools")?;
         let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =
             Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
@@ -818,12 +805,32 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
-        let cognitive_sessions = production_cognitive_session_factory(
-            &runtime_config_snapshot,
-            clock.clone(),
-            recall_memory.clone(),
-            dasein_handle.clone(),
-        );
+        let cognitive_sessions: Arc<
+            dyn crate::application::harness_factory::CognitiveSessionFactory,
+        > = match runtime_config_snapshot.harness_kind {
+            cognit::harness::HarnessKind::Linear => production_cognitive_session_factory(
+                &runtime_config_snapshot,
+                clock.clone(),
+                recall_memory.clone(),
+                dasein_handle.clone(),
+            ),
+            cognit::harness::HarnessKind::Robot => {
+                let promoter = Some(Arc::new(
+                    crate::application::robot_episode_promotion::MnemosyneEpisodePromoter::new(
+                        fact_use_cases.clone(),
+                    ),
+                )
+                    as Arc<dyn cognit::harness::robot::EpisodePromotionPort>);
+                super::robot::build_robot_cognitive_session_factory(
+                    &config.embodiment_provider,
+                    embodiment_port.clone(),
+                    clock.clone(),
+                    &data_dir,
+                    promoter,
+                )
+                .await?
+            }
+        };
         let conscious_registry = Arc::new(
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),
@@ -1132,6 +1139,12 @@ impl RequestHandler {
         .await?;
         let memory_agent_control = agent_svc.agent_control.clone();
         let canonical_event_spine = agent_svc.canonical_event_spine;
+        bind(
+            &progress_sink,
+            canonical_event_spine.clone(),
+            session_id.clone(),
+        )
+        .await;
         corpus_group
             .hook_registry
             .lock()

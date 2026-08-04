@@ -1,6 +1,6 @@
 use executive::application::world_state::EmbodimentWorldState;
 use fabric::types::embodiment::DeviceId;
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
+use fabric::types::world_state::{WorldSnapshot, WorldStatePort, ANY_SCHEMA};
 use fabric::{MonoDeadline, MonoTime};
 use kernel::chronos::TestClock;
 use std::sync::Arc;
@@ -28,8 +28,8 @@ async fn per_device_latest_sequence() {
     ws.ingest(a.clone(), snapshot("a", 1, 1.0)).unwrap();
     ws.ingest(b.clone(), snapshot("b", 1, 10.0)).unwrap();
     ws.ingest(a.clone(), snapshot("a", 2, 2.0)).unwrap();
-    assert_eq!(ws.latest(&a).await.unwrap().sequence, 2);
-    assert_eq!(ws.latest(&b).await.unwrap().sequence, 1);
+    assert_eq!(ws.latest(&a, ANY_SCHEMA).await.unwrap().sequence, 2);
+    assert_eq!(ws.latest(&b, ANY_SCHEMA).await.unwrap().sequence, 1);
 }
 
 #[tokio::test]
@@ -41,7 +41,10 @@ async fn keep_separate_sequence_per_device() {
         .unwrap();
     // b's low sequence doesn't touch a
     assert_eq!(
-        ws.latest(&DeviceId("a".into())).await.unwrap().sequence,
+        ws.latest(&DeviceId("a".into()), ANY_SCHEMA)
+            .await
+            .unwrap()
+            .sequence,
         100
     );
 }
@@ -56,7 +59,7 @@ async fn observe_until_uses_injected_kernel_clock_for_expiry() {
 
     let observed = tokio::time::timeout(
         std::time::Duration::from_millis(20),
-        ws.observe_until(&device, 1, MonoDeadline(MonoTime(100))),
+        ws.observe_until(&device, ANY_SCHEMA, 1, MonoDeadline(MonoTime(100))),
     )
     .await
     .expect("expired deadline must not wait");

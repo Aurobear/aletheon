@@ -718,6 +718,8 @@ dependencies = [
  "futures",
  "kernel",
  "parking_lot",
+ "prost",
+ "prost-types",
  "reqwest",
  "rusqlite",
  "schemars",
@@ -729,6 +731,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "tonic",
+ "tonic-build",
  "tracing",
  "uuid",
 ]

@@ -21,6 +21,7 @@ mod params;
 pub mod production_embodiment;
 mod request;
 mod request_ports;
+mod robot;
 mod role_profiles;
 mod runtime;
 mod security;
