@@ -134,3 +134,36 @@ async fn audit_record_preserves_session_and_dynamic_command_risk() {
     assert_eq!(record["session_id"], "session-1");
     assert_eq!(record["risk_category"], "ReadOnly");
 }
+
+#[tokio::test]
+async fn read_only_cache_hit_gets_a_fresh_audit_record() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("cache-audit.jsonl");
+    let mut runner = ToolRunnerWithGuard::with_default_sandbox(
+        AuditLogger::new(path.clone()).unwrap(),
+        test_clock(),
+    );
+    let audit_id = runner
+        .record_read_only_cache_hit(
+            &StreamingReadTool,
+            &serde_json::json!({"path":"artifact.txt"}),
+            &make_ctx(),
+            "turn-cache",
+            &ToolResult {
+                content: "cached".into(),
+                is_error: false,
+                metadata: ToolResultMeta::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let record: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(path).unwrap().trim()).unwrap();
+    assert_eq!(record["audit_id"], audit_id.0.to_string());
+    assert_eq!(record["session_id"], "test-session");
+    assert!(record["loop_verdict"]
+        .as_str()
+        .unwrap()
+        .starts_with("cache_hit:"));
+}

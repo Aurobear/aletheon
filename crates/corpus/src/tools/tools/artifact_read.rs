@@ -54,6 +54,14 @@ impl Tool for ArtifactReadTool {
         PermissionLevel::L0
     }
 
+    fn cache_policy(&self) -> fabric::tool::ToolCachePolicy {
+        // Artifact IDs are SHA-256 content identities. Principal + Session
+        // scoping prevents one caller from learning another caller's artifact
+        // through the local result cache, while the digest itself supplies the
+        // dependency version required for safe reuse.
+        fabric::tool::ToolCachePolicy::Session { ttl_ms: 60_000 }
+    }
+
     fn exposure(&self) -> ToolExposure {
         ToolExposure::Deferred
     }
@@ -146,6 +154,10 @@ mod tests {
         let tool = ArtifactReadTool {
             root: Some(temp.path().to_path_buf()),
         };
+        assert_eq!(
+            tool.cache_policy(),
+            fabric::tool::ToolCachePolicy::Session { ttl_ms: 60_000 }
+        );
 
         let result = tool
             .execute(

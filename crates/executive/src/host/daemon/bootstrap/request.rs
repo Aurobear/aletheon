@@ -728,6 +728,7 @@ impl RequestHandler {
         // scope/query/filters/embedding model/policy version/write-generation.
         // Fail-open — the authoritative DefaultMemoryService is always reached
         // on cache miss, lock contention, or after any memory write.
+        let memory_metrics = local_memory_service.metrics().clone();
         let local_memory_service = mnemosyne::CachingMemoryService::new(
             Arc::new(local_memory_service),
             config.memory_policy.policy.version.clone(),
@@ -736,7 +737,8 @@ impl RequestHandler {
                 .then(|| embedding_config.model.clone()),
             512,
             std::time::Duration::from_secs(30),
-        );
+        )
+        .with_metrics(memory_metrics);
         let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(local_memory_service);
         let supplemental_runtime =
             crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(

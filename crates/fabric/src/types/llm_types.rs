@@ -126,6 +126,13 @@ pub struct InferenceCapabilities {
 /// These values are runtime metadata, not claims made by the model itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRuntimeFacts {
+    /// Configured provider identity at the routing boundary. `None` only for
+    /// legacy/in-process providers that cannot expose their route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    /// Concrete wire transport (`openai`, `anthropic`, `ollama`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
     pub effective_model_id: String,
     pub display_name: String,
     pub max_context_tokens: usize,
@@ -170,6 +177,8 @@ pub trait LlmProvider: Send + Sync {
     /// adapters should override this with the resolved model specification.
     fn runtime_facts(&self) -> ModelRuntimeFacts {
         ModelRuntimeFacts {
+            provider_id: None,
+            transport: None,
             effective_model_id: self.name().to_string(),
             display_name: self.name().to_string(),
             max_context_tokens: self.max_context_length(),

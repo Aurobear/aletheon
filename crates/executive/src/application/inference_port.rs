@@ -17,6 +17,12 @@ pub struct CoreInferenceRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCapabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_reporting: Option<String>,
     pub model_spec: String,
     pub display_name: String,
     pub max_context_tokens: usize,
@@ -130,6 +136,9 @@ pub struct PortLlmProvider {
     model_spec: String,
     display_name: String,
     max_context: usize,
+    provider_id: Option<String>,
+    transport: Option<String>,
+    cache_reporting: Option<String>,
 }
 
 impl PortLlmProvider {
@@ -148,6 +157,9 @@ impl PortLlmProvider {
             model_spec: capabilities.model_spec,
             display_name: capabilities.display_name,
             max_context: capabilities.max_context_tokens,
+            provider_id: capabilities.provider_id,
+            transport: capabilities.transport,
+            cache_reporting: capabilities.cache_reporting,
         })
     }
 
@@ -202,10 +214,12 @@ impl LlmProvider for PortLlmProvider {
 
     fn runtime_facts(&self) -> ModelRuntimeFacts {
         ModelRuntimeFacts {
+            provider_id: self.provider_id.clone(),
+            transport: self.transport.clone(),
             effective_model_id: self.model_spec.clone(),
             display_name: self.display_name.clone(),
             max_context_tokens: self.max_context,
-            cache_reporting: None,
+            cache_reporting: self.cache_reporting.clone(),
         }
     }
 
@@ -225,6 +239,9 @@ impl InferencePort for LocalInferencePort {
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         let display_name = self.provider.name().to_string();
         Ok(ModelCapabilities {
+            provider_id: None,
+            transport: self.provider.runtime_facts().transport,
+            cache_reporting: self.provider.runtime_facts().cache_reporting,
             model_spec: if model_spec.trim().is_empty() {
                 display_name.clone()
             } else {

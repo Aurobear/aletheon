@@ -16,6 +16,10 @@ pub struct SessionManager {
     pub session_id: String,
     messages: Vec<Message>,
     turn_count: usize,
+    /// Process-local monotonic identity of deliberate history rewrites. The
+    /// prefix-shape tracker is also process-local, so this need not become a
+    /// second durable Session authority.
+    rewrite_version: u64,
     compressor: AdvancedCompressor,
 }
 
@@ -31,6 +35,7 @@ impl SessionManager {
             session_id,
             messages: Vec::new(),
             turn_count: 0,
+            rewrite_version: 0,
             compressor: AdvancedCompressor::new(
                 (max_tokens as f64 * 0.25) as usize,
                 4_000,
@@ -93,6 +98,10 @@ impl SessionManager {
         self.turn_count
     }
 
+    pub fn rewrite_version(&self) -> u64 {
+        self.rewrite_version
+    }
+
     pub fn message_count(&self) -> usize {
         self.messages.len()
     }
@@ -102,6 +111,7 @@ impl SessionManager {
     pub async fn clear_history(&mut self) -> Result<()> {
         self.messages.clear();
         self.turn_count = 0;
+        self.rewrite_version = self.rewrite_version.saturating_add(1);
         info!(session_id = %self.session_id, "Session working projection cleared");
         Ok(())
     }
@@ -172,6 +182,7 @@ impl SessionManager {
             self.compressor.maybe_compact(&mut self.messages, llm).await
         }?;
         if compacted {
+            self.rewrite_version = self.rewrite_version.saturating_add(1);
             info!(
                 before,
                 after = self.messages.len(),
@@ -307,6 +318,7 @@ mod tests {
         manager.clear_history().await.unwrap();
         assert!(manager.history().is_empty());
         assert_eq!(manager.turn_count(), 0);
+        assert_eq!(manager.rewrite_version(), 1);
     }
 
     #[tokio::test]
@@ -325,6 +337,7 @@ mod tests {
         }
         let error = manager.force_compact(&FailingLlm).await.unwrap_err();
         assert!(error.to_string().contains("summary failed"));
+        assert_eq!(manager.rewrite_version(), 0);
     }
 
     #[tokio::test]
@@ -363,6 +376,7 @@ mod tests {
         }
         let turns_before = manager.turn_count();
         assert!(manager.compact_if_needed(&StubLlm).await.unwrap());
+        assert_eq!(manager.rewrite_version(), 1);
         assert_eq!(
             manager.turn_count(),
             turns_before,

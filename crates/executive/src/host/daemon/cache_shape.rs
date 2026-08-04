@@ -9,6 +9,8 @@
 use fabric::llm_types::{tool_schema_digest, ToolDefinition};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Version of the prefix-shape identity. Bump when digest inputs change.
 pub const INFERENCE_PREFIX_SHAPE_VERSION: u16 = 1;
@@ -116,6 +118,64 @@ pub enum LocalMissReason {
     ProviderMissOrEviction,
 }
 
+impl LocalMissReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProviderOrModelChanged => "provider_or_model_changed",
+            Self::TransportChanged => "transport_changed",
+            Self::SystemChanged => "system_changed",
+            Self::ToolSchemaChanged => "tool_schema_changed",
+            Self::ProfileChanged => "profile_changed",
+            Self::CompactionOrRewrite => "compaction_or_rewrite",
+            Self::ProviderMissOrEviction => "provider_miss_or_eviction",
+        }
+    }
+}
+
+static PROVIDER_OR_MODEL_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TRANSPORT_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
+static SYSTEM_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TOOL_SCHEMA_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
+static PROFILE_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
+static COMPACTION_OR_REWRITE_TOTAL: AtomicU64 = AtomicU64::new(0);
+static PROVIDER_MISS_OR_EVICTION_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PrefixShapeMetricsSnapshot {
+    pub provider_or_model_changed_total: u64,
+    pub transport_changed_total: u64,
+    pub system_changed_total: u64,
+    pub tool_schema_changed_total: u64,
+    pub profile_changed_total: u64,
+    pub compaction_or_rewrite_total: u64,
+    pub provider_miss_or_eviction_total: u64,
+}
+
+pub fn record_prefix_shape_miss(reason: LocalMissReason) {
+    let counter = match reason {
+        LocalMissReason::ProviderOrModelChanged => &PROVIDER_OR_MODEL_CHANGED_TOTAL,
+        LocalMissReason::TransportChanged => &TRANSPORT_CHANGED_TOTAL,
+        LocalMissReason::SystemChanged => &SYSTEM_CHANGED_TOTAL,
+        LocalMissReason::ToolSchemaChanged => &TOOL_SCHEMA_CHANGED_TOTAL,
+        LocalMissReason::ProfileChanged => &PROFILE_CHANGED_TOTAL,
+        LocalMissReason::CompactionOrRewrite => &COMPACTION_OR_REWRITE_TOTAL,
+        LocalMissReason::ProviderMissOrEviction => &PROVIDER_MISS_OR_EVICTION_TOTAL,
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn prefix_shape_metrics() -> PrefixShapeMetricsSnapshot {
+    PrefixShapeMetricsSnapshot {
+        provider_or_model_changed_total: PROVIDER_OR_MODEL_CHANGED_TOTAL.load(Ordering::Relaxed),
+        transport_changed_total: TRANSPORT_CHANGED_TOTAL.load(Ordering::Relaxed),
+        system_changed_total: SYSTEM_CHANGED_TOTAL.load(Ordering::Relaxed),
+        tool_schema_changed_total: TOOL_SCHEMA_CHANGED_TOTAL.load(Ordering::Relaxed),
+        profile_changed_total: PROFILE_CHANGED_TOTAL.load(Ordering::Relaxed),
+        compaction_or_rewrite_total: COMPACTION_OR_REWRITE_TOTAL.load(Ordering::Relaxed),
+        provider_miss_or_eviction_total: PROVIDER_MISS_OR_EVICTION_TOTAL.load(Ordering::Relaxed),
+    }
+}
+
 /// Deterministic bootstrap identity for an agent profile. Uses the active
 /// profile name so switching profiles changes the shape and produces a
 /// `ProfileChanged` local miss reason; the authoritative per-turn profile
@@ -129,6 +189,61 @@ pub fn agent_profile_digest(profile_name: &str) -> String {
 #[derive(Debug, Default, Clone)]
 pub struct PrefixShapeTracker {
     last: Option<InferencePrefixShape>,
+}
+
+/// Bounded per-thread tracker store for a long-running daemon. Tracking is
+/// diagnostic, so evicting the least-recently-used inactive thread only loses
+/// one comparison; it must never allow unbounded thread IDs to grow host
+/// memory.
+#[derive(Debug)]
+pub struct PrefixShapeTrackerStore {
+    trackers: HashMap<String, PrefixShapeTracker>,
+    order: VecDeque<String>,
+    capacity: usize,
+}
+
+impl Default for PrefixShapeTrackerStore {
+    fn default() -> Self {
+        Self::new(4_096)
+    }
+}
+
+impl PrefixShapeTrackerStore {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            trackers: HashMap::new(),
+            order: VecDeque::new(),
+            capacity: capacity.max(1),
+        }
+    }
+
+    pub fn track(
+        &mut self,
+        thread_id: &str,
+        shape: &InferencePrefixShape,
+    ) -> (bool, Option<LocalMissReason>) {
+        let had_previous = self.trackers.contains_key(thread_id);
+        if !had_previous {
+            while self.trackers.len() >= self.capacity {
+                if let Some(oldest) = self.order.pop_front() {
+                    self.trackers.remove(&oldest);
+                }
+            }
+        }
+        self.order.retain(|candidate| candidate != thread_id);
+        self.order.push_back(thread_id.to_owned());
+        let reason = self
+            .trackers
+            .entry(thread_id.to_owned())
+            .or_default()
+            .track(shape);
+        (had_previous, reason)
+    }
+
+    #[cfg(test)]
+    fn contains(&self, thread_id: &str) -> bool {
+        self.trackers.contains_key(thread_id)
+    }
 }
 
 impl PrefixShapeTracker {
@@ -303,6 +418,20 @@ mod tests {
         assert_eq!(tracker.track(&b), Some(LocalMissReason::ToolSchemaChanged));
         assert_eq!(tracker.track(&b), None);
         assert_eq!(tracker.last(), Some(&b));
+    }
+
+    #[test]
+    fn tracker_store_is_bounded_and_refreshes_recency() {
+        let mut store = PrefixShapeTrackerStore::new(2);
+        let a = shape("a", &[tool("alpha", "one")], "profile-a");
+        let b = shape("b", &[tool("alpha", "one")], "profile-a");
+        assert_eq!(store.track("thread-a", &a), (false, None));
+        assert_eq!(store.track("thread-b", &a), (false, None));
+        assert_eq!(store.track("thread-a", &a), (true, None));
+        assert_eq!(store.track("thread-c", &b), (false, None));
+        assert!(store.contains("thread-a"));
+        assert!(!store.contains("thread-b"));
+        assert!(store.contains("thread-c"));
     }
 
     #[test]

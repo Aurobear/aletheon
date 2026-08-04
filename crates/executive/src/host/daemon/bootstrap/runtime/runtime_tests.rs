@@ -23,6 +23,9 @@ mod goal_runtime_tests {
             crate::application::inference_port::InferenceError,
         > {
             Ok(crate::application::inference_port::ModelCapabilities {
+                provider_id: None,
+                transport: None,
+                cache_reporting: None,
                 model_spec: model_spec.into(),
                 display_name: model_spec.into(),
                 max_context_tokens: 128_000,

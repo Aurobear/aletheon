@@ -1,5 +1,39 @@
 use super::{ReActLoop, PLAN_MODE_MARKER};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DynamicFragmentKind {
+    PlanMode,
+    MemoryUpdate,
+    GoalContext,
+    DaseinState,
+    CurrentInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DynamicMessageFragment {
+    kind: DynamicFragmentKind,
+    content: String,
+}
+
+impl DynamicMessageFragment {
+    fn render(&self) -> String {
+        match self.kind {
+            DynamicFragmentKind::PlanMode | DynamicFragmentKind::CurrentInput => {
+                self.content.clone()
+            }
+            DynamicFragmentKind::MemoryUpdate => {
+                format!("<memory-update>\n{}\n</memory-update>", self.content)
+            }
+            DynamicFragmentKind::GoalContext => {
+                format!("<goal-context>\n{}\n</goal-context>", self.content)
+            }
+            DynamicFragmentKind::DaseinState => {
+                format!("<dasein-state>\n{}\n</dasein-state>", self.content)
+            }
+        }
+    }
+}
+
 impl ReActLoop {
     /// Enable/disable plan mode. Injected into user message, NOT system prompt.
     pub fn set_plan_mode(&mut self, enabled: bool) {
@@ -22,29 +56,7 @@ impl ReActLoop {
     /// Compose user message with mid-session injections.
     /// Changes go here, NOT into system prompt, to preserve cache stability.
     pub fn compose_user_message(&self, input: &str) -> String {
-        let mut parts = Vec::new();
-
-        if self.plan_mode {
-            parts.push(PLAN_MODE_MARKER.to_string());
-        }
-
-        if !self.pending_memory.is_empty() {
-            let updates = self
-                .pending_memory
-                .iter()
-                .map(|m| format!("- {m}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            parts.push(format!("<memory-update>\n{updates}\n</memory-update>"));
-        }
-
-        let goal_ctx = self.goal_tracker.get_context();
-        if !goal_ctx.is_empty() {
-            parts.push(format!("<goal-context>\n{goal_ctx}\n</goal-context>"));
-        }
-
-        parts.push(input.to_string());
-        parts.join("\n\n")
+        self.compose_dynamic_fragments(input, None)
     }
 
     /// Compose user message with mid-session injections plus DaseinContext.
@@ -58,10 +70,17 @@ impl ReActLoop {
         input: &str,
         dasein_context: Option<&str>,
     ) -> String {
-        let mut parts = Vec::new();
+        self.compose_dynamic_fragments(input, dasein_context)
+    }
+
+    fn compose_dynamic_fragments(&self, input: &str, dasein_context: Option<&str>) -> String {
+        let mut fragments = Vec::new();
 
         if self.plan_mode {
-            parts.push(PLAN_MODE_MARKER.to_string());
+            fragments.push(DynamicMessageFragment {
+                kind: DynamicFragmentKind::PlanMode,
+                content: PLAN_MODE_MARKER.to_owned(),
+            });
         }
 
         if !self.pending_memory.is_empty() {
@@ -71,21 +90,37 @@ impl ReActLoop {
                 .map(|m| format!("- {m}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            parts.push(format!("<memory-update>\n{updates}\n</memory-update>"));
+            fragments.push(DynamicMessageFragment {
+                kind: DynamicFragmentKind::MemoryUpdate,
+                content: updates,
+            });
         }
 
         let goal_ctx = self.goal_tracker.get_context();
         if !goal_ctx.is_empty() {
-            parts.push(format!("<goal-context>\n{goal_ctx}\n</goal-context>"));
+            fragments.push(DynamicMessageFragment {
+                kind: DynamicFragmentKind::GoalContext,
+                content: goal_ctx,
+            });
         }
 
         if let Some(ctx) = dasein_context {
             if !ctx.is_empty() {
-                parts.push(format!("<dasein-state>\n{ctx}\n</dasein-state>"));
+                fragments.push(DynamicMessageFragment {
+                    kind: DynamicFragmentKind::DaseinState,
+                    content: ctx.to_owned(),
+                });
             }
         }
 
-        parts.push(input.to_string());
-        parts.join("\n\n")
+        fragments.push(DynamicMessageFragment {
+            kind: DynamicFragmentKind::CurrentInput,
+            content: input.to_owned(),
+        });
+        fragments
+            .iter()
+            .map(DynamicMessageFragment::render)
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 }

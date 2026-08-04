@@ -51,6 +51,9 @@ pub struct BeginUserResult {
     pub session_id: String,
     pub turn_count: usize,
     pub history_budget_tokens: usize,
+    /// Monotonic process-local version of deliberate history compaction or
+    /// rewrite for this canonical Session projection.
+    pub rewrite_version: u64,
 }
 
 #[async_trait]

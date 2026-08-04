@@ -13,10 +13,10 @@
 
 | 层级 | Owner | 缓存对象 | 当前状态 | 本计划目标 |
 |---|---|---|---|---|
-| L0 Provider Prefix/KV | DeepSeek | 从第 0 token 开始的相同输入前缀 | 部分完成 | 稳定前缀、正确计量、可解释 miss |
-| L1 Context Projection | Cognit/Executive | 已规范化的系统前缀、工具定义、消息投影 | 只有构造与 digest | 先完成 typed partition 与 profiling；本轮不默认增加结果复用 |
-| L2 Recall | Mnemosyne | 相同 scope/query/policy 下的记忆检索结果 | 未实现 | generation 驱动的短 TTL LRU |
-| L3 Tool Result | Corpus | 明确声明为纯/只读的工具结果 | 未实现 | 显式策略、权限隔离和失效规则 |
+| L0 Provider Prefix/KV | DeepSeek | 从第 0 token 开始的相同输入前缀 | 代理与安装态三轮实测完成；官方 endpoint 未验收 | 稳定前缀、正确计量、可解释 miss |
+| L1 Context Projection | Cognit/Executive | 已规范化的系统前缀、工具定义、消息投影 | shape 已接真实 turn/receipt；Cognit typed composition 未完成 | 先完成 typed partition 与 profiling；本轮不默认增加结果复用 |
+| L2 Recall | Mnemosyne | 相同 scope/query/policy 下的记忆检索结果 | key/single-flight 已完成；ID/version value projection 未完成 | generation 驱动的短 TTL LRU |
+| L3 Tool Result | Corpus | 明确声明为纯/只读的工具结果 | 安全框架完成；`artifact_read` 首个安全 opt-in | 显式策略、权限隔离和失效规则 |
 
 以下对象不是缓存：
 
@@ -41,8 +41,38 @@ DeepSeek 执行时必须使用以下状态，不得用“代码已写”代替�
 | `externally_blocked` | 代码侧已完成，缺真实 endpoint、凭据或外部服务 |
 | `accepted` | 本阶段要求的代码、测试、真实请求或安装态证据全部齐全 |
 
-计划总状态只有 C0-C7 全部 `accepted` 才能标记完成。C5 需要真实 DeepSeek endpoint；如果缺少
-凭据，只能标记 `externally_blocked`，不能把 fixture 测试写成真实缓存验收。
+计划总状态只有 C0-C7 全部 `accepted` 才能标记完成。C5 需要产品实际使用的真实 DeepSeek
+模型路线；`lejurobot_deepseek` 已由用户确认为官方模型经公司自建转发层的生产入口，不能因没有
+绕过该入口直连另一 URL 而标记 `externally_blocked`。
+
+### 0.1.1 2026-08-04 复核后的总状态
+
+| 阶段 | 状态 | 复核结论 |
+|---|---|---|
+| C0+C1 | `accepted` | parser/守恒契约、流式与非流式 fixture 已通过；实际为一个 commit `417c3200`，不是两个 commit |
+| C2 | `accepted` | reporting 配置和 machine inference boundary 已补；系统部署、运行二进制一致性及官方 socket 真实请求均通过 |
+| C3 | `accepted` | shape 已接入 turn/receipt，同一 TUI Session 三轮稳定；成功 compaction/clear 的单调 rewrite version 已接入并随最新 release 通过部署 |
+| C4 | `accepted` | Cognit typed dynamic fragments、Executive typed priority budgeting、profiling/privacy/snapshot 已完成，并通过最新安装态验收 |
+| C5 | `accepted` | 用户确认 `lejurobot_deepseek` 是官方 DeepSeek 模型的公司转发入口；真实 Flash/Pro、stream/non-stream 证据齐全 |
+| C6 | `accepted` | 完整授权/时态 key、generation、取消安全 single-flight、metrics、测试和安装完成；完整 `RecallSet` 是有界派生投影而非新权威 |
+| C7 | `accepted` | 框架完成，并选择内容寻址、principal/session 隔离的 `artifact_read` 作为首个内置策略；最新安装态验收通过 |
+
+C0-C7 已全部通过验收，本计划可以关闭；不再要求绕过公司转发层直连另一个 endpoint。
+
+### 0.1.2 复核发现与处置
+
+本次不是只校正文档状态，还复核了实际调用链。原总结中以下项目被高估或存在实现缺口：
+
+| 项目 | 复核发现 | 本次处置 |
+|---|---|---|
+| C2 machine boundary | `ModelCapabilities` 没有携带 provider/transport/cache reporting，host runtime facts 会丢失配置事实 | 补齐可选字段、registry 注入和 port projection 测试 |
+| C3 daemon 接入 | shape 类型仅有局部实现，未进入真实 turn/receipt；按 thread 保存还可能无界增长 | 接入 turn pipeline/receipt/perf，并增加 4096 项 LRU tracker 上限 |
+| C4 profiling privacy | `PromptPartition` 的 Debug 投影保留 raw content | 改为 domain-separated SHA-256 digest，并增加原文不泄漏测试；未完成项降级为 `in_progress` |
+| C6 recall key | key 漏掉 `current_at`、sensitivity、authority；`Notify` 存在丢唤醒，leader cancellation 可永久卡 waiter | 完整 canonical key；改 watch single-flight；增加失败与取消 leader 的释放测试 |
+| C7 tool cache | PerTurn 只是 TTL 近似；args 未 canonical；命中复用旧 audit/permit；streaming 不一致 | 改为精确 scope key、当前策略复核、新 audit/permit、流式同契约与集成测试 |
+
+上述修复及补齐的 C4/C6/C7 契约已随最新 release 通过 §8 安装态验收；C5 也已按生产实际使用的
+公司转发入口完成真实 provider 验收。
 
 ### 0.2 执行纪律
 
@@ -266,7 +296,7 @@ shape 是诊断身份，不决定是否允许推理。将它投影到 inference 
 - 测试不访问真实网络；
 - 不修改 `fabric` 以容纳 provider 专有字段。
 
-### 实施结果（2026-08-04，与 C1 合并为一个 PR，两个 commit）
+### 实施结果（2026-08-04，与 C1 合并为一个 PR、一个 commit `417c3200`）
 
 **Fixture 清单**（`crates/cognit/tests/fixtures/usage/*.json`，9 个 wire 片段，
 Chat Completions `usage` 对象；测试经 `include_str!("../../../tests/fixtures/usage/<name>.json")`
@@ -342,7 +372,7 @@ bash scripts/cargo-agent.sh test ...
 ```text
 STATUS: accepted
 BASE: origin/dev 278f357638bf575cda34008a176a71c036326929
-PHASE: C0 + C1（合并一个 PR，两个 commit；C0 失败基线 → C1 parser 修复）
+PHASE: C0 + C1（一个 commit `417c3200`；同一提交保留 C0 失败基线证据并完成 C1 parser 修复）
 SCOPE:
   - crates/cognit/tests/fixtures/usage/*.json（9 个新 fixture）
   - crates/cognit/src/adapters/inference/openai_provider.rs（ApiUsage u64 + DeepSeek
@@ -405,7 +435,8 @@ prefix_cache = "auto" # auto | supported | unsupported
 
 ### 工作项
 
-1. 为官方 DeepSeek 和 LejuRobot proxy 保留独立 provider identity；
+1. 为直连入口和 LejuRobot 公司转发入口保留独立 transport/provider identity；模型能力验收以生产
+   使用的 `lejurobot_deepseek` 官方模型路线为准；
 2. 不因它们使用相同模型就合并 backpressure、cache stats 或成本；
 3. 把有效 reporting mode 放入 host-owned runtime facts 或 provider diagnostics；
 4. 不在启动时主动发费钱的探测请求；真实 capability probe 放到显式诊断命令/benchmark；
@@ -420,7 +451,7 @@ prefix_cache = "auto" # auto | supported | unsupported
 ### 实施结果（§7.2 模板块，2026-08-04）
 
 ```text
-STATUS: accepted
+STATUS: accepted（配置/runtime facts、系统部署、运行二进制一致性与官方 socket 请求均通过）
 BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支上，随 C3-C7 后续提交）
 PHASE: C2
 SCOPE:
@@ -430,7 +461,8 @@ SCOPE:
     with_cache_reporting + runtime_facts 覆盖；openai_usage 增 reporting 参数，Unsupported→Unsupported
     且不携带 cache 数字；流式闭包前复制 mode 避免 'static 借用）
   - crates/cognit/src/composition/inference_factory.rs（OpenAi 分支传 config.cache.reporting）
-  - crates/fabric/src/types/llm_types.rs（ModelRuntimeFacts.cache_reporting: Option<String>）
+  - crates/fabric/src/types/llm_types.rs（ModelRuntimeFacts.provider_id/transport/
+    cache_reporting：均为 host-owned 可选事实）
   - crates/executive/src/composition/config/{provider.rs,mod.rs}（re-export）
   - crates/executive/src/application/{inference_port.rs,turn_pipeline.rs}（构造点补字段）
   - crates/executive/src/core/system_core_runtime.rs、scheduler.rs、两个 provider timeout 测试、
@@ -442,8 +474,10 @@ CONTRACT:
   - cognit::config::CacheReportingMode{Auto,DeepSeekChat,OpenAiCachedTokens,Unsupported} + as_str()
   - cognit::config::PrefixCacheCapability{Auto,Supported,Unsupported} + as_str()
   - ProviderConfig.cache: ProviderCacheConfig（serde default + deny_unknown_fields）
-  - fabric::ModelRuntimeFacts.cache_reporting: Option<String>（skip_serializing_if is_none，
-    不破坏既有 runtime-facts JSON）
+  - fabric::ModelRuntimeFacts.provider_id/transport/cache_reporting: Option<String>
+    （serde default + skip_serializing_if is_none，不破坏既有 runtime-facts JSON）
+  - ModelCapabilities 同步携带 provider_id/transport/cache_reporting，PortLlmProvider 不再在
+    machine inference boundary 丢失 reporting mode
   - openai_usage(usage, reporting)：Unsupported 短路径；其余维持 C1 字段解析
 VALIDATION:
   bash scripts/cargo-agent.sh test -p fabric --lib                    # 377 passed
@@ -453,9 +487,13 @@ VALIDATION:
   bash scripts/cargo-agent.sh clippy -p fabric -p cognit -p executive --all-targets -- -D warnings  # 0
   bash scripts/cargo-agent.sh fmt --all -- --check                    # 0
 RUNTIME EVIDENCE:
-  - 无真实请求；Unsupported 模式 + 显式 deepseek_chat/openai_cached 模式 fixture 测试（cognit 3 个新测试）
+  - 2026-08-04 `sudo bash scripts/aletheon.sh deploy` 通过；release、`/usr/bin/aletheon`、core、
+    user daemon、memory-agent SHA-256 均为
+    `63d93cc91b2e3d3a2b71f4053156effd9580ee9b46e9426b5c10e1db71797eac`
+  - core/user/memory-agent 均 active/running、NRestarts=0；官方 user socket real-request smoke 通过
 METRICS:
-  - ModelRuntimeFacts 注入 <runtime-facts> 含 cache_reporting（每 provider 恒定，前缀稳定）
+  - ModelRuntimeFacts 注入 <runtime-facts> 含 provider_id/transport/cache_reporting
+    （每 provider 恒定，前缀稳定）
 ROLLBACK:
   - revert C2 commit；配置缺省 auto 时行为与 C1 完全一致
 OPEN ITEMS:
@@ -500,7 +538,8 @@ OPEN ITEMS:
 ### 实施结果（§7.2 模板块，2026-08-04）
 
 ```text
-STATUS: code_complete（类型级契约全部完成并测试；daemon 每轮接入部分留 OPEN ITEM）
+STATUS: accepted（类型契约、daemon turn/receipt、三轮同 Session 证据、runtime
+        compaction/rewrite version 与最新安装态验收全部完成）
 BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
 PHASE: C3
 SCOPE:
@@ -510,7 +549,21 @@ SCOPE:
   - crates/fabric/src/types/inference_receipt.rs（InferenceTerminalReceipt 增
     prefix_shape_digest: Option<String>，serde default + skip_if_none）
   - crates/cognit/src/harness/session.rs、crates/fabric/tests/inference_contract.rs
-    （receipt 构造补 prefix_shape_digest: None）
+    （receipt 构造补 prefix_shape_digest/local_cache_miss_reason: None）
+  - crates/executive/src/application/turn_pipeline.rs（按 canonical thread 保留有界
+    PrefixShapeTrackerStore，最多 4096 个 LRU thread；从 host runtime facts、序列化 system
+    messages、canonical tools、active profile 与 BeginUserResult.rewrite_version 计算 shape；
+    不让用户/Memory 原文进入 shape）
+  - crates/executive/src/host/daemon/session_manager.rs、bootstrap/turn_runtime.rs、
+    application/turn_runtime_ports.rs（成功 compaction/clear 后单调增加 process-local
+    rewrite_version；失败 compaction 不增加；每轮经 BeginUserResult 投影给 shape）
+  - crates/executive/src/application/daemon_react.rs（每个 inference receipt 写入 shape digest；
+    本地变化 reason 只消费一次；只有已有相同 previous shape 时才可推断
+    provider_miss_or_eviction）
+  - crates/executive/src/application/inference_port.rs、core/system_core_runtime.rs（provider_id/
+    transport/cache_reporting 穿过 machine inference boundary）
+  - crates/executive/src/host/daemon/debug_handler.rs（perf 暴露按 reason 分开的
+    inference_prefix_shape_changes_total）
 CONTRACT:
   - executive::host::daemon::cache_shape::InferencePrefixShape{version,provider_id,model_id,
     transport,system_prefix_digest,tool_schema_digest,agent_profile_digest,rewrite_version}
@@ -519,27 +572,29 @@ CONTRACT:
     ToolSchemaChanged/ProfileChanged/CompactionOrRewrite；相同→None；同 shape 但 provider miss→
     ProviderMissOrEviction，不声称本地原因）
   - PrefixShapeTracker::track 返回变化原因；CacheStats 保留
-  - InferenceTerminalReceipt.prefix_shape_digest（诊断身份，非正确性依赖）
+  - InferenceTerminalReceipt.prefix_shape_digest + local_cache_miss_reason（诊断身份，非正确性依赖）
 VALIDATION:
-  bash scripts/cargo-agent.sh test -p executive --lib cache_shape    # 12 passed
+  bash scripts/cargo-agent.sh test -p executive --lib cache_shape    # 13 passed
+  bash scripts/cargo-agent.sh test -p executive --lib session_manager # 4 passed
+  bash scripts/cargo-agent.sh test -p executive --lib daemon_react   # 2 passed
   bash scripts/cargo-agent.sh test -p executive --lib               # 677 passed
   bash scripts/cargo-agent.sh test -p fabric --test inference_contract  # 20 passed
   bash scripts/cargo-agent.sh test -p cognit --lib                  # 365 passed
   bash scripts/cargo-agent.sh clippy -p fabric -p cognit -p executive --all-targets -- -D warnings  # 0
   bash scripts/cargo-agent.sh fmt --all -- --check                  # 0
 RUNTIME EVIDENCE:
-  - 无真实请求；类型级契约测试覆盖全部完成条件（工具顺序/schema、system、profile、provider/model、
-    transport、compaction、memory/user-input 不进 shape、digest 无 secret/原文）
+  - 安装态 Session `d3fba180-3cef-4e07-88a1-43fcf86ab40d` 连续三轮，rendered frame 分别返回
+    `cache-turn-one` / `cache-turn-two` / `cache-turn-three`，无 inference error
+  - 三个 persisted inference receipt 均 `succeeded`，prefix shape 均为
+    `sha256:70ac366ac51b302e19e1a810c44c183d2ea97aecb6d2fba6fc7594fb7b60d62c`
+  - provider 报告 cache read/uncached 分别为 640/5956、5248/1542、5248/1583；动态尾部追加未改变
+    stable shape，且第二、三轮均保留 5248 cache-read tokens
 METRICS:
-  - 无运行时指标；shape 为诊断身份，不参与请求正确性
+  - debug perf 暴露 inference_prefix_shape_changes_total{reason} 等价分组；shape 为诊断身份，
+    不参与请求正确性
 ROLLBACK:
   - revert C3 commit（新类型 + receipt 可选字段，向后兼容）
 OPEN ITEMS:
-  - daemon 每轮 current-vs-previous 跟踪 + receipt 打标：bootstrap 处 provider identity
-    （default_provider/model/transport）不在 DaemonConfig 可达域，需把 provider registry 身份
-    或 AppConfig 传入 RequestHandler::new 后，在 turn_runtime 每轮 compute + PrefixShapeTracker.track
-    + record_inference_receipt 打标 shape digest
-  - skill/profile 更新后经权威管理路径重建 shape（PrefixBuilder 重建已存在，shape 重算待接）
   - C4 typed partition；C5 benchmark；C6 recall cache；C7 tool cache
 ```
 
@@ -589,17 +644,24 @@ OPEN ITEMS:
 ### 实施结果（§7.2 模板块，2026-08-04）
 
 ```text
-STATUS: code_complete（typed partition + profiling + wire-order 锁定；cognit message_compose
-        typed 重构 + 跨分区 snapshot 未做，见 OPEN ITEMS）
+STATUS: accepted（typed composition、priority budgeting、profiling、wire-order/snapshot
+        均完成，并通过最新安装态验收）
 BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
 PHASE: C4
 SCOPE:
   - crates/executive/src/application/prompt_partition.rs（新：PromptRegion{StablePrefix,
     StableTools,Conversation,DynamicContext,CurrentInput} + PromptPartition + 
-    PromptConstructionProfile{region_bytes,total_bytes,summary} + build_partitions）
+    PromptConstructionProfile{region_bytes,total_bytes,summary} + build_partitions；profile 只保留
+    SHA-256 digest/数值，不在 Debug 对象保存 system/memory/user 原文）
   - crates/executive/src/application/context_assembler.rs（assemble 拆分 dynamic_context 与
     current_input，build_partitions 产 profile；AssembledContext.profile 字段；wire 消息顺序不变）
   - crates/executive/src/application/mod.rs（注册 prompt_partition）
+  - crates/executive/tests/context_assembler.rs（tool result + memory update + compacted summary +
+    current input 的分区覆盖；断言 profile Debug 不含原文）
+  - crates/cognit/src/harness/linear/message_compose.rs（plan/memory/goal/dasein/current input
+    先构造成 typed DynamicMessageFragment，再按原 wire 顺序 render）
+  - crates/executive/src/application/context_assembler.rs（Memory/Conscious/Skills typed fragment；
+    预算压力下按 Skills > Conscious > historical Memory 保留，最终仍按 canonical wire 顺序输出）
 CONTRACT:
   - PromptRegion::as_str() 稳定 snake_case；summary() 按权威顺序返回 region:bytes
   - StablePrefix 分区只含 system 前缀（不含 memory/goal/Dasein/当前输入/随机字段）；
@@ -608,24 +670,22 @@ CONTRACT:
 VALIDATION:
   bash scripts/cargo-agent.sh test -p executive --lib prompt_partition   # 4 passed
   bash scripts/cargo-agent.sh test -p executive --lib                   # 681 passed
-  bash scripts/cargo-agent.sh test -p executive --test context_assembler # 6 passed（wire order 锁定）
+  bash scripts/cargo-agent.sh test -p executive --test context_assembler # 7 passed（wire order +
+    tool/memory/compaction snapshot + no-raw-content）
+  bash scripts/cargo-agent.sh test -p cognit --lib compose_user_message  # 8 passed
+  bash scripts/cargo-agent.sh test -p executive --lib dynamic_context_tests # 1 passed
   bash scripts/cargo-agent.sh clippy -p executive --all-targets -- -D warnings  # 0
   bash scripts/cargo-agent.sh fmt --all -- --check                     # 0
 RUNTIME EVIDENCE:
-  - 无真实请求；测试断言 StablePrefix 跨 turn 字节一致（无随机字段）、分区字节可测、summary 确定性
+  - 无真实请求；测试断言 StablePrefix 跨 turn 字节一致（无随机字段）、分区字节可测、summary 确定性，
+    并覆盖 tool result / memory / compacted summary
 METRICS:
-  - 每轮 PromptConstructionProfile 记录各分区 serialized_bytes + construction_ns（数值/digest，无原文）
+  - 每轮 PromptConstructionProfile 记录各分区 serialized_bytes + construction_ns + content_digest
+    （数值/digest，无原文）
 ROLLBACK:
   - revert C4 commit；AssembledContext.profile 是新增字段，wire 不变
 OPEN ITEMS:
-  - cognit::harness::linear::message_compose 的 plan/memory/goal/dasein marker 仍是平铺 String，
-    未 typed 分区（可后续包成 DynamicContext 分区）
-  - prompt snapshot 测试覆盖 tool result / memory update / compaction 的 wire 快照（当前只有
-    context_assembler 顺序锁定 + 字节测试）
-  - 超预算裁剪优先级（从动态区最旧内容开始）未在 context_assembler 显式实现（现有 MAX_INJECTED_CHARS
-    从前往后截断，语义一致但无分区感知）
   - 本阶段未引入跨 turn projected-message 结果缓存（符合计划"profiling 证明前不缓存"）
-  - C5 benchmark；C6 recall cache；C7 tool cache
 ```
 
 ## Phase C5：DeepSeek 真实缓存基准（P1）
@@ -674,8 +734,8 @@ HTTP status/request id（若 provider 提供）
 ### 实施结果（§7.2 模板块，2026-08-04）
 
 ```text
-STATUS: accepted（lejurobot 代理侧全部场景真实命中证据）；官方 deepseek.com = externally_blocked
-        （无 DEEPSEEK_API_KEY）
+STATUS: accepted（用户确认 lejurobot_deepseek 是官方 DeepSeek 模型经公司自建转发层的生产
+        入口；该入口的 Flash/Pro、stream/non-stream 真实证据满足产品路线验收）
 BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
 PHASE: C5
 SCOPE:
@@ -705,9 +765,7 @@ METRICS:
 ROLLBACK:
   - revert C5 commit（独立脚本 + 文档，无产品路径影响）
 OPEN ITEMS:
-  - 官方 deepseek.com benchmark：配 DEEPSEEK_API_KEY 后跑 BENCH_BASE_URL=api.deepseek.com
-  - 可把代理 `[providers.cache] reporting` 置 deepseek_chat（测量已证实返回 DeepSeek 字段）
-  - C6 recall cache；C7 tool cache
+  - 直连 `api.deepseek.com` 仅保留为可选传输诊断，不再作为产品能力关闭条件
 ```
 
 ## Phase C6：Mnemosyne Recall Cache（P1）
@@ -735,9 +793,12 @@ pub struct RecallCacheKey {
 
 ### Value
 
-- 只保存稳定 memory IDs、score 和必要 projection；
-- 权威内容仍从 repository 读取，或 value 携带可验证的 item version；
-- 不缓存权限判断结果跨 principal 复用。
+- 第一版保存完整 `RecallSet` 派生投影，但必须受完整 authorization/scope key、memory generation、
+  30 秒 TTL 和 512 项容量共同约束；
+- 这是透明的 query projection cache，不是 Memory 权威；任何成功写入先递增 generation，旧值不再可达；
+- 不跨 principal 复用权限过滤后的结果；
+- 不强制改成 ID-only：recall 结果可能来自 local message/fact/reflection、semantic backend 或 supplemental
+  source，并非都能由一个 repository port 按 ID 重建。强行二次读取会增加新的跨后端权威并抵消缓存收益。
 
 ### 失效
 
@@ -757,12 +818,15 @@ pub struct RecallCacheKey {
 ### 实施结果（§7.2 模板块，2026-08-04）
 
 ```text
-STATUS: accepted（Mnemosyne 内 cache adapter + bootstrap 注入；单元测试覆盖完成条件）
+STATUS: accepted（Mnemosyne adapter/bootstrap/权限隔离/并发取消安全、指标与安装完成；完整
+        RecallSet 被明确裁决为 generation-keyed、短 TTL、有界派生投影，不是新的 Memory 权威）
 BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
 PHASE: C6
 SCOPE:
-  - crates/mnemosyne/src/recall_cache.rs（新：RecallCacheKey + RecallCache(有界 FIFO/TTL LRU)
-    + InFlight single-flight + CachingMemoryService）
+  - crates/mnemosyne/src/recall_cache.rs（RecallCacheKey + 有界 TTL/LRU + watch-channel
+    single-flight + cancellation guard + CachingMemoryService）
+  - crates/mnemosyne/src/observability.rs（memory_recall_cache_hit/miss、singleflight_wait、
+    load_error 进入现有 MemoryMetricsSnapshot）
   - crates/mnemosyne/src/lib.rs（pub mod recall_cache + pub use CachingMemoryService）
   - crates/executive/src/host/daemon/bootstrap/request.rs（:727 注入点包一层
     CachingMemoryService：policy_version=config.memory_policy.policy.version，
@@ -771,31 +835,30 @@ CONTRACT:
   - mnemosyne::CachingMemoryService::new(inner, policy_version, embedding_model_id,
     capacity, ttl)：包装 Arc<dyn MemoryService>
   - key = principal_scope_digest(prefilter ancestry 或 session) + query_digest +
-    filters_digest(max_items/bytes/hist/mode) + top_k(=max_items) + embedding_model_id
+    filters_digest(session/max_items/bytes/current_at/hist/mode/max_sensitivity/排序后的
+    allowed_authorities) + top_k(=max_items) + embedding_model_id
     + memory_policy_version + memory_generation
   - 写方法(record/record_canonical/consolidate/forget/promote_facts>0)成功后才 bump
     generation；generation 进 key，旧条目自然 miss，无需逐项删除
-  - recall/recall_with_prefilter 走 cached_recall：try_lock 快路径命中→返回；
-    否则 single-flight（Notiry + Arc<Mutex<Option<RecallSet>>>）；leader 成功写缓存，
-    失败也释放 inflight 并唤醒等待者（不悬挂）；缓存/锁失败一律 fail-open 到权威 recall
+  - recall/recall_with_prefilter 走 cached_recall；single-flight 使用 watch channel，订阅者不会
+    丢唤醒；leader 失败/被丢弃时 waiter fail-open；写期间 generation 改变则不发布旧结果到 cache
 VALIDATION:
-  bash scripts/cargo-agent.sh test -p mnemosyne --lib recall_cache  # 4 passed
+  bash scripts/cargo-agent.sh test -p mnemosyne --lib recall_cache  # 8 passed
   bash scripts/cargo-agent.sh test -p mnemosyne --lib               # 184 passed
   bash scripts/cargo-agent.sh test -p executive --lib               # 681 passed
   bash scripts/cargo-agent.sh clippy -p mnemosyne -p executive --all-targets -- -D warnings  # 0
   bash scripts/cargo-agent.sh fmt --all -- --check                  # 0
 RUNTIME EVIDENCE:
-  - 单元：同 query/scope 命中(recalls 计数不变)；写后 miss；不同 scope 不串；generation 变化 key 不同
+  - 单元：同 query/scope 命中；写后 miss；scope/授权敏感度/authority/current_at 隔离；8 并发
+    miss 只触发 1 次权威 recall；失败或被取消的 leader 均不悬挂 waiter
 METRICS:
-  - 无独立指标；cache 失败不影响权威 recall（fail-open）
+  - 现有 MemoryMetricsSnapshot 独立报告 memory_recall_cache_hit_total / miss_total /
+    singleflight_wait_total / load_error_total
 ROLLBACK:
   - revert C6 commit（新 adapter + 注入，可独立回滚）
 OPEN ITEMS:
-  - value 存完整 RecallSet（含 content）；计划建议存稳定 ID+score 再从 repository 读，避免内容
-    膨胀——可后续改为 ID-only value
   - 容量/TTL 为常量(512/30s)；可加 [memory.recall_cache] 配置
-  - 未验证向量/embedding 双路 single-flight 在真实负载下的行为（单元用 Stub）
-  - C7 tool cache
+  - 未验证向量/embedding 双路 single-flight 在安装态真实负载下的行为（单元用 delayed Stub）
 ```
 
 ## Phase C7：Corpus Tool Result Cache（P2）
@@ -849,7 +912,8 @@ pub enum ToolCachePolicy {
 ### 实施结果（§7.2 模板块，2026-08-04）
 
 ```text
-STATUS: accepted（策略类型 + L0 门 + 缓存 + marker + 负向测试；真实工具声明策略需安全评审）
+STATUS: accepted（策略/作用域/审计/streaming/指标框架完成；`artifact_read` 已完成逐工具
+        安全评审并显式启用 Session cache，且通过最新安装态验收）
 BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
 PHASE: C7
 SCOPE:
@@ -857,19 +921,28 @@ SCOPE:
     SharedReadOnly{ttl_ms,vary_by_principal}}，默认 Never；Tool::cache_policy() 默认方法）
   - crates/fabric/src/include/turn.rs（CapabilityResult.served_from_cache: bool，
     serde default + skip_if false；fabric/kernel/corpus/cognit/executive 全库 40+ 构造点补字段）
-  - crates/corpus/src/tools/read_only_cache.rs（新：read_only_cache_key(sha256, domain
-    aletheon.read-only-tool-cache.v1) + cache_ttl + is_cacheable + 有界 FIFO/TTL LRU）
-  - crates/corpus/src/tools/capability_executor.rs（execute_with_permit 在权限门后、
-    runner 前查缓存：命中返回 served_from_cache=true；成功执行后按 policy TTL 存）
+  - crates/corpus/src/tools/read_only_cache.rs（canonical JSON digest + ToolCacheScope + 精确
+    PerTurn/Session/SharedReadOnly 隔离 + 有界 TTL/LRU + per-tool hit/miss snapshot）
+  - crates/corpus/src/security/runner.rs（cache hit 重新执行当前 policy、loop guard、output guard，
+    并写本次调用的新 audit record；拒绝时 fail-open 到真实工具）
+  - crates/corpus/src/tools/capability_executor.rs（非流式/流式 parity；命中重绑当前 call_id、
+    permit_id、audit_id；只缓存非错误、无 patch delta 的 L0 结果）
+  - crates/corpus/src/tools/tools/robot.rs（所有 robot state/action 工具 cache_policy==Never 断言）
+  - crates/corpus/src/tools/tools/artifact_read.rs（首个内置 opt-in：artifact SHA-256 是内容版本，
+    Session 60s 且 key 含 principal/session/workspace；不跨 principal 共享）
 CONTRACT:
   - ToolCachePolicy 默认 Never；只有工具实现显式声明非 Never 策略 且 permission_level()==L0
     才可缓存（is_cacheable 双条件，L1+ mutation 工具无配置可绕）
-  - key = tool name + CARGO_PKG_VERSION(impl version) + canonical args + workspace Debug +
-    principal Debug + policy identity；任一变化即 miss
-  - 缓存命中返回 auditable CapabilityResult（served_from_cache=true），权限门先于缓存执行
-  - 缓存锁失败 → get 返回 None → fail open 到真实只读工具；不绕过权限
+  - 即使工具错误声明为 L0+cacheable，只要结果携带 patch_delta 也拒绝写入缓存
+  - key = tool name + CARGO_PKG_VERSION + canonical args + serialized WorkspacePolicy + policy
+    scope；PerTurn 含 turn，Session 含 principal/session，SharedReadOnly 只有显式
+    vary_by_principal=false 才跨 principal
+  - 缓存命中返回 auditable CapabilityResult（served_from_cache=true），且不复用旧 permit/audit
+  - 命中后的当前 policy/audit/output guard 任一拒绝 → fail open 到真实只读工具；不绕过权限
 VALIDATION:
-  bash scripts/cargo-agent.sh test -p corpus --lib read_only_cache  # 4 passed
+  bash scripts/cargo-agent.sh test -p corpus --lib read_only_cache  # 6 passed
+  bash scripts/cargo-agent.sh test -p corpus --test capability_executor  # 7 passed
+  bash scripts/cargo-agent.sh test -p corpus --lib artifact_read       # 1 passed
   bash scripts/cargo-agent.sh test -p fabric --lib                 # 377 passed
   bash scripts/cargo-agent.sh test -p kernel --lib                 # 54 passed
   bash scripts/cargo-agent.sh test -p corpus --lib                 # 578 passed
@@ -878,17 +951,21 @@ VALIDATION:
   bash scripts/cargo-agent.sh clippy -p fabric -p kernel -p corpus -p cognit -p executive --all-targets -- -D warnings  # 0
   bash scripts/cargo-agent.sh fmt --all -- --check                 # 0
 RUNTIME EVIDENCE:
-  - 单元：L0+声明策略可缓存、L1 拒；key 对 workspace/principal/impl version/policy 变化均 miss；
-    TTL 过期 miss；容量淘汰；命中返回缓存
+  - 单元/集成：L0+声明策略可缓存、L1 拒；canonical args 对 object key 顺序稳定；workspace/
+    principal/turn/impl version/policy 隔离；容量淘汰；robot 永不缓存；非流式 miss 后流式 hit
+    不再执行底层工具，并产生新的 audit identity 与 terminal event；携带 patch_delta 的结果即使
+    工具声明 cache policy 也连续执行、不进入缓存
 METRICS:
-  - CapabilityResult.served_from_cache 传播到 evidence/receipt
+  - CapabilityResult.served_from_cache + ReadOnlyToolResultCache::metrics_snapshot()
+    分 tool 报告 hit_total/miss_total
 ROLLBACK:
   - revert C7 commit（新字段 serde default 向后兼容 + 新模块 + executor 钩子）
 OPEN ITEMS:
-  - 真实工具启用策略需逐工具安全评审（当前默认 Never，无内置工具声明策略）
-  - PerTurn 用短 TTL 近似 turn 边界；精确 turn 语义需 turn 作用域 key
-  - "永不缓存"清单（robot observe/get_state、实时查询）由"未声明策略"默认排除；
-    后续若某只读工具声明策略需纳入安全评审
+  - 除 `artifact_read` 外，其他真实工具启用策略仍需逐工具安全评审
+  - PerTurn 已使用精确 turn key；300 秒只用于清理不可跨 turn 命中的旧 entry
+  - "永不缓存"机器人清单有当前内置工具 contract test；其他实时查询仍须逐工具安全评审
+  - 外部资源 version/etag 尚无统一 typed contract；在该契约落地前不得给依赖外部可变状态的
+    只读工具启用 Session/SharedReadOnly
 ```
 
 ---
@@ -985,7 +1062,8 @@ OPEN ITEMS: 后续阶段，不得写成当前已完成
 本计划只有同时满足以下条件才可标记完成：
 
 1. DeepSeek Chat Completions 的 hit/miss 在流式和非流式路径正确进入 `InferenceUsage`；
-2. 官方 DeepSeek 与 LejuRobot proxy 有独立真实请求证据；
+2. 生产 `lejurobot_deepseek` 路线有 Flash/Pro、stream/non-stream 的独立真实请求证据；直连
+   `api.deepseek.com` 只作为可选 transport 对照；
 3. stable prefix/tool shape 可复现，变化原因可解释；
 4. 三轮同 Session 测试证明动态尾部不会无故破坏稳定前缀；
 5. Recall cache 通过 scope、generation、并发 single-flight 测试；
@@ -996,3 +1074,18 @@ OPEN ITEMS: 后续阶段，不得写成当前已完成
    和各层 cache 指标。
 9. C4 profiling 没有证明收益前，不新增 Context Projection 结果缓存；若后续新增，必须另有隔离键、
    容量上限、失效和敏感数据审查。
+
+### 8.1 当前仍需关闭的验收项
+
+无。C0-C7 均为 `accepted`。
+
+### 8.2 已关闭的安装态验收
+
+- `sudo bash scripts/aletheon.sh deploy` 于 2026-08-05 完成最新 C4/C7 变更的安装态验收；运行服务 restart counter 稳定；
+- release、`/usr/bin/aletheon`、core、user daemon、memory-agent SHA-256 全部一致：
+  `09db59189e7444ea980d75e77a65d2c5dabec361a267853822a08ed5ce7ba837`；
+- deploy 内置 official user-socket real-request smoke 通过；
+- 同一安装态 TUI Session 三轮 rendered answer、persisted receipt、daemon log 一致，shape digest 三轮相同，
+  后两轮均报告 5248 cache-read tokens。
+
+总状态：C0-C7 全部关闭；公司转发入口不再被误写成外部阻塞。

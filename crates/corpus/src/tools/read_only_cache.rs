@@ -9,7 +9,7 @@
 //! the permission/approval gate (which runs before the cache is consulted).
 //! Cache failures fail open to the real read-only tool.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use fabric::tool::{PermissionLevel, ToolCachePolicy};
@@ -21,15 +21,22 @@ const KEY_DOMAIN: &[u8] = b"aletheon.read-only-tool-cache.v1\0";
 /// Host-owned cache key for a read-only tool result.
 ///
 /// Includes the tool name, implementation version, canonical arguments,
-/// workspace identity, principal scope and policy identity so that a change to
-/// any one of them is a miss. The caller supplies the Debug-string workspace
-/// and principal identities.
+/// workspace identity and the exact scope implied by the policy. Per-turn and
+/// session policies can never cross their typed boundary; shared policies omit
+/// principal identity only when the tool owner explicitly declares that safe.
+#[derive(Debug, Clone, Copy)]
+pub struct ToolCacheScope<'a> {
+    pub workspace: &'a str,
+    pub principal: &'a str,
+    pub session: &'a str,
+    pub turn: &'a str,
+}
+
 pub fn read_only_cache_key(
     tool_name: &str,
     impl_version: &str,
     args: &Value,
-    workspace_key: &str,
-    principal_key: &str,
+    scope: ToolCacheScope<'_>,
     policy: ToolCachePolicy,
 ) -> String {
     let mut hasher = Sha256::new();
@@ -38,19 +45,80 @@ pub fn read_only_cache_key(
     hasher.update(b"\0");
     hasher.update(impl_version.as_bytes());
     hasher.update(b"\0");
-    hasher.update(serde_json::to_string(args).unwrap_or_default().as_bytes());
+    hash_canonical_json(&mut hasher, args);
     hasher.update(b"\0");
-    hasher.update(workspace_key.as_bytes());
+    hasher.update(scope.workspace.as_bytes());
     hasher.update(b"\0");
-    hasher.update(principal_key.as_bytes());
+    match policy {
+        ToolCachePolicy::Never => hasher.update(b"never"),
+        ToolCachePolicy::PerTurn => {
+            hasher.update(b"turn\0");
+            hasher.update(scope.principal.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(scope.session.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(scope.turn.as_bytes());
+        }
+        ToolCachePolicy::Session { .. } => {
+            hasher.update(b"session\0");
+            hasher.update(scope.principal.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(scope.session.as_bytes());
+        }
+        ToolCachePolicy::SharedReadOnly {
+            vary_by_principal, ..
+        } => {
+            hasher.update(b"shared\0");
+            if vary_by_principal {
+                hasher.update(scope.principal.as_bytes());
+            }
+        }
+    }
     hasher.update(b"\0");
     hasher.update(format!("{policy:?}").as_bytes());
     format!("sha256:{:x}", hasher.finalize())
 }
 
+/// Feed JSON into a digest with explicit type tags and lexicographically sorted
+/// object keys. This remains deterministic even when serde_json is compiled
+/// with insertion-order map preservation.
+fn hash_canonical_json(hasher: &mut Sha256, value: &Value) {
+    match value {
+        Value::Null => hasher.update(b"n"),
+        Value::Bool(value) => hasher.update(if *value { b"b1" } else { b"b0" }),
+        Value::Number(value) => {
+            hasher.update(b"d");
+            hasher.update(value.to_string().as_bytes());
+        }
+        Value::String(value) => {
+            hasher.update(b"s");
+            hasher.update(value.len().to_le_bytes());
+            hasher.update(value.as_bytes());
+        }
+        Value::Array(values) => {
+            hasher.update(b"a");
+            hasher.update(values.len().to_le_bytes());
+            for value in values {
+                hash_canonical_json(hasher, value);
+            }
+        }
+        Value::Object(values) => {
+            hasher.update(b"o");
+            hasher.update(values.len().to_le_bytes());
+            let mut entries = values.iter().collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(right.0));
+            for (key, value) in entries {
+                hasher.update(key.len().to_le_bytes());
+                hasher.update(key.as_bytes());
+                hash_canonical_json(hasher, value);
+            }
+        }
+    }
+}
+
 /// TTL for a declared policy. `Never` yields `None` (uncacheable). `PerTurn`
-/// uses a short TTL as a turn-bounded approximation; exact turn-boundary
-/// semantics would need turn-scoped keys.
+/// uses a short retention TTL only for cleanup; its key contains the exact turn
+/// identity, so the value can never be served in another turn.
 pub fn cache_ttl(policy: ToolCachePolicy) -> Option<Duration> {
     match policy {
         ToolCachePolicy::Session { ttl_ms } | ToolCachePolicy::SharedReadOnly { ttl_ms, .. } => {
@@ -78,7 +146,16 @@ pub struct ReadOnlyToolResultCache {
 struct Inner {
     entries: HashMap<String, Entry>,
     order: VecDeque<String>,
+    metrics: BTreeMap<String, ToolCacheCounters>,
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolCacheCounters {
+    pub hit_total: u64,
+    pub miss_total: u64,
+}
+
+pub type ToolCacheMetricsSnapshot = BTreeMap<String, ToolCacheCounters>;
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -97,7 +174,7 @@ impl ReadOnlyToolResultCache {
 
     /// Look up a cached result, expiring stale entries and refreshing recency
     /// on a hit. Returns `None` on miss/expiry or lock failure (fail-open).
-    pub fn get(&self, key: &str) -> Option<fabric::CapabilityResult> {
+    pub fn get(&self, tool_name: &str, key: &str) -> Option<fabric::CapabilityResult> {
         let now = Instant::now();
         let mut inner = self
             .inner
@@ -110,12 +187,44 @@ impl ReadOnlyToolResultCache {
         if expired {
             inner.entries.remove(key);
             inner.order.retain(|candidate| candidate != key);
+            let metric = inner.metrics.entry(tool_name.to_owned()).or_default();
+            metric.miss_total = metric.miss_total.saturating_add(1);
             return None;
         }
         let value = inner.entries.get(key).map(|entry| entry.value.clone());
         inner.order.retain(|candidate| candidate != key);
         inner.order.push_back(key.to_owned());
         value
+    }
+
+    /// Record a candidate value that passed the current policy/audit pipeline
+    /// and was actually served to the caller.
+    pub fn record_hit(&self, tool_name: &str) {
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let metric = inner.metrics.entry(tool_name.to_owned()).or_default();
+        metric.hit_total = metric.hit_total.saturating_add(1);
+    }
+
+    /// Record a cached candidate rejected by current policy/audit. The caller
+    /// executes the authoritative tool, so this is an effective cache miss.
+    pub fn record_rejected_candidate(&self, tool_name: &str) {
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let metric = inner.metrics.entry(tool_name.to_owned()).or_default();
+        metric.miss_total = metric.miss_total.saturating_add(1);
+    }
+
+    pub fn metrics_snapshot(&self) -> ToolCacheMetricsSnapshot {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .metrics
+            .clone()
     }
 
     /// Store a result under a key with the policy TTL.
@@ -169,7 +278,18 @@ mod tests {
         principal: &str,
         policy: ToolCachePolicy,
     ) -> String {
-        read_only_cache_key("read_file", "v1", &args, workspace, principal, policy)
+        read_only_cache_key(
+            "read_file",
+            "v1",
+            &args,
+            ToolCacheScope {
+                workspace,
+                principal,
+                session: "session-a",
+                turn: "turn-a",
+            },
+            policy,
+        )
     }
 
     #[test]
@@ -234,6 +354,74 @@ mod tests {
     }
 
     #[test]
+    fn canonical_arguments_and_policy_scope_are_exact() {
+        let left = serde_json::from_str::<Value>(r#"{"b":2,"a":{"y":1,"x":0}}"#).unwrap();
+        let right = serde_json::from_str::<Value>(r#"{"a":{"x":0,"y":1},"b":2}"#).unwrap();
+        assert_eq!(
+            key(left, "ws-a", "principal-a", ToolCachePolicy::PerTurn),
+            key(right, "ws-a", "principal-a", ToolCachePolicy::PerTurn)
+        );
+
+        let per_turn_a = read_only_cache_key(
+            "read_file",
+            "v1",
+            &serde_json::json!({}),
+            ToolCacheScope {
+                workspace: "ws-a",
+                principal: "principal-a",
+                session: "session-a",
+                turn: "turn-a",
+            },
+            ToolCachePolicy::PerTurn,
+        );
+        let per_turn_b = read_only_cache_key(
+            "read_file",
+            "v1",
+            &serde_json::json!({}),
+            ToolCacheScope {
+                workspace: "ws-a",
+                principal: "principal-a",
+                session: "session-a",
+                turn: "turn-b",
+            },
+            ToolCachePolicy::PerTurn,
+        );
+        assert_ne!(per_turn_a, per_turn_b);
+
+        let shared_a = read_only_cache_key(
+            "read_file",
+            "v1",
+            &serde_json::json!({}),
+            ToolCacheScope {
+                workspace: "ws-a",
+                principal: "principal-a",
+                session: "session-a",
+                turn: "turn-a",
+            },
+            ToolCachePolicy::SharedReadOnly {
+                ttl_ms: 1000,
+                vary_by_principal: false,
+            },
+        );
+        let shared_b = read_only_cache_key(
+            "read_file",
+            "v1",
+            &serde_json::json!({}),
+            ToolCacheScope {
+                workspace: "ws-a",
+                principal: "principal-b",
+                session: "session-b",
+                turn: "turn-b",
+            },
+            ToolCachePolicy::SharedReadOnly {
+                ttl_ms: 1000,
+                vary_by_principal: false,
+            },
+        );
+        assert_eq!(shared_a, shared_b);
+    }
+
+    #[test]
     fn hit_returns_cached_and_expiry_misses() {
         let cache = ReadOnlyToolResultCache::new(4);
         let k = key(
@@ -242,20 +430,37 @@ mod tests {
             "principal-a",
             ToolCachePolicy::Session { ttl_ms: 60000 },
         );
-        assert!(cache.get(&k).is_none());
+        assert!(cache.get("read_file", &k).is_none());
         cache.insert(k.clone(), result("cached-content"), Duration::from_secs(60));
-        let hit = cache.get(&k).expect("cached hit");
+        let hit = cache.get("read_file", &k).expect("cached hit");
+        cache.record_hit("read_file");
         assert_eq!(hit.output, "cached-content");
         // A different key (implementation version bump) misses.
         let v2 = read_only_cache_key(
             "read_file",
             "v2",
             &serde_json::json!({"path": "/tmp/a"}),
-            "ws-a",
-            "principal-a",
+            ToolCacheScope {
+                workspace: "ws-a",
+                principal: "principal-a",
+                session: "session-a",
+                turn: "turn-a",
+            },
             ToolCachePolicy::Session { ttl_ms: 60000 },
         );
-        assert!(cache.get(&v2).is_none());
+        assert!(cache.get("read_file", &v2).is_none());
+        let expired = key(
+            serde_json::json!({"path": "/tmp/expired"}),
+            "ws-a",
+            "principal-a",
+            ToolCachePolicy::Session { ttl_ms: 0 },
+        );
+        cache.insert(expired.clone(), result("expired-content"), Duration::ZERO);
+        std::thread::sleep(Duration::from_millis(1));
+        assert!(cache.get("read_file", &expired).is_none());
+        let metrics = cache.metrics_snapshot();
+        assert_eq!(metrics["read_file"].hit_total, 1);
+        assert_eq!(metrics["read_file"].miss_total, 3);
     }
 
     #[test]
@@ -273,8 +478,8 @@ mod tests {
             keys.push(k);
         }
         // Oldest (v0) evicted; v1 and v2 present.
-        assert!(cache.get(&keys[0]).is_none());
-        assert!(cache.get(&keys[1]).is_some());
-        assert!(cache.get(&keys[2]).is_some());
+        assert!(cache.get("read_file", &keys[0]).is_none());
+        assert!(cache.get("read_file", &keys[1]).is_some());
+        assert!(cache.get("read_file", &keys[2]).is_some());
     }
 }

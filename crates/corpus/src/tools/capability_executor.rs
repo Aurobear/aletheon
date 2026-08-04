@@ -1,14 +1,15 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+use fabric::tool::ToolCachePolicy;
 use fabric::{
     AuditEventId, CapabilityId, CapabilityRequest, CapabilityResult, Clock, ExecutionPermit,
-    ToolContext, UsageReport,
+    ToolContext, ToolResult, ToolResultMeta, UsageReport,
 };
 use kernel::capability::ToolExecutor;
 
 use crate::tools::read_only_cache::{
-    cache_ttl, is_cacheable, read_only_cache_key, ReadOnlyToolResultCache,
+    cache_ttl, is_cacheable, read_only_cache_key, ReadOnlyToolResultCache, ToolCacheScope,
 };
 use crate::{CorpusError, ExtensionDescriptor, ExtensionKind};
 use crate::{ToolRegistry, ToolRunnerWithGuard};
@@ -102,6 +103,12 @@ impl CorpusToolExecutor {
         }
     }
 
+    pub fn read_only_cache_metrics(
+        &self,
+    ) -> crate::tools::read_only_cache::ToolCacheMetricsSnapshot {
+        self.read_only_cache.metrics_snapshot()
+    }
+
     fn error_result(
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
@@ -139,6 +146,77 @@ impl CorpusToolExecutor {
             "permit expired or sandbox unavailable"
         );
         Ok(())
+    }
+
+    fn cache_key(
+        request: &CapabilityRequest,
+        tool: &dyn fabric::Tool,
+        cache_policy: ToolCachePolicy,
+    ) -> Option<String> {
+        is_cacheable(cache_policy, tool.permission_level()).then(|| {
+            let workspace = serde_json::to_string(&request.authority.workspace)
+                .expect("workspace cache identity serializes");
+            read_only_cache_key(
+                tool.name(),
+                env!("CARGO_PKG_VERSION"),
+                &request.call.input,
+                ToolCacheScope {
+                    workspace: &workspace,
+                    principal: &request.authority.principal.0,
+                    session: &request.authority.session_id,
+                    turn: &request.authority.turn_id.0.to_string(),
+                },
+                cache_policy,
+            )
+        })
+    }
+
+    async fn authorize_cache_hit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        tool: &dyn fabric::Tool,
+        context: &ToolContext,
+        hit: &mut CapabilityResult,
+    ) -> bool {
+        let cached_tool_result = ToolResult {
+            content: hit.output.clone(),
+            is_error: hit.is_error,
+            metadata: ToolResultMeta::default(),
+        };
+        let audit_id = self
+            .runner
+            .lock()
+            .await
+            .record_read_only_cache_hit(
+                tool,
+                &request.call.input,
+                context,
+                &request.authority.turn_id.0.to_string(),
+                &cached_tool_result,
+            )
+            .await;
+        let Ok(audit_id) = audit_id else {
+            tracing::warn!(
+                tool = tool.name(),
+                error = %audit_id.unwrap_err(),
+                "cached result rejected by current policy/audit; executing authoritative tool"
+            );
+            self.read_only_cache.record_rejected_candidate(tool.name());
+            return false;
+        };
+        hit.call_id = request.call.call_id.clone();
+        hit.usage = UsageReport {
+            permit_id: permit.id,
+            output_bytes: hit.output.len() as u64,
+            exit_code: Some(if hit.is_error { 1 } else { 0 }),
+            ..Default::default()
+        };
+        hit.audit_id = Some(audit_id);
+        hit.patch_delta = None;
+        hit.served_from_cache = true;
+        self.read_only_cache.record_hit(tool.name());
+        true
     }
 }
 
@@ -188,25 +266,22 @@ impl ToolExecutor for CorpusToolExecutor {
         // gate above already ran, and this cache never bypasses it. A hit is
         // returned as an auditable CapabilityResult marked served_from_cache.
         let cache_policy = tool.cache_policy();
-        let cache_key = is_cacheable(cache_policy, tool.permission_level()).then(|| {
-            read_only_cache_key(
-                tool.name(),
-                env!("CARGO_PKG_VERSION"),
-                &request.call.input,
-                &format!("{:?}", request.authority.workspace),
-                &format!("{:?}", request.authority.principal),
-                cache_policy,
-            )
-        });
+        let cache_key = Self::cache_key(request, tool.as_ref(), cache_policy);
         if let Some(key) = &cache_key {
-            if let Some(mut hit) = self.read_only_cache.get(key) {
-                hit.call_id = request.call.call_id.clone();
-                hit.served_from_cache = true;
-                tracing::info!(
-                    tool = tool.name(),
-                    "read-only tool result served from cache (underlying tool not executed)"
-                );
-                return hit;
+            if let Some(mut hit) = self.read_only_cache.get(tool.name(), key) {
+                if !self
+                    .authorize_cache_hit(request, permit, tool.as_ref(), &context, &mut hit)
+                    .await
+                {
+                    // Current policy or audit rejected this candidate. Continue
+                    // through the authoritative runner below.
+                } else {
+                    tracing::info!(
+                        tool = tool.name(),
+                        "read-only tool result served from cache (underlying tool not executed)"
+                    );
+                    return hit;
+                }
             }
         }
         let started = self.clock.mono_now();
@@ -247,11 +322,13 @@ impl ToolExecutor for CorpusToolExecutor {
                 };
                 // Store successful read-only results under their cache key so a
                 // later identical call is served without executing the tool.
-                if let Some(key) = cache_key {
-                    if let Some(ttl) = cache_ttl(cache_policy) {
-                        let mut cached = capability.clone();
-                        cached.served_from_cache = true;
-                        self.read_only_cache.insert(key, cached, ttl);
+                if !capability.is_error && capability.patch_delta.is_none() {
+                    if let Some(key) = cache_key {
+                        if let Some(ttl) = cache_ttl(cache_policy) {
+                            let mut cached = capability.clone();
+                            cached.served_from_cache = true;
+                            self.read_only_cache.insert(key, cached, ttl);
+                        }
                     }
                 }
                 capability
@@ -300,6 +377,30 @@ impl ToolExecutor for CorpusToolExecutor {
             clock: self.clock.clone(),
             turn_event_sender: request.control.turn_event_sender.clone(),
         };
+        let cache_policy = tool.cache_policy();
+        let cache_key = Self::cache_key(request, tool.as_ref(), cache_policy);
+        if let Some(key) = &cache_key {
+            if let Some(mut hit) = self.read_only_cache.get(tool.name(), key) {
+                if self
+                    .authorize_cache_hit(request, permit, tool.as_ref(), &context, &mut hit)
+                    .await
+                {
+                    if !sink.terminal_sent() {
+                        sink.terminal(Ok(ToolResult {
+                            content: hit.output.clone(),
+                            is_error: hit.is_error,
+                            metadata: ToolResultMeta::default(),
+                        }))
+                        .await;
+                    }
+                    tracing::info!(
+                        tool = tool.name(),
+                        "streaming read-only tool result served from cache (underlying tool not executed)"
+                    );
+                    return hit;
+                }
+            }
+        }
         let started = self.clock.mono_now();
         let report = self
             .runner
@@ -321,7 +422,7 @@ impl ToolExecutor for CorpusToolExecutor {
                 } else {
                     result.metadata.execution_time_ms
                 };
-                CapabilityResult {
+                let capability = CapabilityResult {
                     call_id: request.call.call_id.clone(),
                     output: result.content.clone(),
                     is_error: result.is_error,
@@ -335,7 +436,17 @@ impl ToolExecutor for CorpusToolExecutor {
                     audit_id: Some(report.audit_id),
                     patch_delta: result.metadata.patch_delta,
                     served_from_cache: false,
+                };
+                if !capability.is_error && capability.patch_delta.is_none() {
+                    if let Some(key) = cache_key {
+                        if let Some(ttl) = cache_ttl(cache_policy) {
+                            let mut cached = capability.clone();
+                            cached.served_from_cache = true;
+                            self.read_only_cache.insert(key, cached, ttl);
+                        }
+                    }
                 }
+                capability
             }
             Err(error) => Self::error_result(request, permit, error.to_string(), report.audit_id),
         }

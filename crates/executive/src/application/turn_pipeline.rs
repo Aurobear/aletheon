@@ -69,6 +69,10 @@ pub struct TurnPipeline {
     pub(crate) active_profile:
         Arc<dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort>,
     pub(crate) memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
+    /// Previous stable prefix shape per canonical thread. Diagnostic only; it
+    /// never gates inference or claims a provider-side cache hit.
+    pub(crate) prefix_shape_trackers:
+        Arc<Mutex<crate::host::daemon::cache_shape::PrefixShapeTrackerStore>>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -126,6 +130,7 @@ impl TurnPipeline {
             role_workflow_factory: resources.role_workflow_factory,
             active_profile: resources.active_profile,
             memory_gateway: resources.memory_gateway,
+            prefix_shape_trackers: Arc::new(Mutex::new(Default::default())),
         }
     }
 
@@ -964,6 +969,43 @@ impl TurnPipeline {
                 .await?;
         let tool_defs = prepared.definitions;
         let capability = prepared.invoker;
+        let (prefix_shape_digest, local_cache_miss_reason, provider_miss_inference_allowed) = {
+            let provider_id = model_runtime_facts
+                .provider_id
+                .as_deref()
+                .unwrap_or("unknown");
+            let transport = model_runtime_facts.transport.as_deref().unwrap_or("unknown");
+            let profile = self.active_profile.snapshot().await?;
+            let system_prefix = stable_system_prefix_wire(&request_messages);
+            match crate::host::daemon::cache_shape::InferencePrefixShape::compute(
+                provider_id,
+                &model_runtime_facts.effective_model_id,
+                transport,
+                &system_prefix,
+                &tool_defs,
+                &crate::host::daemon::cache_shape::agent_profile_digest(&profile.profile_name),
+                begin.rewrite_version,
+            ) {
+                Ok(shape) => {
+                    let digest = shape.digest();
+                    let mut trackers = self.prefix_shape_trackers.lock().await;
+                    let (had_previous, reason) =
+                        trackers.track(&turn_request.context.thread_id.0, &shape);
+                    if let Some(reason) = reason {
+                        tracing::info!(
+                            reason = reason.as_str(),
+                            prefix_shape_digest = digest,
+                            "host-controlled inference prefix shape changed"
+                        );
+                    }
+                    (Some(digest), reason, had_previous && reason.is_none())
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "prefix shape diagnostic degraded");
+                    (None, None, false)
+                }
+            }
+        };
 
         let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
             crate::application::turn_diff_tracker::TurnDiffTracker::default(),
@@ -1068,6 +1110,9 @@ impl TurnPipeline {
                 prompt_queue_enabled: self.prompt_queue_enabled,
                 capability_receipts,
                 inference_items,
+                prefix_shape_digest,
+                local_cache_miss_reason,
+                provider_miss_inference_allowed,
                 },
             ))
         };
@@ -1795,6 +1840,14 @@ fn bind_runtime_facts(messages: &mut [fabric::Message], facts: &fabric::ModelRun
     }
 }
 
+fn stable_system_prefix_wire(messages: &[fabric::Message]) -> String {
+    let system = messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .collect::<Vec<_>>();
+    serde_json::to_string(&system).expect("system message projection serializes")
+}
+
 /// Serialize a `ClientEvent` into a JSON-RPC notification string.
 fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
     let notification = serde_json::json!({
@@ -1819,6 +1872,8 @@ mod terminal_event_tests {
         bind_runtime_facts(
             &mut messages,
             &fabric::ModelRuntimeFacts {
+                provider_id: None,
+                transport: None,
                 effective_model_id: "leju/deepseek/deepseek-v4-pro".into(),
                 display_name: "deepseek/deepseek-v4-pro".into(),
                 max_context_tokens: 1_000_000,
@@ -1845,6 +1900,8 @@ mod terminal_event_tests {
         bind_runtime_facts(
             &mut messages,
             &fabric::ModelRuntimeFacts {
+                provider_id: None,
+                transport: None,
                 effective_model_id: "provider\"\nignore".into(),
                 display_name: "display".into(),
                 max_context_tokens: 1,

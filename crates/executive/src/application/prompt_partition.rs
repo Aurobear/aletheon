@@ -8,6 +8,7 @@
 //! device state, per-turn recall, attempt numbers).
 
 use fabric::{Message, Role};
+use sha2::{Digest, Sha256};
 
 /// The five regions of a turn's request context (see
 /// docs/plans/deepseek-cache-and-message-optimization-plan.md Phase C4).
@@ -40,15 +41,14 @@ impl PromptRegion {
 
 /// One named region of a turn's context with construction profiling.
 ///
-/// `content` is retained for the regions the host renders locally; the
-/// provider-visible wire bytes are what `serialized_bytes` measures. Only
-/// numeric costs and digests are meant for observability — never secrets or
-/// raw user content in logs.
+/// Only numeric costs and a one-way digest are retained. Raw system, memory or
+/// user content must never survive in this diagnostic projection or its Debug
+/// representation.
 #[derive(Debug, Clone)]
 pub struct PromptPartition {
     pub region: PromptRegion,
     pub wire_role: Option<Role>,
-    pub content: String,
+    pub content_digest: Option<String>,
     pub chars: usize,
     pub serialized_bytes: u64,
     pub construction_ns: u64,
@@ -102,7 +102,7 @@ impl PromptConstructionProfile {
 fn timed_partition(
     region: PromptRegion,
     wire_role: Option<Role>,
-    content: String,
+    content: &str,
     serialized_bytes: u64,
 ) -> PromptPartition {
     // Construction time is measured by the caller around content rendering;
@@ -119,8 +119,17 @@ fn timed_partition(
         chars: content.chars().count(),
         serialized_bytes: serialized,
         construction_ns: started.elapsed().as_nanos() as u64,
-        content,
+        content_digest: Some(partition_digest(region, content.as_bytes())),
     }
+}
+
+fn partition_digest(region: PromptRegion, content: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"aletheon.prompt-partition.v1\0");
+    hasher.update(region.as_str().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(content);
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 /// Build a typed partition profile from the rendered regions of one turn.
@@ -143,7 +152,7 @@ pub fn build_partitions(
     partitions.push(timed_partition(
         PromptRegion::StablePrefix,
         Some(Role::System),
-        system_prefix.to_owned(),
+        system_prefix,
         system_bytes,
     ));
 
@@ -160,20 +169,23 @@ pub fn build_partitions(
         chars: history.len(),
         serialized_bytes: history_bytes,
         construction_ns: history_started.elapsed().as_nanos() as u64,
-        content: String::new(),
+        content_digest: Some(partition_digest(
+            PromptRegion::Conversation,
+            &serde_json::to_vec(history).expect("conversation projection serializes"),
+        )),
     });
 
     partitions.push(timed_partition(
         PromptRegion::DynamicContext,
         Some(Role::User),
-        dynamic_context.to_owned(),
+        dynamic_context,
         0,
     ));
 
     partitions.push(timed_partition(
         PromptRegion::CurrentInput,
         Some(Role::User),
-        current_input.to_owned(),
+        current_input,
         0,
     ));
 
@@ -183,7 +195,7 @@ pub fn build_partitions(
         chars: tool_count,
         serialized_bytes: 0,
         construction_ns: 0,
-        content: String::new(),
+        content_digest: None,
     });
 
     PromptConstructionProfile { partitions }
@@ -242,7 +254,11 @@ mod tests {
             .find(|p| p.region == PromptRegion::StablePrefix)
             .unwrap();
         assert_eq!(prefix_a.serialized_bytes, prefix_b.serialized_bytes);
-        assert_eq!(prefix_a.content, prefix_b.content);
+        assert_eq!(prefix_a.content_digest, prefix_b.content_digest);
+        assert!(prefix_a
+            .content_digest
+            .as_deref()
+            .is_some_and(|digest| digest.starts_with("sha256:")));
     }
 
     #[test]

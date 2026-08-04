@@ -20,6 +20,9 @@ struct FakeInference;
 impl InferencePort for FakeInference {
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         Ok(ModelCapabilities {
+            provider_id: None,
+            transport: None,
+            cache_reporting: None,
             model_spec: model_spec.to_owned(),
             display_name: model_spec.to_owned(),
             max_context_tokens: 1_000_000,

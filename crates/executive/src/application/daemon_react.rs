@@ -29,6 +29,9 @@ pub struct DaemonStreamingTurnContext<F> {
     pub prompt_queue_enabled: bool,
     pub capability_receipts: Arc<tokio::sync::Mutex<Vec<fabric::CapabilityTerminalReceipt>>>,
     pub inference_items: Arc<tokio::sync::Mutex<Vec<fabric::ItemPayload>>>,
+    pub prefix_shape_digest: Option<String>,
+    pub local_cache_miss_reason: Option<crate::host::daemon::cache_shape::LocalMissReason>,
+    pub provider_miss_inference_allowed: bool,
 }
 
 /// Submit one daemon turn through Cognit's authoritative session facade.
@@ -55,6 +58,9 @@ where
         prompt_queue_enabled,
         capability_receipts,
         inference_items,
+        prefix_shape_digest,
+        local_cache_miss_reason,
+        provider_miss_inference_allowed,
     } = context;
     let services = DaemonTurnServices {
         llm,
@@ -69,6 +75,9 @@ where
         receipt_prefix: request.operation_id.0.to_string(),
         capability_receipts,
         inference_items,
+        prefix_shape_digest,
+        local_cache_miss_reason: tokio::sync::Mutex::new(local_cache_miss_reason),
+        provider_miss_inference_allowed,
     };
     let session_record = SessionRecord {
         schema_version: SESSION_SCHEMA_VERSION,
@@ -106,6 +115,10 @@ struct DaemonTurnServices<F> {
     receipt_prefix: String,
     capability_receipts: Arc<tokio::sync::Mutex<Vec<fabric::CapabilityTerminalReceipt>>>,
     inference_items: Arc<tokio::sync::Mutex<Vec<fabric::ItemPayload>>>,
+    prefix_shape_digest: Option<String>,
+    local_cache_miss_reason:
+        tokio::sync::Mutex<Option<crate::host::daemon::cache_shape::LocalMissReason>>,
+    provider_miss_inference_allowed: bool,
 }
 
 #[async_trait]
@@ -158,8 +171,23 @@ where
 
     async fn record_inference_receipt(
         &self,
-        receipt: fabric::types::inference_receipt::InferenceTerminalReceipt,
+        mut receipt: fabric::types::inference_receipt::InferenceTerminalReceipt,
     ) {
+        receipt.prefix_shape_digest = self.prefix_shape_digest.clone();
+        let mut reason = self.local_cache_miss_reason.lock().await.take();
+        if reason.is_none()
+            && self.provider_miss_inference_allowed
+            && receipt.usage.cache_telemetry == fabric::CacheTelemetry::Reported
+            && receipt.usage.cache_read_tokens == Some(0)
+            && receipt.usage.uncached_input_tokens.unwrap_or(0) > 0
+        {
+            reason =
+                Some(crate::host::daemon::cache_shape::LocalMissReason::ProviderMissOrEviction);
+        }
+        if let Some(reason) = reason {
+            receipt.local_cache_miss_reason = Some(reason.as_str().to_owned());
+            crate::host::daemon::cache_shape::record_prefix_shape_miss(reason);
+        }
         self.inference_items
             .lock()
             .await
@@ -287,6 +315,9 @@ mod tests {
             receipt_prefix: "p3-turn".into(),
             capability_receipts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             inference_items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            prefix_shape_digest: None,
+            local_cache_miss_reason: tokio::sync::Mutex::new(None),
+            provider_miss_inference_allowed: false,
         };
 
         let mut next_call_messages = services.request_messages.clone();
@@ -318,6 +349,7 @@ mod tests {
     #[tokio::test]
     async fn daemon_services_publish_terminal_receipts_to_turn_artifacts() {
         let receipts = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let inference_items = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let services = DaemonTurnServices {
             llm: Arc::new(RecordingLlm(Mutex::new(Vec::new()))),
             tool_defs: vec![],
@@ -334,7 +366,12 @@ mod tests {
             thread_id: ThreadId("test".into()),
             receipt_prefix: "test".into(),
             capability_receipts: receipts.clone(),
-            inference_items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            inference_items: inference_items.clone(),
+            prefix_shape_digest: Some("sha256:shape".into()),
+            local_cache_miss_reason: tokio::sync::Mutex::new(Some(
+                crate::host::daemon::cache_shape::LocalMissReason::SystemChanged,
+            )),
+            provider_miss_inference_allowed: false,
         };
         let receipt = fabric::CapabilityTerminalReceipt {
             invocation_id: "validation-1".into(),
@@ -357,5 +394,33 @@ mod tests {
         let retained = receipts.lock().await;
         assert_eq!(retained.len(), 1);
         assert!(retained[0].proves_success());
+        drop(retained);
+
+        services
+            .record_inference_receipt(fabric::types::inference_receipt::InferenceTerminalReceipt {
+                schema_version:
+                    fabric::types::inference_receipt::INFERENCE_TERMINAL_RECEIPT_SCHEMA_V1,
+                inference_id: "inference-1".into(),
+                operation_id: "operation-1".into(),
+                provider_id: "provider".into(),
+                model_id: "model".into(),
+                system_prefix_digest: "sha256:system".into(),
+                tool_schema_digest: "sha256:tools".into(),
+                status: fabric::types::inference_receipt::InferenceTerminalStatus::Succeeded,
+                usage: fabric::InferenceUsage::reported(10, 2, Some(10), Some(0), None),
+                failure_kind: None,
+                prefix_shape_digest: None,
+                local_cache_miss_reason: None,
+            })
+            .await;
+        let inference_items = inference_items.lock().await;
+        let fabric::ItemPayload::InferenceReceipt { receipt } = &inference_items[0] else {
+            panic!("expected inference receipt");
+        };
+        assert_eq!(receipt.prefix_shape_digest.as_deref(), Some("sha256:shape"));
+        assert_eq!(
+            receipt.local_cache_miss_reason.as_deref(),
+            Some("system_changed")
+        );
     }
 }

@@ -46,6 +46,9 @@ impl InferencePort for FakeInference {
 
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         Ok(ModelCapabilities {
+            provider_id: None,
+            transport: None,
+            cache_reporting: None,
             model_spec: format!("resolved/{model_spec}"),
             display_name: "fixture-model".into(),
             max_context_tokens: 1_000_000,

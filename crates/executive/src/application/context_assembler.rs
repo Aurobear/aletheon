@@ -20,6 +20,39 @@ const MAX_SYSTEM_PREFIX_CHARS: usize = 128 * 1024;
 const MAX_PROJECTED_ITEM_CHARS: usize = 4 * 1024;
 const MAX_SELF_ITEM_CHARS: usize = 64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DynamicContextKind {
+    Memory,
+    Conscious,
+    Skills,
+}
+
+impl DynamicContextKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Memory => "memory-context",
+            Self::Conscious => "conscious-context",
+            Self::Skills => "skills",
+        }
+    }
+
+    /// Higher values survive budget pressure first. Task-matched skills are
+    /// immediately actionable, conscious state is current but advisory, and
+    /// recalled memory is historical/untrusted reference data.
+    const fn priority(self) -> u8 {
+        match self {
+            Self::Memory => 1,
+            Self::Conscious => 2,
+            Self::Skills => 3,
+        }
+    }
+}
+
+struct DynamicContextFragment<'a> {
+    kind: DynamicContextKind,
+    value: &'a str,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ContextFragments {
     pub system_prefix: String,
@@ -190,18 +223,23 @@ impl ContextAssembler {
             .as_ref()
             .map(render_conscious_projection)
             .transpose()?;
-        let mut dynamic_context = String::new();
-        let mut remaining = MAX_INJECTED_CHARS;
-        for (label, value) in [
-            ("memory-context", fragments.memory_context.as_str()),
-            (
-                "conscious-context",
-                conscious.as_deref().unwrap_or_default(),
-            ),
-            ("skills", fragments.skills.as_str()),
-        ] {
-            append_fragment(&mut dynamic_context, label, value, &mut remaining);
-        }
+        let dynamic_context = render_dynamic_context(
+            &[
+                DynamicContextFragment {
+                    kind: DynamicContextKind::Memory,
+                    value: &fragments.memory_context,
+                },
+                DynamicContextFragment {
+                    kind: DynamicContextKind::Conscious,
+                    value: conscious.as_deref().unwrap_or_default(),
+                },
+                DynamicContextFragment {
+                    kind: DynamicContextKind::Skills,
+                    value: &fragments.skills,
+                },
+            ],
+            MAX_INJECTED_CHARS,
+        );
         let effective = if dynamic_context.is_empty() {
             request.input.clone()
         } else {
@@ -342,22 +380,73 @@ fn format_recall_context(set: &RecallSet) -> String {
     )
 }
 
-fn append_fragment(output: &mut String, label: &str, value: &str, remaining: &mut usize) {
-    if value.trim().is_empty() || *remaining == 0 {
-        return;
+fn render_dynamic_context(fragments: &[DynamicContextFragment<'_>], budget: usize) -> String {
+    let mut projected = fragments
+        .iter()
+        .filter(|fragment| !fragment.value.trim().is_empty())
+        .map(|fragment| {
+            // Re-scrub at the final model-visible boundary so legacy memory and
+            // durable conscious state cannot carry a secret across sessions.
+            let governed = fabric::types::data_governance::scrub_for_projection(
+                fragment.value,
+                fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+            );
+            (
+                fragment.kind,
+                truncate(&governed.content, MAX_FRAGMENT_CHARS),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let mut remaining = budget;
+    let mut allocation_order = (0..projected.len()).collect::<Vec<_>>();
+    allocation_order.sort_by_key(|index| std::cmp::Reverse(projected[*index].0.priority()));
+    let mut retained = vec![String::new(); projected.len()];
+    for index in allocation_order {
+        retained[index] = truncate(&projected[index].1, remaining);
+        remaining = remaining.saturating_sub(retained[index].chars().count());
     }
-    // Every fragment here is host-projected context rather than the current
-    // user input. Re-scrub it at the final model-visible boundary so legacy
-    // memory and durable conscious state cannot carry a secret across sessions.
-    let governed = fabric::types::data_governance::scrub_for_projection(
-        value,
-        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
-    );
-    let bounded = truncate(&governed.content, MAX_FRAGMENT_CHARS.min(*remaining));
-    *remaining = remaining.saturating_sub(bounded.chars().count());
-    output.push_str(&format!("<{label}>\n{bounded}\n</{label}>\n"));
+
+    let mut output = String::new();
+    for ((kind, _), value) in projected.drain(..).zip(retained) {
+        if !value.is_empty() {
+            let label = kind.label();
+            output.push_str(&format!("<{label}>\n{value}\n</{label}>\n"));
+        }
+    }
+    output
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
+}
+
+#[cfg(test)]
+mod dynamic_context_tests {
+    use super::*;
+
+    #[test]
+    fn budget_keeps_high_priority_fragments_but_preserves_canonical_wire_order() {
+        let rendered = render_dynamic_context(
+            &[
+                DynamicContextFragment {
+                    kind: DynamicContextKind::Memory,
+                    value: "memory",
+                },
+                DynamicContextFragment {
+                    kind: DynamicContextKind::Conscious,
+                    value: "care",
+                },
+                DynamicContextFragment {
+                    kind: DynamicContextKind::Skills,
+                    value: "skill",
+                },
+            ],
+            9,
+        );
+        assert!(!rendered.contains("memory"));
+        assert!(rendered.contains("<conscious-context>\ncare"));
+        assert!(rendered.contains("<skills>\nskill"));
+        assert!(rendered.find("<conscious-context>").unwrap() < rendered.find("<skills>").unwrap());
+    }
 }

@@ -15,6 +15,9 @@ struct FakeInferencePort;
 impl InferencePort for FakeInferencePort {
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         Ok(ModelCapabilities {
+            provider_id: None,
+            transport: None,
+            cache_reporting: None,
             model_spec: if model_spec.is_empty() {
                 "fixture/fixture-model".into()
             } else {

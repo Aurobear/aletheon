@@ -491,6 +491,8 @@ impl LlmProvider for OpenAiProvider {
         // mode. Built directly to keep the async_trait block free of
         // self-recursive fully-qualified calls.
         ModelRuntimeFacts {
+            provider_id: None,
+            transport: Some("openai".into()),
             effective_model_id: self.name().to_string(),
             display_name: self.name().to_string(),
             max_context_tokens: self.max_context_length(),
