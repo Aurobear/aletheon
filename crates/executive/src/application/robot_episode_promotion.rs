@@ -122,17 +122,17 @@ mod tests {
                 uri: "artifact://sha256/rosbag".into(),
             }],
         };
-        build_report(
-            "ep-1",
-            "stand",
-            DeviceId("kuavo-mujoco-01".into()),
-            "mujoco-v1",
-            "abc123",
-            "sha256:proto",
-            Some(1),
-            Some(2),
-            "completed",
-            vec![AttemptRecord::from_verification(
+        build_report(fabric::types::episode_report::EpisodeReportInput {
+            episode_id: "ep-1".into(),
+            goal: "stand".into(),
+            device: DeviceId("kuavo-mujoco-01".into()),
+            sim_scene_version: "mujoco-v1".into(),
+            aletheon_commit: "abc123".into(),
+            bridge_protocol_digest: "sha256:proto".into(),
+            before_sequence: Some(1),
+            after_sequence: Some(2),
+            settlement: "completed".into(),
+            attempts: vec![AttemptRecord::from_verification(
                 1,
                 "attempt:ep-1:1".into(),
                 None,
@@ -141,8 +141,8 @@ mod tests {
                 Some(&verification),
                 None,
             )],
-            vec![],
-        )
+            artifacts: vec![],
+        })
     }
 
     #[tokio::test]

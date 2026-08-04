@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::types::embodiment::DeviceId;
-use fabric::types::episode_report::{build_report, AttemptRecord, EpisodeReport};
+use fabric::types::episode_report::{
+    build_report, AttemptRecord, EpisodeReport, EpisodeReportInput,
+};
 use fabric::{Clock, TurnEvent, TurnEventSink, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 use tokio_util::sync::CancellationToken;
 
@@ -113,22 +115,22 @@ impl RobotCognitiveSession {
         if let Some(verification) = &state.latest_verification {
             artifacts.extend(verification.evidence.clone());
         }
-        build_report(
-            &state.episode_id,
-            &state.goal,
-            state.device.clone(),
-            &self.sim_scene_version,
-            &self.aletheon_commit,
-            &self.bridge_protocol_digest,
-            state.latest_snapshot.as_ref().map(|snap| snap.sequence),
-            state
+        build_report(EpisodeReportInput {
+            episode_id: state.episode_id.clone(),
+            goal: state.goal.clone(),
+            device: state.device.clone(),
+            sim_scene_version: self.sim_scene_version.clone(),
+            aletheon_commit: self.aletheon_commit.clone(),
+            bridge_protocol_digest: self.bridge_protocol_digest.clone(),
+            before_sequence: state.latest_snapshot.as_ref().map(|snap| snap.sequence),
+            after_sequence: state
                 .latest_verification
                 .as_ref()
                 .map(|v| v.evaluated_sequence),
-            settlement,
+            settlement: settlement.into(),
             attempts,
             artifacts,
-        )
+        })
     }
 }
 
