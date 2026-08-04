@@ -45,10 +45,18 @@ pub use cli::run;
 /// Build the local chat envelope. Keeping this in one place prevents the TUI,
 /// line mode, and `-m` mode from silently diverging.
 pub fn chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> serde_json::Value {
-    fabric::protocol::client::ClientRpcRequest::chat(message, workspace)
-        .chat_with_permission_mode(crate::host::permission_mode_from_environment())
-        .to_json_rpc(Some(1))
-        .expect("typed chat request serializes")
+    crate::intent::rpc(crate::intent::submit_prompt(crate::intent::PromptIntent {
+        surface: fabric::contract::command::ClientSurface::Tui,
+        correlation_id: format!("tui-chat:{}", uuid::Uuid::new_v4()),
+        content: message,
+        session_id: None,
+        workspace,
+        requirements: Vec::new(),
+        task_kind: None,
+        permission_mode: crate::host::permission_mode_from_environment(),
+    }))
+    .to_json_rpc(Some(1))
+    .expect("typed chat request serializes")
 }
 
 /// Restore terminal to normal state.
@@ -451,10 +459,12 @@ mod working_dir_tests {
         )
         .unwrap();
         let request = super::chat_request("inspect this project", &workspace);
-        assert_eq!(request["params"]["message"], "inspect this project");
-        assert_eq!(request["params"]["working_dir"], "/tmp/project");
+        assert_eq!(request["method"], "client.intent");
+        let prompt = &request["params"]["command"]["arguments"];
+        assert_eq!(prompt["content"], "inspect this project");
+        assert_eq!(prompt["workspace"]["cwd"], "/tmp/project");
         assert_eq!(
-            request["params"]["workspace_roots"],
+            prompt["workspace"]["writable_roots"],
             serde_json::json!(["/tmp/project", "/tmp/shared"])
         );
     }

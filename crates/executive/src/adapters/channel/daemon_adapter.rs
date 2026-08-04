@@ -12,7 +12,10 @@ use crate::application::approval::{
     ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
 };
 use crate::application::goal::ObjectiveStore;
-use crate::application::DaemonTurnOrchestrator;
+use crate::application::{
+    CommandDispatcher, CommandOutput, CommandUseCases, DaemonTurnOrchestrator,
+};
+use fabric::contract::command::{ClientIntent, StatusIntent, SubmitPromptIntent};
 use fabric::{
     ApprovalId, ApprovalSnapshot, GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId,
 };
@@ -23,6 +26,7 @@ use tokio::sync::Mutex;
 
 /// Wraps a `DaemonTurnOrchestrator` so the channel router can invoke
 /// full daemon chat turns without depending on the handler stack.
+#[derive(Clone)]
 pub struct DaemonChannelTurnExecutor {
     orchestrator: Arc<DaemonTurnOrchestrator>,
 }
@@ -235,34 +239,45 @@ impl DaemonChannelTurnExecutor {
 }
 
 #[async_trait::async_trait]
-impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
-    async fn execute(
+impl CommandUseCases for DaemonChannelTurnExecutor {
+    async fn submit_prompt(
         &self,
-        principal: &str,
-        message: &str,
-        correlation_id: &str,
-    ) -> anyhow::Result<String> {
+        intent: &ClientIntent,
+        prompt: &SubmitPromptIntent,
+    ) -> anyhow::Result<CommandOutput> {
+        let permission_mode = prompt.permission_mode;
+        let thread_id = prompt.session_id.as_ref().map_or_else(
+            || fabric::ThreadId(intent.principal.0.clone()),
+            |session_id| fabric::ThreadId(session_id.0.clone()),
+        );
         let resp = self
             .orchestrator
-            .execute_authenticated_turn(
-                serde_json::Value::String(correlation_id.to_string()),
-                message,
+            .execute_turn(
+                serde_json::Value::String(intent.correlation_id.clone()),
+                &prompt.content,
                 fabric::PrincipalContext::new(
-                    PrincipalId::local_uid(nix::unistd::Uid::effective().as_raw()),
+                    intent.principal.clone(),
                     fabric::LocalOsPrincipal {
                         uid: nix::unistd::Uid::effective().as_raw(),
                         gid: nix::unistd::Gid::effective().as_raw(),
                     },
                     fabric::ConnectionId::new(),
-                    fabric::ThreadId(principal.to_owned()),
-                    fabric::WorkspacePolicy::from_resolved_roots(
-                        std::path::PathBuf::from("/var/lib/aletheon"),
-                        Vec::new(),
-                    )
-                    .map_err(anyhow::Error::msg)?,
-                    fabric::PermissionProfileId::workspace_write(),
-                    fabric::ApprovalPolicy::OnRequest,
+                    thread_id,
+                    prompt.workspace.clone(),
+                    if permission_mode.is_full() {
+                        fabric::PermissionProfileId::danger_full_access()
+                    } else {
+                        fabric::PermissionProfileId::workspace_write()
+                    },
+                    if permission_mode.is_full() {
+                        fabric::ApprovalPolicy::Never
+                    } else {
+                        fabric::ApprovalPolicy::OnRequest
+                    },
                 ),
+                prompt.requirements.clone(),
+                prompt.task_kind,
+                None,
             )
             .await;
 
@@ -278,12 +293,39 @@ impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
             anyhow::bail!("turn failed: {msg}");
         }
 
-        let text = resp
-            .get("result")
-            .and_then(|r| r.get("response"))
-            .and_then(|r| r.as_str())
-            .unwrap_or("");
-        Ok(text.to_string())
+        Ok(CommandOutput::PromptCompleted {
+            correlation_id: intent.correlation_id.clone(),
+            result: resp.get("result").cloned().unwrap_or_default(),
+        })
+    }
+
+    async fn status(
+        &self,
+        _intent: &ClientIntent,
+        _status: &StatusIntent,
+    ) -> anyhow::Result<CommandOutput> {
+        anyhow::bail!("status is not available through the channel turn executor")
+    }
+}
+
+#[async_trait::async_trait]
+impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
+    async fn execute(&self, intent: &ClientIntent) -> anyhow::Result<String> {
+        let output = CommandDispatcher::new(Arc::new(self.clone()))
+            .dispatch(intent.clone())
+            .await?;
+        match output {
+            CommandOutput::PromptCompleted { result, .. } => Ok(result
+                .get("response")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned()),
+            CommandOutput::PromptAccepted { .. } => Ok(String::new()),
+            CommandOutput::Status { .. } | CommandOutput::StatusProjected { .. } => {
+                anyhow::bail!("channel turn executor received a non-prompt command")
+            }
+            CommandOutput::Rejected { message, .. } => anyhow::bail!(message),
+        }
     }
 }
 

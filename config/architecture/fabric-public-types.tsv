@@ -12,6 +12,7 @@ crates/fabric/src/contract/command.rs	enum	CommandVisibility	governed	fabric	ale
 crates/fabric/src/contract/command.rs	enum	TaskKindArg	governed	fabric	aletheon,interact	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	struct	ClientIntent	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	struct	CommandSpec	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	struct	StatusIntent	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	struct	SubmitPromptIntent	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/dasein/context.rs	enum	AssertionSource	baseline	-	-	-
 crates/fabric/src/dasein/context.rs	struct	AssertionSnapshot	baseline	-	-	-

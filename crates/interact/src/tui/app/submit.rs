@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Write;
 
+use fabric::contract::command::ClientSurface;
 use fabric::protocol::client::ClientRpcRequest;
 use fabric::ui_event::CollaborationMode;
 use fabric::ui_event::InterruptReason;
@@ -128,9 +129,11 @@ pub async fn submit_message(app: &mut App, text: String) {
                 };
                 send_request(
                     app,
-                    ClientRpcRequest::StatusFor(fabric::protocol::client::SessionParams {
-                        session_id,
-                    }),
+                    crate::intent::rpc(crate::intent::status(
+                        ClientSurface::Tui,
+                        format!("tui-status:{}", uuid::Uuid::new_v4()),
+                        Some(fabric::SessionId(session_id)),
+                    )),
                 )
                 .await;
                 return;
@@ -471,26 +474,16 @@ pub async fn submit_message(app: &mut App, text: String) {
 pub async fn send_to_daemon(app: &mut App, text: &str) {
     let request_id = app.next_request_id;
     app.next_request_id = app.next_request_id.saturating_add(1);
-    let request = app.app_state.session_id.clone().map_or_else(
-        || {
-            ClientRpcRequest::chat_with_task_kind(
-                text,
-                None,
-                &app.workspace,
-                app.turn_requirements.clone(),
-                app.requested_task_kind,
-            )
-        },
-        |session_id| {
-            ClientRpcRequest::chat_with_task_kind(
-                text,
-                Some(fabric::SessionId(session_id)),
-                &app.workspace,
-                app.turn_requirements.clone(),
-                app.requested_task_kind,
-            )
-        },
-    );
+    let request = crate::intent::rpc(crate::intent::submit_prompt(crate::intent::PromptIntent {
+        surface: ClientSurface::Tui,
+        correlation_id: format!("tui:{request_id}"),
+        content: text,
+        session_id: app.app_state.session_id.clone().map(fabric::SessionId),
+        workspace: &app.workspace,
+        requirements: app.turn_requirements.clone(),
+        task_kind: app.requested_task_kind,
+        permission_mode: crate::host::permission_mode_from_environment(),
+    }));
     let msg = request
         .to_json_rpc(Some(request_id))
         .expect("typed chat request serializes");

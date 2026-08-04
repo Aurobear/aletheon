@@ -18,6 +18,10 @@ use super::super::response::{
 use super::super::term_compat::TermCaps;
 use super::super::test_infra::{EventRecorder, FrameRecorder, TestConfig, TestInputReader};
 use super::super::App;
+use super::super::{
+    command::{looks_like_command, BuiltinCommand, CommandType},
+    registry::CommandRegistry,
+};
 use super::key_handler::{handle_key, handle_mouse};
 use super::submit::submit_message;
 
@@ -224,6 +228,7 @@ pub async fn simple_line_mode(
     let stdin = io::stdin();
     let mut read_buf = vec![0u8; 8192];
     let mut response_buf = super::super::json_lines::JsonLineBuffer::default();
+    let registry = CommandRegistry::new();
 
     loop {
         print!("> ");
@@ -240,50 +245,62 @@ pub async fn simple_line_mode(
         if trimmed.is_empty() {
             continue;
         }
-        if trimmed == "/quit" || trimmed == "/exit" {
-            break;
-        }
-
-        // Select a typed daemon request from slash commands.
-        let request = if trimmed.starts_with('/') {
-            let cmd = trimmed.strip_prefix('/').unwrap_or(trimmed);
-            let (name, _args) = match cmd.find(' ') {
-                Some(i) => (&cmd[..i], cmd[i + 1..].trim()),
-                None => (cmd, ""),
-            };
-            match name {
-                "clear" => ClientRpcRequest::Clear,
-                "status" | "st" => ClientRpcRequest::Status,
-                "sessions" | "sess" => ClientRpcRequest::Sessions,
-                "resume" => ClientRpcRequest::resume(_args),
-                "compact" | "cmp" => ClientRpcRequest::Compact,
-                "model" | "m" => ClientRpcRequest::ModelList,
-                "cwd" => {
-                    println!("{}", workspace.cwd().display());
+        // Resolve slash syntax through the same catalog as the full TUI. The
+        // line adapter only projects typed commands it can render safely; it
+        // never forwards unknown command text to the model as a chat prompt.
+        let request = if looks_like_command(trimmed) {
+            match registry.parse(trimmed) {
+                Some(CommandType::Builtin(BuiltinCommand::Quit)) => break,
+                Some(CommandType::Builtin(BuiltinCommand::Help)) => {
+                    println!("{}", registry.help_text());
                     continue;
                 }
-                "reflect" | "r" | "reflect_now" | "rn" | "evolution" | "evo" | "genome"
-                | "gene" | "hooks" | "hk" | "task" | "evaluation" | "eval" | "approve" | "a"
-                | "plan" | "p" | "computer" => {
-                    println!("Unknown command: /{name}");
+                Some(CommandType::Builtin(BuiltinCommand::Clear)) => ClientRpcRequest::Clear,
+                Some(CommandType::Builtin(BuiltinCommand::Status)) => {
+                    crate::intent::rpc(crate::intent::status(
+                        fabric::contract::command::ClientSurface::Tui,
+                        format!("line-status:{}", uuid::Uuid::new_v4()),
+                        None,
+                    ))
+                }
+                Some(CommandType::Builtin(BuiltinCommand::Sessions)) => ClientRpcRequest::Sessions,
+                Some(CommandType::Builtin(BuiltinCommand::Resume { id })) if !id.is_empty() => {
+                    ClientRpcRequest::resume(id)
+                }
+                Some(CommandType::Builtin(BuiltinCommand::Compact)) => ClientRpcRequest::Compact,
+                Some(CommandType::Builtin(BuiltinCommand::Model)) => ClientRpcRequest::ModelList,
+                Some(CommandType::Skill { name, args }) => {
+                    ClientRpcRequest::skill_invoke(name, args, &workspace)
+                }
+                Some(CommandType::Unknown {
+                    name, suggestions, ..
+                }) => {
+                    if suggestions.is_empty() {
+                        println!("Unknown command: /{name}");
+                    } else {
+                        println!(
+                            "Unknown command: /{name}. Did you mean {}?",
+                            suggestions.join(", ")
+                        );
+                    }
                     continue;
                 }
-                _ => ClientRpcRequest::chat_with_task_kind(
-                    trimmed,
-                    None,
-                    &workspace,
-                    turn_requirements.clone(),
-                    task_kind,
-                ),
+                Some(CommandType::Builtin(_)) | None => {
+                    println!("Command is unavailable in line mode: {trimmed}");
+                    continue;
+                }
             }
         } else {
-            ClientRpcRequest::chat_with_task_kind(
-                trimmed,
-                None,
-                &workspace,
-                turn_requirements.clone(),
+            crate::intent::rpc(crate::intent::submit_prompt(crate::intent::PromptIntent {
+                surface: fabric::contract::command::ClientSurface::Tui,
+                correlation_id: format!("line:{}", uuid::Uuid::new_v4()),
+                content: trimmed,
+                session_id: None,
+                workspace: &workspace,
+                requirements: turn_requirements.clone(),
                 task_kind,
-            )
+                permission_mode: crate::host::permission_mode_from_environment(),
+            }))
         };
         let msg = request.to_json_rpc(Some(1))?;
         let payload = serde_json::to_string(&msg)?;

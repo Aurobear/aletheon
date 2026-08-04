@@ -205,18 +205,23 @@ pub struct SubmitPromptIntent {
     pub permission_mode: HostPermissionMode,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct StatusIntent {
+    pub session_id: Option<SessionId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", content = "arguments", rename_all = "snake_case")]
 pub enum ClientCommand {
     SubmitPrompt(SubmitPromptIntent),
-    Status,
+    Status(StatusIntent),
 }
 
 impl ClientCommand {
     pub const fn id(&self) -> CommandId {
         match self {
             Self::SubmitPrompt(_) => CommandId::SubmitPrompt,
-            Self::Status => CommandId::Status,
+            Self::Status(_) => CommandId::Status,
         }
     }
 }

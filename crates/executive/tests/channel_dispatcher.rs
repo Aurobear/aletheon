@@ -21,17 +21,21 @@ use tokio::sync::Mutex;
 #[derive(Default)]
 struct FakeTurnExecutor {
     calls: Mutex<Vec<String>>,
+    intents: Mutex<Vec<fabric::contract::command::ClientIntent>>,
 }
 
 #[async_trait::async_trait]
 impl ChannelTurnExecutor for FakeTurnExecutor {
     async fn execute(
         &self,
-        _principal: &str,
-        message: &str,
-        _correlation_id: &str,
+        intent: &fabric::contract::command::ClientIntent,
     ) -> anyhow::Result<String> {
+        let fabric::contract::command::ClientCommand::SubmitPrompt(prompt) = &intent.command else {
+            anyhow::bail!("expected prompt intent")
+        };
+        let message = &prompt.content;
         self.calls.lock().await.push(message.to_string());
+        self.intents.lock().await.push(intent.clone());
         Ok(format!("reply:{message}"))
     }
 }
@@ -203,6 +207,19 @@ async fn owner_text_invokes_executor_once() {
     let calls = executor.calls.lock().await;
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0], "hello world");
+    drop(calls);
+    let intents = executor.intents.lock().await;
+    assert_eq!(
+        intents[0].surface,
+        fabric::contract::command::ClientSurface::Gateway
+    );
+    assert_eq!(intents[0].principal.0, "owner");
+    assert_eq!(intents[0].correlation_id, "corr-text");
+    assert!(matches!(
+        &intents[0].command,
+        fabric::contract::command::ClientCommand::SubmitPrompt(prompt)
+            if prompt.session_id.as_ref().map(|value| value.0.as_str()) == Some("owner")
+    ));
 
     // Inbox completed.
     let store = inspect(&db_path);
@@ -333,9 +350,7 @@ async fn executor_failure_inbox_retryable_cursor_unchanged() {
     impl ChannelTurnExecutor for FailingExecutor {
         async fn execute(
             &self,
-            _principal: &str,
-            _message: &str,
-            _correlation_id: &str,
+            _intent: &fabric::contract::command::ClientIntent,
         ) -> anyhow::Result<String> {
             anyhow::bail!("simulated ai failure")
         }

@@ -26,7 +26,11 @@ impl CommandUseCases for RecordingUseCases {
         })
     }
 
-    async fn status(&self, _intent: &ClientIntent) -> anyhow::Result<CommandOutput> {
+    async fn status(
+        &self,
+        _intent: &ClientIntent,
+        _status: &fabric::contract::command::StatusIntent,
+    ) -> anyhow::Result<CommandOutput> {
         self.calls.lock().unwrap().push(CommandId::Status);
         Ok(CommandOutput::Status {
             ready: true,

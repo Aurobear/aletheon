@@ -34,10 +34,12 @@ struct FakeTurnExecutor {
 impl ChannelTurnExecutor for FakeTurnExecutor {
     async fn execute(
         &self,
-        _principal: &str,
-        message: &str,
-        _correlation_id: &str,
+        intent: &fabric::contract::command::ClientIntent,
     ) -> anyhow::Result<String> {
+        let fabric::contract::command::ClientCommand::SubmitPrompt(prompt) = &intent.command else {
+            anyhow::bail!("expected prompt intent")
+        };
+        let message = &prompt.content;
         self.calls.lock().await.push(message.to_string());
         Ok(format!("reply:{message}"))
     }
