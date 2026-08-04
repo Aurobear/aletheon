@@ -14,7 +14,7 @@ OVERNIGHT_DEADLINE: unbounded_by_owner
 OVERNIGHT_INPUT_TOKEN_CAP: unbounded_by_owner
 OVERNIGHT_OUTPUT_TOKEN_CAP: unbounded_by_owner
 OVERNIGHT_COST_CAP_USD: unbounded_by_owner
-B0_MERGE_SHA: pending
+B0_MERGE_SHA: 95a5f8046f64eccd0ea6f22b0a82f06465e72419
 ```
 
 上述字段已由 owner 明确授权；token/cost/deadline 豁免不取消依赖、三次 attempt、证据、CI 或 blocked 停止规则。
@@ -22,14 +22,14 @@ B0_MERGE_SHA: pending
 ## B0
 
 ```text
-STATUS: in_progress
+STATUS: accepted
 NODE: B0
-BASE / BRANCH / PR / GOAL_ID: c080b08bf3170dd8a09acdb738a255133abbf11b / auro/docs/20260805-goal-execution-bootstrap / pending / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: c080b08bf3170dd8a09acdb738a255133abbf11b / auro/docs/20260805-goal-execution-bootstrap / #162 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: six documents present; path/structure/dependency/sensitive-data checks passed
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: six documents present; path/structure/dependency/sensitive-data checks passed; GitHub CI 5 passed and 4 skipped
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 95a5f8046f64eccd0ea6f22b0a82f06465e72419
 ```
 
 ## B1
@@ -37,7 +37,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: B1
-BASE / BRANCH / PR / GOAL_ID: c080b08bf3170dd8a09acdb738a255133abbf11b / bootstrap branch pending / n/a / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: c080b08bf3170dd8a09acdb738a255133abbf11b / n/a / n/a / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: owner approval recorded; GitHub auth verified; external supervisor Goal active
 FAILURES: none
@@ -48,11 +48,11 @@ MERGE_SHA: n/a
 ## X0
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X0
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: 95a5f8046f64eccd0ea6f22b0a82f06465e72419 / auro/chore/20260805-x0-architecture-freeze / #163 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: all 14 retained historical branch tips are ancestors of origin/dev; compatibility-debt.tsv and metrics.env frozen_commit equal PLAN_BASELINE; B0/B1 evidence complete
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
@@ -418,7 +418,7 @@ BASE / BRANCH / PR / GOAL_ID: pending
 BUDGET: pending
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
 FAILURES: none
-BLOCKER: bridge version/proto digest/scene version not recorded; B0 not merged
+BLOCKER: bridge version/proto digest/scene version not recorded
 MERGE_SHA: pending
 ```
 
