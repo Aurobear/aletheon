@@ -26,6 +26,13 @@ pub struct InferenceTerminalReceipt {
     pub status: InferenceTerminalStatus,
     pub usage: InferenceUsage,
     pub failure_kind: Option<String>,
+    /// Diagnostic identity of the cache-relevant request prefix (see
+    /// `executive::host::daemon::cache_shape::InferencePrefixShape::digest`).
+    /// Host-side diagnostic only; never a correctness dependency and never a
+    /// claim that the provider hit or missed cache. `None` when the host did
+    /// not compute a shape for this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_shape_digest: Option<String>,
 }
 
 impl InferenceTerminalReceipt {

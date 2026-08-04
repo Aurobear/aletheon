@@ -148,6 +148,10 @@ impl InferenceMetadata {
             status,
             usage,
             failure_kind: failure_kind.map(str::to_owned),
+            // The host stamps the diagnostic prefix-shape digest onto the
+            // receipt when it records it (see daemon_react); the session does
+            // not know the host-side shape.
+            prefix_shape_digest: None,
         }
     }
 }

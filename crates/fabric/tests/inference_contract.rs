@@ -50,6 +50,7 @@ fn terminal(
         status,
         usage: InferenceUsage::default(),
         failure_kind: failure_kind.map(str::to_owned),
+        prefix_shape_digest: None,
     }
 }
 

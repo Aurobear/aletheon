@@ -1,95 +1,160 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+//! Cache-relevant request prefix identity.
+//!
+//! `InferencePrefixShape` is a *diagnostic identity* of the stable request
+//! prefix for one turn. It explains whether the host kept every input it
+//! controls stable across turns (so a provider prefix cache could be reused);
+//! it never gates inference and it is not a claim about whether the provider
+//! actually hit cache. Shape changes are surfaced as typed `LocalMissReason`s.
 
-/// Tracks the "shape" of the cache-relevant prefix across turns.
-/// If the shape changes, the cache is invalidated.
-#[derive(Debug, Clone)]
-pub struct CacheShape {
-    /// Hash of the system prompt text
-    pub system_hash: u64,
-    /// Hash of the tool schemas (sorted deterministically)
-    pub tools_hash: u64,
-    /// Combined prefix hash
-    pub prefix_hash: u64,
-    /// Incremented on each compaction (the only deliberate cache-reset point)
-    pub rewrite_version: u32,
+use fabric::llm_types::{tool_schema_digest, ToolDefinition};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+/// Version of the prefix-shape identity. Bump when digest inputs change.
+pub const INFERENCE_PREFIX_SHAPE_VERSION: u16 = 1;
+
+/// Domain separator for the full shape digest.
+const SHAPE_DOMAIN: &[u8] = b"aletheon.inference-prefix-shape.v1\0";
+/// Domain separator for the system-prefix digest.
+const SYSTEM_PREFIX_DOMAIN: &[u8] = b"aletheon.system-prefix.v1\0";
+
+/// Stable host-owned facts that define the cache-relevant request prefix.
+///
+/// Never contains a secret, the raw system prefix, or any user content — only
+/// digests and stable identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InferencePrefixShape {
+    pub version: u16,
+    pub provider_id: String,
+    pub model_id: String,
+    pub transport: String,
+    pub system_prefix_digest: String,
+    pub tool_schema_digest: String,
+    pub agent_profile_digest: String,
+    pub rewrite_version: u64,
 }
 
-impl CacheShape {
-    /// Compute the current cache shape from system prompt and tool names.
-    pub fn compute(system_prompt: &str, tool_names: &[&str]) -> Self {
-        let system_hash = Self::hash_str(system_prompt);
-
-        // Sort tool names deterministically before hashing
-        let mut sorted_tools: Vec<&str> = tool_names.to_vec();
-        sorted_tools.sort();
-        let tools_str = sorted_tools.join(",");
-        let tools_hash = Self::hash_str(&tools_str);
-
-        let mut combined = DefaultHasher::new();
-        system_hash.hash(&mut combined);
-        tools_hash.hash(&mut combined);
-        let prefix_hash = combined.finish();
-
-        Self {
-            system_hash,
-            tools_hash,
-            prefix_hash,
-            rewrite_version: 0,
-        }
+impl InferencePrefixShape {
+    /// Compute a shape from host-owned turn facts. Tool definitions are
+    /// canonicalized by `fabric::tool_schema_digest` (order and object-key
+    /// independent). `system_prefix` must be the stable system prefix only —
+    /// memory, goal, Dasein, tool results and the current input never enter it.
+    pub fn compute(
+        provider_id: &str,
+        model_id: &str,
+        transport: &str,
+        system_prefix: &str,
+        tools: &[ToolDefinition],
+        agent_profile_digest: &str,
+        rewrite_version: u64,
+    ) -> anyhow::Result<Self> {
+        let system_prefix_digest =
+            sha256_domain_hex(SYSTEM_PREFIX_DOMAIN, system_prefix.as_bytes());
+        let tools_digest = tool_schema_digest(tools)?;
+        Ok(Self {
+            version: INFERENCE_PREFIX_SHAPE_VERSION,
+            provider_id: provider_id.to_owned(),
+            model_id: model_id.to_owned(),
+            transport: transport.to_owned(),
+            system_prefix_digest,
+            tool_schema_digest: tools_digest,
+            agent_profile_digest: agent_profile_digest.to_owned(),
+            rewrite_version,
+        })
     }
 
-    /// Increment rewrite version (called on compaction).
-    pub fn increment_rewrite(&mut self) {
-        self.rewrite_version = self.rewrite_version.wrapping_add(1);
+    /// Full deterministic SHA-256 digest of the shape (diagnostic identity).
+    pub fn digest(&self) -> String {
+        let encoded = serde_json::to_vec(self).expect("shape serializes");
+        sha256_domain_hex(SHAPE_DOMAIN, &encoded)
     }
 
-    /// Compare with a previous shape and explain any cache miss.
-    pub fn compare(&self, prev: &CacheShape) -> CacheComparison {
-        if self.prefix_hash == prev.prefix_hash && self.rewrite_version == prev.rewrite_version {
-            return CacheComparison::Hit;
+    /// Compare against a previous shape and report the first host-controlled
+    /// difference, or `None` when identical. When the shape is identical but
+    /// the provider still reports a miss, record
+    /// `LocalMissReason::ProviderMissOrEviction` — never claim a local cause.
+    pub fn compare(&self, previous: &InferencePrefixShape) -> Option<LocalMissReason> {
+        if previous.provider_id != self.provider_id || previous.model_id != self.model_id {
+            return Some(LocalMissReason::ProviderOrModelChanged);
         }
-
-        let mut reasons = Vec::new();
-
-        if self.system_hash != prev.system_hash {
-            reasons.push(CacheMissReason::SystemChanged);
+        if previous.transport != self.transport {
+            return Some(LocalMissReason::TransportChanged);
         }
-        if self.tools_hash != prev.tools_hash {
-            reasons.push(CacheMissReason::ToolsChanged);
+        if previous.system_prefix_digest != self.system_prefix_digest {
+            return Some(LocalMissReason::SystemChanged);
         }
-        if self.rewrite_version != prev.rewrite_version {
-            reasons.push(CacheMissReason::Compacted);
+        if previous.tool_schema_digest != self.tool_schema_digest {
+            return Some(LocalMissReason::ToolSchemaChanged);
         }
-
-        CacheComparison::Miss { reasons }
-    }
-
-    fn hash_str(s: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        s.hash(&mut hasher);
-        hasher.finish()
+        if previous.agent_profile_digest != self.agent_profile_digest {
+            return Some(LocalMissReason::ProfileChanged);
+        }
+        if previous.rewrite_version != self.rewrite_version {
+            return Some(LocalMissReason::CompactionOrRewrite);
+        }
+        None
     }
 }
 
-/// Result of comparing two cache shapes.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CacheComparison {
-    /// Cache hit — prefix is identical
-    Hit,
-    /// Cache miss — with reasons
-    Miss { reasons: Vec<CacheMissReason> },
-}
-
-/// Why the cache was invalidated.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CacheMissReason {
-    /// System prompt text changed
+/// Why the host-controlled prefix shape changed between two turns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalMissReason {
+    /// Provider or model identity changed.
+    ProviderOrModelChanged,
+    /// Wire transport changed.
+    TransportChanged,
+    /// System prefix changed.
     SystemChanged,
-    /// Tool schemas changed
-    ToolsChanged,
-    /// Context was compacted (deliberate cache reset)
-    Compacted,
+    /// Tool schema set changed.
+    ToolSchemaChanged,
+    /// Agent profile digest changed.
+    ProfileChanged,
+    /// Compaction or another deliberate rewrite bumped the version.
+    CompactionOrRewrite,
+    /// Shape identical but the provider reported a miss. The host cannot know
+    /// why (eviction, cold cache, proxy behaviour); never claim a local cause.
+    ProviderMissOrEviction,
+}
+
+/// Deterministic bootstrap identity for an agent profile. Uses the active
+/// profile name so switching profiles changes the shape and produces a
+/// `ProfileChanged` local miss reason; the authoritative per-turn profile
+/// digest can replace this once a profile registry exposes system-prompt
+/// content to the daemon host.
+pub fn agent_profile_digest(profile_name: &str) -> String {
+    sha256_domain_hex(b"aletheon.agent-profile.v1\0", profile_name.as_bytes())
+}
+
+/// Tracks the last observed prefix shape across turns.
+#[derive(Debug, Default, Clone)]
+pub struct PrefixShapeTracker {
+    last: Option<InferencePrefixShape>,
+}
+
+impl PrefixShapeTracker {
+    /// Record the current shape. Returns the reason the shape changed versus
+    /// the previously recorded shape, or `None` when it is identical (or on
+    /// first observation).
+    pub fn track(&mut self, shape: &InferencePrefixShape) -> Option<LocalMissReason> {
+        let reason = self
+            .last
+            .as_ref()
+            .and_then(|previous| shape.compare(previous));
+        self.last = Some(shape.clone());
+        reason
+    }
+
+    /// The most recently recorded shape.
+    pub fn last(&self) -> Option<&InferencePrefixShape> {
+        self.last.as_ref()
+    }
+}
+
+fn sha256_domain_hex(domain: &[u8], value: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(value);
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 /// Tracks session-wide cache statistics.
@@ -124,67 +189,120 @@ impl CacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    #[test]
-    fn compute_deterministic() {
-        let s1 = CacheShape::compute("hello", &["a", "b"]);
-        let s2 = CacheShape::compute("hello", &["a", "b"]);
-        assert_eq!(s1.prefix_hash, s2.prefix_hash);
+    fn tool(name: &str, description: &str) -> ToolDefinition {
+        ToolDefinition {
+            name: name.into(),
+            description: description.into(),
+            input_schema: json!({ "type": "object" }),
+        }
+    }
+
+    fn shape(system: &str, tools: &[ToolDefinition], profile: &str) -> InferencePrefixShape {
+        InferencePrefixShape::compute(
+            "lejurobot_deepseek",
+            "deepseek/deepseek-v4-flash[1m]",
+            "openai",
+            system,
+            tools,
+            profile,
+            0,
+        )
+        .unwrap()
     }
 
     #[test]
-    fn tool_order_independent() {
-        let s1 = CacheShape::compute("sys", &["b", "a"]);
-        let s2 = CacheShape::compute("sys", &["a", "b"]);
-        assert_eq!(s1.tools_hash, s2.tools_hash);
-        assert_eq!(s1.prefix_hash, s2.prefix_hash);
+    fn compute_is_deterministic_and_sha256() {
+        let a = shape(
+            "prefix",
+            &[tool("alpha", "one"), tool("zeta", "two")],
+            "profile-a",
+        );
+        let b = shape(
+            "prefix",
+            &[tool("alpha", "one"), tool("zeta", "two")],
+            "profile-a",
+        );
+        assert_eq!(a.digest(), b.digest());
+        assert!(a.digest().starts_with("sha256:"));
+        // A digest never embeds the prefix text, a secret, or user content.
+        assert!(!a.digest().contains("prefix"));
+        assert!(!a.system_prefix_digest.contains("prefix"));
+    }
+
+    #[test]
+    fn tool_order_and_object_key_independent() {
+        let left = shape("sys", &[tool("zeta", "z"), tool("alpha", "a")], "profile-a");
+        let right = shape("sys", &[tool("alpha", "a"), tool("zeta", "z")], "profile-a");
+        assert_eq!(left.tool_schema_digest, right.tool_schema_digest);
+        assert_eq!(left.digest(), right.digest());
+    }
+
+    #[test]
+    fn tool_schema_change_detected() {
+        let a = shape("sys", &[tool("alpha", "one")], "profile-a");
+        let b = shape("sys", &[tool("alpha", "two")], "profile-a");
+        assert_eq!(b.compare(&a), Some(LocalMissReason::ToolSchemaChanged));
     }
 
     #[test]
     fn system_change_detected() {
-        let s1 = CacheShape::compute("prompt A", &["tool"]);
-        let s2 = CacheShape::compute("prompt B", &["tool"]);
-        let comp = s2.compare(&s1);
-        assert_eq!(
-            comp,
-            CacheComparison::Miss {
-                reasons: vec![CacheMissReason::SystemChanged],
-            }
-        );
+        let a = shape("prompt A", &[tool("alpha", "one")], "profile-a");
+        let b = shape("prompt B", &[tool("alpha", "one")], "profile-a");
+        assert_eq!(b.compare(&a), Some(LocalMissReason::SystemChanged));
     }
 
     #[test]
-    fn tools_change_detected() {
-        let s1 = CacheShape::compute("sys", &["a"]);
-        let s2 = CacheShape::compute("sys", &["a", "b"]);
-        let comp = s2.compare(&s1);
-        assert_eq!(
-            comp,
-            CacheComparison::Miss {
-                reasons: vec![CacheMissReason::ToolsChanged],
-            }
-        );
+    fn memory_and_user_input_never_enter_shape() {
+        // Memory, goal, Dasein and current input are not inputs to compute();
+        // identical prefix/tools/profile yield an identical shape.
+        let a = shape("stable", &[tool("alpha", "one")], "profile-a");
+        let b = shape("stable", &[tool("alpha", "one")], "profile-a");
+        assert_eq!(a.compare(&b), None);
+    }
+
+    #[test]
+    fn profile_change_detected() {
+        let a = shape("sys", &[tool("alpha", "one")], "profile-a");
+        let b = shape("sys", &[tool("alpha", "one")], "profile-b");
+        assert_eq!(b.compare(&a), Some(LocalMissReason::ProfileChanged));
+    }
+
+    #[test]
+    fn provider_or_model_change_detected() {
+        let a = shape("sys", &[tool("alpha", "one")], "profile-a");
+        let mut b = shape("sys", &[tool("alpha", "one")], "profile-a");
+        b.model_id = "deepseek/deepseek-v4-pro[1m]".into();
+        assert_eq!(b.compare(&a), Some(LocalMissReason::ProviderOrModelChanged));
+    }
+
+    #[test]
+    fn transport_change_detected() {
+        let a = shape("sys", &[tool("alpha", "one")], "profile-a");
+        let mut b = shape("sys", &[tool("alpha", "one")], "profile-a");
+        b.transport = "anthropic".into();
+        assert_eq!(b.compare(&a), Some(LocalMissReason::TransportChanged));
     }
 
     #[test]
     fn compaction_detected() {
-        let s1 = CacheShape::compute("sys", &["a"]);
-        let mut s2 = CacheShape::compute("sys", &["a"]);
-        s2.increment_rewrite();
-        let comp = s2.compare(&s1);
-        assert_eq!(
-            comp,
-            CacheComparison::Miss {
-                reasons: vec![CacheMissReason::Compacted],
-            }
-        );
+        let a = shape("sys", &[tool("alpha", "one")], "profile-a");
+        let mut b = shape("sys", &[tool("alpha", "one")], "profile-a");
+        b.rewrite_version = 1;
+        assert_eq!(b.compare(&a), Some(LocalMissReason::CompactionOrRewrite));
     }
 
     #[test]
-    fn hit_when_identical() {
-        let s1 = CacheShape::compute("sys", &["a"]);
-        let s2 = CacheShape::compute("sys", &["a"]);
-        assert_eq!(s2.compare(&s1), CacheComparison::Hit);
+    fn tracker_reports_first_change_then_stable() {
+        let mut tracker = PrefixShapeTracker::default();
+        let a = shape("sys", &[tool("alpha", "one")], "profile-a");
+        assert_eq!(tracker.track(&a), None); // first observation
+        assert_eq!(tracker.track(&a), None); // stable
+        let b = shape("sys", &[tool("alpha", "two")], "profile-a");
+        assert_eq!(tracker.track(&b), Some(LocalMissReason::ToolSchemaChanged));
+        assert_eq!(tracker.track(&b), None);
+        assert_eq!(tracker.last(), Some(&b));
     }
 
     #[test]

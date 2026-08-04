@@ -497,6 +497,52 @@ OPEN ITEMS:
 - skill/profile 更新通过权威管理路径重建 shape；
 - shape 不包含 secret、原始 prompt 或用户内容。
 
+### 实施结果（§7.2 模板块，2026-08-04）
+
+```text
+STATUS: code_complete（类型级契约全部完成并测试；daemon 每轮接入部分留 OPEN ITEM）
+BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
+PHASE: C3
+SCOPE:
+  - crates/executive/src/host/daemon/cache_shape.rs（重写：CacheShape/DefaultHasher →
+    InferencePrefixShape + LocalMissReason + PrefixShapeTracker + agent_profile_digest +
+    CacheStats；SHA-256 + domain separation `aletheon.inference-prefix-shape.v1\0`）
+  - crates/fabric/src/types/inference_receipt.rs（InferenceTerminalReceipt 增
+    prefix_shape_digest: Option<String>，serde default + skip_if_none）
+  - crates/cognit/src/harness/session.rs、crates/fabric/tests/inference_contract.rs
+    （receipt 构造补 prefix_shape_digest: None）
+CONTRACT:
+  - executive::host::daemon::cache_shape::InferencePrefixShape{version,provider_id,model_id,
+    transport,system_prefix_digest,tool_schema_digest,agent_profile_digest,rewrite_version}
+  - compute() 用 fabric::tool_schema_digest（顺序/对象 key 无关）；digest() 全 shape SHA-256
+  - compare() -> Option<LocalMissReason>（ProviderOrModelChanged/TransportChanged/SystemChanged/
+    ToolSchemaChanged/ProfileChanged/CompactionOrRewrite；相同→None；同 shape 但 provider miss→
+    ProviderMissOrEviction，不声称本地原因）
+  - PrefixShapeTracker::track 返回变化原因；CacheStats 保留
+  - InferenceTerminalReceipt.prefix_shape_digest（诊断身份，非正确性依赖）
+VALIDATION:
+  bash scripts/cargo-agent.sh test -p executive --lib cache_shape    # 12 passed
+  bash scripts/cargo-agent.sh test -p executive --lib               # 677 passed
+  bash scripts/cargo-agent.sh test -p fabric --test inference_contract  # 20 passed
+  bash scripts/cargo-agent.sh test -p cognit --lib                  # 365 passed
+  bash scripts/cargo-agent.sh clippy -p fabric -p cognit -p executive --all-targets -- -D warnings  # 0
+  bash scripts/cargo-agent.sh fmt --all -- --check                  # 0
+RUNTIME EVIDENCE:
+  - 无真实请求；类型级契约测试覆盖全部完成条件（工具顺序/schema、system、profile、provider/model、
+    transport、compaction、memory/user-input 不进 shape、digest 无 secret/原文）
+METRICS:
+  - 无运行时指标；shape 为诊断身份，不参与请求正确性
+ROLLBACK:
+  - revert C3 commit（新类型 + receipt 可选字段，向后兼容）
+OPEN ITEMS:
+  - daemon 每轮 current-vs-previous 跟踪 + receipt 打标：bootstrap 处 provider identity
+    （default_provider/model/transport）不在 DaemonConfig 可达域，需把 provider registry 身份
+    或 AppConfig 传入 RequestHandler::new 后，在 turn_runtime 每轮 compute + PrefixShapeTracker.track
+    + record_inference_receipt 打标 shape digest
+  - skill/profile 更新后经权威管理路径重建 shape（PrefixBuilder 重建已存在，shape 重算待接）
+  - C4 typed partition；C5 benchmark；C6 recall cache；C7 tool cache
+```
+
 ## Phase C4：消息构造稳定性（P1）
 
 ### 修改范围
