@@ -76,7 +76,7 @@ MERGE_SHA: cb2388e8c9af690a9ce3063472c7f2f3cd6bda99
 ```text
 STATUS: code_complete
 NODE: X2
-BASE / BRANCH / PR / GOAL_ID: cb2388e8c9af690a9ce3063472c7f2f3cd6bda99 / auro/refactor/20260805-x2-task-kind-contract / pending / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: cb2388e8c9af690a9ce3063472c7f2f3cd6bda99 / auro/refactor/20260805-x2-task-kind-contract / #165 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TaskKindArg and TaskKind conversion moved to fabric::contract::command without a Clap dependency; production interact::cli caller count is 0; focused Fabric/Aletheon/Interact tests and architecture gates passed
 FAILURES: none
