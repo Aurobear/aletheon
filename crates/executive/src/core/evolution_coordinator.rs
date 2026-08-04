@@ -196,7 +196,7 @@ impl EvolutionCoordinator {
             let counter = self.turn_counter.fetch_add(1, Ordering::Relaxed) + 1;
             let n = self.config.trigger_every_n_turns;
             let on_fail = self.config.trigger_on_failure && !success;
-            (n > 0 && counter % n == 0) || on_fail
+            (n > 0 && counter.is_multiple_of(n)) || on_fail
         };
 
         let (triggered, verification_receipts) = if should_trigger {
