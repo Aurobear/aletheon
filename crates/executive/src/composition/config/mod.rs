@@ -46,7 +46,9 @@ pub use integrations::{
 };
 pub use memory_policy::MemoryPolicyConfig;
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
-pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
+pub use provider::{
+    CacheReportingMode, ModelRoutingConfig, PrefixCacheCapability, ProviderConfig, Transport,
+};
 pub use supplemental_memory::{
     MemoryConfig, SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
 };

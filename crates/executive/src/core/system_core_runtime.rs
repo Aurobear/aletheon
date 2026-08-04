@@ -58,6 +58,7 @@ impl RegistryInferencePort {
             max_context_length: None,
             pricing: None,
             backpressure: Default::default(),
+            cache: Default::default(),
         });
         config
             .model_aliases

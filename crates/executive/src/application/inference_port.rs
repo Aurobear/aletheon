@@ -205,6 +205,7 @@ impl LlmProvider for PortLlmProvider {
             effective_model_id: self.model_spec.clone(),
             display_name: self.display_name.clone(),
             max_context_tokens: self.max_context,
+            cache_reporting: None,
         }
     }
 

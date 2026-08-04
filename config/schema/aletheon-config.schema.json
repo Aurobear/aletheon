@@ -261,6 +261,31 @@
       ],
       "type": "string"
     },
+    "CacheReportingMode": {
+      "description": "How a provider reports cache usage in its usage telemetry. Used only to\ninterpret the wire fields; it does not enable or disable server-side\ncaching and never claims whether the endpoint actually hits cache.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Inspect the returned wire fields themselves (DeepSeek hit/miss, then\nOpenAI `cached_tokens`, else `Unknown`). Default; never fabricates.",
+          "type": "string"
+        },
+        {
+          "const": "deep_seek_chat",
+          "description": "Provider emits DeepSeek `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`.",
+          "type": "string"
+        },
+        {
+          "const": "open_ai_cached_tokens",
+          "description": "Provider emits OpenAI `prompt_tokens_details.cached_tokens`.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "Provider has no cache reporting; usage telemetry must be `Unsupported`.",
+          "type": "string"
+        }
+      ]
+    },
     "CodingRuntimeConfig": {
       "additionalProperties": false,
       "properties": {
@@ -2100,6 +2125,15 @@
       },
       "type": "object"
     },
+    "PrefixCacheCapability": {
+      "description": "Whether the endpoint supports provider-side prefix caching. `Auto` leaves\nthe decision to runtime facts/diagnostics rather than model-name guessing.",
+      "enum": [
+        "auto",
+        "supported",
+        "unsupported"
+      ],
+      "type": "string"
+    },
     "ProfileOverride": {
       "additionalProperties": false,
       "description": "Per-profile override values. All fields are optional; only the provided\nvalues replace the profile's declared defaults.",
@@ -2208,6 +2242,23 @@
       },
       "type": "object"
     },
+    "ProviderCacheConfig": {
+      "additionalProperties": false,
+      "description": "Per-provider cache behavior hints. These only interpret telemetry and shape\ntracking; they do not turn caching on or off and never become correctness\ndependencies.",
+      "properties": {
+        "prefix_cache": {
+          "$ref": "#/$defs/PrefixCacheCapability",
+          "default": "auto",
+          "description": "Whether the endpoint supports prefix caching (used for diagnostics and\nshape accounting, not for request correctness)."
+        },
+        "reporting": {
+          "$ref": "#/$defs/CacheReportingMode",
+          "default": "auto",
+          "description": "How usage telemetry's cache figures should be interpreted."
+        }
+      },
+      "type": "object"
+    },
     "ProviderConfig": {
       "additionalProperties": false,
       "description": "Per-provider configuration.",
@@ -2228,6 +2279,14 @@
         },
         "base_url": {
           "type": "string"
+        },
+        "cache": {
+          "$ref": "#/$defs/ProviderCacheConfig",
+          "default": {
+            "prefix_cache": "auto",
+            "reporting": "auto"
+          },
+          "description": "Cache behavior hints. Default is `Auto` — the wire fields are inspected\ndirectly and `Auto` never fabricates a cache figure."
         },
         "max_context_length": {
           "default": null,

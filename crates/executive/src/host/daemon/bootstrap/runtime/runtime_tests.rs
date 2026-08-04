@@ -74,6 +74,7 @@ mod goal_runtime_tests {
             max_context_length: None,
             pricing: None,
             backpressure: Default::default(),
+            cache: Default::default(),
         }
     }
 

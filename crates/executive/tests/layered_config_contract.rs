@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use executive::composition::config::{
-    merge_layers, schema, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind,
-    EnvironmentCredentialResolver, Transport,
+    merge_layers, schema, AppConfig, CacheReportingMode, ConfigLayer, ConfigSource,
+    ConfigSourceKind, EnvironmentCredentialResolver, PrefixCacheCapability, Transport,
 };
 
 fn layer(kind: ConfigSourceKind, locator: &str, text: &str) -> ConfigLayer {
@@ -241,6 +241,18 @@ fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
             path.display()
         );
         assert_eq!(
+            provider.cache.reporting,
+            CacheReportingMode::Auto,
+            "checked-in provider must default to wire-inspection cache telemetry: {}",
+            path.display()
+        );
+        assert_eq!(
+            provider.cache.prefix_cache,
+            PrefixCacheCapability::Auto,
+            "checked-in provider must not assert prefix-cache capability without measurement: {}",
+            path.display()
+        );
+        assert_eq!(
             config.agent.default_provider.as_deref(),
             Some("lejurobot_deepseek")
         );
@@ -276,6 +288,12 @@ fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
             ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
         );
         assert_eq!(official.max_context_length, None);
+        assert_eq!(
+            official.cache.reporting,
+            CacheReportingMode::Auto,
+            "official DeepSeek must also default to auto until measured: {}",
+            path.display()
+        );
     }
 }
 

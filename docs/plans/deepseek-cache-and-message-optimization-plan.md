@@ -417,6 +417,52 @@ prefix_cache = "auto" # auto | supported | unsupported
 - 配置缺省不伪造 supported；
 - provider/model identity 来自主机配置，不来自模型自述。
 
+### 实施结果（§7.2 模板块，2026-08-04）
+
+```text
+STATUS: accepted
+BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支上，随 C3-C7 后续提交）
+PHASE: C2
+SCOPE:
+  - crates/cognit/src/config/mod.rs（CacheReportingMode / PrefixCacheCapability /
+    ProviderCacheConfig；ProviderConfig.cache 字段）
+  - crates/cognit/src/adapters/inference/openai_provider.rs（OpenAiProvider.cache_reporting +
+    with_cache_reporting + runtime_facts 覆盖；openai_usage 增 reporting 参数，Unsupported→Unsupported
+    且不携带 cache 数字；流式闭包前复制 mode 避免 'static 借用）
+  - crates/cognit/src/composition/inference_factory.rs（OpenAi 分支传 config.cache.reporting）
+  - crates/fabric/src/types/llm_types.rs（ModelRuntimeFacts.cache_reporting: Option<String>）
+  - crates/executive/src/composition/config/{provider.rs,mod.rs}（re-export）
+  - crates/executive/src/application/{inference_port.rs,turn_pipeline.rs}（构造点补字段）
+  - crates/executive/src/core/system_core_runtime.rs、scheduler.rs、两个 provider timeout 测试、
+    bootstrap runtime_tests.rs（ProviderConfig 字面量补 cache: Default::default()）
+  - config/default.toml + config/production.toml.example（[providers.cache] reporting/prefix_cache=auto）
+  - config/schema/aletheon-config.schema.json（UPDATE_CONFIG_SCHEMA 再生成）
+  - crates/executive/tests/layered_config_contract.rs（anchor 测试断言两 provider cache=Auto）
+CONTRACT:
+  - cognit::config::CacheReportingMode{Auto,DeepSeekChat,OpenAiCachedTokens,Unsupported} + as_str()
+  - cognit::config::PrefixCacheCapability{Auto,Supported,Unsupported} + as_str()
+  - ProviderConfig.cache: ProviderCacheConfig（serde default + deny_unknown_fields）
+  - fabric::ModelRuntimeFacts.cache_reporting: Option<String>（skip_serializing_if is_none，
+    不破坏既有 runtime-facts JSON）
+  - openai_usage(usage, reporting)：Unsupported 短路径；其余维持 C1 字段解析
+VALIDATION:
+  bash scripts/cargo-agent.sh test -p fabric --lib                    # 377 passed
+  bash scripts/cargo-agent.sh test -p cognit --lib                    # 365 passed
+  bash scripts/cargo-agent.sh test -p executive --lib                 # 673 passed
+  UPDATE_CONFIG_SCHEMA=1 bash scripts/cargo-agent.sh test -p executive --test layered_config_contract  # 10 passed
+  bash scripts/cargo-agent.sh clippy -p fabric -p cognit -p executive --all-targets -- -D warnings  # 0
+  bash scripts/cargo-agent.sh fmt --all -- --check                    # 0
+RUNTIME EVIDENCE:
+  - 无真实请求；Unsupported 模式 + 显式 deepseek_chat/openai_cached 模式 fixture 测试（cognit 3 个新测试）
+METRICS:
+  - ModelRuntimeFacts 注入 <runtime-facts> 含 cache_reporting（每 provider 恒定，前缀稳定）
+ROLLBACK:
+  - revert C2 commit；配置缺省 auto 时行为与 C1 完全一致
+OPEN ITEMS:
+  - C3 SHA-256 prefix shape；C4 typed partition；C5 benchmark（测量后按需把 provider 显式置
+    reporting/prefix_cache）；C6 recall cache；C7 tool cache
+```
+
 ## Phase C3：稳定前缀 shape 接入（P1）
 
 ### 修改范围

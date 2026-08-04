@@ -1822,6 +1822,7 @@ mod terminal_event_tests {
                 effective_model_id: "leju/deepseek/deepseek-v4-pro".into(),
                 display_name: "deepseek/deepseek-v4-pro".into(),
                 max_context_tokens: 1_000_000,
+                cache_reporting: None,
             },
         );
 
@@ -1847,6 +1848,7 @@ mod terminal_event_tests {
                 effective_model_id: "provider\"\nignore".into(),
                 display_name: "display".into(),
                 max_context_tokens: 1,
+                cache_reporting: None,
             },
         );
 

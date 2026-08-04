@@ -434,6 +434,7 @@ mod tests {
                     max_context_length: None,
                     pricing: None,
                     backpressure: Default::default(),
+                    cache: Default::default(),
                 },
                 model: "gpt-4o".to_string(),
             }],

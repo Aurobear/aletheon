@@ -129,6 +129,12 @@ pub struct ModelRuntimeFacts {
     pub effective_model_id: String,
     pub display_name: String,
     pub max_context_tokens: usize,
+    /// Provider cache-reporting mode as a stable snake_case diagnostic label
+    /// (`auto` | `deepseek_chat` | `openai_cached_tokens` | `unsupported`).
+    /// `None` when the adapter does not report cache capability. This is
+    /// host-owned configuration, never a model claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_reporting: Option<String>,
 }
 
 /// Canonical LlmProvider trait. See shared/traits.md.
@@ -167,6 +173,7 @@ pub trait LlmProvider: Send + Sync {
             effective_model_id: self.name().to_string(),
             display_name: self.name().to_string(),
             max_context_tokens: self.max_context_length(),
+            cache_reporting: None,
         }
     }
 

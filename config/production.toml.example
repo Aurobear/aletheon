@@ -17,6 +17,12 @@ models = ["deepseek/deepseek-v4-flash[1m]"]
 [providers.backpressure]
 min_request_interval_ms = 15000
 
+[providers.cache]
+# auto | deepseek_chat | openai_cached_tokens | unsupported. Only interprets
+# usage telemetry; does not enable/disable server-side caching.
+reporting = "auto"
+prefix_cache = "auto"
+
 # Optional official endpoint. The service resolves DEEPSEEK_API_KEY from the
 # provider EnvironmentFile when this route is selected.
 [[providers]]
@@ -25,6 +31,10 @@ base_url = "https://api.deepseek.com"
 api_key = ""
 transport = "openai"
 models = ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
+
+[providers.cache]
+reporting = "auto"
+prefix_cache = "auto"
 
 # Production rollout starts in observation-only mode. Enforce remains an
 # explicit trusted-host decision after shadow calibration.
