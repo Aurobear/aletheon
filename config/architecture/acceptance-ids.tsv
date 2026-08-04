@@ -1,0 +1,5 @@
+# frozen_commit=03d263d44f0277d883c24b1be0b98e3a48519291
+# id	node	kind	target
+A-DEP-001	X1	test	crates/fabric/tests/architecture_contract.rs
+A-DEP-002	X1	test	crates/fabric/tests/architecture_contract.rs
+A-DEP-003	X1	test	crates/fabric/tests/architecture_contract.rs

@@ -48,24 +48,24 @@ MERGE_SHA: n/a
 ## X0
 
 ```text
-STATUS: code_complete
+STATUS: accepted
 NODE: X0
 BASE / BRANCH / PR / GOAL_ID: 95a5f8046f64eccd0ea6f22b0a82f06465e72419 / auro/chore/20260805-x0-architecture-freeze / #163 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: all 14 retained historical branch tips are ancestors of origin/dev; compatibility-debt.tsv and metrics.env frozen_commit equal PLAN_BASELINE; B0/B1 evidence complete
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: all 14 retained historical branch tips are ancestors of origin/dev; compatibility-debt.tsv and metrics.env frozen_commit equal PLAN_BASELINE; B0/B1 evidence complete; GitHub CI 5 passed and 4 skipped
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 03d263d44f0277d883c24b1be0b98e3a48519291
 ```
 
 ## X1
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X1
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: 03d263d44f0277d883c24b1be0b98e3a48519291 / auro/feat/20260805-x1-contract-gates / #164 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: 22-row migration matrix; 1014-type Fabric public snapshot; 3 acceptance IDs bound to passing tests; forbidden-edge/parser/writer metrics; architecture and negative fixtures passed
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending

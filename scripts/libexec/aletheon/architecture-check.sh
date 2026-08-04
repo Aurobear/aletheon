@@ -191,7 +191,44 @@ metrics = {
     "FORBIDDEN_INFRA_IMPORTS": 0,
     "CORE_OPAQUE_VALUE_INSPECTIONS": 0,
     "FABRIC_PROVIDER_TYPES": 0,
+    "FORBIDDEN_DEPENDENCY_EDGES": 0,
+    "PRODUCTION_CLI_PARSERS": 0,
+    "SESSION_APPEND_WRITERS": 0,
 }
+
+# X1 governance counters. A production parser is counted only when a binary
+# entry point invokes Clap's `Type::parse()`; dormant compatibility library
+# parsers do not become production authority merely by existing. Session
+# writers count concrete production implementations of the append port.
+for main in sorted((root / "crates").glob("*/src/main.rs")):
+    production = main.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    metrics["PRODUCTION_CLI_PARSERS"] += len(
+        re.findall(r"\b[A-Z][A-Za-z0-9_]*::parse\(\)", production)
+    )
+for rel, body in production_rs():
+    metrics["SESSION_APPEND_WRITERS"] += len(
+        re.findall(r"\bimpl\s+(?:fabric::)?SessionAppendStore\s+for\b", body)
+    )
+
+# These are semantic forbidden edges rather than a second dependency maximum.
+# The existing maximum still rejects any unreviewed local dependency; this
+# counter makes the architecture decisions explicit and keeps their target at
+# zero even when a future baseline is regenerated.
+for manifest in sorted((root / "crates").glob("*/Cargo.toml")):
+    package = tomllib.loads(manifest.read_text()).get("package", {}).get("name", manifest.parent.name)
+    dependencies = set(tomllib.loads(manifest.read_text()).get("dependencies", {}))
+    if package == "interact":
+        metrics["FORBIDDEN_DEPENDENCY_EDGES"] += len(dependencies & {"corpus", "mnemosyne"})
+    if package == "cognit":
+        metrics["FORBIDDEN_DEPENDENCY_EDGES"] += len(dependencies & {"executive", "interact"})
+    if package != "aletheon" and "aletheon" in dependencies:
+        metrics["FORBIDDEN_DEPENDENCY_EDGES"] += 1
+for rel, body in production_rs():
+    if rel.startswith("crates/hardware/"):
+        continue
+    for line in body.splitlines():
+        if "hardware::grpc::" in line and "BRIDGE_PROTOCOL_DIGEST" not in line:
+            metrics["FORBIDDEN_DEPENDENCY_EDGES"] += 1
 for rel, body in sources:
     lines = body.splitlines()
     if core(rel):
@@ -242,6 +279,201 @@ for row in data_lines("compatibility-debt.tsv"):
     if actual != int(expected):
         raise SystemExit(f"architecture-check: compatibility debt {debt_id} changed {expected}->{actual}; update/lower its reviewed baseline")
 PY
+fi
+
+# X1 contract governance. Legacy architecture fixtures that intentionally model
+# only Fabric do not carry these files; a production checkout (identified by the
+# aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
+# providing contract-migrations.tsv.
+if [[ ${ARCH_SKIP_X1_GATES:-0} != 1 && -d config/architecture ]]; then
+if [[ -f config/architecture/contract-migrations.tsv || -d crates/aletheon ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+from collections import defaultdict
+from pathlib import Path
+
+root = Path.cwd()
+cfg = root / "config/architecture"
+
+required_files = {
+    "contract-migrations.tsv",
+    "acceptance-ids.tsv",
+    "fabric-public-types.tsv",
+    "id-collisions.tsv",
+}
+missing_files = sorted(name for name in required_files if not (cfg / name).is_file())
+if missing_files:
+    raise SystemExit(f"architecture-check: missing X1 contract inventories: {missing_files}")
+
+def rows(name: str, fields: int):
+    parsed = []
+    for line_no, raw in enumerate((cfg / name).read_text().splitlines(), 1):
+        if not raw.strip() or raw.startswith("#"):
+            continue
+        values = raw.split("\t")
+        if len(values) != fields:
+            raise SystemExit(
+                f"architecture-check: {name}:{line_no} has {len(values)} fields, expected {fields}"
+            )
+        parsed.append((line_no, values))
+    return parsed
+
+# The migration matrix is intentionally about actions, not live status. It
+# must cover every authority/ID scope named by the plan and preserve all six
+# migration decisions so later nodes cannot silently invent a seventh mode.
+migration_rows = rows("contract-migrations.tsv", 11)
+allowed_actions = {"existing", "extend", "project", "v2", "new", "delete"}
+required_scopes = {"turn", "session", "plan", "memory", "agent", "command", "receipt", "id"}
+seen_components = set()
+seen_actions = set()
+seen_scopes = set()
+for line_no, values in migration_rows:
+    component, scope, current, action, target, owner, consumers, surface, evidence, decision, exit_node = values
+    if component in seen_components:
+        raise SystemExit(f"architecture-check: duplicate contract migration component {component}")
+    seen_components.add(component)
+    seen_actions.add(action)
+    seen_scopes.add(scope)
+    if action not in allowed_actions:
+        raise SystemExit(f"architecture-check: unknown migration action {action} at line {line_no}")
+    if not all(value.strip() for value in (component, scope, current, target, owner, consumers, surface, exit_node)):
+        raise SystemExit(f"architecture-check: incomplete contract migration at line {line_no}")
+    evidence_path, separator, evidence_line = evidence.rpartition(":")
+    source = root / evidence_path
+    if not separator or not evidence_line.isdigit() or not source.is_file():
+        raise SystemExit(f"architecture-check: invalid migration evidence {evidence}")
+    if int(evidence_line) < 1 or int(evidence_line) > len(source.read_text(errors="replace").splitlines()):
+        raise SystemExit(f"architecture-check: out-of-range migration evidence {evidence}")
+    decision_path = decision.split("#", 1)[0]
+    if not decision_path or not (root / decision_path).is_file():
+        raise SystemExit(f"architecture-check: missing migration decision reference {decision}")
+if seen_actions != allowed_actions:
+    raise SystemExit(f"architecture-check: migration actions incomplete: {sorted(allowed_actions-seen_actions)}")
+if not required_scopes <= seen_scopes:
+    raise SystemExit(f"architecture-check: migration scopes incomplete: {sorted(required_scopes-seen_scopes)}")
+
+# Acceptance IDs are a status-free, incrementally populated registry. A node
+# adds its rows only together with real evidence; merely listing future IDs
+# would create false acceptance. Every registered test must already exist and
+# use the mechanical function prefix.
+acceptance_rows = rows("acceptance-ids.tsv", 4)
+seen_ids = set()
+for line_no, (acceptance_id, node, kind, target) in acceptance_rows:
+    if acceptance_id in seen_ids or not re.fullmatch(r"[A-Z]+-[A-Z]+-[0-9]{3}", acceptance_id):
+        raise SystemExit(f"architecture-check: invalid/duplicate acceptance ID at line {line_no}")
+    seen_ids.add(acceptance_id)
+    if kind not in {"test", "command", "manual-evidence"}:
+        raise SystemExit(f"architecture-check: invalid acceptance kind {kind}")
+    target_path = root / target
+    if not node or not target_path.is_file():
+        raise SystemExit(f"architecture-check: missing acceptance target {target}")
+    if kind == "test":
+        prefix = acceptance_id.lower().replace("-", "_")
+        if not re.search(rf"\bfn\s+{re.escape(prefix)}(?:_|\b)", target_path.read_text(errors="replace")):
+            raise SystemExit(f"architecture-check: acceptance test prefix missing for {acceptance_id}")
+
+# Stable public Fabric type snapshot. X1 baseline rows are grandfathered;
+# post-X1 types must use provenance=governed and provide owner, consumers and a
+# repository decision reference. The fixed baseline_count prevents disguising
+# a new type as another baseline row.
+snapshot_path = cfg / "fabric-public-types.tsv"
+baseline_match = re.search(r"^# baseline_count=(\d+)$", snapshot_path.read_text(), re.M)
+if not baseline_match:
+    raise SystemExit("architecture-check: fabric public type snapshot lacks baseline_count")
+snapshot_rows = rows("fabric-public-types.tsv", 7)
+snapshot = {}
+baseline_rows = 0
+for line_no, (path, kind, symbol, provenance, owner, consumers, decision) in snapshot_rows:
+    key = (path, kind, symbol)
+    if key in snapshot:
+        raise SystemExit(f"architecture-check: duplicate Fabric public type {key}")
+    snapshot[key] = provenance
+    if provenance == "baseline":
+        baseline_rows += 1
+        if (owner, consumers, decision) != ("-", "-", "-"):
+            raise SystemExit(f"architecture-check: baseline Fabric row has mutable metadata at line {line_no}")
+    elif provenance == "governed":
+        if any(value in {"", "-"} for value in (owner, consumers, decision)):
+            raise SystemExit(f"architecture-check: governed Fabric type lacks metadata at line {line_no}")
+        decision_path = decision.split("#", 1)[0]
+        if not (root / decision_path).is_file():
+            raise SystemExit(f"architecture-check: governed Fabric decision is missing: {decision}")
+    else:
+        raise SystemExit(f"architecture-check: invalid Fabric provenance {provenance}")
+if baseline_rows != int(baseline_match.group(1)):
+    raise SystemExit("architecture-check: Fabric baseline_count changed; new types must be governed")
+type_rx = re.compile(r"^pub (struct|enum|trait|type) ([A-Za-z_][A-Za-z0-9_]*)\b", re.M)
+actual_types = set()
+for path in sorted((root / "crates/fabric/src").rglob("*.rs")):
+    for kind, symbol in type_rx.findall(path.read_text(errors="replace")):
+        actual_types.add((path.relative_to(root).as_posix(), kind, symbol))
+if actual_types != set(snapshot):
+    raise SystemExit(
+        "architecture-check: Fabric public type snapshot differs; "
+        f"added={sorted(actual_types-set(snapshot))}, removed={sorted(set(snapshot)-actual_types)}"
+    )
+
+# Duplicate ID wrappers are explicit semantic decisions. New collisions fail;
+# the known hardware OperationId collision remains a ledgered rename debt until
+# its scoped robot convergence node replaces it.
+collision_rows = rows("id-collisions.tsv", 6)
+recorded_collisions = {}
+for line_no, (symbol, paths, representations, decision, target, exit_node) in collision_rows:
+    if symbol in recorded_collisions or decision not in {"rename", "converge", "retain_distinct_semantics"}:
+        raise SystemExit(f"architecture-check: invalid ID collision row {line_no}")
+    path_values = tuple(paths.split(","))
+    representation_values = tuple(representations.split(","))
+    if len(path_values) != len(representation_values) or len(path_values) < 2 or not target or not exit_node:
+        raise SystemExit(f"architecture-check: incomplete ID collision row {line_no}")
+    recorded_collisions[symbol] = (path_values, representation_values)
+id_struct = re.compile(r"^pub struct ([A-Za-z_][A-Za-z0-9_]*Id)\s*\(pub\s+([^;)]+)\);", re.M)
+id_alias = re.compile(r"^pub type ([A-Za-z_][A-Za-z0-9_]*Id)\s*=\s*([^;]+);", re.M)
+actual_id_rows = defaultdict(list)
+for path in sorted((root / "crates").glob("*/src/**/*.rs")):
+    source = path.read_text(errors="replace")
+    for symbol, representation in [*id_struct.findall(source), *id_alias.findall(source)]:
+        actual_id_rows[symbol].append((path.relative_to(root).as_posix(), representation.strip()))
+actual_collisions = {
+    symbol: (tuple(path for path, _ in values), tuple(rep for _, rep in values))
+    for symbol, values in actual_id_rows.items() if len(values) > 1
+}
+if actual_collisions != recorded_collisions:
+    raise SystemExit(
+        "architecture-check: duplicate ID wrapper inventory differs; "
+        f"current={actual_collisions}, recorded={recorded_collisions}"
+    )
+
+# A dispatcher must define each dotted RPC method at most once. Client/server
+# copies are expected; duplicate arms inside one authority are not.
+rpc_dispatchers = [
+    root / "crates/executive/src/host/daemon/handler/rpc.rs",
+    root / "crates/executive/src/host/daemon/handler/mod.rs",
+    root / "crates/executive/src/host/daemon/debug_handler.rs",
+    root / "crates/executive/src/core/session_gateway/gateway.rs",
+]
+rpc_arm = re.compile(r'^\s*((?:"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+"\s*(?:\|\s*)?)+)\s*=>', re.M)
+rpc_value = re.compile(r'"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"')
+for path in rpc_dispatchers:
+    if not path.is_file():
+        continue
+    seen = set()
+    duplicates = set()
+    for arm in rpc_arm.findall(path.read_text(errors="replace")):
+        for method in rpc_value.findall(arm):
+            if method in seen:
+                duplicates.add(method)
+            seen.add(method)
+    if duplicates:
+        raise SystemExit(f"architecture-check: duplicate RPC method arms in {path}: {sorted(duplicates)}")
+
+print(
+    f"X1 contract gates: {len(migration_rows)} migrations, "
+    f"{len(acceptance_rows)} acceptance IDs, {len(snapshot_rows)} Fabric public types"
+)
+PY
+fi
 fi
 
 # Q01 deletion gates: application-layer discovery belongs only to Executive,
