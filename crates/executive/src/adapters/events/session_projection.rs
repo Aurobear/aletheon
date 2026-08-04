@@ -152,7 +152,30 @@ impl SessionProjection {
         state: &mut PublicSessionState,
         event: &SpineEvent,
     ) -> Result<(), ProjectionError> {
-        let item = current_item(decode_inline(event)?).map_err(ProjectionError::Storage)?;
+        // Tolerate legacy turn-schema events with non-item payloads (e.g. admin
+        // profile switches written before the schema was fixed). Skipping them
+        // keeps the public-session projection replayable instead of poisoned.
+        let item = match decode_inline::<ItemRecord>(event) {
+            Ok(value) => match current_item(value) {
+                Ok(item) => item,
+                Err(error) => {
+                    tracing::warn!(
+                        event_id = %event.position.event_id.0,
+                        %error,
+                        "skipping turn-schema event with non-item payload"
+                    );
+                    return Ok(());
+                }
+            },
+            Err(error) => {
+                tracing::warn!(
+                    event_id = %event.position.event_id.0,
+                    %error,
+                    "skipping turn-schema event with non-item payload"
+                );
+                return Ok(());
+            }
+        };
         if item.session_id != SessionId(event.identity.session_id.clone()) {
             return Err(invalid("Session item identity differs from spine"));
         }
