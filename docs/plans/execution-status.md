@@ -115,7 +115,7 @@ MERGE_SHA: c76d6aa8f649b4485e02c28712a2d74e6e125abb
 ```text
 STATUS: code_complete
 NODE: X3c
-BASE / BRANCH / PR / GOAL_ID: c76d6aa8f649b4485e02c28712a2d74e6e125abb / auro/refactor/20260805-x3c-remove-compat-parser / pending / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: c76d6aa8f649b4485e02c28712a2d74e6e125abb / auro/refactor/20260805-x3c-remove-compat-parser / #168 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commit 61875dc8 deletes the dormant Interact Args parser, handler, module export, and assembly compatibility re-export; the required one-shot socket path is preserved as a parser-free ClientIntent adapter and no longer re-parses slash text; Interact no longer depends on Clap; A-ENTRY-002/003 and U-CLI-004 prove the parser is absent and production caller/import count is zero; Interact 121-test suite plus 7 integration tests, Aletheon package tests, focused one-shot tests, package Clippy -D warnings, formatting, diff, and architecture gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 b51b61713763da87cec1906695755f0cb40b7722376c7acb47620ad3ae30f9d9, zero restart counters, stable services, and an official-socket real LLM request
 FAILURES: none
