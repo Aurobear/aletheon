@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use fabric::paths::{ProcessRuntimeEnvironment, RuntimeEnvironment, UserRuntimePaths};
 
-// Reserve one second of the five-second user-facing budget for install-mode
-// discovery, error projection, and process teardown around the lifecycle call.
-const CLIENT_STARTUP_TIMEOUT: Duration = Duration::from_secs(4);
+// A healthy cold start may restore durable cognition state before accepting the
+// initialize handshake. Bootstrap failures are observed independently and are
+// still projected immediately rather than waiting for this readiness deadline.
+const CLIENT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct DaemonStartupDiagnostic {
@@ -260,7 +261,7 @@ mod tests {
         > {
             Err(executive::host::launcher::EnsureUserDaemonError::Lifecycle(
                 executive::application::daemon_lifecycle::DaemonLifecycleError::ReadinessTimeout {
-                    timeout_ms: 4_000,
+                    timeout_ms: 30_000,
                     last_readiness:
                         executive::application::daemon_lifecycle::DaemonReadiness::Absent,
                     diagnostic: "service configuration rejected startup".into(),
@@ -338,7 +339,7 @@ mod tests {
         let request = ensurer.request.lock().unwrap();
         let request = request.as_ref().unwrap();
         assert_eq!(request.socket.as_deref(), Some(socket.as_path()));
-        assert_eq!(request.startup_timeout, Duration::from_secs(4));
+        assert_eq!(request.startup_timeout, Duration::from_secs(30));
     }
 
     #[tokio::test]
@@ -351,7 +352,7 @@ mod tests {
         assert_eq!(error.diagnostic().schema_version, 1);
         assert_eq!(error.diagnostic().code, "daemon_readiness_timeout");
         assert_eq!(error.diagnostic().socket, "/tmp/config-error.sock");
-        assert_eq!(error.diagnostic().timeout_ms, 4_000);
+        assert_eq!(error.diagnostic().timeout_ms, 30_000);
         assert!(error
             .diagnostic()
             .detail

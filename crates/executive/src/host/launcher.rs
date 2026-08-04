@@ -103,7 +103,7 @@ impl Default for EnsureUserDaemon {
     fn default() -> Self {
         Self {
             socket: None,
-            startup_timeout: Duration::from_secs(5),
+            startup_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -132,6 +132,7 @@ impl EnsureUserDaemonError {
                 DaemonLifecycleError::Probe(_) => "readiness_probe_failed",
                 DaemonLifecycleError::StaleSocketRecovery(_) => "stale_socket_recovery_failed",
                 DaemonLifecycleError::Activation(_) => "daemon_activation_failed",
+                DaemonLifecycleError::BootstrapFailed(_) => "daemon_bootstrap_failed",
                 DaemonLifecycleError::ProtocolMismatch { .. } => "protocol_version_mismatch",
                 DaemonLifecycleError::RuntimeVersionMismatch { .. } => "runtime_version_mismatch",
                 DaemonLifecycleError::ReadinessTimeout { .. } => "daemon_readiness_timeout",
@@ -152,7 +153,7 @@ pub async fn ensure_user_daemon(
     // exact requested endpoint. Isolated or custom endpoints use foreground
     // development activation instead of waiting on an unrelated unit.
     let mode = detect_install_mode(&socket).await;
-    let backend = Arc::new(ProcessDaemonLifecycleBackend::new(executable));
+    let backend = Arc::new(ProcessDaemonLifecycleBackend::new(executable, mode));
     let startup_lock = Arc::new(FileStartupLock::new(
         paths.runtime_root.join("daemon-startup.lock"),
     ));
@@ -290,10 +291,10 @@ mod tests {
     use super::{render_exec_json, select_daemon_socket, EnsureUserDaemon};
 
     #[test]
-    fn user_daemon_startup_budget_is_bounded_to_five_seconds() {
+    fn user_daemon_startup_budget_allows_durable_state_restore() {
         assert_eq!(
             EnsureUserDaemon::default().startup_timeout,
-            std::time::Duration::from_secs(5)
+            std::time::Duration::from_secs(30)
         );
     }
 

@@ -40,6 +40,9 @@ pub enum DaemonReadiness {
     Unready {
         detail: String,
     },
+    Failed {
+        detail: String,
+    },
     Ready {
         protocol_version: u16,
         runtime_version: String,
@@ -84,6 +87,8 @@ pub enum DaemonLifecycleError {
     StaleSocketRecovery(String),
     #[error("daemon activation failed: {0}")]
     Activation(String),
+    #[error("daemon bootstrap failed: {0}")]
+    BootstrapFailed(String),
     #[error("daemon protocol mismatch: client={expected}, daemon={actual}")]
     ProtocolMismatch { expected: u16, actual: u16 },
     #[error("daemon runtime version mismatch: client={expected}, daemon={actual}")]
@@ -151,6 +156,7 @@ impl DaemonLifecycleService {
         let started = Instant::now();
         let deadline = started + request.startup_timeout;
         let readiness = probe_before_deadline(&self.backend, &request.socket, deadline).await?;
+        fail_if_bootstrap_failed(&readiness)?;
         if let Some(ready) = validate_ready(&request, readiness.clone())? {
             return Ok(receipt(
                 &request,
@@ -178,6 +184,7 @@ impl DaemonLifecycleService {
         // A second client may have completed activation while this client was
         // waiting for the startup lock. Re-probe before any mutation.
         let readiness = probe_before_deadline(&self.backend, &request.socket, deadline).await?;
+        fail_if_bootstrap_failed(&readiness)?;
         if let Some(ready) = validate_ready(&request, readiness.clone())? {
             return Ok(receipt(
                 &request,
@@ -214,10 +221,12 @@ impl DaemonLifecycleService {
                     .await?
             }
             DaemonReadiness::Unready { .. } => DaemonActivation::AlreadyRunning,
+            DaemonReadiness::Failed { .. } => unreachable!("failed state returned above"),
             DaemonReadiness::Ready { .. } => unreachable!("ready state returned above"),
         };
         loop {
             let readiness = probe_before_deadline(&self.backend, &request.socket, deadline).await?;
+            fail_if_bootstrap_failed(&readiness)?;
             if let Some(ready) = validate_ready(&request, readiness.clone())? {
                 return Ok(receipt(&request, activation, ready, started));
             }
@@ -232,6 +241,15 @@ impl DaemonLifecycleService {
             }
             tokio::time::sleep(request.poll_interval.min(deadline - now)).await;
         }
+    }
+}
+
+fn fail_if_bootstrap_failed(readiness: &DaemonReadiness) -> Result<(), DaemonLifecycleError> {
+    match readiness {
+        DaemonReadiness::Failed { detail } => {
+            Err(DaemonLifecycleError::BootstrapFailed(detail.clone()))
+        }
+        _ => Ok(()),
     }
 }
 

@@ -48,6 +48,33 @@ struct FakeBackend {
 
 struct SlowProbeBackend;
 
+struct FailedBootstrapBackend;
+
+#[async_trait::async_trait]
+impl DaemonLifecycleBackend for FailedBootstrapBackend {
+    async fn probe(&self, _socket: &Path) -> Result<DaemonReadiness, DaemonLifecycleError> {
+        Ok(DaemonReadiness::Failed {
+            detail: "configuration rejected before runtime bootstrap".into(),
+        })
+    }
+
+    async fn recover_stale_socket(&self, _socket: &Path) -> Result<(), DaemonLifecycleError> {
+        unreachable!("a failed bootstrap must not mutate the endpoint")
+    }
+
+    async fn activate(
+        &self,
+        _mode: DaemonInstallMode,
+        _socket: &Path,
+    ) -> Result<DaemonActivation, DaemonLifecycleError> {
+        unreachable!("a failed bootstrap must not be activated again")
+    }
+
+    async fn diagnose(&self, _socket: &Path) -> String {
+        unreachable!("a typed bootstrap failure does not need timeout diagnostics")
+    }
+}
+
 #[async_trait::async_trait]
 impl DaemonLifecycleBackend for SlowProbeBackend {
     async fn probe(&self, _socket: &Path) -> Result<DaemonReadiness, DaemonLifecycleError> {
@@ -292,4 +319,22 @@ async fn readiness_probe_cannot_overrun_the_monotonic_startup_deadline() {
             && diagnostic == "probe deadline exhausted"
     ));
     assert!(started.elapsed() < Duration::from_millis(500));
+}
+
+#[tokio::test]
+async fn u_boot_002_bootstrap_failure_returns_without_waiting_for_readiness_deadline() {
+    let service = DaemonLifecycleService::new(
+        Arc::new(FailedBootstrapBackend),
+        Arc::new(TestStartupLock::default()),
+    );
+    let mut request = request();
+    request.startup_timeout = Duration::from_secs(30);
+    let started = std::time::Instant::now();
+
+    assert!(matches!(
+        service.ensure_running(request).await,
+        Err(DaemonLifecycleError::BootstrapFailed(detail))
+            if detail.contains("configuration rejected")
+    ));
+    assert!(started.elapsed() < Duration::from_secs(1));
 }

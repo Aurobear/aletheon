@@ -5,7 +5,8 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fabric::protocol::client::{
@@ -128,18 +129,50 @@ fn try_file_lock(path: &Path) -> io::Result<Option<File>> {
 
 pub struct ProcessDaemonLifecycleBackend {
     executable: PathBuf,
+    mode: DaemonInstallMode,
+    foreground_exit: Arc<Mutex<Option<ExitStatus>>>,
 }
 
 impl ProcessDaemonLifecycleBackend {
-    pub fn new(executable: PathBuf) -> Self {
-        Self { executable }
+    pub fn new(executable: PathBuf, mode: DaemonInstallMode) -> Self {
+        Self {
+            executable,
+            mode,
+            foreground_exit: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn bootstrap_failure(&self) -> Option<String> {
+        match self.mode {
+            DaemonInstallMode::SystemInstall | DaemonInstallMode::UserLocal => {
+                systemd_service_failure().await
+            }
+            DaemonInstallMode::DevForeground => self
+                .foreground_exit
+                .lock()
+                .ok()
+                .and_then(|status| *status)
+                .filter(|status| !status.success())
+                .map(|status| format!("foreground daemon exited with {status}")),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl DaemonLifecycleBackend for ProcessDaemonLifecycleBackend {
     async fn probe(&self, socket: &Path) -> Result<DaemonReadiness, DaemonLifecycleError> {
-        probe_daemon(socket).await
+        let readiness = probe_daemon(socket).await?;
+        if matches!(
+            readiness,
+            DaemonReadiness::Absent
+                | DaemonReadiness::StaleSocket { .. }
+                | DaemonReadiness::Unready { .. }
+        ) {
+            if let Some(detail) = self.bootstrap_failure().await {
+                return Ok(DaemonReadiness::Failed { detail });
+            }
+        }
+        Ok(readiness)
     }
 
     async fn recover_stale_socket(&self, socket: &Path) -> Result<(), DaemonLifecycleError> {
@@ -175,7 +208,8 @@ impl DaemonLifecycleBackend for ProcessDaemonLifecycleBackend {
                 Ok(DaemonActivation::ActivatedService)
             }
             DaemonInstallMode::DevForeground => {
-                spawn_foreground(&self.executable, socket).await?;
+                spawn_foreground(&self.executable, socket, Arc::clone(&self.foreground_exit))
+                    .await?;
                 Ok(DaemonActivation::SpawnedForeground)
             }
         }
@@ -300,7 +334,11 @@ async fn activate_user_socket() -> Result<(), DaemonLifecycleError> {
     Ok(())
 }
 
-async fn spawn_foreground(executable: &Path, socket: &Path) -> Result<(), DaemonLifecycleError> {
+async fn spawn_foreground(
+    executable: &Path,
+    socket: &Path,
+    exit: Arc<Mutex<Option<ExitStatus>>>,
+) -> Result<(), DaemonLifecycleError> {
     let mut command = Command::new(executable);
     command
         .arg("daemon")
@@ -316,13 +354,45 @@ async fn spawn_foreground(executable: &Path, socket: &Path) -> Result<(), Daemon
         .map_err(|error| DaemonLifecycleError::Activation(bounded(error.to_string().as_bytes())))?
         .map_err(|error| DaemonLifecycleError::Activation(bounded(error.to_string().as_bytes())))?;
     std::thread::spawn(move || match child.wait() {
-        Ok(status) if !status.success() => {
-            tracing::warn!(%status, "development daemon exited unsuccessfully")
+        Ok(status) => {
+            if !status.success() {
+                tracing::warn!(%status, "development daemon exited unsuccessfully");
+            }
+            if let Ok(mut recorded) = exit.lock() {
+                *recorded = Some(status);
+            }
         }
         Err(error) => tracing::warn!(%error, "failed to reap development daemon"),
-        _ => {}
     });
     Ok(())
+}
+
+async fn systemd_service_failure() -> Option<String> {
+    let mut command = Command::new("systemctl");
+    command.args([
+        "--user",
+        "show",
+        "aletheon.service",
+        "--property=LoadState,ActiveState,SubState,Result,ExecMainStatus",
+        "--no-pager",
+    ]);
+    let output = command_output_with_timeout(command, SYSTEMD_QUERY_TIMEOUT)
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let facts = bounded(&output.stdout);
+    systemd_failure_detail(&facts)
+}
+
+fn systemd_failure_detail(facts: &str) -> Option<String> {
+    let failed = facts.lines().any(|line| line == "ActiveState=failed")
+        || facts.lines().any(|line| {
+            line.strip_prefix("Result=")
+                .is_some_and(|result| !result.is_empty() && result != "success")
+        });
+    failed.then(|| facts.replace('\n', ", "))
 }
 
 async fn command_output(mut command: Command) -> io::Result<Output> {
@@ -497,6 +567,19 @@ mod tests {
             ),
             DaemonInstallMode::DevForeground
         );
+    }
+
+    #[test]
+    fn systemd_failure_is_distinct_from_a_healthy_boot_in_progress() {
+        assert!(systemd_failure_detail(
+            "LoadState=loaded\nActiveState=active\nSubState=running\nResult=success\n"
+        )
+        .is_none());
+        let detail = systemd_failure_detail(
+            "LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\nExecMainStatus=1\n",
+        )
+        .unwrap();
+        assert!(detail.contains("Result=exit-code"));
     }
 
     #[tokio::test]
