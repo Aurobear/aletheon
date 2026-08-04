@@ -4,6 +4,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::command::{BuiltinCommand, CommandType};
+use fabric::contract::command::{
+    command_specs, CommandAvailability as SpecAvailability, CommandExecution, CommandSpec,
+    CommandSurface, CommandVisibility,
+};
 
 const RETIRED_GOVERNANCE_COMMAND_NAMES: &[&str] = &[
     "reflect",
@@ -49,33 +53,6 @@ pub enum CommandSource {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BuiltinId {
-    Help,
-    New,
-    Clear,
-    Status,
-    Compact,
-    Sessions,
-    Resume,
-    Fork,
-    Model,
-    Permissions,
-    Context,
-    Interrupt,
-    Copy,
-    Mode,
-    Quit,
-    Agents,
-    Agent,
-    Skills,
-    Profile,
-    Diff,
-    Mention,
-    Input,
-    Memory,
-}
-
 #[derive(Debug, Clone)]
 pub struct CommandDescriptor {
     pub name: String,
@@ -87,31 +64,31 @@ pub struct CommandDescriptor {
     pub availability: CommandAvailability,
     pub acceptance_case_id: String,
     pub source: CommandSource,
-    builtin: Option<BuiltinId>,
+    builtin_key: Option<String>,
 }
 
 impl CommandDescriptor {
-    fn builtin(
-        name: &str,
-        aliases: &[&str],
-        description: &str,
-        category: &str,
-        usage: &str,
-        executor: CommandExecutor,
-        availability: CommandAvailability,
-        id: BuiltinId,
-    ) -> Self {
+    fn builtin(spec: &CommandSpec) -> Self {
         Self {
-            name: name.into(),
-            aliases: aliases.iter().map(|value| (*value).into()).collect(),
-            description: description.into(),
-            category: category.into(),
-            usage: usage.into(),
-            executor,
-            availability,
-            acceptance_case_id: format!("tui.command.{name}"),
+            name: spec.name.clone(),
+            aliases: spec.aliases.clone(),
+            description: spec.summary.clone(),
+            category: spec.category.clone(),
+            usage: spec.usage.clone(),
+            executor: match spec.execution {
+                CommandExecution::Local => CommandExecutor::Local,
+                CommandExecution::Application | CommandExecution::Compatibility => {
+                    CommandExecutor::Rpc
+                }
+            },
+            availability: match spec.availability {
+                SpecAvailability::Always => CommandAvailability::Always,
+                SpecAvailability::IdleOnly => CommandAvailability::IdleOnly,
+                SpecAvailability::ActiveTurnOnly => CommandAvailability::ActiveTurnOnly,
+            },
+            acceptance_case_id: format!("tui.command.{}", spec.name),
             source: CommandSource::Builtin,
-            builtin: Some(id),
+            builtin_key: Some(spec.key.clone()),
         }
     }
 
@@ -139,241 +116,10 @@ impl Default for CommandRegistry {
 
 impl CommandRegistry {
     pub fn new() -> Self {
-        use BuiltinId as B;
-        use CommandAvailability::{ActiveTurnOnly as Active, Always, IdleOnly as Idle};
-        use CommandExecutor::{Local, Rpc};
-        let mut builtins = vec![
-            CommandDescriptor::builtin(
-                "help",
-                &[],
-                "显示帮助信息",
-                "会话",
-                "/help",
-                Local,
-                Always,
-                B::Help,
-            ),
-            CommandDescriptor::builtin(
-                "new",
-                &[],
-                "创建并切换到新会话",
-                "会话",
-                "/new",
-                Rpc,
-                Idle,
-                B::New,
-            ),
-            CommandDescriptor::builtin(
-                "clear",
-                &[],
-                "创建新会话并清屏",
-                "会话",
-                "/clear",
-                Rpc,
-                Idle,
-                B::Clear,
-            ),
-            CommandDescriptor::builtin(
-                "status",
-                &["st"],
-                "查看运行时状态",
-                "会话",
-                "/status",
-                Rpc,
-                Always,
-                B::Status,
-            ),
-            CommandDescriptor::builtin(
-                "compact",
-                &["cmp"],
-                "压缩上下文",
-                "会话",
-                "/compact",
-                Rpc,
-                Idle,
-                B::Compact,
-            ),
-            CommandDescriptor::builtin(
-                "sessions",
-                &["sess"],
-                "列出历史会话",
-                "会话",
-                "/sessions",
-                Rpc,
-                Always,
-                B::Sessions,
-            ),
-            CommandDescriptor::builtin(
-                "resume",
-                &[],
-                "选择历史会话，或按 ID 恢复",
-                "会话",
-                "/resume <id>",
-                Rpc,
-                Idle,
-                B::Resume,
-            ),
-            CommandDescriptor::builtin(
-                "fork",
-                &[],
-                "从当前会话创建分支",
-                "会话",
-                "/fork",
-                Rpc,
-                Idle,
-                B::Fork,
-            ),
-            CommandDescriptor::builtin(
-                "model",
-                &["m"],
-                "查询或切换模型",
-                "会话",
-                "/model",
-                Rpc,
-                Always,
-                B::Model,
-            ),
-            CommandDescriptor::builtin(
-                "permissions",
-                &[],
-                "查看权限与审批策略",
-                "会话",
-                "/permissions",
-                Rpc,
-                Always,
-                B::Permissions,
-            ),
-            CommandDescriptor::builtin(
-                "context",
-                &["ctx"],
-                "显示当前上下文信息",
-                "会话",
-                "/context",
-                Local,
-                Always,
-                B::Context,
-            ),
-            CommandDescriptor::builtin(
-                "interrupt",
-                &["int"],
-                "中断当前操作",
-                "会话",
-                "/interrupt",
-                Rpc,
-                Active,
-                B::Interrupt,
-            ),
-            CommandDescriptor::builtin(
-                "copy",
-                &["cp"],
-                "复制最后回复到剪贴板",
-                "动作",
-                "/copy",
-                Local,
-                Always,
-                B::Copy,
-            ),
-            CommandDescriptor::builtin(
-                "mode",
-                &[],
-                "切换协作模式",
-                "动作",
-                "/mode [plan|auto|sandbox]",
-                Rpc,
-                Idle,
-                B::Mode,
-            ),
-            CommandDescriptor::builtin(
-                "quit",
-                &["exit"],
-                "退出",
-                "动作",
-                "/quit",
-                Local,
-                Always,
-                B::Quit,
-            ),
-            CommandDescriptor::builtin(
-                "agents",
-                &["ag"],
-                "列出活跃子 Agent",
-                "信息",
-                "/agents",
-                Local,
-                Always,
-                B::Agents,
-            ),
-            CommandDescriptor::builtin(
-                "agent",
-                &[],
-                "查看子 Agent 详情",
-                "信息",
-                "/agent <id>",
-                Local,
-                Always,
-                B::Agent,
-            ),
-            CommandDescriptor::builtin(
-                "skills",
-                &["sk"],
-                "列出可用 Skill",
-                "信息",
-                "/skills",
-                Rpc,
-                Always,
-                B::Skills,
-            ),
-            CommandDescriptor::builtin(
-                "profile",
-                &["prof"],
-                "查询或切换 Agent Profile",
-                "信息",
-                "/profile [name]",
-                Rpc,
-                Idle,
-                B::Profile,
-            ),
-            CommandDescriptor::builtin(
-                "diff",
-                &[],
-                "显示当前工作区差异",
-                "信息",
-                "/diff",
-                Local,
-                Always,
-                B::Diff,
-            ),
-            CommandDescriptor::builtin(
-                "mention",
-                &[],
-                "向输入加入文件引用",
-                "信息",
-                "/mention <path>",
-                Local,
-                Always,
-                B::Mention,
-            ),
-            CommandDescriptor::builtin(
-                "input",
-                &["i"],
-                "打开多行输入",
-                "动作",
-                "/input",
-                Local,
-                Always,
-                B::Input,
-            ),
-            CommandDescriptor::builtin(
-                "memory",
-                &[],
-                "查看会话记忆（核心记忆块、近期事实、回忆记录）",
-                "信息",
-                "/memory",
-                Rpc,
-                Always,
-                B::Memory,
-            ),
-        ];
+        let mut builtins = command_specs(CommandSurface::Tui)
+            .filter(|spec| spec.parent.is_none() && spec.visibility != CommandVisibility::Internal)
+            .map(CommandDescriptor::builtin)
+            .collect::<Vec<_>>();
         builtins.sort_by(|left, right| left.name.cmp(&right.name));
         Self {
             builtins,
@@ -396,8 +142,10 @@ impl CommandRegistry {
                     args: args.into(),
                 }),
                 CommandSource::Builtin => descriptor
-                    .builtin
-                    .map(|id| CommandType::Builtin(to_builtin(id, args))),
+                    .builtin_key
+                    .as_deref()
+                    .and_then(|key| to_builtin(key, args))
+                    .map(CommandType::Builtin),
             },
             None => Some(CommandType::Unknown {
                 name: name.into(),
@@ -590,7 +338,7 @@ impl CommandRegistry {
                     skill_id: skill_id.into(),
                     extension_id,
                 },
-                builtin: None,
+                builtin_key: None,
             });
         }
         skills.sort_by(|left, right| left.name.cmp(&right.name));
@@ -616,37 +364,37 @@ impl CommandRegistry {
     }
 }
 
-fn to_builtin(id: BuiltinId, args: &str) -> BuiltinCommand {
-    match id {
-        BuiltinId::Help => BuiltinCommand::Help,
-        BuiltinId::New => BuiltinCommand::New,
-        BuiltinId::Clear => BuiltinCommand::Clear,
-        BuiltinId::Status => BuiltinCommand::Status,
-        BuiltinId::Compact => BuiltinCommand::Compact,
-        BuiltinId::Sessions => BuiltinCommand::Sessions,
-        BuiltinId::Resume => BuiltinCommand::Resume { id: args.into() },
-        BuiltinId::Fork => BuiltinCommand::Fork,
-        BuiltinId::Model => BuiltinCommand::Model,
-        BuiltinId::Permissions => BuiltinCommand::Permissions,
-        BuiltinId::Context => BuiltinCommand::Context,
-        BuiltinId::Interrupt => BuiltinCommand::Interrupt,
-        BuiltinId::Copy => BuiltinCommand::Copy,
-        BuiltinId::Mode => BuiltinCommand::Mode { name: args.into() },
-        BuiltinId::Quit => BuiltinCommand::Quit,
-        BuiltinId::Agents => BuiltinCommand::Agents,
-        BuiltinId::Agent => BuiltinCommand::AgentDetail { id: args.into() },
-        BuiltinId::Skills => BuiltinCommand::Skills,
-        BuiltinId::Profile => {
+fn to_builtin(key: &str, args: &str) -> Option<BuiltinCommand> {
+    Some(match key {
+        "tui.help" => BuiltinCommand::Help,
+        "tui.new" => BuiltinCommand::New,
+        "tui.clear" => BuiltinCommand::Clear,
+        "tui.status" => BuiltinCommand::Status,
+        "tui.compact" => BuiltinCommand::Compact,
+        "tui.sessions" => BuiltinCommand::Sessions,
+        "tui.resume" => BuiltinCommand::Resume { id: args.into() },
+        "tui.fork" => BuiltinCommand::Fork,
+        "tui.model" => BuiltinCommand::Model,
+        "tui.permissions" => BuiltinCommand::Permissions,
+        "tui.context" => BuiltinCommand::Context,
+        "tui.interrupt" => BuiltinCommand::Interrupt,
+        "tui.copy" => BuiltinCommand::Copy,
+        "tui.mode" => BuiltinCommand::Mode { name: args.into() },
+        "tui.quit" => BuiltinCommand::Quit,
+        "tui.agents" => BuiltinCommand::Agents,
+        "tui.agent" => BuiltinCommand::AgentDetail { id: args.into() },
+        "tui.skills" => BuiltinCommand::Skills,
+        "tui.profile" => {
             if args.is_empty() {
                 BuiltinCommand::Profile
             } else {
                 BuiltinCommand::ProfileSet { name: args.into() }
             }
         }
-        BuiltinId::Diff => BuiltinCommand::Diff,
-        BuiltinId::Mention => BuiltinCommand::Mention { path: args.into() },
-        BuiltinId::Input => BuiltinCommand::Input,
-        BuiltinId::Memory => {
+        "tui.diff" => BuiltinCommand::Diff,
+        "tui.mention" => BuiltinCommand::Mention { path: args.into() },
+        "tui.input" => BuiltinCommand::Input,
+        "tui.memory" => {
             if args == "status" {
                 BuiltinCommand::MemoryStatus
             } else if let Some(query) = args.strip_prefix("search ").map(str::trim) {
@@ -657,7 +405,8 @@ fn to_builtin(id: BuiltinId, args: &str) -> BuiltinCommand {
                 BuiltinCommand::Memory
             }
         }
-    }
+        _ => return None,
+    })
 }
 
 fn fuzzy_subsequence(candidate: &str, query: &str) -> bool {
@@ -774,6 +523,31 @@ mod tests {
             registry.parse("/unknown"),
             Some(CommandType::Unknown { .. })
         ));
+    }
+
+    #[test]
+    fn u_cli_002_compatibility_aliases_forward_to_the_canonical_handler() {
+        let registry = CommandRegistry::new();
+        for (canonical, compatibility) in [
+            ("/status", "/st"),
+            ("/compact", "/cmp"),
+            ("/sessions", "/sess"),
+            ("/model", "/m"),
+            ("/context", "/ctx"),
+            ("/interrupt", "/int"),
+            ("/copy", "/cp"),
+            ("/quit", "/exit"),
+            ("/agents", "/ag"),
+            ("/skills", "/sk"),
+            ("/profile", "/prof"),
+            ("/input", "/i"),
+        ] {
+            assert_eq!(
+                registry.parse(canonical),
+                registry.parse(compatibility),
+                "{compatibility} diverged from {canonical}"
+            );
+        }
     }
 
     #[test]

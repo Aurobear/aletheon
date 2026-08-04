@@ -11,8 +11,10 @@
 
 use aletheon::workspace::WorkspaceArgs;
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
-use fabric::contract::command::TaskKindArg;
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
+use fabric::contract::command::{
+    command_specs, CommandSpec, CommandSurface, CommandVisibility, TaskKindArg,
+};
 use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -354,7 +356,7 @@ enum ConfigSub {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = parse_cli();
     let permission_mode = cli.permission_mode.effective(cli.full);
     std::env::set_var("ALETHEON_PERMISSION_MODE", permission_mode);
     #[cfg(feature = "acp")]
@@ -517,6 +519,40 @@ async fn main() -> Result<()> {
     }
 }
 
+fn parse_cli() -> Cli {
+    let matches = canonical_cli_command().get_matches();
+    Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
+
+fn canonical_cli_command() -> clap::Command {
+    apply_cli_command_specs(Cli::command(), None)
+}
+
+fn apply_cli_command_specs(mut command: clap::Command, parent: Option<&str>) -> clap::Command {
+    for spec in command_specs(CommandSurface::Cli).filter(|spec| spec.parent.as_deref() == parent) {
+        let path = parent.map_or_else(
+            || spec.name.clone(),
+            |parent| format!("{parent}.{}", spec.name),
+        );
+        command = command.mut_subcommand(spec.name.clone(), |subcommand| {
+            let subcommand = apply_cli_command_metadata(subcommand, spec);
+            apply_cli_command_specs(subcommand, Some(&path))
+        });
+    }
+    command
+}
+
+fn apply_cli_command_metadata(
+    mut command: clap::Command,
+    spec: &'static CommandSpec,
+) -> clap::Command {
+    command = command.about(spec.summary.clone());
+    if !spec.aliases.is_empty() {
+        command = command.visible_aliases(spec.aliases.iter().map(String::as_str));
+    }
+    command.hide(spec.visibility == CommandVisibility::Internal)
+}
+
 // ── Config & Doctor handlers ────────────────────────────────────────────────
 
 async fn handle_config(sub: &ConfigSub) -> Result<()> {
@@ -667,7 +703,66 @@ mod acp_cli_tests {
 
 #[cfg(test)]
 mod daemon_cli_tests {
+    use std::collections::BTreeSet;
+
     use super::*;
+
+    fn command_at_path<'a>(root: &'a clap::Command, path: &str) -> &'a clap::Command {
+        path.split('.').fold(root, |command, segment| {
+            command
+                .get_subcommands()
+                .find(|candidate| candidate.get_name() == segment)
+                .unwrap_or_else(|| panic!("missing parser command {path}"))
+        })
+    }
+
+    fn collect_parser_paths(
+        command: &clap::Command,
+        parent: Option<&str>,
+        output: &mut BTreeSet<String>,
+    ) {
+        for child in command.get_subcommands() {
+            let path = parent.map_or_else(
+                || child.get_name().to_owned(),
+                |parent| format!("{parent}.{}", child.get_name()),
+            );
+            output.insert(path.clone());
+            collect_parser_paths(child, Some(&path), output);
+        }
+    }
+
+    #[test]
+    fn u_cli_001_cli_parser_and_help_are_materialized_from_command_specs() {
+        let command = canonical_cli_command();
+        let specs = command_specs(CommandSurface::Cli).collect::<Vec<_>>();
+        let expected_paths = specs
+            .iter()
+            .map(|spec| spec.key.trim_start_matches("cli.").to_owned())
+            .collect::<BTreeSet<_>>();
+        let mut actual_paths = BTreeSet::new();
+        collect_parser_paths(&command, None, &mut actual_paths);
+        assert_eq!(actual_paths, expected_paths);
+
+        for spec in specs {
+            let path = spec.key.trim_start_matches("cli.");
+            let parser = command_at_path(&command, path);
+            assert_eq!(
+                parser.get_about().map(ToString::to_string).as_deref(),
+                Some(spec.summary.as_str()),
+                "help drift for {path}"
+            );
+            assert_eq!(
+                parser.get_all_aliases().collect::<Vec<_>>(),
+                spec.aliases.iter().map(String::as_str).collect::<Vec<_>>(),
+                "alias drift for {path}"
+            );
+            assert_eq!(
+                parser.is_hide_set(),
+                spec.visibility == CommandVisibility::Internal,
+                "visibility drift for {path}"
+            );
+        }
+    }
 
     #[test]
     fn execd_flag_defaults_off_and_enables_additively() {

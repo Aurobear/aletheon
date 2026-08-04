@@ -4,7 +4,11 @@
 crates/fabric/src/contract/command.rs	enum	ClientCommand	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	enum	ClientIntentError	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	enum	ClientSurface	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	enum	CommandAvailability	governed	fabric	aletheon,interact,gateway	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#4.2
+crates/fabric/src/contract/command.rs	enum	CommandExecution	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#4.2
 crates/fabric/src/contract/command.rs	enum	CommandId	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	enum	CommandSurface	governed	fabric	aletheon,interact,gateway	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#4.2
+crates/fabric/src/contract/command.rs	enum	CommandVisibility	governed	fabric	aletheon,interact,gateway	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#4.2
 crates/fabric/src/contract/command.rs	enum	TaskKindArg	governed	fabric	aletheon,interact	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	struct	ClientIntent	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	struct	CommandSpec	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2

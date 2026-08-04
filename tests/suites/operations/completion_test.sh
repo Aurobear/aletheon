@@ -3,6 +3,8 @@ set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 
+python3 "$root/scripts/generate-command-completions.py" --check
+
 source "$root/scripts/completions/aletheon.bash"
 source "$root/scripts/completions/aletheon-ops.bash"
 complete -p aletheon | grep -q '_aletheon_cli_completion'

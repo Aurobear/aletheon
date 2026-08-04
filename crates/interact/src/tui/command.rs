@@ -1,7 +1,7 @@
 /// Command parser for /command input.
 
 /// Built-in commands.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinCommand {
     Help,
     New,
@@ -49,7 +49,7 @@ pub enum BuiltinCommand {
 }
 
 /// Parsed command type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandType {
     /// Built-in command (no arguments).
     Builtin(BuiltinCommand),
