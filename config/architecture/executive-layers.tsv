@@ -111,6 +111,7 @@ crates/executive/src/application/prompt_partition.rs	application	executive	promp
 crates/executive/src/application/prefix_cache_observability.rs	application	executive	provider prefix cache diagnostics and metrics
 crates/executive/src/application/context_fragment.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_react.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/daemon_lifecycle.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/execute.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/helpers.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/lifecycle.rs	application	executive	use-case orchestration and ports
@@ -309,6 +310,7 @@ crates/executive/src/host/daemon/server.rs	host	executive	daemon, transport, or 
 crates/executive/src/host/daemon/session_manager.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/doctor.rs	host	executive	process and deployment host boundary
 crates/executive/src/host/launcher.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/readiness.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/mod.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/systemd.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/lib.rs	compatibility	executive	legacy public path or crate facade

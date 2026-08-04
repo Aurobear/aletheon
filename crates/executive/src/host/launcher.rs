@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use fabric::{
@@ -13,6 +14,9 @@ use tracing::info;
 use crate::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use crate::core::SystemCoreRuntime;
 use crate::host::core_rpc::CoreRpcClient;
+use crate::host::readiness::{
+    acquire_daemon_authority, detect_install_mode, FileStartupLock, ProcessDaemonLifecycleBackend,
+};
 use crate::ExecSessionBuilder;
 
 #[derive(Debug, Clone)]
@@ -65,6 +69,8 @@ pub async fn run_daemon(request: DaemonLaunch) -> Result<()> {
     }
     let paths =
         fabric::paths::UserRuntimePaths::resolve(&fabric::paths::ProcessRuntimeEnvironment)?;
+    paths.prepare()?;
+    let _authority = acquire_daemon_authority(&paths.runtime_root.join("daemon-authority.lock"))?;
     let socket = select_daemon_socket(
         request.command_socket,
         request.parent_socket,
@@ -85,6 +91,57 @@ pub async fn run_daemon(request: DaemonLaunch) -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("/run/aletheon/core.sock"));
     let inference = Arc::new(CoreRpcClient::new(core_socket));
     UserRuntime::bootstrap(config, inference).await?.run().await
+}
+
+#[derive(Debug, Clone)]
+pub struct EnsureUserDaemon {
+    pub socket: Option<PathBuf>,
+    pub startup_timeout: Duration,
+}
+
+impl Default for EnsureUserDaemon {
+    fn default() -> Self {
+        Self {
+            socket: None,
+            startup_timeout: Duration::from_secs(10),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EnsureUserDaemonError {
+    #[error(transparent)]
+    Paths(#[from] fabric::paths::UserPathError),
+    #[error("cannot resolve the current Aletheon executable: {0}")]
+    CurrentExecutable(#[source] std::io::Error),
+    #[error(transparent)]
+    Lifecycle(#[from] crate::application::daemon_lifecycle::DaemonLifecycleError),
+}
+
+pub async fn ensure_user_daemon(
+    request: EnsureUserDaemon,
+) -> Result<crate::application::daemon_lifecycle::DaemonReadyReceipt, EnsureUserDaemonError> {
+    let paths =
+        fabric::paths::UserRuntimePaths::resolve(&fabric::paths::ProcessRuntimeEnvironment)?;
+    paths.prepare()?;
+    let socket = request.socket.unwrap_or_else(|| paths.socket_path());
+    let executable = std::env::current_exe().map_err(EnsureUserDaemonError::CurrentExecutable)?;
+    let mode = detect_install_mode().await;
+    let backend = Arc::new(ProcessDaemonLifecycleBackend::new(executable));
+    let startup_lock = Arc::new(FileStartupLock::new(
+        paths.runtime_root.join("daemon-startup.lock"),
+    ));
+    crate::application::daemon_lifecycle::DaemonLifecycleService::new(backend, startup_lock)
+        .ensure_running(crate::application::daemon_lifecycle::EnsureDaemonRequest {
+            socket,
+            mode,
+            startup_timeout: request.startup_timeout,
+            poll_interval: Duration::from_millis(50),
+            expected_protocol_version: fabric::CLIENT_PROTOCOL_VERSION,
+            expected_runtime_version: Some(env!("CARGO_PKG_VERSION").into()),
+        })
+        .await
+        .map_err(Into::into)
 }
 
 #[derive(Debug, Clone)]

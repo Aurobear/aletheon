@@ -16,6 +16,97 @@ const MAX_DOCTOR_TEXT_CHARS: usize = 512;
 const MAX_DOCTOR_JSON_ENTRIES: usize = 256;
 const MAX_DOCTOR_JSON_DEPTH: usize = 16;
 
+#[derive(Debug, Clone, Default)]
+pub struct DoctorRequest {
+    pub json: bool,
+    pub config_path: Option<std::path::PathBuf>,
+    pub project_dir: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DoctorOutput {
+    pub rendered: String,
+    pub report: DoctorReport,
+}
+
+/// Execute standalone diagnostics and render the schema-stable adapter output.
+/// The binary supplies only parsed arguments and writes the returned text.
+pub fn execute(request: DoctorRequest) -> anyhow::Result<DoctorOutput> {
+    let loaded = if let Some(path) = request.config_path.as_deref() {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading doctor config '{}'", path.display()))?;
+        let layer = crate::composition::config::ConfigLayer::from_toml(
+            crate::composition::config::ConfigSource::new(
+                crate::composition::config::ConfigSourceKind::Cli,
+                path.display().to_string(),
+            ),
+            &text,
+        )?;
+        crate::composition::config::merge_layers([layer])?
+    } else {
+        crate::composition::config::diagnostics::load_config_diagnostics(
+            request.project_dir.as_deref(),
+        )?
+    };
+    let report = DoctorReport::standalone(&loaded);
+    let rendered = if request.json {
+        serde_json::to_string_pretty(&report)?
+    } else {
+        render_text(&report)
+    };
+    Ok(DoctorOutput { rendered, report })
+}
+
+fn render_text(report: &DoctorReport) -> String {
+    use std::fmt::Write;
+
+    let mut output = String::new();
+    let _ = writeln!(output, "aletheon doctor — v{}", report.daemon_version);
+    let _ = writeln!(output, "  status:    {}", report.status);
+    let _ = writeln!(
+        output,
+        "  config:    {} ({} leaves)",
+        report.config.validity, report.config.leaf_count
+    );
+    let _ = writeln!(
+        output,
+        "  deploy:    sha={} (core_compat={})",
+        report.deployment.installed_sha,
+        report
+            .deployment
+            .runtime_versions_compatible
+            .map_or("unknown".to_string(), |compatible| compatible.to_string())
+    );
+    let _ = writeln!(
+        output,
+        "  MCP:       {} servers configured",
+        report.mcp_servers.len()
+    );
+    let _ = writeln!(output, "  sandbox:   {}", report.sandbox.status);
+    let _ = writeln!(output, "  writer:    {}", report.writer_health.status);
+    let _ = writeln!(
+        output,
+        "  recovery:  {} sessions / {} turns / {} recovered",
+        report.turn_recovery.sessions_scanned,
+        report.turn_recovery.turns_scanned,
+        report.turn_recovery.incomplete_turns_recovered
+    );
+    let names = if report.quarantined_profiles.names.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", report.quarantined_profiles.names.join(", "))
+    };
+    let _ = writeln!(
+        output,
+        "  profiles:  {} quarantined{}",
+        report.quarantined_profiles.count, names
+    );
+    for warning in &report.warnings {
+        let _ = writeln!(output, "  WARNING:   {warning}");
+    }
+    output.trim_end().to_string()
+}
+
 fn bounded_text(value: &str) -> String {
     value.chars().take(MAX_DOCTOR_TEXT_CHARS).collect()
 }
@@ -346,6 +437,23 @@ mod tests {
         assert!(json.contains("\"config\""));
         assert!(json.contains("\"deployment\""));
         assert!(!json.contains("\"api_key\": \"")); // secrets redacted
+    }
+
+    #[test]
+    fn doctor_use_case_owns_json_and_text_rendering() {
+        let json = execute(DoctorRequest {
+            json: true,
+            ..DoctorRequest::default()
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json.rendered).unwrap()["daemon_version"],
+            env!("CARGO_PKG_VERSION")
+        );
+
+        let text = execute(DoctorRequest::default()).unwrap();
+        assert!(text.rendered.starts_with("aletheon doctor — v"));
+        assert!(text.rendered.contains("  config:"));
     }
 
     #[test]

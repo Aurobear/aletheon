@@ -22,6 +22,7 @@ pub mod conscious_field;
 pub mod conscious_workspace;
 pub mod context_assembler;
 pub mod context_fragment;
+pub mod daemon_lifecycle;
 pub mod daemon_react;
 pub mod daemon_turn;
 pub mod daemon_turn_engine;

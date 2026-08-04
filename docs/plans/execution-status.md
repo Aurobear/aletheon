@@ -113,24 +113,24 @@ MERGE_SHA: c76d6aa8f649b4485e02c28712a2d74e6e125abb
 ## X3c
 
 ```text
-STATUS: code_complete
+STATUS: accepted
 NODE: X3c
 BASE / BRANCH / PR / GOAL_ID: c76d6aa8f649b4485e02c28712a2d74e6e125abb / auro/refactor/20260805-x3c-remove-compat-parser / #168 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commit 61875dc8 deletes the dormant Interact Args parser, handler, module export, and assembly compatibility re-export; the required one-shot socket path is preserved as a parser-free ClientIntent adapter and no longer re-parses slash text; Interact no longer depends on Clap; A-ENTRY-002/003 and U-CLI-004 prove the parser is absent and production caller/import count is zero; Interact 121-test suite plus 7 integration tests, Aletheon package tests, focused one-shot tests, package Clippy -D warnings, formatting, diff, and architecture gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 b51b61713763da87cec1906695755f0cb40b7722376c7acb47620ad3ae30f9d9, zero restart counters, stable services, and an official-socket real LLM request
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commit 61875dc8 deletes the dormant Interact Args parser, handler, module export, and assembly compatibility re-export; the required one-shot socket path is preserved as a parser-free ClientIntent adapter and no longer re-parses slash text; Interact no longer depends on Clap; A-ENTRY-002/003 and U-CLI-004 prove the parser is absent and production caller/import count is zero; Interact 121-test suite plus 7 integration tests, Aletheon package tests, focused one-shot tests, package Clippy -D warnings, formatting, diff, and architecture gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 b51b61713763da87cec1906695755f0cb40b7722376c7acb47620ad3ae30f9d9, zero restart counters, stable services, and an official-socket real LLM request; GitHub CI 5 passed and 4 skipped
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 58a136204bda2d4b8d719a6b06d9cb52c918433c
 ```
 
 ## X4a
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X4a
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: 58a136204bda2d4b8d719a6b06d9cb52c918433c / auro/feat/20260805-x4a-daemon-lifecycle-doctor / #169 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commits 5bca5e30 and 98be8a6b add the Executive daemon lifecycle contract, deterministic install-mode resolution, one monotonic startup deadline, cross-process startup and process-lifetime authority locks, owned stale-socket recovery, typed initialize version negotiation, bounded diagnostics, and the Executive doctor use case; U-BOOT-003 concurrent-client coverage proves one activation and one stale-socket recovery, while host tests cover lock recovery, typed readiness, fail-closed version skew, and refusal to replace an unresponsive authority; focused Executive/Aletheon tests, package Clippy -D warnings, architecture, formatting, and diff gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 ba445e151f4228358008422df247a646dadb62ae81d6e62f95bcd059815c131a, stable PIDs, zero restart counters, and an official-socket real LLM request; a second installed daemon exits nonzero on the authority fence and installed doctor JSON remains parseable
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
