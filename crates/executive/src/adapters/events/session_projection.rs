@@ -54,7 +54,21 @@ impl SessionProjection {
                 Ok(())
             }
             fabric::SchemaId::TURN_EVENT_V1 => {
-                let item = current_item(decode_inline_anyhow(event)?)?;
+                // A few legacy events were written under the turn schema with a
+                // non-item payload (e.g. admin profile switches). Tolerate them
+                // instead of poisoning the whole public-session projection: skip
+                // the event with a warning, keep processing the rest.
+                let item = match decode_inline_anyhow::<ItemRecord>(event).and_then(current_item) {
+                    Ok(item) => item,
+                    Err(error) => {
+                        tracing::warn!(
+                            event_id = %event.position.event_id.0,
+                            %error,
+                            "skipping turn-schema event with non-item payload"
+                        );
+                        return Ok(());
+                    }
+                };
                 let sequence = item.sequence;
                 let session_id = item.session_id.clone();
                 store.append(&session_id, sequence, item).await?;
@@ -136,7 +150,30 @@ impl SessionProjection {
         state: &mut PublicSessionState,
         event: &SpineEvent,
     ) -> Result<(), ProjectionError> {
-        let item = current_item(decode_inline(event)?).map_err(ProjectionError::Storage)?;
+        // Tolerate legacy turn-schema events with non-item payloads (e.g. admin
+        // profile switches written before the schema was fixed). Skipping them
+        // keeps the public-session projection replayable instead of poisoned.
+        let item = match decode_inline::<ItemRecord>(event) {
+            Ok(value) => match current_item(value) {
+                Ok(item) => item,
+                Err(error) => {
+                    tracing::warn!(
+                        event_id = %event.position.event_id.0,
+                        %error,
+                        "skipping turn-schema event with non-item payload"
+                    );
+                    return Ok(());
+                }
+            },
+            Err(error) => {
+                tracing::warn!(
+                    event_id = %event.position.event_id.0,
+                    %error,
+                    "skipping turn-schema event with non-item payload"
+                );
+                return Ok(());
+            }
+        };
         if item.session_id != SessionId(event.identity.session_id.clone()) {
             return Err(invalid("Session item identity differs from spine"));
         }

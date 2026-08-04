@@ -391,7 +391,8 @@ impl SupplementalMcpAdapter {
         let value = self.invoke("whoami", json!({}), cancel).await?;
         let text =
             extract_text(&value).map_err(|error| self.fail(error.category, error.message))?;
-        let identity: WhoAmI = serde_json::from_str(&text).map_err(|_| {
+        let identity: WhoAmI = serde_json::from_str(&text).map_err(|error| {
+            tracing::warn!(%error, whoami = %text, "whoami identity failed to parse");
             self.fail(
                 SupplementalAdapterErrorCategory::MalformedResponse,
                 "capability response is malformed",
@@ -691,6 +692,12 @@ struct WhoAmI {
     _token_name: Option<String>,
     #[serde(default, rename = "expires_at")]
     _expires_at: Option<Value>,
+    /// Newer gbrain identities carry federation metadata; tolerate them so an
+    /// otherwise valid OAuth identity is not rejected as malformed.
+    #[serde(default, rename = "source_id")]
+    _source_id: Option<String>,
+    #[serde(default, rename = "federated_read")]
+    _federated_read: Option<Vec<String>>,
 }
 
 fn attestation_map(
