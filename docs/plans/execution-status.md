@@ -100,24 +100,24 @@ MERGE_SHA: 0652e70ec4a0140101b67d81885a664ee57996f0
 ## X3b
 
 ```text
-STATUS: code_complete
+STATUS: accepted
 NODE: X3b
 BASE / BRANCH / PR / GOAL_ID: 0652e70ec4a0140101b67d81885a664ee57996f0 / auro/feat/20260805-x3b-user-command-adapters / #167 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: one Fabric CommandSpec catalog now materializes top-level Clap help, TUI slash metadata, Gateway command resolution, and generated Bash/Zsh completion trees; TUI, line mode, one-shot CLI, canonical local RPC, legacy chat/status, and Gateway prompt routes converge on ClientIntent and Executive CommandDispatcher; U-CLI-001/002 and PRODUCTION_CLI_PARSERS=0 gates pass; Fabric/Gateway/Interact/Aletheon and affected Executive tests, package Clippy -D warnings, architecture, formatting, completion, diff, and doc-path checks pass; system deploy passed with release/installed/machine-core/user-daemon SHA-256 cfbfb6127f6a9fa64c4487ae136307bdc988371c1c581e9bafbdaa894d2eb9a5, zero restart counters, stable services, and an official-socket real LLM request
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: one Fabric CommandSpec catalog now materializes top-level Clap help, TUI slash metadata, Gateway command resolution, and generated Bash/Zsh completion trees; TUI, line mode, one-shot CLI, canonical local RPC, legacy chat/status, and Gateway prompt routes converge on ClientIntent and Executive CommandDispatcher; U-CLI-001/002 and PRODUCTION_CLI_PARSERS=0 gates pass; Fabric/Gateway/Interact/Aletheon and affected Executive tests, package Clippy -D warnings, architecture, formatting, completion, diff, and doc-path checks pass; system deploy passed with release/installed/machine-core/user-daemon SHA-256 cfbfb6127f6a9fa64c4487ae136307bdc988371c1c581e9bafbdaa894d2eb9a5, zero restart counters, stable services, and an official-socket real LLM request; GitHub CI 5 passed and 4 skipped
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: c76d6aa8f649b4485e02c28712a2d74e6e125abb
 ```
 
 ## X3c
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X3c
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: c76d6aa8f649b4485e02c28712a2d74e6e125abb / auro/refactor/20260805-x3c-remove-compat-parser / pending / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commit 61875dc8 deletes the dormant Interact Args parser, handler, module export, and assembly compatibility re-export; the required one-shot socket path is preserved as a parser-free ClientIntent adapter and no longer re-parses slash text; Interact no longer depends on Clap; A-ENTRY-002/003 and U-CLI-004 prove the parser is absent and production caller/import count is zero; Interact 121-test suite plus 7 integration tests, Aletheon package tests, focused one-shot tests, package Clippy -D warnings, formatting, diff, and architecture gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 b51b61713763da87cec1906695755f0cb40b7722376c7acb47620ad3ae30f9d9, zero restart counters, stable services, and an official-socket real LLM request
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
