@@ -1,7 +1,14 @@
 # frozen_commit=03d263d44f0277d883c24b1be0b98e3a48519291
 # baseline_count=1014
 # path	kind	symbol	provenance	owner	consumers	decision_reference
+crates/fabric/src/contract/command.rs	enum	ClientCommand	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	enum	ClientIntentError	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	enum	ClientSurface	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	enum	CommandId	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	enum	TaskKindArg	governed	fabric	aletheon,interact	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	struct	ClientIntent	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	struct	CommandSpec	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	struct	SubmitPromptIntent	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/dasein/context.rs	enum	AssertionSource	baseline	-	-	-
 crates/fabric/src/dasein/context.rs	struct	AssertionSnapshot	baseline	-	-	-
 crates/fabric/src/dasein/context.rs	struct	BewandtnisSnapshot	baseline	-	-	-

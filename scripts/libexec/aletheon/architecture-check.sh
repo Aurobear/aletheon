@@ -374,6 +374,19 @@ for line_no, (acceptance_id, node, kind, target) in acceptance_rows:
         if not re.search(rf"\bfn\s+{re.escape(prefix)}(?:_|\b)", target_path.read_text(errors="replace")):
             raise SystemExit(f"architecture-check: acceptance test prefix missing for {acceptance_id}")
 
+if "A-ENTRY-001" in seen_ids:
+    dispatcher_paths = []
+    for path in (root / "crates/executive/src").rglob("*.rs"):
+        production = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+        if re.search(r"\bpub\s+struct\s+CommandDispatcher\b", production):
+            dispatcher_paths.append(path.relative_to(root).as_posix())
+    expected_dispatcher = ["crates/executive/src/application/command_dispatcher.rs"]
+    if sorted(dispatcher_paths) != expected_dispatcher:
+        raise SystemExit(
+            "architecture-check: CommandDispatcher is not the unique application handler: "
+            f"{sorted(dispatcher_paths)}"
+        )
+
 # Stable public Fabric type snapshot. X1 baseline rows are grandfathered;
 # post-X1 types must use provenance=governed and provide owner, consumers and a
 # repository decision reference. The fixed baseline_count prevents disguising
