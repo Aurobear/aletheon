@@ -173,7 +173,8 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
             };
             last_sequence = snapshot.sequence;
 
-            if snapshot.stale || now.0.saturating_sub(snapshot.observed_at.0) > expected.freshness_ms
+            if snapshot.stale
+                || now.0.saturating_sub(snapshot.observed_at.0) > expected.freshness_ms
             {
                 return self.report(
                     VerificationDecision::Unknown,
@@ -197,7 +198,8 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
             match evaluate_expected(expected, &snapshot_wrapped, before_wrapped.as_ref(), now) {
                 OutcomeMatch::Match => {
                     let window_start = *window_started_at.get_or_insert(snapshot.observed_at.0);
-                    if snapshot.observed_at.0.saturating_sub(window_start) >= expected.stable_window_ms
+                    if snapshot.observed_at.0.saturating_sub(window_start)
+                        >= expected.stable_window_ms
                     {
                         return self.report(
                             VerificationDecision::Matched,
@@ -245,7 +247,12 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
-    fn snapshot(seq: u64, observed_at: u64, stale: bool, payload: serde_json::Value) -> WorldSnapshot {
+    fn snapshot(
+        seq: u64,
+        observed_at: u64,
+        stale: bool,
+        payload: serde_json::Value,
+    ) -> WorldSnapshot {
         schema_snapshot("robot.state/v1", seq, observed_at, stale, payload)
     }
 
@@ -315,27 +322,47 @@ mod tests {
         now_ms: u64,
         unsafe_predicates: Vec<OutcomePredicate>,
     ) -> DeterministicOutcomeVerifier {
-        DeterministicOutcomeVerifier::new(world, Arc::new(TestClock::new(0, now_ms)), unsafe_predicates)
+        DeterministicOutcomeVerifier::new(
+            world,
+            Arc::new(TestClock::new(0, now_ms)),
+            unsafe_predicates,
+        )
     }
 
     #[tokio::test]
     async fn missing_observation_before_deadline_is_retryable() {
         let v = verifier(Arc::new(QueueWorld::new(vec![])), 100, vec![]);
-        let report = v.verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1).await;
+        let report = v
+            .verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1)
+            .await;
         assert_eq!(report.decision, VerificationDecision::RetryableMismatch);
     }
 
     #[tokio::test]
     async fn stale_or_freshness_expired_observation_is_unknown() {
-        let world = Arc::new(QueueWorld::new(vec![snapshot(1, 0, false, serde_json::json!({"mode": "stance"}))]));
+        let world = Arc::new(QueueWorld::new(vec![snapshot(
+            1,
+            0,
+            false,
+            serde_json::json!({"mode": "stance"}),
+        )]));
         // now = 60_000 >> freshness 5_000 -> too old.
         let v = verifier(world.clone(), 60_000, vec![]);
-        let report = v.verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1).await;
+        let report = v
+            .verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1)
+            .await;
         assert_eq!(report.decision, VerificationDecision::Unknown);
         // Explicitly stale snapshot.
-        let stale_world = Arc::new(QueueWorld::new(vec![snapshot(1, 0, true, serde_json::json!({"mode": "stance"}))]));
+        let stale_world = Arc::new(QueueWorld::new(vec![snapshot(
+            1,
+            0,
+            true,
+            serde_json::json!({"mode": "stance"}),
+        )]));
         let v2 = verifier(stale_world, 100, vec![]);
-        let report2 = v2.verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1).await;
+        let report2 = v2
+            .verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1)
+            .await;
         assert_eq!(report2.decision, VerificationDecision::Unknown);
     }
 
@@ -355,7 +382,9 @@ mod tests {
                 value: serde_json::json!(true),
             }],
         );
-        let report = v.verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1).await;
+        let report = v
+            .verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1)
+            .await;
         assert_eq!(report.decision, VerificationDecision::Unsafe);
     }
 
@@ -368,7 +397,9 @@ mod tests {
             snapshot(3, 100, false, serde_json::json!({"mode": "stance"})),
         ]));
         let v = verifier(world, 1_000, vec![]);
-        let report = v.verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1).await;
+        let report = v
+            .verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1)
+            .await;
         assert_eq!(report.decision, VerificationDecision::Matched);
         assert_eq!(report.evaluated_sequence, 3);
     }
@@ -383,7 +414,9 @@ mod tests {
             snapshot(3, 100, false, serde_json::json!({"mode": "stance"})),
         ]));
         let v = verifier(world, 1_000, vec![]);
-        let report = v.verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1).await;
+        let report = v
+            .verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1)
+            .await;
         // Window reset at t=50; only t=100 matches after reset -> 50ms < 100ms.
         assert_eq!(report.decision, VerificationDecision::RetryableMismatch);
     }

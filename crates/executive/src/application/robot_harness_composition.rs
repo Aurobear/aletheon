@@ -44,9 +44,7 @@ pub struct RobotHarnessDependencies {
 
 /// Assemble the RobotHarness. Returns `Err` (fail closed) when a required port
 /// is missing — the caller must not fall back to a Linear session.
-pub fn build_robot_harness(
-    dependencies: RobotHarnessDependencies,
-) -> Result<RobotHarness, String> {
+pub fn build_robot_harness(dependencies: RobotHarnessDependencies) -> Result<RobotHarness, String> {
     if dependencies.allowed_skills.is_empty() {
         return Err("robot composition requires a non-empty skill allowlist".into());
     }
@@ -222,8 +220,11 @@ pub async fn build_robot_session_factory(
     Arc::new(pump).spawn(vec![device.clone()]);
     let executor_adapter: Arc<dyn EmbodiedExecutionPort> =
         Arc::new(EmbodiedExecutionAdapter::new(executor));
-    let verifier: Arc<dyn OutcomeVerifierPort> =
-        Arc::new(DeterministicOutcomeVerifier::new(world.clone(), clock.clone(), unsafe_predicates));
+    let verifier: Arc<dyn OutcomeVerifierPort> = Arc::new(DeterministicOutcomeVerifier::new(
+        world.clone(),
+        clock.clone(),
+        unsafe_predicates,
+    ));
     let episodes: Arc<dyn EpisodeSink> = Arc::new(
         crate::adapters::episode::sqlite_episode_sink::SqliteEpisodeSink::open(
             data_dir.join("robot-episodes.db"),
@@ -255,7 +256,9 @@ pub async fn build_robot_session_factory(
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use cognit::harness::robot::{EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, PlanPort};
+    use cognit::harness::robot::{
+        EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, PlanPort,
+    };
     use cognit::ports::policy_provider::PolicyProviderPort;
     use fabric::types::embodiment::{DeviceId, SkillId, SkillRequest, SkillResult};
     use fabric::types::expected_outcome::ExpectedOutcome;
@@ -317,10 +320,20 @@ mod tests {
     struct NoopPlanner;
     #[async_trait]
     impl PlanPort for NoopPlanner {
-        async fn plan(&self, _d: &DeviceId, _s: &WorldSnapshot, _g: &str) -> Result<SkillRequest, String> {
+        async fn plan(
+            &self,
+            _d: &DeviceId,
+            _s: &WorldSnapshot,
+            _g: &str,
+        ) -> Result<SkillRequest, String> {
             Err("noop".into())
         }
-        async fn replan(&self, _d: &DeviceId, _s: &WorldSnapshot, _f: &str) -> Result<SkillRequest, String> {
+        async fn replan(
+            &self,
+            _d: &DeviceId,
+            _s: &WorldSnapshot,
+            _f: &str,
+        ) -> Result<SkillRequest, String> {
             Err("noop".into())
         }
     }
@@ -329,9 +342,15 @@ mod tests {
     impl EpisodeSink for NoopEpisodes {
         async fn append_attempt(
             &self,
-            _e: &str, _a: u32, _ai: &str, _o: Option<&fabric::OperationId>, _x: &ExpectedOutcome,
-            _b: Option<&WorldSnapshot>, _af: Option<&WorldSnapshot>,
-            _r: Option<&SkillResult>, _v: Option<&VerificationReport>,
+            _e: &str,
+            _a: u32,
+            _ai: &str,
+            _o: Option<&fabric::OperationId>,
+            _x: &ExpectedOutcome,
+            _b: Option<&WorldSnapshot>,
+            _af: Option<&WorldSnapshot>,
+            _r: Option<&SkillResult>,
+            _v: Option<&VerificationReport>,
         ) -> Result<(), String> {
             Ok(())
         }
@@ -358,7 +377,10 @@ mod tests {
     impl PolicyProviderPort for NoopPolicy {
         async fn propose(
             &self,
-            _g: &str, _d: &DeviceId, _s: &[WorldSnapshot], _v: &[PerceptionObservation],
+            _g: &str,
+            _d: &DeviceId,
+            _s: &[WorldSnapshot],
+            _v: &[PerceptionObservation],
             _a: &[SkillDescriptor],
         ) -> Result<Vec<SkillProposal>, String> {
             Ok(vec![])

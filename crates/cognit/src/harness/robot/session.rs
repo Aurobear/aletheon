@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::harness::robot::state::RobotState;
 use crate::harness::robot::{EpisodePromotionPort, RobotHarness, RobotHarnessState};
-use crate::harness::session::{CognitiveSession, CognitError};
+use crate::harness::session::{CognitError, CognitiveSession};
 
 /// Cognitive-session adapter for a single robot task.
 ///
@@ -78,24 +78,33 @@ impl RobotCognitiveSession {
             .await
         {
             Ok(durable) if !durable.is_empty() => durable,
-            _ => state.latest_expected_outcome.as_ref().map(|expected| {
-                vec![AttemptRecord::from_verification(
-                    state.attempt,
-                    state
-                        .latest_operation_id
-                        .as_ref()
-                        .map(|op| op.0.to_string())
-                        .unwrap_or_else(|| format!("attempt:{}-{}", state.episode_id, state.attempt)),
-                    state.latest_operation_id.as_ref().map(|op| op.0.to_string()),
-                    expected.clone(),
-                    state
-                        .latest_skill_result
-                        .as_ref()
-                        .map(|result| format!("{:?}", result.outcome)),
-                    state.latest_verification.as_ref(),
-                    None,
-                )]
-            }).unwrap_or_default(),
+            _ => state
+                .latest_expected_outcome
+                .as_ref()
+                .map(|expected| {
+                    vec![AttemptRecord::from_verification(
+                        state.attempt,
+                        state
+                            .latest_operation_id
+                            .as_ref()
+                            .map(|op| op.0.to_string())
+                            .unwrap_or_else(|| {
+                                format!("attempt:{}-{}", state.episode_id, state.attempt)
+                            }),
+                        state
+                            .latest_operation_id
+                            .as_ref()
+                            .map(|op| op.0.to_string()),
+                        expected.clone(),
+                        state
+                            .latest_skill_result
+                            .as_ref()
+                            .map(|result| format!("{:?}", result.outcome)),
+                        state.latest_verification.as_ref(),
+                        None,
+                    )]
+                })
+                .unwrap_or_default(),
         };
         let mut artifacts = Vec::new();
         if let Some(result) = &state.latest_skill_result {
@@ -112,7 +121,10 @@ impl RobotCognitiveSession {
             &self.aletheon_commit,
             &self.bridge_protocol_digest,
             state.latest_snapshot.as_ref().map(|snap| snap.sequence),
-            state.latest_verification.as_ref().map(|v| v.evaluated_sequence),
+            state
+                .latest_verification
+                .as_ref()
+                .map(|v| v.evaluated_sequence),
             settlement,
             attempts,
             artifacts,

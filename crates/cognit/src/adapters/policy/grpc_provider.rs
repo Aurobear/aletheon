@@ -243,10 +243,8 @@ impl GrpcPolicyProvider {
             .last()
             .map(|snapshot| snapshot.payload.to_string())
             .unwrap_or_default();
-        let frame_confidence = visual
-            .iter()
-            .fold(0.0f32, |acc, v| acc + v.confidence)
-            / (visual.len().max(1) as f32);
+        let frame_confidence =
+            visual.iter().fold(0.0f32, |acc, v| acc + v.confidence) / (visual.len().max(1) as f32);
         ProposeRequest {
             protocol_version: self.config.protocol_version.clone(),
             goal: goal.to_string(),
@@ -429,13 +427,8 @@ mod tests {
             preconditions: vec![],
             success_criteria: vec![],
         }];
-        let request = provider.propose_request(
-            "stand",
-            &DeviceId("bot".into()),
-            &[],
-            &visual,
-            &skills,
-        );
+        let request =
+            provider.propose_request("stand", &DeviceId("bot".into()), &[], &visual, &skills);
         assert_eq!(request.goal, "stand");
         assert_eq!(request.device_id, "bot");
         assert_eq!(request.frame_uris, vec!["artifact://sha256:frame"]);

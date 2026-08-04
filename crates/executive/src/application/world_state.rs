@@ -80,7 +80,11 @@ impl WorldStatePort for EmbodimentWorldState {
             entry
                 .latest
                 .values()
-                .max_by(|a, b| a.observed_at.cmp(&b.observed_at).then(a.sequence.cmp(&b.sequence)))
+                .max_by(|a, b| {
+                    a.observed_at
+                        .cmp(&b.observed_at)
+                        .then(a.sequence.cmp(&b.sequence))
+                })
                 .cloned()
         } else {
             entry.latest.get(schema).cloned()
@@ -109,7 +113,8 @@ impl WorldStatePort for EmbodimentWorldState {
                     } else {
                         entry.latest.get(schema).cloned().into_iter().collect()
                     };
-                    if let Some(snap) = candidates.into_iter().find(|s| s.sequence > after_sequence) {
+                    if let Some(snap) = candidates.into_iter().find(|s| s.sequence > after_sequence)
+                    {
                         return Some(snap);
                     }
                 }
@@ -226,10 +231,10 @@ impl WorldStatePump {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
     use fabric::MonoTime;
     use kernel::chronos::TestClock;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
     fn world_state(max_devices: usize) -> EmbodimentWorldState {
         EmbodimentWorldState::new(max_devices, Arc::new(TestClock::default()))
@@ -246,7 +251,12 @@ mod tests {
         }
     }
 
-    fn schema_snapshot(device: &str, schema: &str, seq: u64, payload: serde_json::Value) -> WorldSnapshot {
+    fn schema_snapshot(
+        device: &str,
+        schema: &str,
+        seq: u64,
+        payload: serde_json::Value,
+    ) -> WorldSnapshot {
         WorldSnapshot {
             device: DeviceId(device.into()),
             schema: schema.into(),
@@ -296,27 +306,60 @@ mod tests {
 
         // Three schemas arrive in one pump cycle; the odom counter is far ahead
         // of the ground-truth counter (independent counters).
-        ws.ingest(dev.clone(), schema_snapshot("bot", "base_pose", 100, serde_json::json!({"position": 1.0})))
-            .unwrap();
-        ws.ingest(dev.clone(), schema_snapshot("bot", "base_twist", 100, serde_json::json!({"v": 0.0})))
-            .unwrap();
-        ws.ingest(dev.clone(), schema_snapshot("bot", "ground_truth_pose", 5, serde_json::json!({"position": 1.0})))
-            .unwrap();
+        ws.ingest(
+            dev.clone(),
+            schema_snapshot(
+                "bot",
+                "base_pose",
+                100,
+                serde_json::json!({"position": 1.0}),
+            ),
+        )
+        .unwrap();
+        ws.ingest(
+            dev.clone(),
+            schema_snapshot("bot", "base_twist", 100, serde_json::json!({"v": 0.0})),
+        )
+        .unwrap();
+        ws.ingest(
+            dev.clone(),
+            schema_snapshot(
+                "bot",
+                "ground_truth_pose",
+                5,
+                serde_json::json!({"position": 1.0}),
+            ),
+        )
+        .unwrap();
 
         // All three survive, despite the gt sequence being below the odom one.
         assert_eq!(ws.latest(&dev, "base_pose").await.unwrap().sequence, 100);
         assert_eq!(ws.latest(&dev, "base_twist").await.unwrap().sequence, 100);
-        assert_eq!(ws.latest(&dev, "ground_truth_pose").await.unwrap().sequence, 5);
+        assert_eq!(
+            ws.latest(&dev, "ground_truth_pose").await.unwrap().sequence,
+            5
+        );
 
         // Independent gates: a lower-sequence re-ingest of gt is still rejected
         // within its own schema...
         assert!(ws
-            .ingest(dev.clone(), schema_snapshot("bot", "ground_truth_pose", 4, serde_json::json!({})))
+            .ingest(
+                dev.clone(),
+                schema_snapshot("bot", "ground_truth_pose", 4, serde_json::json!({}))
+            )
             .is_err());
         // ...but a new base_pose with seq 101 is accepted even though it is far
         // above gt's counter.
-        ws.ingest(dev.clone(), schema_snapshot("bot", "base_pose", 101, serde_json::json!({"position": 2.0})))
-            .unwrap();
+        ws.ingest(
+            dev.clone(),
+            schema_snapshot(
+                "bot",
+                "base_pose",
+                101,
+                serde_json::json!({"position": 2.0}),
+            ),
+        )
+        .unwrap();
         assert_eq!(ws.latest(&dev, "base_pose").await.unwrap().sequence, 101);
 
         // ANY_SCHEMA returns the freshest across schemas.
@@ -382,7 +425,11 @@ mod tests {
     }
 
     struct FakeExecutor {
-        results: Mutex<VecDeque<Result<Vec<EmbodiedObservation>, fabric::types::embodiment::SkillDispatchError>>>,
+        results: Mutex<
+            VecDeque<
+                Result<Vec<EmbodiedObservation>, fabric::types::embodiment::SkillDispatchError>,
+            >,
+        >,
     }
 
     #[async_trait::async_trait]
@@ -405,15 +452,19 @@ mod tests {
         async fn list_skills(
             &self,
             _device: &DeviceId,
-        ) -> Result<Vec<fabric::types::embodiment::SkillDescriptor>, fabric::types::embodiment::SkillDispatchError>
-        {
+        ) -> Result<
+            Vec<fabric::types::embodiment::SkillDescriptor>,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             Ok(vec![])
         }
         async fn execute_skill(
             &self,
             _request: fabric::types::embodiment::SkillRequest,
-        ) -> Result<fabric::types::embodiment::SkillResult, fabric::types::embodiment::SkillDispatchError>
-        {
+        ) -> Result<
+            fabric::types::embodiment::SkillResult,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             Err(fabric::types::embodiment::SkillDispatchError::Rejected(
                 "not used".into(),
             ))
@@ -434,7 +485,10 @@ mod tests {
 
     #[tokio::test]
     async fn pump_polls_and_ingests_monotonic_observations() {
-        let ws = Arc::new(EmbodimentWorldState::new(10, Arc::new(TestClock::default())));
+        let ws = Arc::new(EmbodimentWorldState::new(
+            10,
+            Arc::new(TestClock::default()),
+        ));
         let executor = Arc::new(FakeExecutor {
             results: Mutex::new(VecDeque::from(vec![
                 Ok(vec![observation(1, 5_000, 1.0)]),
@@ -461,7 +515,10 @@ mod tests {
 
     #[tokio::test]
     async fn pump_survives_observe_error_without_poisoning() {
-        let ws = Arc::new(EmbodimentWorldState::new(10, Arc::new(TestClock::default())));
+        let ws = Arc::new(EmbodimentWorldState::new(
+            10,
+            Arc::new(TestClock::default()),
+        ));
         let executor = Arc::new(FakeExecutor {
             results: Mutex::new(VecDeque::from(vec![Err(
                 fabric::types::embodiment::SkillDispatchError::Rejected("down".into()),

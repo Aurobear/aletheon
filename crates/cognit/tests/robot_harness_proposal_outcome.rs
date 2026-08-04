@@ -269,7 +269,10 @@ async fn verify_uses_proposal_expected_outcome_not_hardcoded_stance() {
     // PR2: every successful attempt carries a real typed operation id, never
     // "op"; the attempt is also recorded under an independent attempt id.
     let attempt_ids = episodes.attempt_ids.lock().unwrap();
-    assert!(!attempt_ids.is_empty(), "at least one attempt should be recorded");
+    assert!(
+        !attempt_ids.is_empty(),
+        "at least one attempt should be recorded"
+    );
     let ops = episodes.operation_ids.lock().unwrap();
     assert!(
         ops.iter().all(|op| op.is_some()),

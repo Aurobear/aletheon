@@ -495,7 +495,10 @@ mod tests {
             timeout_ms: 10_000,
         };
         let snap = snapshot(1, 0, false, payload);
-        assert_eq!(evaluate_expected(&expected, &snap, None, MonoTime(100)), OutcomeMatch::Match);
+        assert_eq!(
+            evaluate_expected(&expected, &snap, None, MonoTime(100)),
+            OutcomeMatch::Match
+        );
     }
 
     #[test]

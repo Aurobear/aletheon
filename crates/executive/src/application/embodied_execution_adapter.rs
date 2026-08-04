@@ -72,22 +72,28 @@ mod tests {
         async fn observe(
             &self,
             _d: &DeviceId,
-        ) -> Result<Vec<fabric::types::embodiment::EmbodiedObservation>, fabric::types::embodiment::SkillDispatchError>
-        {
+        ) -> Result<
+            Vec<fabric::types::embodiment::EmbodiedObservation>,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             Ok(vec![])
         }
         async fn get_state(
             &self,
             _d: &DeviceId,
-        ) -> Result<Option<fabric::types::embodiment::EmbodiedObservation>, fabric::types::embodiment::SkillDispatchError>
-        {
+        ) -> Result<
+            Option<fabric::types::embodiment::EmbodiedObservation>,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             Ok(None)
         }
         async fn list_skills(
             &self,
             _d: &DeviceId,
-        ) -> Result<Vec<fabric::types::embodiment::SkillDescriptor>, fabric::types::embodiment::SkillDispatchError>
-        {
+        ) -> Result<
+            Vec<fabric::types::embodiment::SkillDescriptor>,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             Ok(vec![])
         }
         async fn execute_skill(
@@ -136,7 +142,10 @@ mod tests {
         assert_eq!(result.outcome, SkillOutcome::Succeeded);
         adapter.cancel(&device).await.unwrap();
         let calls = inner.calls.lock().unwrap();
-        assert_eq!(*calls, VecDeque::from(["execute".to_string(), "cancel".to_string()]));
+        assert_eq!(
+            *calls,
+            VecDeque::from(["execute".to_string(), "cancel".to_string()])
+        );
     }
 
     #[tokio::test]

@@ -90,9 +90,8 @@ aletheon
   （出厂配置禁用）。
 - **仅设计**：FUSE、D-Bus、Android、嵌入式、向量库、macOS/Windows。
 - 硬件侧（`hardware` 确定性 simulator、`RobotHarness`、gRPC provider）当前为
-  `experimental_wired`，**不是生产主链**——这正是另一份
-  [机器人仿真接入计划](../plans/ROBOT_EMBODIMENT_AND_SIMULATION_INTEGRATION_PLAN.md)
-  要补齐的问题。
+  `experimental_wired`，**不是生产主链**。机器人执行链的实现说明已并入当前代码与本指南，真实
+  bridge/stance 能力仍由对应 provider 配置决定。
 
 ### 0.5 文档地图与阅读约定
 
@@ -393,7 +392,7 @@ network bytes
 -各 provider 的 `complete_stream`；
 - `crates/cognit/src/harness/linear/step.rs`；
 - `crates/cognit/src/harness/event_sink.rs`；
-- `crates/fabric/src/types/llm_types.rs::StreamChunk`。
+- `crates/fabric/src/types/llm_types.rs`（`StreamChunk`）。
 
 当前 non-streaming `run()` 通过 adapter 复用 streaming loop，这是正确方向：一个 loop，两种消费方式。
 
@@ -689,7 +688,7 @@ Prompt cache 依赖相同前缀：
 
 - `crates/cognit/src/harness/linear/message_compose.rs`；
 - `crates/cognit/src/harness/linear/` 的 compaction；
-- `crates/cognit/src/harness/session.rs::ProjectionRecordingLlm`；
+- `crates/cognit/src/harness/session.rs`（`ProjectionRecordingLlm`）；
 - `crates/fabric/src/types/model_projection.rs`；
 - `docs/testing/runtime-correctness.md`。
 
@@ -1499,7 +1498,7 @@ ROS 消息和公司专有类型留在 bridge，Fabric 只保留稳定 skill/obse
 - `crates/executive/src/application/embodiment_service.rs`；
 - `crates/cognit/src/harness/robot/`；
 - `crates/cognit/src/ports/policy_provider.rs`；
-- [`机器人仿真接入计划`](../plans/ROBOT_EMBODIMENT_AND_SIMULATION_INTEGRATION_PLAN.md)。
+- `crates/cognit/src/harness/robot/` 与 `crates/executive/src/application/robot_harness_composition.rs`。
 
 ---
 

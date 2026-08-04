@@ -47,9 +47,7 @@ impl AttemptRecord {
             expected,
             result_outcome,
             verification_decision: verification.map(|v| v.decision.clone()),
-            verification_reasons: verification
-                .map(|v| v.reasons.clone())
-                .unwrap_or_default(),
+            verification_reasons: verification.map(|v| v.reasons.clone()).unwrap_or_default(),
             retry_reason,
         }
     }

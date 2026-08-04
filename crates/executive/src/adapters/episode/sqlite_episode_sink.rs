@@ -72,7 +72,11 @@ impl SqliteEpisodeSink {
         hasher.update(episode_id.as_bytes());
         hasher.update(attempt.to_be_bytes());
         hasher.update(attempt_id.as_bytes());
-        hasher.update(serde_json::to_string(expected).unwrap_or_default().as_bytes());
+        hasher.update(
+            serde_json::to_string(expected)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
         format!("{:x}", hasher.finalize())
     }
 
@@ -122,28 +126,36 @@ impl SqliteEpisodeSink {
 
         rows.into_iter()
             .map(
-                |(attempt, attempt_id, operation_id, expected_json, result_json, verification_json)| {
+                |(
+                    attempt,
+                    attempt_id,
+                    operation_id,
+                    expected_json,
+                    result_json,
+                    verification_json,
+                )| {
                     let expected = serde_json::from_str(&expected_json)
                         .map_err(|e| format!("expected deserialize: {e}"))?;
-                    let result_outcome = result_json
-                        .map(|json| {
-                            serde_json::from_str::<SkillResult>(&json)
-                                .map(|result| format!("{:?}", result.outcome))
-                                .unwrap_or_else(|_| "unparsed".into())
-                        });
+                    let result_outcome = result_json.map(|json| {
+                        serde_json::from_str::<SkillResult>(&json)
+                            .map(|result| format!("{:?}", result.outcome))
+                            .unwrap_or_else(|_| "unparsed".into())
+                    });
                     let verification = verification_json
                         .map(|json| serde_json::from_str::<VerificationReport>(&json))
                         .transpose()
                         .map_err(|e| format!("verification deserialize: {e}"))?;
-                    Ok(fabric::types::episode_report::AttemptRecord::from_verification(
-                        attempt as u32,
-                        attempt_id,
-                        operation_id,
-                        expected,
-                        result_outcome,
-                        verification.as_ref(),
-                        None,
-                    ))
+                    Ok(
+                        fabric::types::episode_report::AttemptRecord::from_verification(
+                            attempt as u32,
+                            attempt_id,
+                            operation_id,
+                            expected,
+                            result_outcome,
+                            verification.as_ref(),
+                            None,
+                        ),
+                    )
                 },
             )
             .collect()
@@ -227,8 +239,8 @@ impl EpisodeSink for SqliteEpisodeSink {
         attempt_id: &str,
         verification: &VerificationReport,
     ) -> Result<(), String> {
-        let verification_json =
-            serde_json::to_string(verification).map_err(|e| format!("serialize verification: {e}"))?;
+        let verification_json = serde_json::to_string(verification)
+            .map_err(|e| format!("serialize verification: {e}"))?;
         self.connection
             .lock()
             .execute(
@@ -332,9 +344,19 @@ mod tests {
     async fn duplicate_attempt_is_idempotent() {
         let sink = sink();
         for _ in 0..2 {
-            sink.append_attempt("ep-2", 1, "attempt:ep-2:1", Some(&fabric::OperationId::new()), &expected(), None, None, None, None)
-                .await
-                .unwrap();
+            sink.append_attempt(
+                "ep-2",
+                1,
+                "attempt:ep-2:1",
+                Some(&fabric::OperationId::new()),
+                &expected(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
         }
         assert_eq!(sink.count("ep-2"), 1, "identical digest must not duplicate");
     }
@@ -342,9 +364,19 @@ mod tests {
     #[tokio::test]
     async fn close_episode_sets_status_and_settled_at() {
         let sink = sink();
-        sink.append_attempt("ep-3", 1, "attempt:ep-3:1", Some(&fabric::OperationId::new()), &expected(), None, None, None, None)
-            .await
-            .unwrap();
+        sink.append_attempt(
+            "ep-3",
+            1,
+            "attempt:ep-3:1",
+            Some(&fabric::OperationId::new()),
+            &expected(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         sink.close_episode("ep-3", "completed").await.unwrap();
         let connection = sink.connection.lock();
         let (status, settled): (String, i64) = connection
@@ -365,7 +397,9 @@ mod tests {
             "ep-4",
             1,
             "attempt:ep-4:1",
-            Some(&fabric::OperationId("00000000-0000-0000-0000-000000000001".parse().unwrap())),
+            Some(&fabric::OperationId(
+                "00000000-0000-0000-0000-000000000001".parse().unwrap(),
+            )),
             &expected(),
             Some(&snapshot(0)),
             Some(&snapshot(1)),

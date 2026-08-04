@@ -45,14 +45,14 @@ pub use bridge::learning::LearningBridge;
 pub use bridge::llm::LlmBridge;
 
 // Re-export harness components
+pub use adapters::policy::grpc_provider::{
+    validate_policy_endpoint, GrpcPolicyConfig, GrpcPolicyProvider, StubPolicyProvider,
+};
 pub use harness::config::HarnessConfig;
 pub use harness::{
     CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError, CognitErrorKind,
     CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies, CognitiveStreamEvent,
     CognitiveStreamSink, HarnessKind,
-};
-pub use adapters::policy::grpc_provider::{
-    validate_policy_endpoint, GrpcPolicyConfig, GrpcPolicyProvider, StubPolicyProvider,
 };
 /// Stable inference contracts and the runtime scheduling facade.
 ///

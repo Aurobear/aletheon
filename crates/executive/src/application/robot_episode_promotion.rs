@@ -156,7 +156,10 @@ mod tests {
 
         let requests = facts.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].content.contains("stand"), "summary carries the goal");
+        assert!(
+            requests[0].content.contains("stand"),
+            "summary carries the goal"
+        );
         assert!(requests[0].content.contains("kuavo-mujoco-01"));
         assert_eq!(requests[0].scope, "global");
         assert!(requests[0].tags.contains("robot-episode"));

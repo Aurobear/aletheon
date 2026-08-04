@@ -825,7 +825,8 @@ impl RequestHandler {
                     crate::application::robot_episode_promotion::MnemosyneEpisodePromoter::new(
                         fact_use_cases.clone(),
                     ),
-                ) as Arc<dyn cognit::harness::robot::EpisodePromotionPort>);
+                )
+                    as Arc<dyn cognit::harness::robot::EpisodePromotionPort>);
                 super::robot::build_robot_cognitive_session_factory(
                     &config.embodiment_provider,
                     embodiment_port.clone(),
@@ -1145,7 +1146,12 @@ impl RequestHandler {
         let memory_agent_control = agent_svc.agent_control.clone();
         let canonical_event_spine = agent_svc.canonical_event_spine;
         // Bind robot progress to the session event spine (turns run after this).
-        super::robot::bind_robot_progress_spine(&progress_sink, canonical_event_spine.clone(), session_id.clone()).await;
+        super::robot::bind_robot_progress_spine(
+            &progress_sink,
+            canonical_event_spine.clone(),
+            session_id.clone(),
+        )
+        .await;
         corpus_group
             .hook_registry
             .lock()

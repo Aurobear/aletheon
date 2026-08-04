@@ -286,7 +286,6 @@ mod tests {
         }
     }
 
-
     #[async_trait]
     impl fabric::TurnEventSink for RecordingSink {
         async fn emit(&self, event: fabric::TurnEvent) {

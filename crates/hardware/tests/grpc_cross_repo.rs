@@ -14,9 +14,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use fabric::types::embodiment::{DeviceId, EmbodiedObservation};
 use hardware::grpc::provider::{GrpcEmbodimentProvider, GrpcProviderConfig};
 use hardware::EmbodimentProvider;
-use fabric::types::embodiment::{DeviceId, EmbodiedObservation};
 
 const BRIDGE_ENDPOINT: &str = "http://127.0.0.1:50051";
 const DEVICE_ID: &str = "kuavo-mujoco-01";
@@ -43,14 +43,14 @@ async fn bridge_capabilities_and_skill_manifest_match_contract() {
     // skill; `kuavo.move_base_timed` is exposed for bounded base motion.
     // `kuavo.stance` execution is a later bridge phase — asserted as present
     // once the bridge exposes it.
-    assert!(
-        !skills.is_empty(),
-        "bridge must expose at least one skill"
-    );
+    assert!(!skills.is_empty(), "bridge must expose at least one skill");
     assert!(
         skills.iter().any(|s| s.skill.0 == "kuavo.stop"),
         "bridge must expose the read-only safe skill kuavo.stop, got: {:?}",
-        skills.iter().map(|s| s.skill.0.as_str()).collect::<Vec<_>>()
+        skills
+            .iter()
+            .map(|s| s.skill.0.as_str())
+            .collect::<Vec<_>>()
     );
 }
 

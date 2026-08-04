@@ -37,10 +37,7 @@ async fn connect_service() -> EmbodimentService {
     .await
     .expect("bridge must be reachable (tunnel or local)");
     let mut registry = ProviderRegistry::new();
-    registry.register(
-        DeviceId(DEVICE_ID.into()),
-        Arc::new(provider),
-    );
+    registry.register(DeviceId(DEVICE_ID.into()), Arc::new(provider));
     let broker = Arc::new(Broker::new(Arc::new(registry), clock));
     let progress = Arc::new(RecordingEmbodimentProgress::default());
     let (invoker, active) =
@@ -74,7 +71,10 @@ async fn production_path_lists_and_executes_stop_against_bridge() {
     assert!(
         skills.iter().any(|s| s.skill.0 == "kuavo.stop"),
         "bridge must expose kuavo.stop, got: {:?}",
-        skills.iter().map(|s| s.skill.0.as_str()).collect::<Vec<_>>()
+        skills
+            .iter()
+            .map(|s| s.skill.0.as_str())
+            .collect::<Vec<_>>()
     );
 
     // Production-path execution: Kernel admission -> Broker -> Grpc -> bridge.
@@ -92,10 +92,7 @@ async fn production_path_lists_and_executes_stop_against_bridge() {
         "kuavo.stop must succeed over the real bridge"
     );
 
-    let observations = service
-        .observe(&device)
-        .await
-        .expect("observe over bridge");
+    let observations = service.observe(&device).await.expect("observe over bridge");
     assert!(
         !observations.is_empty(),
         "bridge must return observations after execution"

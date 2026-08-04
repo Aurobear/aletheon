@@ -185,8 +185,11 @@ async fn robot_turn_drives_harness_to_completion() {
         executor: executor.clone(),
     });
     let adapter: Arc<dyn EmbodiedExecutionPort> = Arc::new(EmbodiedExecutionAdapter::new(executor));
-    let verifier: Arc<dyn OutcomeVerifierPort> =
-        Arc::new(DeterministicOutcomeVerifier::new(world.clone(), clock.clone(), vec![]));
+    let verifier: Arc<dyn OutcomeVerifierPort> = Arc::new(DeterministicOutcomeVerifier::new(
+        world.clone(),
+        clock.clone(),
+        vec![],
+    ));
     let episodes: Arc<dyn EpisodeSink> = Arc::new(RecordingEpisodes::default());
     let allowed_skills = vec![SkillDescriptor {
         skill: SkillId("kuavo.stance".into()),
@@ -233,11 +236,13 @@ async fn robot_turn_drives_harness_to_completion() {
     );
     // The output is the structured EpisodeReport — parse it and verify the
     // settlement is authoritative.
-    let report: fabric::types::episode_report::EpisodeReport =
-        serde_json::from_str(&result.output)
-            .expect("turn output must be a structured EpisodeReport");
+    let report: fabric::types::episode_report::EpisodeReport = serde_json::from_str(&result.output)
+        .expect("turn output must be a structured EpisodeReport");
     assert_eq!(report.settlement, "completed");
-    assert!(report.can_promote(), "matched + settled episode should promote");
+    assert!(
+        report.can_promote(),
+        "matched + settled episode should promote"
+    );
     assert!(result.metrics.completed_normally);
 }
 
@@ -259,10 +264,8 @@ impl EpisodeSink for RecordingEpisodes {
         result: Option<&SkillResult>,
         verification: Option<&VerificationReport>,
     ) -> Result<(), String> {
-        self.attempts
-            .lock()
-            .unwrap()
-            .push(fabric::types::episode_report::AttemptRecord::from_verification(
+        self.attempts.lock().unwrap().push(
+            fabric::types::episode_report::AttemptRecord::from_verification(
                 attempt,
                 attempt_id.to_string(),
                 operation_id.map(|op| op.0.to_string()),
@@ -270,7 +273,8 @@ impl EpisodeSink for RecordingEpisodes {
                 result.map(|r| format!("{:?}", r.outcome)),
                 verification,
                 None,
-            ));
+            ),
+        );
         Ok(())
     }
     async fn close_episode(&self, _episode_id: &str, _outcome: &str) -> Result<(), String> {

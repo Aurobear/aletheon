@@ -471,7 +471,10 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
         &self,
         device: &fabric::types::embodiment::DeviceId,
     ) -> Result<Vec<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
-        Ok(vec![self.get_state(device).await?.expect("kuavo always exposes state")])
+        Ok(vec![self
+            .get_state(device)
+            .await?
+            .expect("kuavo always exposes state")])
     }
 
     async fn get_state(
@@ -576,9 +579,7 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
 #[cfg(test)]
 mod kuavo_sim_tests {
     use super::*;
-    use crate::{
-        skill::authorized_fixture, EmbodimentProvider, ManualClock, SkillProgressSink,
-    };
+    use crate::{skill::authorized_fixture, EmbodimentProvider, ManualClock, SkillProgressSink};
     use fabric::types::embodiment::{DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest};
 
     struct NullSink;
@@ -603,7 +604,10 @@ mod kuavo_sim_tests {
         };
         let authorized = authorized_fixture(request);
         let result = provider
-            .execute_skill(crate::ValidatedSkillCommand(&authorized), Arc::new(NullSink))
+            .execute_skill(
+                crate::ValidatedSkillCommand(&authorized),
+                Arc::new(NullSink),
+            )
             .await
             .unwrap();
         assert_eq!(result.outcome, SkillOutcome::Succeeded);
