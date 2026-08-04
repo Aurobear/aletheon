@@ -3,7 +3,7 @@
 > 本文件是 **架构 / UX / robot 三份计划的唯一执行权威**，也是**计划基线 SHA 的唯一声明处**。
 > 自动执行按 §3 的依赖表选择节点；一个 Goal 只处理一个节点，依赖判定由 §8 的外层监督器完成，不能依赖 Goal runtime 自行推断。
 > 设计契约仍以三份源计划为准；三份源计划自带的 PR 表**一律视为历史，禁止调度**，冲突以本文件为准。
-> 文档状态：`revised-for-owner-approval`；完成 §0.1 的 B0/B1 并记录 owner approval 后才可启动无人值守循环。
+> 文档状态：`approved-executing`；B0 已由 PR #162 合入，B1 已记录 owner approval 与 `external_supervisor` 控制面。
 >
 > 源计划（只提供设计契约，不提供执行顺序）：
 > - `Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md`（架构契约）
@@ -29,7 +29,7 @@ LOCAL_DEV_AT_REVIEW = 278f357638bf575cda34008a176a71c036326929  # stale，不得
 
 ### 0.1 B0/B1：无人值守执行前置（不属于自动 Goal DAG）
 
-当前工作树承载以下 **6 份待入库文档**；前五份在本轮修订开始时为 untracked，第六份由本轮修订创建：
+B0 已将以下 **6 份文档**纳入版本控制并通过 PR #162 合入 `dev`：
 
 ```text
 docs/plans/Aletheon_Unified_Execution_Plan_2026-08-04.md
@@ -61,7 +61,7 @@ docs/plans/execution-status.md
 |---|---|---|
 | DeepSeek 缓存计划（C0–C7） | `accepted` | C-plan 继续拥有 provider/cache/usage 字段；X9c/X12 只消费 typed 输出 |
 | 14 条历史 feature/fix/test 分支 | `already_merged` 到 `origin/dev` | X0 仅保存对账证据，不再 rebase 或重复合并 |
-| 6 份计划/证据文档 | B0 前未入库 | B0 先提交并合并，随后 Goal DAG 才能启动 |
+| 6 份计划/证据文档 | `accepted`（PR #162，merge `95a5f8046f64eccd0ea6f22b0a82f06465e72419`） | Goal DAG 已启动 |
 
 ### 1.1 单执行器下的 owner 边界
 
@@ -128,26 +128,26 @@ X9c / X12      = 不再因 C 轨道阻塞
 
 ### 3.1 X0 的在途对账清单（2026-08-05 实测）
 
-下列 14 条历史分支均出现在 `git branch --merged origin/dev`，处置统一为 `already_merged`；不得 rebase、cherry-pick 或重复合入：
+下列 14 条历史分支在 X0 以 `git merge-base --is-ancestor <branch> origin/dev` 复核，处置统一为 `already_merged`；记录的 SHA 是本地保留分支尖端，不得 rebase、cherry-pick 或重复合入：
 
 ```text
-auro/feat/20260730-coding-evaluation-kernel       already_merged
-auro/feat/20260731-governed-review-service        already_merged
-auro/feat/20260801-unified-memory-design          already_merged
-auro/feat/20260803-inference-cache-contract       already_merged
-auro/feat/20260804-robot-embodiment-runtime       already_merged
-auro/feature/20260804-deepseek-cache              already_merged
-auro/fix/20260804-gbrain-memory-pipeline          already_merged
-auro/fix/20260804-main-release-gates              already_merged
-auro/fix/20260804-msrv-contract                   already_merged
-auro/fix/20260804-strict-quality-evolution        already_merged
-auro/fix/20260804-strict-quality-final            already_merged
-auro/fix/20260804-strict-quality-tail             already_merged
-auro/test/20260731-plan-acceptance-cleanup        already_merged
-auro/test/20260801-remaining-production-gates     already_merged
+auro/feat/20260730-coding-evaluation-kernel       8ce12a827c08387c75613c1b986b58d94aa5f974  already_merged
+auro/feat/20260731-governed-review-service        555b5656e65864f056a04ebba28427fff3e6328e  already_merged
+auro/feat/20260801-unified-memory-design          8a1fb438144923f14bf901b0ed0dbf0d8e4cbf19  already_merged
+auro/feat/20260803-inference-cache-contract       ba841df1f73e8722636be5ea1a29c81dbcd6442f  already_merged
+auro/feat/20260804-robot-embodiment-runtime       9a93b630a0d709c9ab2d27c441ef3ad10b7a0c06  already_merged
+auro/feature/20260804-deepseek-cache              758af8a808029ca09ee5d3d950b707d5aa8ecee7  already_merged
+auro/fix/20260804-gbrain-memory-pipeline          87f8fec322f227d590857ca0d80c0efa9d4f4650  already_merged
+auro/fix/20260804-main-release-gates              b203d69e38067d35882581ff4112a32394a5d65b  already_merged
+auro/fix/20260804-msrv-contract                   e21d1dc3769e45a6cb1473889f90a8cdc97641d3  already_merged
+auro/fix/20260804-strict-quality-evolution        26eae99caab42abb6f8db0df8c0e64821476d9e0  already_merged
+auro/fix/20260804-strict-quality-final            74acfbf673f1b742afa249405ca79956fd84e7ae  already_merged
+auro/fix/20260804-strict-quality-tail             cbbd89210c7e0666829b9141d47e379c25bfa332  already_merged
+auro/test/20260731-plan-acceptance-cleanup        cd0e68e8f19e2b3502ee0d664ccaae01cbcd5113  already_merged
+auro/test/20260801-remaining-production-gates     c1c030ba9ddb490401bc0ab8d334a2489d9d01e6  already_merged
 ```
 
-B0 前工作树仅包含 §0.1 的计划/证据文档；执行时仍以 `git status --porcelain` 现算。发现任何生产代码改动必须停止 B0，先判定 owner，不能把它混入文档 bootstrap。
+B0 开工时工作树仅包含 §0.1 的计划/证据文档；该事实已由 PR #162 的提交范围保存。后续节点仍以 `git status --porcelain` 现算，发现无归属改动必须先判定 owner，不能混入节点分支。
 
 ### 3.2 新增架构计数器的归属
 
