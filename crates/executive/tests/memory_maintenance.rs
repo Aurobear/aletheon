@@ -455,6 +455,10 @@ async fn agent_runtime_proposal_has_no_tools_or_workspace_and_waits_for_terminal
     assert!(intents[0].trusted_workspace.is_none());
     assert!(intents[0].allowed_tools.is_empty());
     assert_eq!(intents[0].budget.max_tool_calls, 0);
+    assert_eq!(
+        intents[0].budget.max_input_tokens,
+        MemoryPolicyConfig::default().max_input_bytes as u64
+    );
     for field in [
         "control_instruction_detected",
         "contradiction_detected",

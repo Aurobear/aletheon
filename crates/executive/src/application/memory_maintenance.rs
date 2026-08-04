@@ -709,7 +709,11 @@ fn validate_owner(owner_id: &str) -> anyhow::Result<()> {
 }
 
 fn byte_token_budget(bytes: usize) -> u64 {
-    u64::try_from(bytes.saturating_add(3) / 4)
-        .unwrap_or(u64::MAX)
-        .max(1)
+    // The task is already bounded independently by its serialized byte size.
+    // A four-bytes-per-token estimate is not a safe admission limit: CJK text
+    // and tokenizer byte fallbacks can consume substantially more tokens and
+    // made otherwise valid semantic reviews fail after inference completed.
+    // One token per input byte is a conservative upper bound; the resolved
+    // profile and model context limits still apply in the runtime.
+    u64::try_from(bytes).unwrap_or(u64::MAX).max(1)
 }
