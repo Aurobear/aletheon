@@ -724,6 +724,19 @@ impl RequestHandler {
                 }
             });
         }
+        // Bounded recall cache (Phase C6): caches recall results, keyed by
+        // scope/query/filters/embedding model/policy version/write-generation.
+        // Fail-open — the authoritative DefaultMemoryService is always reached
+        // on cache miss, lock contention, or after any memory write.
+        let local_memory_service = mnemosyne::CachingMemoryService::new(
+            Arc::new(local_memory_service),
+            config.memory_policy.policy.version.clone(),
+            embedding_config
+                .enabled
+                .then(|| embedding_config.model.clone()),
+            512,
+            std::time::Duration::from_secs(30),
+        );
         let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(local_memory_service);
         let supplemental_runtime =
             crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(

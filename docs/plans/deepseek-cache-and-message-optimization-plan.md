@@ -754,6 +754,50 @@ pub struct RecallCacheKey {
 - 并发 miss 使用 single-flight，避免重复 embedding/retrieval 风暴；
 - 缓存失败不影响权威 recall。
 
+### 实施结果（§7.2 模板块，2026-08-04）
+
+```text
+STATUS: accepted（Mnemosyne 内 cache adapter + bootstrap 注入；单元测试覆盖完成条件）
+BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
+PHASE: C6
+SCOPE:
+  - crates/mnemosyne/src/recall_cache.rs（新：RecallCacheKey + RecallCache(有界 FIFO/TTL LRU)
+    + InFlight single-flight + CachingMemoryService）
+  - crates/mnemosyne/src/lib.rs（pub mod recall_cache + pub use CachingMemoryService）
+  - crates/executive/src/host/daemon/bootstrap/request.rs（:727 注入点包一层
+    CachingMemoryService：policy_version=config.memory_policy.policy.version，
+    embedding_model_id=embedding_config.model(启用时)，capacity=512，TTL=30s）
+CONTRACT:
+  - mnemosyne::CachingMemoryService::new(inner, policy_version, embedding_model_id,
+    capacity, ttl)：包装 Arc<dyn MemoryService>
+  - key = principal_scope_digest(prefilter ancestry 或 session) + query_digest +
+    filters_digest(max_items/bytes/hist/mode) + top_k(=max_items) + embedding_model_id
+    + memory_policy_version + memory_generation
+  - 写方法(record/record_canonical/consolidate/forget/promote_facts>0)成功后才 bump
+    generation；generation 进 key，旧条目自然 miss，无需逐项删除
+  - recall/recall_with_prefilter 走 cached_recall：try_lock 快路径命中→返回；
+    否则 single-flight（Notiry + Arc<Mutex<Option<RecallSet>>>）；leader 成功写缓存，
+    失败也释放 inflight 并唤醒等待者（不悬挂）；缓存/锁失败一律 fail-open 到权威 recall
+VALIDATION:
+  bash scripts/cargo-agent.sh test -p mnemosyne --lib recall_cache  # 4 passed
+  bash scripts/cargo-agent.sh test -p mnemosyne --lib               # 184 passed
+  bash scripts/cargo-agent.sh test -p executive --lib               # 681 passed
+  bash scripts/cargo-agent.sh clippy -p mnemosyne -p executive --all-targets -- -D warnings  # 0
+  bash scripts/cargo-agent.sh fmt --all -- --check                  # 0
+RUNTIME EVIDENCE:
+  - 单元：同 query/scope 命中(recalls 计数不变)；写后 miss；不同 scope 不串；generation 变化 key 不同
+METRICS:
+  - 无独立指标；cache 失败不影响权威 recall（fail-open）
+ROLLBACK:
+  - revert C6 commit（新 adapter + 注入，可独立回滚）
+OPEN ITEMS:
+  - value 存完整 RecallSet（含 content）；计划建议存稳定 ID+score 再从 repository 读，避免内容
+    膨胀——可后续改为 ID-only value
+  - 容量/TTL 为常量(512/30s)；可加 [memory.recall_cache] 配置
+  - 未验证向量/embedding 双路 single-flight 在真实负载下的行为（单元用 Stub）
+  - C7 tool cache
+```
+
 ## Phase C7：Corpus Tool Result Cache（P2）
 
 ### 修改范围
