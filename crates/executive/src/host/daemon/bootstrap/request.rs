@@ -45,7 +45,7 @@ use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 use super::request_ports::{
     admin_runtime_port, initialize_self_field, retention_admin_port, RequestFacadePorts,
 };
-
+use super::robot::bind_robot_progress_spine as bind;
 impl RequestHandler {
     pub async fn new(
         config: &DaemonConfig,
@@ -98,29 +98,24 @@ impl RequestHandler {
             ..Default::default()
         };
         let mut self_field = SelfField::new(self_field_config);
-
         // SelfField owns the durable Dasein ledger. Restore its reducer version
         // before any turn can submit a transition against the persisted ledger.
         initialize_self_field(&mut self_field, &data_dir).await?;
-
         // Tier 2a: install the Runtime PermissionManager as the permission authority.
         {
             use crate::core::permission_manager::PermissionManager;
             self_field.set_permission_authority(std::sync::Arc::new(PermissionManager::new()));
         }
         let self_field = Arc::new(Mutex::new(self_field));
-
         // Wire DaseinEventBridge to canonical events if available.
         if let Some(ref bus) = event_bus {
             let sf = self_field.lock().await;
             sf.wire_dasein_event_bridge(bus).await?;
         }
-
         let memory = super::memory::compose(super::memory::MemoryCompositionInput {
             data_dir: &data_dir,
             clock: clock.clone(),
         })?;
-
         // Every durable user-runtime store is rooted in the injected state
         // directory. Never rediscover HOME or a machine deployment path here.
         let aletheon_dir = data_dir.clone();
@@ -148,7 +143,6 @@ impl RequestHandler {
             GmailGoalDraftCoordinator::open(&objective_db_path)
                 .context("opening Gmail Goal draft coordinator")?,
         ));
-
         // M3: terminalize stale runtime calls before making their Goals ready.
         // Recovery records cancellation evidence and never invokes a runtime.
         {
@@ -1145,8 +1139,7 @@ impl RequestHandler {
         .await?;
         let memory_agent_control = agent_svc.agent_control.clone();
         let canonical_event_spine = agent_svc.canonical_event_spine;
-        // Bind robot progress to the session event spine (turns run after this).
-        super::robot::bind_robot_progress_spine(
+        bind(
             &progress_sink,
             canonical_event_spine.clone(),
             session_id.clone(),
