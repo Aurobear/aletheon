@@ -37,6 +37,9 @@ pub enum DaemonReadiness {
     StaleSocket {
         detail: String,
     },
+    Unready {
+        detail: String,
+    },
     Ready {
         protocol_version: u16,
         runtime_version: String,
@@ -71,6 +74,8 @@ pub struct DaemonReadyReceipt {
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum DaemonLifecycleError {
+    #[error("daemon startup lock failed: {0}")]
+    Lock(String),
     #[error("daemon startup lock timed out after {timeout_ms}ms")]
     LockTimeout { timeout_ms: u64 },
     #[error("daemon readiness probe failed: {0}")]
@@ -144,6 +149,7 @@ impl DaemonLifecycleService {
         request: EnsureDaemonRequest,
     ) -> Result<DaemonReadyReceipt, DaemonLifecycleError> {
         let started = Instant::now();
+        let deadline = started + request.startup_timeout;
         if let Some(ready) = validate_ready(&request, self.backend.probe(&request.socket).await?)? {
             return Ok(receipt(
                 &request,
@@ -153,7 +159,13 @@ impl DaemonLifecycleService {
             ));
         }
 
-        let _lease = self.startup_lock.acquire(request.startup_timeout).await?;
+        let lock_timeout = deadline.saturating_duration_since(Instant::now());
+        if lock_timeout.is_zero() {
+            return Err(DaemonLifecycleError::LockTimeout {
+                timeout_ms: duration_ms(request.startup_timeout),
+            });
+        }
+        let _lease = self.startup_lock.acquire(lock_timeout).await?;
 
         // A second client may have completed activation while this client was
         // waiting for the startup lock. Re-probe before any mutation.
@@ -166,12 +178,22 @@ impl DaemonLifecycleService {
                 started,
             ));
         }
-        if matches!(readiness, DaemonReadiness::StaleSocket { .. }) {
-            self.backend.recover_stale_socket(&request.socket).await?;
+        if Instant::now() >= deadline {
+            return Err(DaemonLifecycleError::ReadinessTimeout {
+                timeout_ms: duration_ms(request.startup_timeout),
+                last_readiness: readiness,
+                diagnostic: self.backend.diagnose(&request.socket).await,
+            });
         }
-
-        let activation = self.backend.activate(request.mode, &request.socket).await?;
-        let deadline = started + request.startup_timeout;
+        let activation = match readiness {
+            DaemonReadiness::StaleSocket { .. } => {
+                self.backend.recover_stale_socket(&request.socket).await?;
+                self.backend.activate(request.mode, &request.socket).await?
+            }
+            DaemonReadiness::Absent => self.backend.activate(request.mode, &request.socket).await?,
+            DaemonReadiness::Unready { .. } => DaemonActivation::AlreadyRunning,
+            DaemonReadiness::Ready { .. } => unreachable!("ready state returned above"),
+        };
         loop {
             let readiness = self.backend.probe(&request.socket).await?;
             if let Some(ready) = validate_ready(&request, readiness.clone())? {

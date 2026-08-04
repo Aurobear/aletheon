@@ -607,61 +607,12 @@ async fn handle_doctor(
     config_path: Option<&std::path::Path>,
     project_dir: Option<&std::path::Path>,
 ) -> Result<()> {
-    use executive::composition::config;
-    use executive::host::doctor::DoctorReport;
-    let loaded = if let Some(path) = config_path {
-        let txt = std::fs::read_to_string(path)?;
-        let layer = config::ConfigLayer::from_toml(
-            config::ConfigSource::new(config::ConfigSourceKind::Cli, path.display().to_string()),
-            &txt,
-        )?;
-        config::merge_layers([layer])?
-    } else {
-        config::diagnostics::load_config_diagnostics(project_dir)?
-    };
-    let report = DoctorReport::standalone(&loaded);
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        println!("aletheon doctor — v{}", report.daemon_version);
-        println!("  status:    {}", report.status);
-        println!(
-            "  config:    {} ({} leaves)",
-            report.config.validity, report.config.leaf_count
-        );
-        println!(
-            "  deploy:    sha={} (core_compat={})",
-            report.deployment.installed_sha,
-            report
-                .deployment
-                .runtime_versions_compatible
-                .map_or("unknown".to_string(), |c| c.to_string())
-        );
-        println!(
-            "  MCP:       {} servers configured",
-            report.mcp_servers.len()
-        );
-        println!("  sandbox:   {}", report.sandbox.status);
-        println!("  writer:    {}", report.writer_health.status);
-        println!(
-            "  recovery:  {} sessions / {} turns / {} recovered",
-            report.turn_recovery.sessions_scanned,
-            report.turn_recovery.turns_scanned,
-            report.turn_recovery.incomplete_turns_recovered
-        );
-        println!(
-            "  profiles:  {} quarantined{}",
-            report.quarantined_profiles.count,
-            if report.quarantined_profiles.names.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", report.quarantined_profiles.names.join(", "))
-            }
-        );
-        for warning in &report.warnings {
-            println!("  WARNING:   {warning}");
-        }
-    }
+    let output = executive::host::doctor::execute(executive::host::doctor::DoctorRequest {
+        json,
+        config_path: config_path.map(std::path::Path::to_path_buf),
+        project_dir: project_dir.map(std::path::Path::to_path_buf),
+    })?;
+    println!("{}", output.rendered);
     Ok(())
 }
 

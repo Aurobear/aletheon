@@ -37,6 +37,7 @@ impl StartupLockPort for TestStartupLock {
 
 struct FakeBackend {
     stale: AtomicBool,
+    unready: bool,
     ready: AtomicBool,
     activations: AtomicUsize,
     recoveries: AtomicUsize,
@@ -49,6 +50,7 @@ impl FakeBackend {
     fn stale_then_ready() -> Self {
         Self {
             stale: AtomicBool::new(true),
+            unready: false,
             ready: AtomicBool::new(false),
             activations: AtomicUsize::new(0),
             recoveries: AtomicUsize::new(0),
@@ -71,6 +73,11 @@ impl DaemonLifecycleBackend for FakeBackend {
         if self.stale.load(Ordering::SeqCst) {
             return Ok(DaemonReadiness::StaleSocket {
                 detail: "connection refused".into(),
+            });
+        }
+        if self.unready {
+            return Ok(DaemonReadiness::Unready {
+                detail: "accepted connections without handshake".into(),
             });
         }
         Ok(DaemonReadiness::Absent)
@@ -165,6 +172,7 @@ async fn u_boot_003_concurrent_clients_activate_one_authority_and_recover_stale_
 async fn incompatible_runtime_version_fails_closed() {
     let backend = Arc::new(FakeBackend {
         stale: AtomicBool::new(false),
+        unready: false,
         ready: AtomicBool::new(true),
         activations: AtomicUsize::new(0),
         recoveries: AtomicUsize::new(0),
@@ -184,6 +192,7 @@ async fn incompatible_runtime_version_fails_closed() {
 async fn readiness_timeout_carries_typed_last_state_and_doctor_detail() {
     let backend = Arc::new(FakeBackend {
         stale: AtomicBool::new(false),
+        unready: false,
         ready: AtomicBool::new(false),
         activations: AtomicUsize::new(0),
         recoveries: AtomicUsize::new(0),
@@ -203,4 +212,31 @@ async fn readiness_timeout_carries_typed_last_state_and_doctor_detail() {
             ..
         }) if diagnostic == "fake daemon remained unready"
     ));
+}
+
+#[tokio::test]
+async fn unresponsive_existing_authority_is_not_replaced() {
+    let backend = Arc::new(FakeBackend {
+        stale: AtomicBool::new(false),
+        unready: true,
+        ready: AtomicBool::new(false),
+        activations: AtomicUsize::new(0),
+        recoveries: AtomicUsize::new(0),
+        protocol_version: fabric::CLIENT_PROTOCOL_VERSION,
+        runtime_version: env!("CARGO_PKG_VERSION"),
+        become_ready: false,
+    });
+    let service =
+        DaemonLifecycleService::new(backend.clone(), Arc::new(TestStartupLock::default()));
+    let mut request = request();
+    request.startup_timeout = Duration::from_millis(20);
+
+    assert!(matches!(
+        service.ensure_running(request).await,
+        Err(DaemonLifecycleError::ReadinessTimeout {
+            last_readiness: DaemonReadiness::Unready { .. },
+            ..
+        })
+    ));
+    assert_eq!(backend.activations.load(Ordering::SeqCst), 0);
 }
