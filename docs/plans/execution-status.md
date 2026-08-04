@@ -50,7 +50,7 @@ MERGE_SHA: n/a
 ```text
 STATUS: code_complete
 NODE: X0
-BASE / BRANCH / PR / GOAL_ID: 95a5f8046f64eccd0ea6f22b0a82f06465e72419 / auro/chore/20260805-x0-architecture-freeze / pending / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: 95a5f8046f64eccd0ea6f22b0a82f06465e72419 / auro/chore/20260805-x0-architecture-freeze / #163 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: all 14 retained historical branch tips are ancestors of origin/dev; compatibility-debt.tsv and metrics.env frozen_commit equal PLAN_BASELINE; B0/B1 evidence complete
 FAILURES: none
