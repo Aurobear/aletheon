@@ -136,7 +136,9 @@ pub mod runtime {
     pub use crate::application::compressor::budget::{
         BudgetAction, ContextBudgetInput, ContextBudgetPlan, ContextBudgetPlanner,
     };
-    pub use crate::application::compressor::{AdvancedCompressor, CompactionLineage};
+    pub use crate::application::compressor::{
+        AdvancedCompressor, CompactionLineage, DEFAULT_COMPACTION_THRESHOLD_FRACTION,
+    };
     pub use crate::backends::EpisodicMemory;
     #[cfg(feature = "cognitive-memory")]
     pub use crate::backends::{ProceduralMemory, SelfMemory, SemanticMemory};
