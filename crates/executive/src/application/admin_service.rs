@@ -524,7 +524,7 @@ impl ProfileSwitchEventSink for SpineProfileSwitchEventSink {
         };
         let root = "daemon-admin";
         let envelope = fabric::EnvelopeV2::new(
-            fabric::SchemaId::from(fabric::SchemaId::TURN_EVENT_V1),
+            fabric::SchemaId::from(fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1),
             fabric::EnvelopeV2Target("admin:profile".into()),
             fabric::EnvelopeV2Target("daemon:admin".into()),
             fabric::EnvelopeV2Delivery::Direct,

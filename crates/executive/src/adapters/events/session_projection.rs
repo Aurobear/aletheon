@@ -54,7 +54,23 @@ impl SessionProjection {
                 Ok(())
             }
             fabric::SchemaId::TURN_EVENT_V1 => {
-                let item = current_item(decode_inline_anyhow(event)?)?;
+                // A few legacy events were written under the turn schema with a
+                // non-item payload (e.g. admin profile switches). Tolerate them
+                // instead of poisoning the whole public-session projection: skip
+                // the event with a warning, keep processing the rest.
+                let item = match decode_inline_anyhow::<ItemRecord>(event)
+                    .and_then(current_item)
+                {
+                    Ok(item) => item,
+                    Err(error) => {
+                        tracing::warn!(
+                            event_id = %event.position.event_id.0,
+                            %error,
+                            "skipping turn-schema event with non-item payload"
+                        );
+                        return Ok(());
+                    }
+                };
                 let sequence = item.sequence;
                 let session_id = item.session_id.clone();
                 store.append(&session_id, sequence, item).await?;
