@@ -9,6 +9,7 @@ use super::workflow;
 
 use super::response::deduplicate_consecutive_text as deduplicate_response;
 use super::response::format_status;
+use fabric::contract::command::TaskKindArg;
 use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use fabric::ui_event::ClientEvent;
 
@@ -17,7 +18,7 @@ use std::path::PathBuf;
 
 use crate::tui::host_time::ClientTimer;
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use fabric::Timer;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -56,7 +57,7 @@ pub struct Args {
     pub required_agent_runtimes: Vec<String>,
 
     /// Explicit task kind sent to the host; ordinary prompts are never classified.
-    #[arg(long = "task-kind", value_enum, global = true)]
+    #[arg(long = "task-kind", global = true)]
     pub task_kind: Option<TaskKindArg>,
 
     /// Force TUI mode
@@ -91,19 +92,6 @@ pub struct Args {
     /// Exit after N seconds (default: 120)
     #[arg(long, default_value_t = 120)]
     pub test_timeout: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum TaskKindArg {
-    Coding,
-}
-
-impl From<TaskKindArg> for fabric::TaskKind {
-    fn from(value: TaskKindArg) -> Self {
-        match value {
-            TaskKindArg::Coding => Self::Coding,
-        }
-    }
 }
 
 #[derive(Subcommand)]

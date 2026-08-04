@@ -12,7 +12,7 @@
 use aletheon::workspace::WorkspaceArgs;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use interact::cli::TaskKindArg;
+use fabric::contract::command::TaskKindArg;
 use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -62,7 +62,7 @@ struct Cli {
     required_agent_runtimes: Vec<String>,
 
     /// Explicitly classify submitted chat turns for host-owned evaluation.
-    #[arg(long = "task-kind", value_enum)]
+    #[arg(long = "task-kind")]
     task_kind: Option<TaskKindArg>,
 
     #[command(flatten)]
