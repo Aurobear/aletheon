@@ -128,7 +128,7 @@ MERGE_SHA: 58a136204bda2d4b8d719a6b06d9cb52c918433c
 ```text
 STATUS: code_complete
 NODE: X4a
-BASE / BRANCH / PR / GOAL_ID: 58a136204bda2d4b8d719a6b06d9cb52c918433c / auro/feat/20260805-x4a-daemon-lifecycle-doctor / pending / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: 58a136204bda2d4b8d719a6b06d9cb52c918433c / auro/feat/20260805-x4a-daemon-lifecycle-doctor / #169 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commits 5bca5e30 and 98be8a6b add the Executive daemon lifecycle contract, deterministic install-mode resolution, one monotonic startup deadline, cross-process startup and process-lifetime authority locks, owned stale-socket recovery, typed initialize version negotiation, bounded diagnostics, and the Executive doctor use case; U-BOOT-003 concurrent-client coverage proves one activation and one stale-socket recovery, while host tests cover lock recovery, typed readiness, fail-closed version skew, and refusal to replace an unresponsive authority; focused Executive/Aletheon tests, package Clippy -D warnings, architecture, formatting, and diff gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 ba445e151f4228358008422df247a646dadb62ae81d6e62f95bcd059815c131a, stable PIDs, zero restart counters, and an official-socket real LLM request; a second installed daemon exits nonzero on the authority fence and installed doctor JSON remains parseable
 FAILURES: none
