@@ -111,6 +111,7 @@ crates/executive/src/application/prompt_partition.rs	application	executive	promp
 crates/executive/src/application/prefix_cache_observability.rs	application	executive	provider prefix cache diagnostics and metrics
 crates/executive/src/application/context_fragment.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_react.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/daemon_lifecycle.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/execute.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/helpers.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/lifecycle.rs	application	executive	use-case orchestration and ports

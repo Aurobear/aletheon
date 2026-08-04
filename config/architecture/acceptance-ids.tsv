@@ -9,3 +9,4 @@ U-CLI-002	X3b	test	crates/interact/src/tui/registry.rs
 A-ENTRY-002	X3c	test	crates/aletheon/tests/cli_contract.rs
 A-ENTRY-003	X3c	test	crates/aletheon/tests/cli_contract.rs
 U-CLI-004	X3c	test	crates/aletheon/tests/cli_contract.rs
+U-BOOT-003	X4a	test	crates/executive/tests/daemon_lifecycle.rs
