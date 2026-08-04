@@ -1,4 +1,5 @@
 //! Transactional extension lifecycle management.
+#![allow(clippy::items_after_test_module)]
 
 use anyhow::{Context, Result};
 use corpus::extension::store::{ActivationRecord, ExtensionEvidenceEvent, PackageStore};

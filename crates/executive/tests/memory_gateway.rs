@@ -429,14 +429,15 @@ async fn recall_binds_workspace_and_clamps_client_budgets_before_retrieval() {
             .collect::<Vec<_>>(),
         vec!["visible-workspace"]
     );
-    let requests = memory.requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].max_items, MAX_MEMORY_RECALL_ITEMS);
-    assert_eq!(
-        requests[0].max_content_bytes,
-        MAX_MEMORY_RECALL_CONTENT_BYTES
-    );
-    drop(requests);
+    {
+        let requests = memory.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].max_items, MAX_MEMORY_RECALL_ITEMS);
+        assert_eq!(
+            requests[0].max_content_bytes,
+            MAX_MEMORY_RECALL_CONTENT_BYTES
+        );
+    }
 
     let feedback = gateway
         .feedback(

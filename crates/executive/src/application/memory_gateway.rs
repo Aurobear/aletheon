@@ -646,37 +646,35 @@ fn resolve_memory_workspace(working_dir: &Path) -> anyhow::Result<WorkspacePolic
 
 fn load_or_create_installation_id(root: &Path) -> anyhow::Result<String> {
     let path = root.join(INSTALLATION_ID_FILE);
-    loop {
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                let value = uuid::Uuid::new_v4().to_string();
-                file.write_all(value.as_bytes())?;
-                file.write_all(b"\n")?;
-                file.sync_all()?;
-                return Ok(value);
-            }
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                let metadata = std::fs::symlink_metadata(&path)?;
-                anyhow::ensure!(
-                    metadata.file_type().is_file() && metadata.len() <= 128,
-                    "memory installation ID must be a bounded regular file"
-                );
-                let mut file = File::open(&path)?;
-                let mut value = String::new();
-                file.read_to_string(&mut value)?;
-                let value = value.trim();
-                uuid::Uuid::parse_str(value)
-                    .map_err(|_| anyhow::anyhow!("invalid persisted memory installation ID"))?;
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-                return Ok(value.to_owned());
-            }
-            Err(error) => return Err(error.into()),
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            let value = uuid::Uuid::new_v4().to_string();
+            file.write_all(value.as_bytes())?;
+            file.write_all(b"\n")?;
+            file.sync_all()?;
+            Ok(value)
         }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            let metadata = std::fs::symlink_metadata(&path)?;
+            anyhow::ensure!(
+                metadata.file_type().is_file() && metadata.len() <= 128,
+                "memory installation ID must be a bounded regular file"
+            );
+            let mut file = File::open(&path)?;
+            let mut value = String::new();
+            file.read_to_string(&mut value)?;
+            let value = value.trim();
+            uuid::Uuid::parse_str(value)
+                .map_err(|_| anyhow::anyhow!("invalid persisted memory installation ID"))?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            Ok(value.to_owned())
+        }
+        Err(error) => Err(error.into()),
     }
 }
 

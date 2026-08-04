@@ -161,9 +161,8 @@ impl crate::application::memory_gateway::SupplementalBindingNegotiator
         .negotiate_attested(backend_id, policy, &CancellationToken::new())
         .await
         .map_err(anyhow::Error::from)
-        .map(|grant| {
+        .inspect(|_| {
             mark_verified(&self.destination_verified_at, destination_handle);
-            grant
         })
     }
 }

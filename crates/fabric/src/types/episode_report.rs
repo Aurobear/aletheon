@@ -70,6 +70,24 @@ pub struct EpisodeReport {
     pub artifacts: Vec<EvidenceRef>,
 }
 
+/// Inputs required to assemble an authoritative episode report.
+///
+/// Keeping this contract typed avoids positional argument drift as report
+/// metadata evolves.
+pub struct EpisodeReportInput {
+    pub episode_id: String,
+    pub goal: String,
+    pub device: DeviceId,
+    pub sim_scene_version: String,
+    pub aletheon_commit: String,
+    pub bridge_protocol_digest: String,
+    pub before_sequence: Option<u64>,
+    pub after_sequence: Option<u64>,
+    pub settlement: String,
+    pub attempts: Vec<AttemptRecord>,
+    pub artifacts: Vec<EvidenceRef>,
+}
+
 impl EpisodeReport {
     pub fn final_decision(&self) -> Option<VerificationDecision> {
         self.attempts
@@ -87,31 +105,19 @@ impl EpisodeReport {
 }
 
 /// Assemble an episode report from host metadata and the recorded attempts.
-pub fn build_report(
-    episode_id: &str,
-    goal: &str,
-    device: DeviceId,
-    sim_scene_version: &str,
-    aletheon_commit: &str,
-    bridge_protocol_digest: &str,
-    before_sequence: Option<u64>,
-    after_sequence: Option<u64>,
-    settlement: &str,
-    attempts: Vec<AttemptRecord>,
-    artifacts: Vec<EvidenceRef>,
-) -> EpisodeReport {
+pub fn build_report(input: EpisodeReportInput) -> EpisodeReport {
     EpisodeReport {
-        episode_id: episode_id.to_string(),
-        goal: goal.to_string(),
-        device,
-        sim_scene_version: sim_scene_version.to_string(),
-        aletheon_commit: aletheon_commit.to_string(),
-        bridge_protocol_digest: bridge_protocol_digest.to_string(),
-        before_sequence,
-        after_sequence,
-        settlement: settlement.to_string(),
-        attempts,
-        artifacts,
+        episode_id: input.episode_id,
+        goal: input.goal,
+        device: input.device,
+        sim_scene_version: input.sim_scene_version,
+        aletheon_commit: input.aletheon_commit,
+        bridge_protocol_digest: input.bridge_protocol_digest,
+        before_sequence: input.before_sequence,
+        after_sequence: input.after_sequence,
+        settlement: input.settlement,
+        attempts: input.attempts,
+        artifacts: input.artifacts,
     }
 }
 
@@ -144,17 +150,17 @@ mod tests {
     }
 
     fn sample_report(settlement: &str) -> EpisodeReport {
-        build_report(
-            "ep-1",
-            "stand",
-            DeviceId("kuavo-mujoco-01".into()),
-            "mujoco-v1",
-            "abc123",
-            "sha256:proto",
-            Some(1),
-            Some(2),
-            settlement,
-            vec![AttemptRecord::from_verification(
+        build_report(EpisodeReportInput {
+            episode_id: "ep-1".into(),
+            goal: "stand".into(),
+            device: DeviceId("kuavo-mujoco-01".into()),
+            sim_scene_version: "mujoco-v1".into(),
+            aletheon_commit: "abc123".into(),
+            bridge_protocol_digest: "sha256:proto".into(),
+            before_sequence: Some(1),
+            after_sequence: Some(2),
+            settlement: settlement.into(),
+            attempts: vec![AttemptRecord::from_verification(
                 1,
                 "attempt:ep-1:1".into(),
                 Some("00000000-0000-0000-0000-000000000001".into()),
@@ -163,11 +169,11 @@ mod tests {
                 Some(&matched_report()),
                 None,
             )],
-            vec![EvidenceRef {
+            artifacts: vec![EvidenceRef {
                 kind: "rosbag".into(),
                 uri: "artifact://sha256/rosbag".into(),
             }],
-        )
+        })
     }
 
     #[test]

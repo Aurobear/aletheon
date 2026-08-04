@@ -273,7 +273,7 @@ mod tests {
             Ok(SpineEvent {
                 position: EventPosition {
                     tree_id: event.tree_id,
-                    event_id: event.event_id.clone(),
+                    event_id: event.event_id,
                     parent: event.parent,
                     sequence: TreeSequence(1),
                 },
@@ -301,7 +301,7 @@ mod tests {
         let operation_id = fabric::OperationId::new();
         progress
             .record(SkillProgress {
-                operation_id: operation_id.clone(),
+                operation_id,
                 skill: SkillId("kuavo.stance".into()),
                 fraction: 0.5,
                 note: "executing".into(),
@@ -334,7 +334,7 @@ mod tests {
 
         let operation_id = fabric::OperationId::new();
         sink.emit(fabric::TurnEvent::EmbodimentProgress {
-            operation_id: operation_id.clone(),
+            operation_id,
             skill: "kuavo.stance".into(),
             fraction: 0.5,
             note: "executing".into(),
@@ -364,7 +364,7 @@ mod tests {
 
         let operation_id = fabric::OperationId::new();
         let event = fabric::TurnEvent::EmbodimentProgress {
-            operation_id: operation_id.clone(),
+            operation_id,
             skill: "kuavo.stance".into(),
             fraction: 0.25,
             note: "starting".into(),

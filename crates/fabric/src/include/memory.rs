@@ -175,19 +175,6 @@ pub trait ProviderBackpressurePort: Send + Sync {
     async fn observe_retry_after(&self, provider_key: &str, retry_after_ms: Option<u64>);
 }
 
-#[cfg(test)]
-mod provider_backpressure_key_tests {
-    use super::provider_backpressure_key;
-
-    #[test]
-    fn key_normalizes_outer_space_and_trailing_endpoint_slashes() {
-        assert_eq!(
-            provider_backpressure_key(" https://provider.example/v1/// ", " model-a "),
-            "https://provider.example/v1::model-a"
-        );
-    }
-}
-
 /// Memory backend trait — like VFS super_operations.
 ///
 /// Each memory type (episodic, semantic, procedural, self) implements
@@ -211,4 +198,17 @@ pub trait MemoryBackend: Subsystem {
 
     /// Get memory statistics.
     async fn stats(&self) -> Result<MemoryStats>;
+}
+
+#[cfg(test)]
+mod provider_backpressure_key_tests {
+    use super::provider_backpressure_key;
+
+    #[test]
+    fn key_normalizes_outer_space_and_trailing_endpoint_slashes() {
+        assert_eq!(
+            provider_backpressure_key(" https://provider.example/v1/// ", " model-a "),
+            "https://provider.example/v1::model-a"
+        );
+    }
 }

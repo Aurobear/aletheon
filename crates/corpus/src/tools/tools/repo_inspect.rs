@@ -416,7 +416,7 @@ fn vcs_snapshot(root: &Path, store: &ArtifactStore) -> VcsSnapshot {
         kind: Some("git".into()),
         head: read_git_head(root),
         branch,
-        dirty: Some(text.lines().skip(1).next().is_some()),
+        dirty: Some(text.lines().nth(1).is_some()),
         status_artifact_ref: artifact_ref,
     }
 }

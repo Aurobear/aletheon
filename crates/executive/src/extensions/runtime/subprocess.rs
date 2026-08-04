@@ -940,8 +940,10 @@ mod tests {
 
     #[tokio::test]
     async fn unisolated_runtime_fails_closed_before_spawn() {
-        let mut config = SubprocessConfig::default();
-        config.command = "/bin/true".into();
+        let config = SubprocessConfig {
+            command: "/bin/true".into(),
+            ..Default::default()
+        };
         let mut runtime = SubprocessRuntime::new(config);
         let error = runtime.start().await.unwrap_err().to_string();
         assert!(error.contains("no verified isolation backend"));

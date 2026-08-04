@@ -465,6 +465,7 @@ impl ChangeTransactionRegistry {
         Ok(snapshot.clone())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_validation(
         &self,
         transaction_id: ChangeTransactionId,

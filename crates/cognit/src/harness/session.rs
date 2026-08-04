@@ -534,9 +534,11 @@ impl LinearCognitiveSession {
             for evidence in &contract.required_evidence {
                 let evidence_kind = evidence_kind_name(evidence.kind);
                 for index in 1..=evidence.minimum_count {
-                    let sequence = (evidence.minimum_count > 1)
-                        .then(|| format!(" (item {index}/{})", evidence.minimum_count))
-                        .unwrap_or_default();
+                    let sequence = if evidence.minimum_count > 1 {
+                        format!(" (item {index}/{})", evidence.minimum_count)
+                    } else {
+                        String::new()
+                    };
                     validation_requirements.push(ValidationRequirement {
                         id: format!("evaluation:evidence:{evidence_kind}:{index}"),
                         description: format!(
