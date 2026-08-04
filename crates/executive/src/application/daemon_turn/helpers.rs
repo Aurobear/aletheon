@@ -176,7 +176,7 @@ mod tests {
     fn token_budget_selects_more_than_six_messages_in_order() {
         let history = (0..20)
             .map(|index| {
-                if index % 2 == 0 {
+                if index.is_multiple_of(2) {
                     Message::user(format!("user-{index}"))
                 } else {
                     Message::assistant(format!("assistant-{index}"))
