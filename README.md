@@ -551,13 +551,13 @@ See [Section 6 (Current Capabilities)](#6-current-capabilities) for detailed Sta
 | **eBPF (planned)** | libbpf + BPF CO-RE | Kernel-level perception |
 | **Build** | Cargo workspace | Rust ecosystem |
 
-The minimum supported Rust version is **1.85**. The repository pins that
+The minimum supported Rust version is **1.88**. The repository pins that
 toolchain for reproducible builds, while CI also verifies the current stable
 release used by rolling distributions such as Arch Linux.
 
 ```bash
 rustup show
-bash scripts/cargo-agent.sh +1.85.0 check --workspace
+bash scripts/cargo-agent.sh +1.88.0 check --workspace
 bash scripts/cargo-agent.sh +stable check --workspace
 ```
 
