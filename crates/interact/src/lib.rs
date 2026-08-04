@@ -23,7 +23,5 @@ pub mod acp;
 pub mod host;
 mod intent;
 pub mod memory_client;
+mod single_message;
 pub mod tui;
-
-/// Backward compatibility: cli module is now tui::cli
-pub use tui::cli;
