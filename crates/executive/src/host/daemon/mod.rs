@@ -16,7 +16,6 @@
 //! and in subsystem crates (cognit, dasein, corpus, memory, metacog).
 
 pub mod bootstrap;
-pub mod cache_shape;
 pub mod debug_handler;
 pub mod handler;
 pub mod mcp_embedded;

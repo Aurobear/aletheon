@@ -399,7 +399,7 @@ impl DebugHandler {
 
     async fn handle_perf(&self, id: &Value) -> Value {
         let snap = self.perf.snapshot();
-        let prefix_cache = crate::host::daemon::cache_shape::prefix_shape_metrics();
+        let prefix_cache = crate::application::cache_shape::prefix_shape_metrics();
         let tool_calls = {
             let map = self.perf.tool_calls.lock().await;
             map.clone()

@@ -222,9 +222,9 @@ fn openai_usage(usage: &ApiUsage, reporting: CacheReportingMode) -> anyhow::Resu
     if let (Some(hit), Some(openai)) = (deepseek_hit, openai_cached) {
         if hit != openai {
             return Err(InferenceUsageError::FormatConflict {
-                deepseek_hit: hit,
-                deepseek_miss: deepseek_miss.unwrap_or_else(|| total.saturating_sub(hit)),
-                openai_cached: openai,
+                primary_hit: hit,
+                primary_miss: deepseek_miss.unwrap_or_else(|| total.saturating_sub(hit)),
+                nested_cached: openai,
             }
             .into());
         }

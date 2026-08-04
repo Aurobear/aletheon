@@ -10,7 +10,10 @@ use fabric::llm_types::{tool_schema_digest, ToolDefinition};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+
+pub use crate::application::prefix_cache_observability::{
+    prefix_shape_metrics, record_prefix_shape_miss, LocalMissReason,
+};
 
 /// Version of the prefix-shape identity. Bump when digest inputs change.
 pub const INFERENCE_PREFIX_SHAPE_VERSION: u16 = 1;
@@ -95,84 +98,6 @@ impl InferencePrefixShape {
             return Some(LocalMissReason::CompactionOrRewrite);
         }
         None
-    }
-}
-
-/// Why the host-controlled prefix shape changed between two turns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LocalMissReason {
-    /// Provider or model identity changed.
-    ProviderOrModelChanged,
-    /// Wire transport changed.
-    TransportChanged,
-    /// System prefix changed.
-    SystemChanged,
-    /// Tool schema set changed.
-    ToolSchemaChanged,
-    /// Agent profile digest changed.
-    ProfileChanged,
-    /// Compaction or another deliberate rewrite bumped the version.
-    CompactionOrRewrite,
-    /// Shape identical but the provider reported a miss. The host cannot know
-    /// why (eviction, cold cache, proxy behaviour); never claim a local cause.
-    ProviderMissOrEviction,
-}
-
-impl LocalMissReason {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ProviderOrModelChanged => "provider_or_model_changed",
-            Self::TransportChanged => "transport_changed",
-            Self::SystemChanged => "system_changed",
-            Self::ToolSchemaChanged => "tool_schema_changed",
-            Self::ProfileChanged => "profile_changed",
-            Self::CompactionOrRewrite => "compaction_or_rewrite",
-            Self::ProviderMissOrEviction => "provider_miss_or_eviction",
-        }
-    }
-}
-
-static PROVIDER_OR_MODEL_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
-static TRANSPORT_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
-static SYSTEM_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
-static TOOL_SCHEMA_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
-static PROFILE_CHANGED_TOTAL: AtomicU64 = AtomicU64::new(0);
-static COMPACTION_OR_REWRITE_TOTAL: AtomicU64 = AtomicU64::new(0);
-static PROVIDER_MISS_OR_EVICTION_TOTAL: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PrefixShapeMetricsSnapshot {
-    pub provider_or_model_changed_total: u64,
-    pub transport_changed_total: u64,
-    pub system_changed_total: u64,
-    pub tool_schema_changed_total: u64,
-    pub profile_changed_total: u64,
-    pub compaction_or_rewrite_total: u64,
-    pub provider_miss_or_eviction_total: u64,
-}
-
-pub fn record_prefix_shape_miss(reason: LocalMissReason) {
-    let counter = match reason {
-        LocalMissReason::ProviderOrModelChanged => &PROVIDER_OR_MODEL_CHANGED_TOTAL,
-        LocalMissReason::TransportChanged => &TRANSPORT_CHANGED_TOTAL,
-        LocalMissReason::SystemChanged => &SYSTEM_CHANGED_TOTAL,
-        LocalMissReason::ToolSchemaChanged => &TOOL_SCHEMA_CHANGED_TOTAL,
-        LocalMissReason::ProfileChanged => &PROFILE_CHANGED_TOTAL,
-        LocalMissReason::CompactionOrRewrite => &COMPACTION_OR_REWRITE_TOTAL,
-        LocalMissReason::ProviderMissOrEviction => &PROVIDER_MISS_OR_EVICTION_TOTAL,
-    };
-    counter.fetch_add(1, Ordering::Relaxed);
-}
-
-pub fn prefix_shape_metrics() -> PrefixShapeMetricsSnapshot {
-    PrefixShapeMetricsSnapshot {
-        provider_or_model_changed_total: PROVIDER_OR_MODEL_CHANGED_TOTAL.load(Ordering::Relaxed),
-        transport_changed_total: TRANSPORT_CHANGED_TOTAL.load(Ordering::Relaxed),
-        system_changed_total: SYSTEM_CHANGED_TOTAL.load(Ordering::Relaxed),
-        tool_schema_changed_total: TOOL_SCHEMA_CHANGED_TOTAL.load(Ordering::Relaxed),
-        profile_changed_total: PROFILE_CHANGED_TOTAL.load(Ordering::Relaxed),
-        compaction_or_rewrite_total: COMPACTION_OR_REWRITE_TOTAL.load(Ordering::Relaxed),
-        provider_miss_or_eviction_total: PROVIDER_MISS_OR_EVICTION_TOTAL.load(Ordering::Relaxed),
     }
 }
 
@@ -318,7 +243,7 @@ mod tests {
         InferencePrefixShape::compute(
             "lejurobot_deepseek",
             "deepseek/deepseek-v4-flash[1m]",
-            "openai",
+            "provider-a",
             system,
             tools,
             profile,
@@ -396,7 +321,7 @@ mod tests {
     fn transport_change_detected() {
         let a = shape("sys", &[tool("alpha", "one")], "profile-a");
         let mut b = shape("sys", &[tool("alpha", "one")], "profile-a");
-        b.transport = "anthropic".into();
+        b.transport = "transport-b".into();
         assert_eq!(b.compare(&a), Some(LocalMissReason::TransportChanged));
     }
 

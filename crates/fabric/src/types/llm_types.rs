@@ -130,14 +130,13 @@ pub struct ModelRuntimeFacts {
     /// legacy/in-process providers that cannot expose their route.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
-    /// Concrete wire transport (`openai`, `anthropic`, `ollama`, ...).
+    /// Concrete adapter-defined wire transport identifier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport: Option<String>,
     pub effective_model_id: String,
     pub display_name: String,
     pub max_context_tokens: usize,
-    /// Provider cache-reporting mode as a stable snake_case diagnostic label
-    /// (`auto` | `deepseek_chat` | `openai_cached_tokens` | `unsupported`).
+    /// Provider cache-reporting mode as a stable adapter-defined diagnostic label.
     /// `None` when the adapter does not report cache capability. This is
     /// host-owned configuration, never a model claim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -349,11 +348,11 @@ pub enum InferenceUsageError {
         read: Option<u64>,
         write: Option<u64>,
     },
-    #[error("conflicting cache reporting formats: DeepSeek hit {deepseek_hit} / miss {deepseek_miss} disagree with OpenAI cached {openai_cached}")]
+    #[error("conflicting cache reporting formats: primary hit {primary_hit} / miss {primary_miss} disagree with nested cached {nested_cached}")]
     FormatConflict {
-        deepseek_hit: u64,
-        deepseek_miss: u64,
-        openai_cached: u64,
+        primary_hit: u64,
+        primary_miss: u64,
+        nested_cached: u64,
     },
     #[error("invalid cache reporting: {0}")]
     Invalid(String),

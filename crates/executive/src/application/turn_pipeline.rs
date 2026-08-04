@@ -72,7 +72,7 @@ pub struct TurnPipeline {
     /// Previous stable prefix shape per canonical thread. Diagnostic only; it
     /// never gates inference or claims a provider-side cache hit.
     pub(crate) prefix_shape_trackers:
-        Arc<Mutex<crate::host::daemon::cache_shape::PrefixShapeTrackerStore>>,
+        Arc<Mutex<crate::application::cache_shape::PrefixShapeTrackerStore>>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -977,13 +977,13 @@ impl TurnPipeline {
             let transport = model_runtime_facts.transport.as_deref().unwrap_or("unknown");
             let profile = self.active_profile.snapshot().await?;
             let system_prefix = stable_system_prefix_wire(&request_messages);
-            match crate::host::daemon::cache_shape::InferencePrefixShape::compute(
+            match crate::application::cache_shape::InferencePrefixShape::compute(
                 provider_id,
                 &model_runtime_facts.effective_model_id,
                 transport,
                 &system_prefix,
                 &tool_defs,
-                &crate::host::daemon::cache_shape::agent_profile_digest(&profile.profile_name),
+                &crate::application::cache_shape::agent_profile_digest(&profile.profile_name),
                 begin.rewrite_version,
             ) {
                 Ok(shape) => {

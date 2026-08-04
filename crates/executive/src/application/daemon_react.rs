@@ -11,6 +11,7 @@ use fabric::{
 use tokio_util::sync::CancellationToken;
 
 use crate::application::harness_factory::CognitiveSessionFactory;
+use crate::application::prefix_cache_observability::{record_prefix_shape_miss, LocalMissReason};
 use crate::application::turn_policy::TurnPolicy;
 use crate::composition::config::ExecutiveConfig;
 
@@ -30,7 +31,7 @@ pub struct DaemonStreamingTurnContext<F> {
     pub capability_receipts: Arc<tokio::sync::Mutex<Vec<fabric::CapabilityTerminalReceipt>>>,
     pub inference_items: Arc<tokio::sync::Mutex<Vec<fabric::ItemPayload>>>,
     pub prefix_shape_digest: Option<String>,
-    pub local_cache_miss_reason: Option<crate::host::daemon::cache_shape::LocalMissReason>,
+    pub local_cache_miss_reason: Option<LocalMissReason>,
     pub provider_miss_inference_allowed: bool,
 }
 
@@ -116,8 +117,7 @@ struct DaemonTurnServices<F> {
     capability_receipts: Arc<tokio::sync::Mutex<Vec<fabric::CapabilityTerminalReceipt>>>,
     inference_items: Arc<tokio::sync::Mutex<Vec<fabric::ItemPayload>>>,
     prefix_shape_digest: Option<String>,
-    local_cache_miss_reason:
-        tokio::sync::Mutex<Option<crate::host::daemon::cache_shape::LocalMissReason>>,
+    local_cache_miss_reason: tokio::sync::Mutex<Option<LocalMissReason>>,
     provider_miss_inference_allowed: bool,
 }
 
@@ -181,12 +181,11 @@ where
             && receipt.usage.cache_read_tokens == Some(0)
             && receipt.usage.uncached_input_tokens.unwrap_or(0) > 0
         {
-            reason =
-                Some(crate::host::daemon::cache_shape::LocalMissReason::ProviderMissOrEviction);
+            reason = Some(LocalMissReason::ProviderMissOrEviction);
         }
         if let Some(reason) = reason {
             receipt.local_cache_miss_reason = Some(reason.as_str().to_owned());
-            crate::host::daemon::cache_shape::record_prefix_shape_miss(reason);
+            record_prefix_shape_miss(reason);
         }
         self.inference_items
             .lock()
@@ -368,9 +367,7 @@ mod tests {
             capability_receipts: receipts.clone(),
             inference_items: inference_items.clone(),
             prefix_shape_digest: Some("sha256:shape".into()),
-            local_cache_miss_reason: tokio::sync::Mutex::new(Some(
-                crate::host::daemon::cache_shape::LocalMissReason::SystemChanged,
-            )),
+            local_cache_miss_reason: tokio::sync::Mutex::new(Some(LocalMissReason::SystemChanged)),
             provider_miss_inference_allowed: false,
         };
         let receipt = fabric::CapabilityTerminalReceipt {

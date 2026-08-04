@@ -105,7 +105,10 @@ crates/executive/src/application/conscious_core_inspector.rs	application	executi
 crates/executive/src/application/conscious_core_ports.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious_field.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious_workspace.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/cache_shape.rs	application	executive	deterministic provider prefix shape diagnostics
 crates/executive/src/application/context_assembler.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/prompt_partition.rs	application	executive	prompt region classification and construction profiling
+crates/executive/src/application/prefix_cache_observability.rs	application	executive	provider prefix cache diagnostics and metrics
 crates/executive/src/application/context_fragment.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_react.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/execute.rs	application	executive	use-case orchestration and ports
@@ -280,7 +283,6 @@ crates/executive/src/host/daemon/bootstrap/sessions.rs	host	executive	daemon, tr
 crates/executive/src/host/daemon/bootstrap/storage.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/tools.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/turn_runtime.rs	host	executive	daemon, transport, or process lifecycle
-crates/executive/src/host/daemon/cache_shape.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/debug_handler.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/connection.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/format.rs	host	executive	daemon, transport, or process lifecycle
