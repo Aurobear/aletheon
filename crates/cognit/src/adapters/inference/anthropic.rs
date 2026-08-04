@@ -83,11 +83,22 @@ fn provider_request_error(error: reqwest::Error) -> anyhow::Error {
 struct ApiRequest {
     model: String,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    system: Vec<ApiSystemBlock>,
     messages: Vec<ApiMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ApiTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct ApiSystemBlock {
+    #[serde(rename = "type")]
+    block_type: &'static str,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -134,6 +145,23 @@ struct ApiUsage {
     cache_creation_input_tokens: Option<u32>,
     #[serde(default)]
     cache_read_input_tokens: Option<u32>,
+}
+
+fn anthropic_usage(usage: &ApiUsage) -> anyhow::Result<InferenceUsage> {
+    let uncached = u64::from(usage.input_tokens);
+    let read = u64::from(usage.cache_read_input_tokens.unwrap_or(0));
+    let write = u64::from(usage.cache_creation_input_tokens.unwrap_or(0));
+    let total = uncached
+        .checked_add(read)
+        .and_then(|value| value.checked_add(write))
+        .ok_or_else(|| anyhow::anyhow!("anthropic input usage overflow"))?;
+    Ok(InferenceUsage::reported(
+        total,
+        u64::from(usage.output_tokens),
+        Some(uncached),
+        usage.cache_read_input_tokens.map(u64::from),
+        usage.cache_creation_input_tokens.map(u64::from),
+    ))
 }
 
 /// SSE streaming event types for Anthropic API
@@ -197,47 +225,49 @@ struct StreamUsage {
     output_tokens: Option<u32>,
 }
 
-fn messages_to_api(messages: &[Message]) -> Vec<ApiMessage> {
-    let len = messages.len();
-    messages
-        .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            let role = match m.role {
+fn messages_to_api(messages: &[Message]) -> (Vec<ApiSystemBlock>, Vec<ApiMessage>) {
+    let mut system = Vec::new();
+    let mut dynamic = Vec::new();
+    for message in messages {
+        if message.role == Role::System {
+            for block in &message.content {
+                match block {
+                    ContentBlock::Text { text } | ContentBlock::System { text, .. } => {
+                        system.push(ApiSystemBlock {
+                            block_type: "text",
+                            text: text.clone(),
+                            cache_control: None,
+                        });
+                    }
+                    _ => tracing::warn!("ignoring non-text block in Anthropic system message"),
+                }
+            }
+            continue;
+        }
+        {
+            let role = match message.role {
                 Role::User => "user",
                 Role::Assistant => "assistant",
-                Role::System => "user", // Anthropic uses system param, but we fold into user
+                Role::System => unreachable!("system messages were partitioned"),
             };
-            let content = if i == len - 1 {
-                // Add cache_control to last content block of last message
-                if m.content.len() == 1 {
-                    match &m.content[0] {
-                        ContentBlock::Text { text } => {
-                            serde_json::json!([{
-                                "type": "text",
-                                "text": text,
-                                "cache_control": {"type": "ephemeral"}
-                            }])
-                        }
-                        _ => serde_json::to_value(&m.content).unwrap_or_default(),
-                    }
-                } else {
-                    serde_json::to_value(&m.content).unwrap_or_default()
-                }
-            } else if m.content.len() == 1 {
-                match &m.content[0] {
+            let content = if message.content.len() == 1 {
+                match &message.content[0] {
                     ContentBlock::Text { text } => serde_json::json!(text),
-                    _ => serde_json::to_value(&m.content).unwrap_or_default(),
+                    _ => serde_json::to_value(&message.content).unwrap_or_default(),
                 }
             } else {
-                serde_json::to_value(&m.content).unwrap_or_default()
+                serde_json::to_value(&message.content).unwrap_or_default()
             };
-            ApiMessage {
+            dynamic.push(ApiMessage {
                 role: role.to_string(),
                 content,
-            }
-        })
-        .collect()
+            });
+        }
+    }
+    if let Some(last) = system.last_mut() {
+        last.cache_control = Some(serde_json::json!({"type": "ephemeral"}));
+    }
+    (system, dynamic)
 }
 
 fn tools_to_api(tools: &[ToolDefinition]) -> Vec<ApiTool> {
@@ -265,12 +295,15 @@ impl LlmProvider for AnthropicProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmResponse> {
+        let tools = canonicalize_tool_definitions(tools)?;
+        let (system, messages) = messages_to_api(messages);
         let request = ApiRequest {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
             // ... (line 236, complete())
-            messages: messages_to_api(messages),
-            tools: tools_to_api(tools),
+            system,
+            messages,
+            tools: tools_to_api(&tools),
             stream: None,
         };
 
@@ -340,12 +373,7 @@ impl LlmProvider for AnthropicProvider {
         Ok(LlmResponse {
             content,
             stop_reason,
-            usage: Usage {
-                input_tokens: api_resp.usage.input_tokens,
-                output_tokens: api_resp.usage.output_tokens,
-            },
-            cache_hit_tokens: api_resp.usage.cache_read_input_tokens.unwrap_or(0),
-            cache_miss_tokens: api_resp.usage.cache_creation_input_tokens.unwrap_or(0),
+            usage: anthropic_usage(&api_resp.usage)?,
         })
     }
 
@@ -354,12 +382,15 @@ impl LlmProvider for AnthropicProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmStream> {
+        let tools = canonicalize_tool_definitions(tools)?;
+        let (system, messages) = messages_to_api(messages);
         let request = ApiRequest {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
             // ... (line 236, complete())
-            messages: messages_to_api(messages),
-            tools: tools_to_api(tools),
+            system,
+            messages,
+            tools: tools_to_api(&tools),
             stream: Some(true),
         };
 
@@ -396,9 +427,9 @@ impl LlmProvider for AnthropicProvider {
         let stream = futures::stream::unfold(
             AnthropicStreamState {
                 byte_stream: Box::pin(byte_stream),
-                buffer: String::new(),
+                buffer: super::utf8_stream::Utf8StreamBuffer::default(),
                 tool_state: AnthropicToolState::default(),
-                usage: Usage::default(),
+                usage: InferenceUsage::default(),
                 stop_reason: StopReason::EndTurn,
                 stream_idle_timeout: self.stream_idle_timeout,
             },
@@ -406,10 +437,18 @@ impl LlmProvider for AnthropicProvider {
                 loop {
                     // Try to extract a complete SSE event from the buffer
                     // Anthropic SSE format: "event: <type>\n" followed by "data: <json>\n\n"
-                    if let Some(double_newline) = state.buffer.find("\n\n") {
-                        let block = state.buffer[..double_newline].to_string();
-                        state.buffer = state.buffer[double_newline + 2..].to_string();
-
+                    let block = match state.buffer.take_event() {
+                        Ok(block) => block,
+                        Err(error) => {
+                            return Some((
+                                Err(anyhow::anyhow!(
+                                    "provider stream contained invalid UTF-8: {error}"
+                                )),
+                                state,
+                            ));
+                        }
+                    };
+                    if let Some(block) = block {
                         let mut event_type = String::new();
                         let mut data = String::new();
 
@@ -429,8 +468,12 @@ impl LlmProvider for AnthropicProvider {
                             "message_start" => {
                                 match serde_json::from_str::<StreamMessageStart>(&data) {
                                     Ok(msg_start) => {
-                                        state.usage.input_tokens =
-                                            msg_start.message.usage.input_tokens;
+                                        match anthropic_usage(&msg_start.message.usage) {
+                                            Ok(usage) => state.usage = usage,
+                                            Err(error) => {
+                                                tracing::warn!(%error, "invalid Anthropic usage")
+                                            }
+                                        }
                                     }
                                     Err(e) => {
                                         tracing::warn!(error = %e, "Failed to parse message_start");
@@ -539,7 +582,7 @@ impl LlmProvider for AnthropicProvider {
                                         }
                                         if let Some(u) = msg_delta.usage {
                                             if let Some(ot) = u.output_tokens {
-                                                state.usage.output_tokens = ot;
+                                                state.usage.output_tokens = Some(u64::from(ot));
                                             }
                                         }
                                     }
@@ -551,8 +594,7 @@ impl LlmProvider for AnthropicProvider {
                             "message_stop" => {
                                 return Some((
                                     Ok(StreamChunk::Usage {
-                                        input_tokens: state.usage.input_tokens,
-                                        output_tokens: state.usage.output_tokens,
+                                        usage: state.usage.clone(),
                                     }),
                                     state,
                                 ));
@@ -572,16 +614,18 @@ impl LlmProvider for AnthropicProvider {
                         {
                             Err(_) => return Some((Err(provider_timeout()), state)),
                             Ok(Some(Ok(bytes))) => {
-                                let text = String::from_utf8_lossy(&bytes);
-                                state.buffer.push_str(&text);
+                                state.buffer.push(&bytes);
                             }
                             Ok(Some(Err(e))) => {
                                 return Some((Err(provider_request_error(e)), state));
                             }
                             Ok(None) => {
                                 // Stream ended
-                                if !state.buffer.trim().is_empty() {
-                                    tracing::warn!("Stream ended with unprocessed data");
+                                if !state.buffer.is_empty() {
+                                    tracing::warn!(
+                                        remaining_bytes = state.buffer.len(),
+                                        "Stream ended with unprocessed data"
+                                    );
                                 }
                                 return Some((
                                     Ok(StreamChunk::Done {
@@ -612,9 +656,9 @@ impl LlmProvider for AnthropicProvider {
 struct AnthropicStreamState {
     byte_stream:
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<u8>, reqwest::Error>> + Send>>,
-    buffer: String,
+    buffer: super::utf8_stream::Utf8StreamBuffer,
     tool_state: AnthropicToolState,
-    usage: Usage,
+    usage: InferenceUsage,
     stop_reason: StopReason,
     stream_idle_timeout: Duration,
 }
@@ -668,5 +712,66 @@ impl AnthropicToolState {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod cache_contract_tests {
+    use super::*;
+
+    #[test]
+    fn system_and_tool_breakpoints_are_stable_and_dynamic_messages_are_unmarked() {
+        let messages = vec![
+            Message::system("stable system"),
+            Message::user("dynamic user"),
+        ];
+        let (system, dynamic) = messages_to_api(&messages);
+        let tools = fabric::canonicalize_tool_definitions(&[
+            ToolDefinition {
+                name: "zeta".into(),
+                description: "z".into(),
+                input_schema: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "alpha".into(),
+                description: "a".into(),
+                input_schema: serde_json::json!({}),
+            },
+        ])
+        .unwrap();
+        let body = serde_json::to_value(ApiRequest {
+            model: "model".into(),
+            max_tokens: 1,
+            system,
+            messages: dynamic,
+            tools: tools_to_api(&tools),
+            stream: None,
+        })
+        .unwrap();
+
+        assert_eq!(body["system"][0]["text"], "stable system");
+        assert!(body["system"][0]["cache_control"].is_object());
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert!(body["messages"][0]["content"]
+            .get("cache_control")
+            .is_none());
+        assert_eq!(body["tools"][0]["name"], "alpha");
+        assert_eq!(body["tools"][1]["name"], "zeta");
+        assert!(body["tools"][1]["cache_control"].is_object());
+    }
+
+    #[test]
+    fn anthropic_usage_counts_native_cache_dimensions() {
+        let usage = anthropic_usage(&ApiUsage {
+            input_tokens: 7,
+            output_tokens: 3,
+            cache_creation_input_tokens: Some(5),
+            cache_read_input_tokens: Some(11),
+        })
+        .unwrap();
+        assert_eq!(usage.total_input_tokens, Some(23));
+        assert_eq!(usage.uncached_input_tokens, Some(7));
+        assert_eq!(usage.cache_read_tokens, Some(11));
+        assert_eq!(usage.cache_write_tokens, Some(5));
     }
 }

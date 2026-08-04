@@ -12,8 +12,9 @@ We take security vulnerabilities seriously. If you discover a security vulnerabi
 
 ### How to Report
 
-1. **Do NOT** open a public GitHub issue for security vulnerabilities
-2. Email security reports to: [INSERT SECURITY EMAIL]
+1. **Do NOT** open a public GitHub issue for security vulnerabilities.
+2. Use [GitHub Private Vulnerability Reporting](https://github.com/Aurobear/aletheon/security/advisories/new)
+   to submit the report confidentially.
 3. Include the following information:
    - Description of the vulnerability
    - Steps to reproduce
@@ -22,19 +23,11 @@ We take security vulnerabilities seriously. If you discover a security vulnerabi
 
 ### What to Expect
 
-- Acknowledgment of your report within 48 hours
-- Regular updates on the progress of fixing the vulnerability
-- Credit in the security advisory (unless you prefer to remain anonymous)
-
-### Response Timeline
-
-- **Initial Response**: Within 48 hours
-- **Triage**: Within 1 week
-- **Fix Development**: Depends on severity
-  - Critical: Within 1 week
-  - High: Within 2 weeks
-  - Medium: Within 1 month
-  - Low: Next release cycle
+- The report will be triaged privately in the GitHub security advisory.
+- Maintainers will use the advisory to request any missing reproduction details
+  and coordinate disclosure.
+- Reporters may be credited in the published advisory unless they prefer to
+  remain anonymous.
 
 ## Security Best Practices
 

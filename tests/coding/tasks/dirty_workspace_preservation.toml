@@ -1,0 +1,15 @@
+schema_version = 1
+id = "dirty_workspace_preservation"
+category = "dirty_workspace"
+fixture = "dirty_workspace_preservation"
+prompt = "修复标签规范化的边界空白行为。工作区已有用户对 notes.txt 的未提交修改，必须原样保留，只修改实现。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]
+dirty_path = "notes.txt"
+dirty_content = "user-owned draft: keep this exact line\n"

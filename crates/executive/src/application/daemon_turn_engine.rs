@@ -68,6 +68,7 @@ impl TurnEngine for DaemonTurnEngine {
     ) -> Result<TurnEngineResult, TurnEngineError> {
         let turn_id = fabric::TurnId::new();
         events.on_turn_started(turn_id).await;
+        let evaluation_profile_name = context.profile.profile_name.clone();
 
         let principal_context = context.principal_context.ok_or_else(|| {
             TurnEngineError::InvalidContext("daemon principal context is missing".into())
@@ -81,6 +82,9 @@ impl TurnEngine for DaemonTurnEngine {
                 .model_policy
                 .or(context.profile.model_policy.clone()),
             deadline: request.deadline,
+            requirements: request.requirements,
+            requested_task_kind: request.requested_task_kind,
+            evaluation_contract: None,
         };
 
         {
@@ -99,6 +103,7 @@ impl TurnEngine for DaemonTurnEngine {
                 context.process_id,
                 context.cancel_token,
                 principal,
+                context.notification_sender,
             )
             .await?;
         if let Some(error) = response.get("error") {
@@ -119,6 +124,7 @@ impl TurnEngine for DaemonTurnEngine {
         let metrics = fabric::TurnMetrics {
             tool_calls_made: metric["tool_calls_made"].as_u64().unwrap_or(0) as usize,
             tool_errors: metric["tool_errors"].as_u64().unwrap_or(0) as usize,
+            provider_retries: metric["provider_retries"].as_u64().unwrap_or(0),
             elapsed_ms: metric["elapsed_ms"].as_u64().unwrap_or(0),
             iterations: metric["iterations"].as_u64().unwrap_or(0) as usize,
             completed_normally: metric["completed_normally"].as_bool().unwrap_or(false),
@@ -130,6 +136,7 @@ impl TurnEngine for DaemonTurnEngine {
                     .as_str()
                     .unwrap_or(&turn_request.context.thread_id.0)
                     .to_owned(),
+                principal_id: turn_request.context.principal_id.clone(),
                 input: turn_request.input.clone(),
                 output: output.clone(),
                 turn: raw["turn"].as_u64().unwrap_or(0) as usize,
@@ -146,6 +153,18 @@ impl TurnEngine for DaemonTurnEngine {
         };
         let context_projection =
             serde_json::from_value(raw["projection"]["conscious_context"].clone()).ok();
+        let mut evaluation_artifacts = serde_json::from_value::<
+            crate::application::evaluation::TurnEvaluationArtifacts,
+        >(raw["evaluation_artifacts"].clone())
+        .unwrap_or_default();
+        evaluation_artifacts.workspace = Some((*context.workspace).clone());
+        evaluation_artifacts.profile_name = evaluation_profile_name;
+        evaluation_artifacts.session_id = turn_request.context.thread_id.0.clone();
+        evaluation_artifacts.runtime_id = "native-turn".into();
+        evaluation_artifacts.projection_metrics.elapsed_ms = Some(metrics.elapsed_ms);
+        evaluation_artifacts.projection_metrics.provider_retries = Some(metrics.provider_retries);
+        evaluation_artifacts.projection_metrics.tool_calls = Some(metrics.tool_calls_made as u64);
+        evaluation_artifacts.projection_metrics.tool_errors = Some(metrics.tool_errors as u64);
         let status = if turn_cancel.is_cancelled() {
             TurnEngineStatus::Cancelled
         } else if succeeded {
@@ -166,6 +185,7 @@ impl TurnEngine for DaemonTurnEngine {
             items,
             projection: Some(projection),
             context_projection,
+            evaluation_artifacts,
         };
         let result = TurnEngineResult {
             turn_id,

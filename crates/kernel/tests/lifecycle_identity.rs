@@ -52,6 +52,7 @@ async fn one_agent_maps_to_one_live_process_generation_and_rejects_stale_pid_bin
 fn operation_kinds_are_closed_versionable_discriminants() {
     let kinds = [
         OperationKind::Turn,
+        OperationKind::Evaluation,
         OperationKind::ModelCall,
         OperationKind::CapabilityCall,
         OperationKind::MemoryConsolidation,

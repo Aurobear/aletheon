@@ -3,6 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::MemoryPolicyConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryConfig {
@@ -18,6 +20,10 @@ pub struct MemoryConfig {
     pub extraction: MemoryExtractionConfig,
     #[serde(default)]
     pub promotion: MemoryPromotionConfig,
+    #[serde(default)]
+    pub embedding: MemoryEmbeddingConfig,
+    #[serde(default)]
+    pub policy: MemoryPolicyConfig,
 }
 
 impl Default for MemoryConfig {
@@ -29,8 +35,30 @@ impl Default for MemoryConfig {
             recall: Default::default(),
             extraction: Default::default(),
             promotion: Default::default(),
+            embedding: Default::default(),
+            policy: Default::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct MemoryEmbeddingConfig {
+    pub enabled: bool,
+    /// `open_ai` or `ollama`.
+    pub provider: String,
+    pub model: String,
+    pub base_url: String,
+    pub dimensions: usize,
+    pub credential_env: String,
+    #[serde(default = "default_embedding_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub rotation_generation: u32,
+}
+
+fn default_embedding_timeout_ms() -> u64 {
+    400
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -74,6 +102,25 @@ pub struct SupplementalMemoryConfig {
     pub schema_version: String,
     #[serde(default = "default_outbox_dir", alias = "outbox_dir")]
     pub legacy_outbox_dir: String,
+    /// Non-secret proofs binding opaque MCP destinations to external sources.
+    /// OAuth client credentials remain exclusively in the MCP secret config.
+    #[serde(default)]
+    pub destination_attestations: Vec<SupplementalDestinationAttestationConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SupplementalDestinationAttestationConfig {
+    pub destination_handle: String,
+    pub source_id: String,
+    pub marker_slug: String,
+    pub marker_sha256: String,
+    #[serde(default = "default_attestation_revalidate_secs")]
+    pub revalidate_after_secs: u64,
+}
+
+fn default_attestation_revalidate_secs() -> u64 {
+    300
 }
 
 impl Default for SupplementalMemoryConfig {
@@ -98,6 +145,7 @@ impl Default for SupplementalMemoryConfig {
             schema_fixture: default_schema_fixture(),
             schema_version: default_schema_version(),
             legacy_outbox_dir: default_outbox_dir(),
+            destination_attestations: Vec::new(),
         }
     }
 }

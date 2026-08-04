@@ -29,9 +29,13 @@ pub mod ports;
 // Re-export core components
 pub use core::critic::Critic;
 pub use core::learner::Learner;
-pub use core::planner::Planner;
+#[allow(deprecated)]
 pub use core::reasoner::{Reasoner, ReasoningStrategy};
 pub use core::reflector::Reflector;
+pub use core::task_decomposition::{
+    DecompositionContext, DecompositionError, DeterministicTaskDecompositionPolicy,
+    TaskDecomposition, TaskDecompositionPolicy,
+};
 pub use core::world_model::WorldModel;
 
 // Re-export bridge components
@@ -41,6 +45,9 @@ pub use bridge::learning::LearningBridge;
 pub use bridge::llm::LlmBridge;
 
 // Re-export harness components
+pub use adapters::policy::grpc_provider::{
+    validate_policy_endpoint, GrpcPolicyConfig, GrpcPolicyProvider, StubPolicyProvider,
+};
 pub use harness::config::HarnessConfig;
 pub use harness::{
     CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError, CognitErrorKind,
@@ -67,6 +74,9 @@ pub mod inference {
     pub mod scheduler {
         pub use crate::adapters::inference::scheduler::*;
     }
+    pub use crate::adapters::inference::backpressure::{
+        provider_backpressure_snapshot, MachineProviderBackpressure, ProviderBackpressureSnapshot,
+    };
     pub use scheduler::*;
 }
 

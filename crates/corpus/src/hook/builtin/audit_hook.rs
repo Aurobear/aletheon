@@ -18,6 +18,7 @@ pub fn register_audit_hook(registry: &mut HookRegistry) {
         script_path: None,
         point: HookPoint::PostTool,
         priority: 1000, // Run last
+        timeout_ms: None,
     });
 }
 

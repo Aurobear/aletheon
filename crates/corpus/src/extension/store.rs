@@ -261,7 +261,7 @@ impl PackageStore {
     }
 
     pub fn list_installed(&self) -> Result<Vec<InstalledPackageRecord>> {
-        let mut records = Vec::new();
+        let mut records: Vec<InstalledPackageRecord> = Vec::new();
         for entry in std::fs::read_dir(&self.state_dir)? {
             let entry = entry?;
             if entry.file_type()?.is_dir() {
@@ -288,6 +288,22 @@ impl PackageStore {
 
     pub fn write_activation(&self, record: &ActivationRecord) -> Result<()> {
         write_json_atomic(&self.activation_path(&record.package_id), record)
+    }
+
+    pub fn list_activations(&self) -> Result<Vec<ActivationRecord>> {
+        let mut records: Vec<ActivationRecord> = Vec::new();
+        for entry in std::fs::read_dir(&self.state_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let path = entry.path().join("activation.json");
+            if path.is_file() {
+                records.push(read_json(&path)?);
+            }
+        }
+        records.sort_by(|left, right| left.package_id.cmp(&right.package_id));
+        Ok(records)
     }
 
     pub fn store_receipt(&self, package_id: &str, receipt: &serde_json::Value) -> Result<PathBuf> {

@@ -1,6 +1,6 @@
 # Metacog Crate — Meta-Cognition and Evolution
 
-> Code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 **Crate:** `metacog`
 **Purpose:** The self-modification engine. Reads its own genome, generates candidate runtime modifications, tests them in sandbox, evaluates results, and migrates to improved versions. No direct production updates.
@@ -12,32 +12,21 @@
 ```
 metacog/src/
   lib.rs                          # Crate root
-  core/                           # Core trait implementations
-    traits.rs                     # DefaultMetaRuntime (design skeleton)
-    types.rs                      # Re-exported types
-  bridge/                         # Bridge to other subsystems
-    mod.rs
-  impl/                           # Concrete implementations
-    mod.rs
-    genome/                       # Genome model
-      mod.rs
-      loader.rs                   # GenomeLoader — loads genome from files
-    meta_runtime/                 # MetaRuntime components
-      mod.rs
-      self_reader.rs              # SelfReader — reads current runtime state
-      spec_editor.rs              # SpecEditor — edits genome specifications
-      runtime_builder.rs          # RuntimeBuilder — builds candidate runtimes
-      sandbox_runner.rs           # SandboxRunner — tests in sandbox
-      evaluator.rs                # Evaluator — evaluates test results
-      rollback.rs                 # RollbackManager — rollback to previous version
-      migration.rs                # MigrationManager — migrate to new runtime
-      lineage.rs                  # LineageRecorder — records evolution lineage
-    morphogenesis/                # Self-evolution pipeline
-      mod.rs
-      pipeline.rs                 # MorphogenesisPipeline — orchestrates full flow
-      candidate.rs                # RuntimeCandidate model
-      mutation_intent.rs          # MutationIntent from reflection
+  genome/                         # Genome model (loader, specifications)
+  governance/                     # MetaRuntime, RollbackManager
+  evolution/                      # Self-evolution pipeline (candidates, mutation)
+  evaluation/                     # HIL evidence, test result evaluation
+  evidence/                       # Evidence collection and verification
+  experience/                     # Experience recording and replay
+  improvement/                    # Improvement proposals and tracking
+  problem/                        # Problem ledger and diagnostics
+  reflection/                     # Reflective analysis after execution
+  adapters/                       # External adapter implementations
 ```
+
+The old technical-layer roots `core/`, `bridge/`, and `impl/` were removed
+during the architecture decoupling refactor. Metacog now uses feature-owned
+modules directly under `src/`.
 
 ## Key Concepts
 

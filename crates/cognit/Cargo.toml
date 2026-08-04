@@ -26,6 +26,13 @@ futures = "0.3"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 dirs = "5"
+sha2 = { workspace = true }
+tonic = { version = "0.12", features = ["transport"] }
+prost = "0.13"
+prost-types = "0.13"
+
+[build-dependencies]
+tonic-build = "0.12"
 
 [dev-dependencies]
 kernel = { path = "../kernel" }

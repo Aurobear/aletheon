@@ -121,6 +121,9 @@ mod tests {
             input: "hello".into(),
             model_policy: None,
             deadline: None,
+            requirements: Vec::new(),
+            requested_task_kind: None,
+            evaluation_contract: None,
         }
     }
 
@@ -183,6 +186,7 @@ mod tests {
                             items: vec![],
                             projection: None,
                             context_projection: None,
+                            evaluation_artifacts: Default::default(),
                         })
                     }
                 },

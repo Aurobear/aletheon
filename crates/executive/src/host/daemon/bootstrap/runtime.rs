@@ -1,6 +1,7 @@
 //! Runtime-provider construction for daemon bootstrap.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fabric::{AgentControlPort, Registry};
@@ -35,11 +36,35 @@ pub(super) struct ProfileLoadResult {
     pub quarantined: Vec<QuarantinedProfile>,
 }
 
+/// Safe, always-available capabilities that are NOT gated by a profile's
+/// `allowed_tools` whitelist. These are read-only/local, non-exfiltrating
+/// bookkeeping and repo-inspection tools: read-only git evidence and task/todo
+/// management. Mutating git operations are deliberately not universal because
+/// they must not bypass version-bound change transactions. Any registered
+/// universal tool is merged into every profile so the model can both see and
+/// execute it regardless of active profile. Genuinely dangerous capabilities
+/// (file_write, bash_exec, network,
+/// kernel) remain profile-gated and per-action (L0–L3) + sandbox-gated.
+pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_show",
+    "task_create",
+    "task_update",
+    "task_list",
+    "task_get",
+    "request_user_input",
+    "skill_list",
+    "skill_get",
+];
+
 pub(super) async fn load_agent_profiles(
-    agents_dir: &std::path::Path,
+    agents_dir: &Path,
     inference: Arc<dyn InferencePort>,
     default_llm: Arc<dyn LlmProvider>,
     definitions: &[fabric::ToolDefinition],
+    profile_definitions: &[fabric::ToolDefinition],
     config: &crate::composition::config::ExecutiveConfig,
     profiles_config: &crate::composition::config::AgentProfilesConfig,
 ) -> anyhow::Result<ProfileLoadResult> {
@@ -48,6 +73,50 @@ pub(super) async fn load_agent_profiles(
         loader.load_from_dir(agents_dir)?;
         loader.validate_legacy_toml_grants(agents_dir)?;
     }
+    load_agent_profiles_from_loader(
+        loader,
+        inference,
+        default_llm,
+        definitions,
+        profile_definitions,
+        config,
+        profiles_config,
+    )
+    .await
+}
+
+pub(super) async fn load_agent_profiles_from_paths(
+    profile_paths: &[PathBuf],
+    inference: Arc<dyn InferencePort>,
+    default_llm: Arc<dyn LlmProvider>,
+    definitions: &[fabric::ToolDefinition],
+    profile_definitions: &[fabric::ToolDefinition],
+    config: &crate::composition::config::ExecutiveConfig,
+    profiles_config: &crate::composition::config::AgentProfilesConfig,
+) -> anyhow::Result<ProfileLoadResult> {
+    let mut loader = AgentLoader::new();
+    loader.load_from_paths(profile_paths)?;
+    load_agent_profiles_from_loader(
+        loader,
+        inference,
+        default_llm,
+        definitions,
+        profile_definitions,
+        config,
+        profiles_config,
+    )
+    .await
+}
+
+async fn load_agent_profiles_from_loader(
+    loader: AgentLoader,
+    inference: Arc<dyn InferencePort>,
+    default_llm: Arc<dyn LlmProvider>,
+    definitions: &[fabric::ToolDefinition],
+    profile_definitions: &[fabric::ToolDefinition],
+    config: &crate::composition::config::ExecutiveConfig,
+    profiles_config: &crate::composition::config::AgentProfilesConfig,
+) -> anyhow::Result<ProfileLoadResult> {
     for profile in profiles_config.overrides.keys() {
         anyhow::ensure!(
             loader.get(profile).is_some(),
@@ -61,7 +130,7 @@ pub(super) async fn load_agent_profiles(
             profiles_config.default
         );
     }
-    let catalog = definitions
+    let catalog = profile_definitions
         .iter()
         .map(|definition| (definition.name.clone(), definition.clone()))
         .collect::<HashMap<_, _>>();
@@ -69,11 +138,30 @@ pub(super) async fn load_agent_profiles(
     let mut profiles = HashMap::new();
     let mut quarantined = Vec::new();
     for role in loader.list() {
-        let mut tools = Vec::with_capacity(role.tools.len());
+        // Merge in universal tools (git + task) that are registered, so every
+        // profile can see and execute them regardless of its allowed_tools
+        // whitelist. Only tools present in the catalog are added, so this never
+        // introduces an unknown-tool quarantine.
+        let mut effective_tools = role.tools.clone();
+        for name in UNIVERSAL_TOOLS {
+            if catalog.contains_key(*name) && !effective_tools.iter().any(|t| t == name) {
+                effective_tools.push((*name).to_string());
+            }
+        }
+        let mut authorized_tools = Vec::with_capacity(effective_tools.len());
+        let mut tools = Vec::with_capacity(effective_tools.len());
         let mut failed = false;
-        for name in &role.tools {
+        for name in &effective_tools {
             match catalog.get(name).cloned() {
-                Some(definition) => tools.push(definition),
+                Some(definition) => {
+                    authorized_tools.push(definition.clone());
+                    if definitions
+                        .iter()
+                        .any(|visible| visible.name == definition.name)
+                    {
+                        tools.push(definition);
+                    }
+                }
                 None => {
                     tracing::warn!(
                         profile = %role.name,
@@ -133,13 +221,13 @@ pub(super) async fn load_agent_profiles(
 
         // Derive risk tier from tool permission levels — delegated to the
         // registry construction; here we use a simple heuristic.
-        let risk_tier = derive_risk_tier(&role.tools, &catalog);
+        let risk_tier = derive_risk_tier(&effective_tools, &catalog);
 
         let profile = fabric::AgentProfile {
             id: fabric::AgentProfileId(role.name.clone()),
             system_prompt: role.body.clone(),
             model: llm.name().to_string(),
-            allowed_tools: role.tools.clone(),
+            allowed_tools: effective_tools.clone(),
             max_iterations,
             max_input_tokens,
             max_output_tokens,
@@ -161,6 +249,7 @@ pub(super) async fn load_agent_profiles(
         registry.register(crate::adapters::runtime::ResolvedAgentProfile {
             profile: profile.clone(),
             llm,
+            authorized_tools,
             tools,
         })?;
         profiles.insert(role.name.clone(), profile);
@@ -204,7 +293,8 @@ fn tool_permission_level(name: &str) -> i32 {
         // L2 — System-level changes
         "ebpf_compile" | "module_build" => 2,
         // L1 — Sandboxed write
-        "file_write" | "bash_exec" | "apply_patch" | "web_fetch" => 1,
+        "file_write" | "bash_exec" | "exec_command" | "write_stdin" | "validation_run"
+        | "apply_patch" | "web_fetch" => 1,
         // L0 — Read-only (default)
         _ => 0,
     }

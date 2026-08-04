@@ -14,7 +14,7 @@ output is a well-structured report -- demonstrating closed-loop learning.
 ## Prerequisites
 
 - Rust toolchain (stable)
-- Aletheon built at workspace root (`cargo build`)
+- Aletheon built at the workspace root (`bash scripts/cargo-agent.sh build`)
 
 ## Quick Start
 

@@ -181,6 +181,7 @@ async fn governed_invocation_requires_activation_binding_scope_and_permit() {
                 .unwrap(),
             session_id: "session-1".into(),
             working_dir: "/workspace".into(),
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
         },
         control: InvocationControl::default(),
     };

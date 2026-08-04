@@ -15,3 +15,4 @@ oauth-credential-vault	corpus	crates/corpus/src/security/credential_vault.rs	vau
 mcp-token-store	corpus	crates/corpus/src/tools/mcp/token_store.rs	token record format	MCP auth client	MCP token store	atomic write; preserve secret permissions; reject malformed data	6,8d
 artifact-store	platform	crates/platform/src/artifact_store.rs	receipt/metadata schema	artifact consumers	platform artifact store	atomic publish and receipt verification; version incompatible metadata	2
 hil-evidence	metacog	crates/metacog/src/evaluation/hil_evidence.rs	schema_version	HIL verifier	executive/HIL capture	fail closed on unknown version or integrity mismatch	8c
+robot-episodes	executive	crates/executive/src/adapters/episode/migrations/001_episodes.sql	crates/executive/src/adapters/episode/sqlite_episode_sink.rs::MIGRATION	report builder and episode recovery	robot episode sink	idempotent additive migration; preserve durable attempt receipts and reject incompatible schema	8c

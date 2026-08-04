@@ -118,6 +118,21 @@ impl StreamController {
         self.tail.push_str(text);
     }
 
+    /// Replace the in-progress response with the authoritative terminal text.
+    ///
+    /// Live deltas are intentionally bounded and may be incomplete after
+    /// backpressure. A terminal snapshot resets every draft buffer so the
+    /// committed UI cannot preserve a malformed partial response.
+    pub fn replace_text(&mut self, text: &str) {
+        self.committed.clear();
+        self.tail.clear();
+        self.thinking_buf.clear();
+        self.thinking = false;
+        self.thinking_start = None;
+        self.table_holdback = TableHoldbackState::None;
+        self.tail.push_str(text);
+    }
+
     pub fn current_text(&mut self) -> String {
         let mut result = String::new();
         if self.thinking && !self.thinking_collapsed {
@@ -265,7 +280,7 @@ impl StreamController {
             let elapsed_ms = self.clock.mono_now().0.saturating_sub(start.0);
             let elapsed = elapsed_ms as f64 / 1000.0;
             self.committed
-                .push_str(&format!("✻ Thought for {elapsed:.1}s\n\n"));
+                .push_str(&format!("· Reasoning completed in {elapsed:.1}s\n\n"));
         }
         self.thinking = false;
         self.thinking_collapsed = true;
@@ -333,7 +348,7 @@ mod tests {
 
         let rendered = stream.current_text();
         assert!(stream.thinking_collapsed());
-        assert!(rendered.contains("✻ Thought for 1.2s"));
+        assert!(rendered.contains("· Reasoning completed in 1.2s"));
         assert!(!rendered.contains("先分析问题"));
         assert!(rendered.ends_with("最终回答"));
     }
@@ -348,7 +363,7 @@ mod tests {
         clock.advance(500);
         stream.commit();
 
-        assert_eq!(stream.current_text(), "✻ Thought for 0.5s\n\n");
+        assert_eq!(stream.current_text(), "· Reasoning completed in 0.5s\n\n");
         assert!(stream.thinking_collapsed());
         assert!(!stream.is_thinking());
     }

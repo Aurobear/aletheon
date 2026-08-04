@@ -1,6 +1,8 @@
 # Aletheon 设计文档
 
-> Phase 1-4 已全部实现，Phase 5 已实质完成，Phase 6 部分实现。设计文档保留接口规格，实现代码在 `crates/`。
+> 本目录同时保存目标设计和当前实现说明。能力状态以本页、顶层
+> `README.md` 和当前 `crates/` 代码为准；子文档中的 Phase 编号描述设计
+> 路线，不等同于生产部署验收。
 
 > 将 AI Agent 深度融入操作系统内核与系统服务的架构设计方案。
 > 目标：让 Agent 成为操作系统的"第二大脑"，而不是一个 App。
@@ -16,17 +18,17 @@
 
 | Subsystem | Implemented | Partial | Planned | Not Started |
 |-----------|-------------|---------|---------|-------------|
-| **Core (cognitive-engine, memory, session)** | Harness-driven cognitive loop (linear ReAct harness via factory), ContentBlock, CoreMemory, RecallMemory, SessionStore, EventJournal, Context compaction, Streaming, MemoryScope (Global/Session/Agent), Memory Pipeline | ArchivalMemory, Session recovery | InterruptManager, ProactiveGoal, IdleScheduler | — |
-| **Execution (tool, sandbox, IPC, MCP)** | Tool trait, 9 built-in tools, OutputManager, BubblewrapBackend, ProcessBackend, NoopBackend, SplitSandbox, ContainerSandbox, UnixSocket, PriorityQueue, IpcManager, MCP stdio/StreamableHTTP/SSE transports, BM25+TF-IDF tool search, parallel execution (RwLock+PathConflictDetector) | IoUringBackend (feature gate), SharedMemBackend (stub) | Tool exposure layers | — |
-| **Security** | PolicyEngine, LoopDetector, CircuitBreaker, RiskClassifier, OutputGuardrail, Audit, ToolRunnerWithGuard, RollbackEngine, WritableRoot, IntegrityMonitor, SelfProtection, ErrorHandling | — | File-level rollback, NetworkSandboxPolicy | — |
+| **Core (cognitive-engine, memory, session)** | Harness-driven cognitive loop, ContentBlock, local memory services, canonical/event-sourced session stores, context compaction, streaming, scoped memory | Optional archival/vector paths | Additional proactive/idle scheduling policy | — |
+| **Execution (tool, sandbox, IPC, MCP)** | Tool trait/registry, output management, Bubblewrap/Process/Noop backends, official Unix sockets, MCP stdio/HTTP transports, tool search, parallel execution | Legacy io_uring/shared-memory compatibility backends are not official daemon transport | Additional portable sandbox backends | — |
+| **Security** | Exec policy, approval gates, LoopDetector, RiskClassifier, audit, guarded runner, WritableRoot and transactional restore | Network policy and sandbox portability vary by host | Standalone integrity monitoring and broader rollback | — |
 | **Orchestration** | Agent trait, Registry, DelegateTool, Selector, Handoff, DiGraph, Termination, Budget | — | — | — |
 | **Inference** | Core/daemon typed inference boundary, effective model capability resolution, task model routing, 1M-aware context budgeting, host-owned `ModelRuntimeFacts`, bounded retry with `Retry-After` | Machine-wide cross-session provider concurrency/cooldown | Provider health and quota telemetry | — |
-| **Perception** | PerceptionEvent, Manager, Aggregator, ProcSource, JournaldSource, Perception→Engine feed, FUSE AgentFs (fuse3 real mount) | eBPF source (mock /proc only), InotifySource (polling), Network monitoring (passive) | — | Hardware sensors (GPU/SMART/temp/ECC) |
-| **Platform** | PlatformAdapter (Linux+Android), Boot, Agent Awareness | — | Multi-Device | Kernel IPC module (agent_ipc.ko) |
+| **Perception** | PerceptionEvent, Manager, Aggregator, ProcSource, JournaldSource, Perception→Engine feed, in-memory AgentFs | eBPF-named `/proc` fallback, InotifySource (polling), passive network monitoring, FUSE stub | Real eBPF probes and production FUSE mount | Hardware sensors (GPU/SMART/temp/ECC) |
+| **Platform** | Host contracts with Linux/macOS/Windows backends in `platform`; Linux systemd deployment | Non-Linux backends remain incomplete | Android, embedded, multi-device | Kernel IPC module (agent_ipc.ko) |
 | **Resilience** | Error handling, panic recovery, exponential provider retry, provider-advised cooldown | Machine-wide request coordination | Durable quota-aware admission | — |
-| **Observability** | EventJournal, structured daemon logs, session JSONL, runtime provenance, inference/retry/tool separation | Unified runtime-fact projection to every UI/API | Prometheus metrics | — |
+| **Observability** | Event-sourced session evidence, structured daemon logs, audit records, runtime provenance, inference/retry/tool separation | Unified runtime-fact projection to every UI/API | Prometheus metrics | — |
 | **Testing** | Focused unit/contract tests, real-TUI monitor scenarios, installed binary provenance and real-request deployment gate | Long-duration and concurrent-session coverage | Performance and provider-storm benchmarks | — |
-| **Automation** | Automation system | — | — | — |
+| **Automation** | systemd timers and goal/channel workers | General routines module removed | Typed automation service | — |
 | **MCP** | MCP OAuth 2.0, StreamableHTTP + SSE transports | — | — | — |
 
 **Legend:** ✅ Implemented (works end-to-end) | 🔶 Partial (exists but incomplete) | ⬜ Planned (designed, not started) | ❌ Not Started (no code at all)
@@ -39,6 +41,10 @@
 1. [architecture-overview.md](architecture-overview.md) — 整体愿景与三层演化路线
 2. 本文档 — 架构总览、技术选型、设计原则
 3. [roadmap/phases.md](roadmap/phases.md) — 6 Phase 路线图
+
+> 需要源码级理解而不是只看概念时，先读
+> [`docs/guide/agent-runtime-technical-guide.md`](../guide/agent-runtime-technical-guide.md) ——
+> 一份从项目介绍到 Runtime 逐章对应源码的教程。
 
 **按 Crate 查阅（推荐）：**
 
@@ -192,7 +198,7 @@ aletheon/
 ├── systemd/
 │   └── aletheond.service       # systemd 服务文件
 │
-├── references/                 # 参考项目 (~3GB, gitignored)
+├── references/                 # 参考项目 (~3GB, gitignored)  目前已经删除了
 │
 └── docs/
     ├── design/                 # 按 Crate 组织的设计文档 (本目录)
@@ -254,7 +260,7 @@ aletheon/
 
 ## Crate 内部结构模式
 
-所有 crate 遵循统一的三层内部结构：
+所有 crate 遵循统一的三层内部结构：  这里约束也不对了，实际上
 
 ```
 crates/*/

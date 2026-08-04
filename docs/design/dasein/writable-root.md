@@ -1,4 +1,4 @@
-> Merged from docs/design/security/writable-root.md + docs/design/security/security-model.md §4.4-4.8 — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Merged from docs/design/security/writable-root.md + docs/design/security/security-model.md §4.4-4.8 — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 # WritableRoot 路径隔离
 
@@ -6,7 +6,7 @@
 
 **模块编号:** 05-子模块
 **父模块:** [安全模型](../corpus/security.md)
-**关联模块:** [循环检测器](loop-detector.md)
+**关联模块:** [循环检测器](../corpus/loop-detector.md)
 **最后更新:** 2026-06-06
 
 ---

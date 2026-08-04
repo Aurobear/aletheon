@@ -52,6 +52,7 @@ pub struct LinearCognitiveSessionFactory {
     clock: std::sync::Arc<dyn fabric::Clock>,
     evicted_memory: Option<std::sync::Arc<tokio::sync::Mutex<mnemosyne::runtime::RecallMemory>>>,
     verifier: Option<std::sync::Arc<dyn fabric::policy::verifier::Verifier>>,
+    dasein: Option<std::sync::Arc<dyn fabric::dasein::DaseinOps>>,
 }
 
 impl LinearCognitiveSessionFactory {
@@ -61,6 +62,7 @@ impl LinearCognitiveSessionFactory {
             clock,
             evicted_memory: None,
             verifier: None,
+            dasein: None,
         }
     }
 
@@ -79,6 +81,46 @@ impl LinearCognitiveSessionFactory {
         self.evicted_memory = Some(memory);
         self
     }
+
+    pub fn with_grounded_dasein_outcomes(
+        mut self,
+        dasein: std::sync::Arc<dyn fabric::dasein::DaseinOps>,
+    ) -> Self {
+        self.dasein = Some(dasein);
+        self
+    }
+
+    fn grounded_outcome_sink(
+        &self,
+        session: &SessionRecord,
+    ) -> Option<std::sync::Arc<dyn cognit::core::GroundedOutcomeSink>> {
+        self.dasein.as_ref().map(|dasein| {
+            std::sync::Arc::new(
+                crate::application::dasein_workspace_adapter::GroundedDaseinOutcomeSink::new(
+                    dasein.clone(),
+                    self.clock.clone(),
+                    session.id.0.clone(),
+                ),
+            ) as std::sync::Arc<dyn cognit::core::GroundedOutcomeSink>
+        })
+    }
+}
+
+pub fn production_cognitive_session_factory(
+    config: &ExecutiveConfig,
+    clock: std::sync::Arc<dyn fabric::Clock>,
+    memory: std::sync::Arc<tokio::sync::Mutex<mnemosyne::runtime::RecallMemory>>,
+    dasein: std::sync::Arc<dyn fabric::dasein::DaseinOps>,
+) -> std::sync::Arc<dyn CognitiveSessionFactory> {
+    tracing::info!(
+        harness = selected_harness_kind(config.harness_kind),
+        "cognitive harness selected from config"
+    );
+    std::sync::Arc::new(
+        LinearCognitiveSessionFactory::new(harness_config_from_executive(config), clock)
+            .with_evicted_memory(memory)
+            .with_grounded_dasein_outcomes(dasein),
+    )
 }
 
 #[async_trait]
@@ -98,6 +140,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 batch_planner: None,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
                 verifier: self.verifier.clone(),
+                grounded_outcome_sink: self.grounded_outcome_sink(session),
             },
         )))
     }
@@ -119,6 +162,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 batch_planner: None,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
                 verifier: self.verifier.clone(),
+                grounded_outcome_sink: self.grounded_outcome_sink(session),
             },
         )))
     }
@@ -141,6 +185,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 batch_planner,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
                 verifier: self.verifier.clone(),
+                grounded_outcome_sink: self.grounded_outcome_sink(session),
             },
         )))
     }
@@ -184,17 +229,21 @@ fn compactor(config: &HarnessConfig) -> Box<dyn fabric::CompactorTrait> {
     } else {
         config.tail_token_budget
     };
-    Box::new(AdvancedCompressor::new(
-        effective_tail,
-        config.target_summary_chars,
-        config.context_window_tokens,
-    ))
+    Box::new(
+        AdvancedCompressor::new(
+            effective_tail,
+            config.target_summary_chars,
+            config.context_window_tokens,
+        )
+        .with_threshold_fraction(config.compaction_threshold_percent as f64 / 100.0),
+    )
 }
 
 pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig {
     HarnessConfig {
         max_iterations: config.max_iterations,
         compaction_enabled: config.compaction_enabled,
+        compaction_threshold_percent: config.compaction_threshold_percent,
         compaction_v2: config.compaction_v2,
         tail_token_budget: config.tail_token_budget,
         target_summary_chars: config.target_summary_chars,

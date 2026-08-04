@@ -24,11 +24,20 @@ pub(crate) struct DaemonTurnTestHarness {
 
 pub(crate) struct DaemonTurnTestBuilder {
     runner: TestTurnRunner,
+    prompt_queue: bool,
 }
 
 impl DaemonTurnTestBuilder {
     pub(crate) fn new(runner: TestTurnRunner) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            prompt_queue: false,
+        }
+    }
+
+    pub(crate) fn with_prompt_queue(mut self, enabled: bool) -> Self {
+        self.prompt_queue = enabled;
+        self
     }
 
     pub(crate) fn succeeding(output: impl Into<String>) -> Self {
@@ -48,6 +57,7 @@ impl DaemonTurnTestBuilder {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             })
         }))
@@ -79,16 +89,21 @@ impl DaemonTurnTestBuilder {
             store.clone(),
             Arc::new(Mutex::new(Default::default())),
         ));
+        let grok_hardening = crate::composition::config::GrokHardeningConfig {
+            prompt_queue: self.prompt_queue,
+            ..Default::default()
+        };
         let orchestrator = DaemonTurnOrchestrator {
             kernel: kernel.clone(),
             notify_tx: Arc::new(Mutex::new(None::<mpsc::Sender<String>>)),
-            main_agent_process_id: Arc::new(Mutex::new(None)),
+            main_agent_process_ids: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            approval_owner_process_id: Arc::new(Mutex::new(None)),
             turn_token: Arc::new(Mutex::new(None)),
             pipeline: None,
             turn_engine: None,
             coordinator: coordinator.clone(),
             session_service,
-            grok_hardening: Default::default(),
+            grok_hardening,
             active_profile: Arc::new(StubActiveAgentProfile),
             test_runner: Some(self.runner),
         };

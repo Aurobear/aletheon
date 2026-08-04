@@ -24,6 +24,7 @@ pub struct TurnExecution {
     pub items: Vec<ItemPayload>,
     pub projection: Option<super::post_turn_projection::PostTurnDispatch>,
     pub context_projection: Option<fabric::ContextProjectionReceipt>,
+    pub evaluation_artifacts: super::evaluation::TurnEvaluationArtifacts,
 }
 
 struct CompletedExecution {
@@ -48,6 +49,16 @@ pub struct ActiveTurn {
     pub operation_id: fabric::OperationId,
     pub turn_id: TurnId,
     pub cancel: CancellationToken,
+    pub started_at: fabric::MonoTime,
+    pub deadline_at: Option<fabric::MonoDeadline>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct TurnWatchdogSnapshot {
+    pub active: usize,
+    pub oldest_age_ms: u64,
+    pub overdue: usize,
+    pub stale_without_deadline: usize,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -77,6 +88,7 @@ pub struct TurnCoordinator {
     grok_hardening: GrokHardeningConfig,
     backpressure: BackpressureConfig,
     session_input: Arc<super::session_input::SessionInputCoordinator>,
+    evaluation: Option<Arc<super::evaluation::EvaluationService>>,
 }
 
 impl TurnCoordinator {
@@ -94,6 +106,7 @@ impl TurnCoordinator {
             grok_hardening,
             backpressure: BackpressureConfig::default(),
             session_input: Arc::new(super::session_input::SessionInputCoordinator::in_memory()),
+            evaluation: None,
         }
     }
 
@@ -118,6 +131,14 @@ impl TurnCoordinator {
         self
     }
 
+    pub fn with_evaluation_service(
+        mut self,
+        evaluation: Arc<super::evaluation::EvaluationService>,
+    ) -> Self {
+        self.evaluation = Some(evaluation);
+        self
+    }
+
     pub fn session_input(&self) -> Arc<super::session_input::SessionInputCoordinator> {
         self.session_input.clone()
     }
@@ -125,6 +146,28 @@ impl TurnCoordinator {
     /// Number of currently active turns across all connections.
     pub async fn active_turn_count(&self) -> usize {
         self.active.lock().await.len()
+    }
+
+    pub async fn watchdog_snapshot(&self, stale_after_ms: u64) -> TurnWatchdogSnapshot {
+        let now = self.clock.mono_now();
+        let active = self.active.lock().await;
+        let mut snapshot = TurnWatchdogSnapshot {
+            active: active.len(),
+            ..Default::default()
+        };
+        for turn in active.values() {
+            let age = now.0.saturating_sub(turn.started_at.0);
+            snapshot.oldest_age_ms = snapshot.oldest_age_ms.max(age);
+            if turn
+                .deadline_at
+                .is_some_and(|deadline| deadline.is_expired_at(now))
+            {
+                snapshot.overdue += 1;
+            } else if turn.deadline_at.is_none() && age >= stale_after_ms {
+                snapshot.stale_without_deadline += 1;
+            }
+        }
+        snapshot
     }
 
     /// D2-M5-T2: check if backpressure limit is exceeded.
@@ -252,6 +295,8 @@ impl TurnCoordinator {
             thread_id: thread_id.clone(),
             kind: PromptKind::Prompt,
             content: String::new(),
+            requirements: Vec::new(),
+            requested_task_kind: None,
             created_at_unix: 0,
             updated_at_unix: 0,
             state: PromptState::Queued,
@@ -300,6 +345,19 @@ impl TurnCoordinator {
         request.operation_id = operation.id;
         request.context.turn_id = Some(TurnId::new());
         let turn_id = request.context.turn_id.unwrap_or_default();
+        request.evaluation_contract = if let Some(evaluation) = &self.evaluation {
+            match evaluation.issue_contract(&request).await {
+                Ok(contract) => contract,
+                Err(error) => {
+                    self.kernel
+                        .fail_operation(operation.id, error.to_string())
+                        .await?;
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         let cancel = CancellationToken::new();
         let active_key = ActiveTurnKey::from_request(&request);
         {
@@ -334,6 +392,10 @@ impl TurnCoordinator {
                     operation_id: operation.id,
                     turn_id,
                     cancel: cancel.clone(),
+                    started_at: self.clock.mono_now(),
+                    deadline_at: request
+                        .deadline
+                        .map(|d| MonoDeadline::after(self.clock.mono_now(), d.0)),
                 },
             );
         }
@@ -467,10 +529,11 @@ impl TurnCoordinator {
         match execution {
             Ok(execution) => {
                 let TurnExecution {
-                    result,
+                    mut result,
                     items,
                     projection,
                     context_projection,
+                    evaluation_artifacts,
                 } = execution;
                 if let Some(receipt) = context_projection {
                     receipt.validate()?;
@@ -509,6 +572,65 @@ impl TurnCoordinator {
                         &mut write_tracker,
                     )
                     .await?;
+                }
+                if let Some(contract) = &request.evaluation_contract {
+                    let evaluation = self.evaluation.as_ref().ok_or_else(|| {
+                        anyhow!("evaluation contract exists without an evaluation service")
+                    })?;
+                    match evaluation
+                        .evaluate(
+                            contract,
+                            &evaluation_artifacts,
+                            request.process_id,
+                            request.operation_id,
+                        )
+                        .await
+                    {
+                        Ok(receipt) => {
+                            result.stop =
+                                super::evaluation::EvaluationSettlementPolicy::settle_stop(
+                                    receipt.decision,
+                                    result.stop,
+                                );
+                            if result.stop != TurnStop::Completed {
+                                result.metrics.completed_normally = false;
+                            }
+                            self.append_tracked(
+                                &session_id,
+                                turn_id,
+                                &mut sequence,
+                                ItemPayload::EvaluationReceiptRef {
+                                    receipt: receipt.reference(),
+                                },
+                                WritePhase::EvaluationReceipt,
+                                &mut write_tracker,
+                            )
+                            .await?;
+                        }
+                        Err(error) => {
+                            tracing::error!(
+                                %error,
+                                mode = ?contract.mode,
+                                turn = %turn_id.0,
+                                "coding evaluation failed without a receipt"
+                            );
+                            self.append_tracked(
+                                &session_id,
+                                turn_id,
+                                &mut sequence,
+                                ItemPayload::SystemNotice {
+                                    content: format!("evaluation indeterminate: {error}"),
+                                },
+                                WritePhase::EvaluationReceipt,
+                                &mut write_tracker,
+                            )
+                            .await?;
+                            if contract.mode == fabric::EvaluationMode::Enforce {
+                                result.stop = TurnStop::Failed;
+                                result.metrics.completed_normally = false;
+                            }
+                        }
+                    }
                 }
                 let terminal = if result.stop == TurnStop::Completed {
                     ItemPayload::AssistantMessage {

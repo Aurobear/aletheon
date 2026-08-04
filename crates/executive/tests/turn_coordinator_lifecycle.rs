@@ -22,6 +22,9 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
         input: "hello".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 
@@ -93,6 +96,7 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
                         dasein_version: fabric::dasein::SelfVersion(4),
                         content_ids: vec![fabric::ContentId(uuid::Uuid::from_u128(5))],
                     }),
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )

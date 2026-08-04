@@ -60,7 +60,8 @@ def test_subagent_requires_exact_structured_lifecycle_and_result_promotion():
     assert evidence["spawn_agent_ids"] == ["agent-first", "agent-second"]
     assert evidence["two_distinct_agents"] is True
     assert evidence["first_agent_listed"] is True
-    assert evidence["mailbox_delivered_to_first"] is True
+    assert evidence["mailbox_outcome_authoritative"] is True
+    assert evidence["mailbox_delivery"] == "delivered"
     assert evidence["first_agent_succeeded"] is True
     assert evidence["agent_result_contains_marker_hash"] is True
     assert evidence["parent_text_contains_marker_hash"] is True
@@ -71,7 +72,29 @@ def test_subagent_requires_exact_structured_lifecycle_and_result_promotion():
         "result_sha256": subagent_research._canonical_hash(agent_result()),
         "marker_in_agent_result": True,
     }
-    assert evidence["second_agent_cancelled"] is True
+    assert evidence["second_agent_cancel_outcome_authoritative"] is True
+    assert evidence["second_agent_cancel_outcome"] == "cancelled"
+
+
+def test_subagent_accepts_only_typed_terminal_races_for_send_and_cancel():
+    events = valid_agent_events()
+    for index, item in enumerate(events):
+        params = item["params"]
+        if item["type"] == "tool_call_result" and params.get("call_id") == "send-1":
+            events[index] = result(
+                "send-1", "agent_send",
+                {"ok": False, "error": {"kind": "terminal"}}, error=True,
+            )
+        if item["type"] == "tool_call_result" and params.get("call_id") == "cancel-2":
+            events[index] = result(
+                "cancel-2", "agent_cancel",
+                {"ok": True, "result": snapshot("agent-second", "succeeded", agent_result("done"))},
+            )
+    evidence = subagent_research._lifecycle_evidence(events, MARKER, MARKER_HASH)
+    assert evidence["mailbox_outcome_authoritative"] is True
+    assert evidence["mailbox_delivery"] == "terminal_rejected"
+    assert evidence["second_agent_cancel_outcome_authoritative"] is True
+    assert evidence["second_agent_cancel_outcome"] == "succeeded"
 
 
 def test_subagent_uses_completed_args_and_exact_call_id_pairing():
@@ -84,7 +107,7 @@ def test_subagent_uses_completed_args_and_exact_call_id_pairing():
         args={"agent_id": "agent-first", "message": "progress?"},
     ))
     evidence = subagent_research._lifecycle_evidence(events, MARKER, MARKER_HASH)
-    assert evidence["mailbox_delivered_to_first"] is True
+    assert evidence["mailbox_outcome_authoritative"] is True
 
 
 def test_subagent_does_not_accept_prompt_or_prose_as_evidence():
@@ -115,10 +138,10 @@ def test_subagent_rejects_wrong_agent_relationships_and_terminal_shapes():
             params["output"] = json.dumps({"ok": True, "result": snapshot(
                 "agent-second", "running")})
     evidence = subagent_research._lifecycle_evidence(events, MARKER, MARKER_HASH)
-    assert evidence["mailbox_delivered_to_first"] is False
+    assert evidence["mailbox_outcome_authoritative"] is False
     assert evidence["first_agent_succeeded"] is False
     assert evidence["result_promoted_to_parent"] is False
-    assert evidence["second_agent_cancelled"] is False
+    assert evidence["second_agent_cancel_outcome_authoritative"] is False
 
 
 def test_subagent_wait_result_alone_is_not_parent_promotion():
@@ -132,11 +155,13 @@ def test_subagent_wait_result_alone_is_not_parent_promotion():
 
 
 def test_subagent_requires_assistant_journal_marker_not_tool_result_marker():
-    tool_only = {"entries": [{"event_type": "tool_result_block",
-                              "event": {"content": f"{MARKER} {MARKER_HASH}"}}]}
+    tool_only = {"entries": [{"event_type": "tool_result",
+                              "item": {"payload": {"data": {
+                                  "content": f"{MARKER} {MARKER_HASH}"}}}}]}
     promoted = {"entries": [*tool_only["entries"],
                              {"event_type": "assistant_message",
-                              "event": {"content": f"final {MARKER} {MARKER_HASH}"}}]}
+                              "item": {"payload": {"data": {
+                                  "content": f"final {MARKER} {MARKER_HASH}"}}}}]}
     assert subagent_research._assistant_journal_promotes(
         tool_only, MARKER, MARKER_HASH
     ) is False

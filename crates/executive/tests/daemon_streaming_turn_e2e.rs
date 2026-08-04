@@ -27,6 +27,9 @@ fn request(process_id: fabric::ProcessId, thread: &str) -> TurnRequest {
         input: "hello daemon".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 
@@ -59,6 +62,8 @@ fn context(
         batch_planner: None,
         session_input: test.session_input.clone(),
         prompt_queue_enabled: false,
+        capability_receipts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        inference_items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
     }
 }
 

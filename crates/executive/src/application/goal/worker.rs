@@ -95,7 +95,7 @@ impl GoalWorker {
         let goal = self
             .store
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .list_goals(
                 &[GoalState::Running, GoalState::Blocked, GoalState::Ready],
                 100,
@@ -129,18 +129,22 @@ impl GoalWorker {
                         .map(|id| (RuntimeId(id.to_owned()), CognitiveRole::Reviewer)),
                     _ => return Ok(false),
                 };
-                goal = self.store.lock().unwrap().transition_goal(
-                    goal.id,
-                    goal.version,
-                    GoalState::Ready,
-                    None,
-                    &serde_json::json!({"action": "scheduler_wake"}),
-                )?;
+                goal = self
+                    .store
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .transition_goal(
+                        goal.id,
+                        goal.version,
+                        GoalState::Ready,
+                        None,
+                        &serde_json::json!({"action": "scheduler_wake"}),
+                    )?;
                 self.coordinator.tick(goal.id, self.clock.wall_now().0)?;
                 goal = self
                     .store
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get_goal(goal.id)?
                     .context("goal disappeared after scheduler wake")?;
             }
@@ -154,7 +158,7 @@ impl GoalWorker {
         let sequence = self
             .store
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .attempts_for_goal(goal.id, 1)?
             .first()
             .map_or(1, |attempt| attempt.sequence.saturating_add(1));
@@ -206,7 +210,7 @@ impl GoalWorker {
         Ok(self
             .store
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .attempts_for_goal(goal_id, 1)?
             .first()
             .map(|attempt| (attempt.runtime_id.clone(), attempt.role)))

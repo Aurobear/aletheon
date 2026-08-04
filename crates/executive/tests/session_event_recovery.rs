@@ -1,3 +1,4 @@
+use executive::application::turn_recovery::{RecoveryClassification, TurnRecoveryStore};
 use executive::runtime::events::{DefaultEventProjectionSet, SqliteEventSpine};
 use executive::runtime::session::{
     canonical_store::CanonicalSessionStore, event_sourced_store::reconcile_committed_session_events,
@@ -112,6 +113,24 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
         vec![item]
     );
 
+    store
+        .mark_recovered_turn(
+            &session_id,
+            fabric::TurnId::new(),
+            RecoveryClassification::Interrupted,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .load_session(&session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SessionStatus::Interrupted
+    );
+
     // A later restart replays the same committed prefix without duplicating
     // items or rejecting already-advanced projection checkpoints.
     drop(store);
@@ -125,4 +144,75 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
         .unwrap();
     assert_eq!(second.scanned, 2);
     assert_eq!(store.load_items(&session_id, None).await.unwrap().len(), 1);
+    assert_eq!(
+        store
+            .load_session(&session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SessionStatus::Interrupted,
+        "creation replay must preserve later recovery state"
+    );
+}
+
+#[tokio::test]
+async fn restart_upgrades_compatible_legacy_event_records_before_materialization() {
+    let directory = tempdir().unwrap();
+    let session_id = SessionId("legacy-event-session".into());
+    let mut session = SessionRecord {
+        schema_version: 1,
+        id: session_id.clone(),
+        parent: None,
+        created_at_ms: 10,
+        status: SessionStatus::Active,
+    };
+    let mut item = ItemRecord {
+        schema_version: 1,
+        id: ItemId(Uuid::from_u128(30)),
+        session_id: session_id.clone(),
+        turn_id: TurnId(Uuid::from_u128(40)),
+        sequence: 1,
+        created_at_ms: 11,
+        payload: ItemPayload::UserMessage {
+            content: "legacy event".into(),
+        },
+    };
+    let spine = SqliteEventSpine::open(directory.path().join("events.db")).unwrap();
+    spine
+        .append(committed_event(
+            &session_id,
+            10,
+            SchemaId::EVENT_SESSION_CREATED_V1,
+            EventVisibility::Control,
+            serde_json::to_value(&session).unwrap(),
+        ))
+        .unwrap();
+    spine
+        .append(committed_event(
+            &session_id,
+            20,
+            SchemaId::TURN_EVENT_V1,
+            EventVisibility::ModelVisible,
+            serde_json::to_value(&item).unwrap(),
+        ))
+        .unwrap();
+
+    let projections =
+        DefaultEventProjectionSet::open(directory.path().join("projections.db")).unwrap();
+    let store = CanonicalSessionStore::open(directory.path().join("sessions.db")).unwrap();
+    reconcile_committed_session_events(&spine, &projections, &store)
+        .await
+        .unwrap();
+
+    session.schema_version = SESSION_SCHEMA_VERSION;
+    item.schema_version = SESSION_SCHEMA_VERSION;
+    assert_eq!(
+        store.load_session(&session_id).await.unwrap(),
+        Some(session)
+    );
+    assert_eq!(
+        store.load_items(&session_id, None).await.unwrap(),
+        vec![item]
+    );
 }

@@ -1,8 +1,8 @@
 # Aletheon operations guide
 
 This is the canonical entry point for building, installing, deploying, and
-checking a native Aletheon host. Dated files below `docs/archive/` preserve
-historical decisions and evidence; do not use them as current runbooks.
+checking a native Aletheon host. Dated architecture evidence and implementation plans preserve historical
+decisions; do not use them as current runbooks.
 
 ## Runtime topology
 
@@ -85,7 +85,7 @@ are external to the repository:
 
 ```text
 /etc/aletheon/credentials/provider.env    machine core provider
-~/.config/aletheon/daemon.env             user daemon and Pi provider
+~/.config/aletheon/.env                 monitor environment
 ~/.config/aletheon/gbrain.env             optional GBrain bearer token
 ```
 

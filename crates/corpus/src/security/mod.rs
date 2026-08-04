@@ -1,6 +1,7 @@
 //! Security pipeline and sandbox execution.
 
 pub mod approval;
+pub(crate) mod command_effect;
 pub mod credential_vault;
 pub mod escape_detector;
 pub mod exec_policy;

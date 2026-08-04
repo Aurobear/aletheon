@@ -17,9 +17,12 @@ ALETHEON_INSTALLED_BINARY=${ALETHEON_INSTALLED_BINARY:-/usr/bin/aletheon}
 ALETHEON_PROC_ROOT=${ALETHEON_PROC_ROOT:-/proc}
 ALETHEON_CORE_UNIT=${ALETHEON_CORE_UNIT:-aletheon-core.service}
 ALETHEON_USER_UNIT=${ALETHEON_USER_UNIT:-aletheon.service}
+ALETHEON_MEMORY_AGENT_UNIT=${ALETHEON_MEMORY_AGENT_UNIT:-aletheon-memory-agent.service}
 ALETHEON_STABILITY_SECONDS=${ALETHEON_STABILITY_SECONDS:-7}
+ALETHEON_READINESS_TIMEOUT_SECONDS=${ALETHEON_READINESS_TIMEOUT_SECONDS:-30}
 ALETHEON_SMOKE_TIMEOUT_SECONDS=${ALETHEON_SMOKE_TIMEOUT_SECONDS:-60}
 ALETHEON_SMOKE_PROMPT=${ALETHEON_SMOKE_PROMPT:-Reply with exactly: ALETHEON_DEPLOYMENT_OK}
+ALETHEON_SMOKE_EXPECTED=${ALETHEON_SMOKE_EXPECTED:-ALETHEON_DEPLOYMENT_OK}
 ALETHEON_LIBEXEC=${ALETHEON_LIBEXEC:-$ALETHEON_ROOT/scripts/libexec/aletheon}
 
 run_internal() {
@@ -50,8 +53,9 @@ gbrain_endpoint() {
 import sys, tomllib
 with open(sys.argv[1], "rb") as source:
     config = tomllib.load(source)
+preferred = config.get("memory", {}).get("supplemental", {}).get("server_name", "gbrain")
 for server in config.get("mcp_servers", []):
-    if server.get("name") == "gbrain" and server.get("url"):
+    if server.get("name") == preferred and server.get("url"):
         print(server["url"])
         raise SystemExit(0)
 raise SystemExit(1)

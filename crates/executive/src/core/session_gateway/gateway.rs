@@ -266,6 +266,7 @@ mod tests {
             tmp.path(),
             "test-session".into(),
             100000,
+            80,
             Arc::new(kernel::chronos::TestClock::default()),
         )
         .await
@@ -465,6 +466,35 @@ mod tests {
         for entry in resp["result"]["entries"].as_array().unwrap() {
             assert_eq!(entry["event_type"], "user_message");
         }
+    }
+
+    #[tokio::test]
+    async fn journal_can_query_an_explicit_resumed_session() {
+        let f = make_gateway().await;
+        let gw = f.gw;
+        gw.canonical_sessions
+            .ensure_legacy_projection(
+                &fabric::SessionId("resumed-session".into()),
+                &[fabric::Message::assistant("durable result")],
+                0,
+            )
+            .await
+            .unwrap();
+
+        let resp = gw
+            .handle_method(
+                "session.journal",
+                &json!("1"),
+                &json!({"session_id": "resumed-session"}),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp["result"]["count"], 1);
+        assert_eq!(
+            resp["result"]["entries"][0]["event_type"],
+            "assistant_message"
+        );
     }
 
     #[tokio::test]

@@ -57,12 +57,14 @@ pub(super) fn post_turn_runtime_port(
     evolution: Arc<dyn metacog::MetacogService>,
     self_field: Arc<Mutex<SelfField>>,
     clock: Arc<dyn fabric::Clock>,
+    proposer: Arc<crate::application::evolution_proposer::GovernedEvolutionProposer>,
 ) -> Arc<dyn PostTurnRuntimePort> {
     Arc::new(PostTurnDomainAdapter {
         executive: runtime,
         evolution,
         self_field,
         mood_fallback: Arc::new(metacog::MetaCognition::new(None, clock)),
+        proposer,
     })
 }
 
@@ -124,6 +126,7 @@ struct PostTurnDomainAdapter {
     evolution: Arc<dyn metacog::MetacogService>,
     self_field: Arc<Mutex<SelfField>>,
     mood_fallback: Arc<metacog::MetaCognition>,
+    proposer: Arc<crate::application::evolution_proposer::GovernedEvolutionProposer>,
 }
 
 #[async_trait::async_trait]
@@ -158,6 +161,28 @@ impl PostTurnRuntimePort for PostTurnDomainAdapter {
                 self.evolution.as_ref(),
             )
             .await?;
+
+        if let Some(summary) = summary.as_ref() {
+            for receipt in &summary.verification_receipts {
+                match self.proposer.propose(
+                    &outcome.session_id,
+                    outcome.principal_id.clone(),
+                    receipt,
+                ) {
+                    Ok(Some(approval)) => tracing::info!(
+                        approval_id = %approval.id,
+                        mutation_id = %receipt.mutation_id,
+                        "governed evolution approval proposed"
+                    ),
+                    Ok(None) => tracing::info!(
+                        mutation_id = %receipt.mutation_id,
+                        "evolution candidate parked because durable A/B evidence is insufficient"
+                    ),
+                    Err(error) => tracing::warn!(%error, mutation_id = %receipt.mutation_id,
+                        "failed to persist governed evolution proposal"),
+                }
+            }
+        }
 
         // Evidence-backed proposals always win. The mood adapter is only the
         // transition fallback while the reflection/proposal pipeline has not
@@ -343,7 +368,7 @@ impl RetentionAdminPort for RetentionAdminAdapter {
 
 impl SupplementalMemoryStatusPort for SupplementalMemoryStatusAdapter {
     fn status(&self) -> SupplementalMemoryStatus {
-        let health = self.health.lock().unwrap();
+        let health = self.health.lock().unwrap_or_else(|e| e.into_inner());
         SupplementalMemoryStatus {
             enabled: health.supplemental_enabled,
             degraded: health.degraded,

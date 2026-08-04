@@ -67,6 +67,9 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
                         input: "hello".into(),
                         model_policy: Some("test-policy".into()),
                         deadline: None,
+                        requirements: Vec::new(),
+                        requested_task_kind: None,
+                        evaluation_contract: None,
                     },
                     &TurnPolicy::daemon(),
                     move |request, _cancel| async move {
@@ -85,6 +88,7 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
                             items: Vec::new(),
                             projection: None,
                             context_projection: None,
+                            evaluation_artifacts: Default::default(),
                         })
                     },
                 )
@@ -163,6 +167,7 @@ fn completed() -> TurnExecution {
         items: Vec::new(),
         projection: None,
         context_projection: None,
+        evaluation_artifacts: Default::default(),
     }
 }
 
@@ -178,6 +183,7 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
         )
         .with_backpressure(executive::composition::config::BackpressureConfig {
             max_concurrent_turns: Some(1),
+            ..Default::default()
         }),
     );
     let process = kernel
@@ -200,6 +206,9 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
             input: "capacity".into(),
             model_policy: None,
             deadline: None,
+            requirements: Vec::new(),
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
         tasks.push(tokio::spawn(async move {
             barrier.wait().await;
@@ -252,6 +261,9 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
             input: "first".into(),
             model_policy: None,
             deadline: None,
+            requirements: Vec::new(),
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
         tokio::spawn(async move {
             coordinator
@@ -274,6 +286,9 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
                 input: "duplicate".into(),
                 model_policy: None,
                 deadline: None,
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &TurnPolicy::daemon(),
             |_, _| async { panic!("duplicate runner must not start") },

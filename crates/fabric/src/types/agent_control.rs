@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::agent_settlement::{BackgroundResourceDecl, MAX_BACKGROUND_RESOURCES};
 use super::attempt::{AttemptEvidence, AttemptUsage, RuntimeId};
@@ -33,6 +34,7 @@ pub enum AgentRuntimeCapability {
     Browser,
     DeviceObserve,
     DeviceCommand,
+    MemoryProposal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -47,6 +49,7 @@ pub enum AgentInteractionMode {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentWorkspaceMode {
+    WorkspaceLess,
     SharedReadOnly,
     SharedWritable,
     IsolatedWorktree,
@@ -288,7 +291,6 @@ impl AgentBudget {
     pub fn validate(&self) -> Result<(), AgentControlError> {
         if self.max_input_tokens == 0
             || self.max_output_tokens == 0
-            || self.max_tool_calls == 0
             || self.max_elapsed_ms == 0
             || self.max_depth == 0
         {
@@ -306,6 +308,218 @@ impl AgentBudget {
     }
 }
 
+/// Host-minted authority that bounds every capability a child Agent may receive.
+/// This value is never accepted from model-visible input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDelegationAuthority {
+    pub workspace: Option<crate::WorkspacePolicy>,
+    pub allowed_tools: Vec<String>,
+    pub budget: AgentBudget,
+}
+
+impl PartialEq for AgentDelegationAuthority {
+    fn eq(&self, other: &Self) -> bool {
+        self.workspace == other.workspace
+            && self.allowed_tools == other.allowed_tools
+            && self.budget.max_input_tokens == other.budget.max_input_tokens
+            && self.budget.max_output_tokens == other.budget.max_output_tokens
+            && self.budget.max_tool_calls == other.budget.max_tool_calls
+            && self.budget.max_elapsed_ms == other.budget.max_elapsed_ms
+            && self.budget.max_depth == other.budget.max_depth
+            && self.budget.max_cost_usd.map(f64::to_bits)
+                == other.budget.max_cost_usd.map(f64::to_bits)
+    }
+}
+
+impl Eq for AgentDelegationAuthority {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentBudgetField {
+    MaxInputTokens,
+    MaxOutputTokens,
+    MaxToolCalls,
+    MaxElapsedMs,
+    MaxCostUsd,
+    MaxDepth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentAttenuationReport {
+    pub dropped_tools: Vec<String>,
+    pub dropped_writable_roots: Vec<std::path::PathBuf>,
+    pub inherited_protected_paths: Vec<std::path::PathBuf>,
+    pub capped_budget_fields: Vec<AgentBudgetField>,
+    pub requested_sha256: String,
+    pub effective_sha256: String,
+}
+
+impl AgentDelegationAuthority {
+    pub fn new(
+        workspace: Option<crate::WorkspacePolicy>,
+        allowed_tools: Vec<String>,
+        budget: AgentBudget,
+    ) -> Self {
+        Self {
+            workspace,
+            allowed_tools,
+            budget,
+        }
+    }
+
+    pub fn covers(&self, child: &Self) -> bool {
+        let tools_cover = child
+            .allowed_tools
+            .iter()
+            .all(|tool| self.allowed_tools.contains(tool));
+        let workspace_covers = match (&self.workspace, &child.workspace) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some(parent), Some(child)) => {
+                child.writable_roots().iter().all(|root| {
+                    parent
+                        .writable_roots()
+                        .iter()
+                        .any(|authority| root.starts_with(authority))
+                }) && parent
+                    .protected_paths()
+                    .credential_paths()
+                    .iter()
+                    .all(|path| child.protected_paths().credential_paths().contains(path))
+            }
+        };
+        tools_cover && workspace_covers && self.accepts_budget(child)
+    }
+
+    pub fn accepts_budget(&self, child: &Self) -> bool {
+        self.budget.max_input_tokens >= child.budget.max_input_tokens
+            && self.budget.max_output_tokens >= child.budget.max_output_tokens
+            && self.budget.max_tool_calls >= child.budget.max_tool_calls
+            && self.budget.max_elapsed_ms >= child.budget.max_elapsed_ms
+            && self.budget.max_depth >= child.budget.max_depth
+            && match (self.budget.max_cost_usd, child.budget.max_cost_usd) {
+                (None, _) => true,
+                (Some(parent), Some(child)) => parent >= child,
+                (Some(_), None) => false,
+            }
+    }
+
+    pub fn attenuate(
+        &self,
+        requested: &Self,
+    ) -> Result<(Self, AgentAttenuationReport), AgentControlError> {
+        let allowed_tools = requested
+            .allowed_tools
+            .iter()
+            .filter(|tool| self.allowed_tools.contains(*tool))
+            .cloned()
+            .collect::<Vec<_>>();
+        let dropped_tools = requested
+            .allowed_tools
+            .iter()
+            .filter(|tool| !self.allowed_tools.contains(*tool))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut dropped_writable_roots = Vec::new();
+        let mut inherited_protected_paths = Vec::new();
+        let workspace = match (&self.workspace, &requested.workspace) {
+            (_, None) | (None, Some(_)) => {
+                if let Some(child) = &requested.workspace {
+                    dropped_writable_roots.extend(child.writable_roots().iter().cloned());
+                }
+                None
+            }
+            (Some(parent), Some(child)) => {
+                let kept = child
+                    .writable_roots()
+                    .iter()
+                    .filter(|root| {
+                        parent
+                            .writable_roots()
+                            .iter()
+                            .any(|authority| root.starts_with(authority))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                dropped_writable_roots.extend(
+                    child
+                        .writable_roots()
+                        .iter()
+                        .filter(|root| !kept.contains(root))
+                        .cloned(),
+                );
+                let mut protected = child.protected_paths().credential_paths().to_vec();
+                for path in parent.protected_paths().credential_paths() {
+                    if !protected.contains(path) {
+                        protected.push(path.clone());
+                        inherited_protected_paths.push(path.clone());
+                    }
+                }
+                let protected = crate::ProtectedPathPolicy::new(protected)
+                    .map_err(AgentControlError::invalid)?;
+                Some(
+                    child
+                        .clone()
+                        .narrow_writable_roots(kept)
+                        .map_err(AgentControlError::invalid)?
+                        .with_protected_paths(protected),
+                )
+            }
+        };
+
+        let mut capped_budget_fields = Vec::new();
+        macro_rules! cap {
+            ($field:ident, $variant:ident) => {{
+                if requested.budget.$field > self.budget.$field {
+                    capped_budget_fields.push(AgentBudgetField::$variant);
+                }
+                requested.budget.$field.min(self.budget.$field)
+            }};
+        }
+        let max_cost_usd = match (self.budget.max_cost_usd, requested.budget.max_cost_usd) {
+            (None, child) => child,
+            (Some(parent), Some(child)) => {
+                if child > parent {
+                    capped_budget_fields.push(AgentBudgetField::MaxCostUsd);
+                }
+                Some(parent.min(child))
+            }
+            (Some(parent), None) => {
+                capped_budget_fields.push(AgentBudgetField::MaxCostUsd);
+                Some(parent)
+            }
+        };
+        let effective = Self::new(
+            workspace,
+            allowed_tools,
+            AgentBudget {
+                max_input_tokens: cap!(max_input_tokens, MaxInputTokens),
+                max_output_tokens: cap!(max_output_tokens, MaxOutputTokens),
+                max_tool_calls: cap!(max_tool_calls, MaxToolCalls),
+                max_elapsed_ms: cap!(max_elapsed_ms, MaxElapsedMs),
+                max_cost_usd,
+                max_depth: cap!(max_depth, MaxDepth),
+            },
+        );
+        let digest = |authority: &Self| -> Result<String, AgentControlError> {
+            let bytes = serde_json::to_vec(authority)
+                .map_err(|error| AgentControlError::invalid(error.to_string()))?;
+            Ok(format!("{:x}", Sha256::digest(bytes)))
+        };
+        let report = AgentAttenuationReport {
+            dropped_tools,
+            dropped_writable_roots,
+            inherited_protected_paths,
+            capped_budget_fields,
+            requested_sha256: digest(requested)?,
+            effective_sha256: digest(&effective)?,
+        };
+        debug_assert!(self.covers(&effective));
+        Ok((effective, report))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentSpawnRequest {
     pub root_agent_id: AgentId,
@@ -318,6 +532,14 @@ pub struct AgentSpawnRequest {
     /// authenticated ToolContext at the capability boundary.
     #[serde(skip)]
     pub trusted_workspace: Option<crate::WorkspacePolicy>,
+    /// Exact host-only authority of the delegating Agent. Required for
+    /// non-root spawns whose parent is outside AgentControl's live registry.
+    #[serde(skip)]
+    pub delegator_authority: Option<AgentDelegationAuthority>,
+    /// Optional host-only task authority admitted atomically after process
+    /// allocation and before the runtime is launched.
+    #[serde(skip)]
+    pub cognitive_binding: Option<crate::cognitive_workflow::CognitiveTaskRuntimeBinding>,
     pub task: String,
     pub context: AgentContextFork,
     #[serde(default)]
@@ -343,6 +565,8 @@ pub struct AgentSpawnIntent {
     /// Host-injected workspace authority. Model-visible input cannot mint it.
     #[serde(skip)]
     pub trusted_workspace: Option<crate::WorkspacePolicy>,
+    #[serde(skip)]
+    pub delegator_authority: Option<AgentDelegationAuthority>,
     pub task: String,
     pub context: AgentContextFork,
     #[serde(default)]
@@ -385,6 +609,20 @@ impl AgentSpawnRequest {
             ensure_text(tool, 512, "allowed tool")?;
         }
         self.context.validate()?;
+        if let Some(binding) = &self.cognitive_binding {
+            if binding.task_node_id.0.trim().is_empty()
+                || binding.role_profile.version == 0
+                || binding.role_profile.id.trim().is_empty()
+            {
+                return Err(AgentControlError::invalid(
+                    "cognitive task runtime binding is invalid",
+                ));
+            }
+            binding
+                .budget
+                .validate()
+                .map_err(|error| AgentControlError::invalid(error.to_string()))?;
+        }
         ensure_count(
             self.background_decls.len(),
             MAX_BACKGROUND_RESOURCES,
@@ -736,4 +974,74 @@ fn ensure_count(value: usize, max: usize, label: &str) -> Result<(), AgentContro
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod delegation_tests {
+    use super::*;
+
+    fn budget(tokens: u64, cost: Option<f64>) -> AgentBudget {
+        AgentBudget {
+            max_input_tokens: tokens,
+            max_output_tokens: tokens,
+            max_tool_calls: tokens as u32,
+            max_elapsed_ms: tokens,
+            max_cost_usd: cost,
+            max_depth: tokens as u16,
+        }
+    }
+
+    #[test]
+    fn attenuation_intersects_tools_roots_protections_and_budget() {
+        let parent_workspace =
+            crate::WorkspacePolicy::from_resolved_roots("/tmp/aletheon-parent".into(), vec![])
+                .unwrap()
+                .with_protected_paths(
+                    crate::ProtectedPathPolicy::new(vec!["/tmp/secret".into()]).unwrap(),
+                );
+        let child_workspace = crate::WorkspacePolicy::from_resolved_roots(
+            "/tmp/aletheon-parent/child".into(),
+            vec!["/var/tmp/outside".into()],
+        )
+        .unwrap();
+        let parent = AgentDelegationAuthority::new(
+            Some(parent_workspace),
+            vec!["read".into(), "test".into()],
+            budget(10, Some(2.0)),
+        );
+        let requested = AgentDelegationAuthority::new(
+            Some(child_workspace),
+            vec!["shell".into(), "read".into()],
+            budget(20, None),
+        );
+
+        let (effective, report) = parent.attenuate(&requested).unwrap();
+        assert!(parent.covers(&effective));
+        assert_eq!(effective.allowed_tools, vec!["read"]);
+        assert_eq!(effective.budget.max_input_tokens, 10);
+        assert_eq!(effective.budget.max_cost_usd, Some(2.0));
+        assert_eq!(report.dropped_tools, vec!["shell"]);
+        assert_eq!(
+            report.dropped_writable_roots,
+            vec![std::path::PathBuf::from("/var/tmp/outside")]
+        );
+        assert_eq!(
+            report.inherited_protected_paths,
+            vec![std::path::PathBuf::from("/tmp/secret")]
+        );
+        assert_eq!(report.requested_sha256.len(), 64);
+        assert_eq!(report.effective_sha256.len(), 64);
+    }
+
+    #[test]
+    fn no_child_workspace_is_always_narrower_but_parentless_is_not() {
+        let parent = AgentDelegationAuthority::new(
+            Some(crate::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap()),
+            vec!["read".into()],
+            budget(10, None),
+        );
+        let read_only = AgentDelegationAuthority::new(None, vec!["read".into()], budget(5, None));
+        assert!(parent.covers(&read_only));
+        assert!(!read_only.covers(&parent));
+    }
 }

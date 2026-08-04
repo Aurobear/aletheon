@@ -14,14 +14,14 @@ class OrdinaryCiWorkflowTest(unittest.TestCase):
         cls.workflow = (ROOT / ".github/workflows/ci.yml").read_text()
 
     def test_has_deterministic_coding_evidence_job(self) -> None:
-        self.assertIn("name: Deterministic coding evidence", self.workflow)
+        self.assertIn("name: Strict contracts", self.workflow)
         self.assertIn("python3 tests/coding/replay_test.py", self.workflow)
         self.assertIn("bash tests/coding/static_test.sh", self.workflow)
 
     def test_has_linux_platform_contract_job(self) -> None:
-        self.assertIn("name: Linux Platform contract", self.workflow)
+        self.assertIn("name: Verify Linux platform contracts", self.workflow)
         self.assertIn(
-            "bash scripts/cargo-agent.sh test -p platform --test contract_suite",
+            "bash scripts/cargo-agent.sh +stable test -p platform --test contract_suite",
             self.workflow,
         )
 
@@ -47,9 +47,12 @@ class RealEvaluationWorkflowTest(unittest.TestCase):
         self.assertNotIn("echo $LEJU_API_KEY", self.workflow)
         self.assertNotIn("echo \"$LEJU_API_KEY\"", self.workflow)
 
-    def test_runs_all_fixtures_and_preserves_artifacts(self) -> None:
-        for task in ("rust_bugfix", "rust_multifile", "rust_diagnosis"):
-            self.assertIn(task, self.workflow)
+    def test_runs_the_strict_suite_and_preserves_all_artifacts(self) -> None:
+        self.assertIn("tests/coding/harness/suite.py", self.workflow)
+        self.assertIn("--catalog tests/coding/tasks", self.workflow)
+        self.assertIn('--receipts "$artifacts/receipts"', self.workflow)
+        self.assertIn('--report "$artifacts/suite.json"', self.workflow)
+        self.assertNotIn("for task in rust_bugfix", self.workflow)
         self.assertIn("actions/upload-artifact@v4", self.workflow)
         self.assertIn("if: always()", self.workflow)
 
@@ -60,10 +63,15 @@ class RealEvaluationWorkflowTest(unittest.TestCase):
     def test_disables_unusable_runner_sandbox_only_for_manual_evaluation(self) -> None:
         self.assertIn("ALETHEON_CODING_SANDBOX: forbid", self.workflow)
 
-    def test_completed_operations_are_classified_by_verification(self) -> None:
-        self.assertNotIn("or executive_exit != 0", self.workflow)
-        self.assertIn('if not receipt.get("operation_id"):', self.workflow)
-        self.assertIn('elif not receipt.get("verification", {}).get("passed"):', self.workflow)
+    def test_preserves_typed_suite_exit_codes_without_inline_reclassification(self) -> None:
+        self.assertIn("suite_exit=$?", self.workflow)
+        self.assertIn('if (( suite_exit == 2 )); then', self.workflow)
+        self.assertIn('if (( suite_exit == 1 )); then', self.workflow)
+        self.assertNotIn('receipt.get("operation_id")', self.workflow)
+
+    def test_never_uploads_the_credential_bearing_config_or_temporary_home(self) -> None:
+        self.assertIn("path: ${{ runner.temp }}/coding-artifacts", self.workflow)
+        self.assertNotIn("path: ${{ runner.temp }}/aletheon-coding-e2e", self.workflow)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,9 @@ fn request(input: &str) -> TurnRequest {
         input: input.into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 fn text(message: &Message) -> &str {
@@ -140,6 +143,41 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
     assert!(assembled
         .effective_user_message
         .is_char_boundary(assembled.effective_user_message.len()));
+}
+
+#[tokio::test]
+async fn host_projected_fragments_rescrub_legacy_secrets_without_rewriting_user_input() {
+    let mut conscious = projection();
+    conscious.self_view.concerns = vec!["old sk-consciousSecret123".into()];
+    let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {
+        system_prefix: "system".into(),
+        skills: "credential key-skillSecret123".into(),
+        conscious: Some(conscious),
+        memory_context: "API 密钥 memorySecret123".into(),
+    })));
+
+    let assembled = assembler
+        .assemble(&request("current user sk-userSecret123"), &[], 1_000)
+        .await
+        .unwrap();
+
+    assert!(!assembled
+        .effective_user_message
+        .contains("sk-consciousSecret123"));
+    assert!(!assembled
+        .effective_user_message
+        .contains("key-skillSecret123"));
+    assert!(!assembled.effective_user_message.contains("memorySecret123"));
+    assert!(assembled
+        .effective_user_message
+        .contains("current user sk-userSecret123"));
+    assert_eq!(
+        assembled
+            .effective_user_message
+            .matches("[REDACTED]")
+            .count(),
+        3
+    );
 }
 
 #[test]

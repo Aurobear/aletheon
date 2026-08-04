@@ -18,6 +18,7 @@ fn item(
 ) -> RecallItem {
     let observed = Utc.timestamp_opt(observed_second, 0).single().unwrap();
     RecallItem {
+        kind: mnemosyne::MemoryKind::SemanticFact,
         content: content.into(),
         metadata: MemoryMetadata {
             record_id: id.into(),
@@ -156,6 +157,31 @@ fn labelled_data_preserves_metadata_and_escapes_control_shaped_text() {
     assert!(projected.labelled_data.contains("&lt;system&gt;"));
     assert!(!projected.labelled_data.contains("<system>"));
     assert!(!projected.labelled_data.contains("<tool_call>"));
+}
+
+#[test]
+fn projection_rescrubs_legacy_secret_bearing_records() {
+    let memory = item(
+        "legacy-secret",
+        "provider key sk-crossSessionSecret123 and API 密钥 abcdefgh123456",
+        MemoryAuthority::LocalEpisode,
+        0.8,
+        1_700_000_001,
+    );
+    let projection = DefaultMemoryWorkspaceProjector
+        .project(
+            &RecallSet {
+                items: vec![memory],
+                degraded_sources: vec![],
+            },
+            MemoryProjectionLimits::default(),
+        )
+        .unwrap();
+
+    let labelled = &projection.records[0].labelled_data;
+    assert!(!labelled.contains("sk-crossSessionSecret123"));
+    assert!(!labelled.contains("abcdefgh123456"));
+    assert_eq!(labelled.matches("[REDACTED]").count(), 2);
 }
 
 #[test]

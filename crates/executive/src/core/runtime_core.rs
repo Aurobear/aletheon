@@ -109,6 +109,8 @@ impl RuntimeCore {
                 app_config.bootstrap.conscious_arbitration_mode.as_deref(),
             )?,
             enable_evolution,
+            evolution_permitted: app_config.evolution.evolution_permitted,
+            evolution_trigger_every_n_turns: app_config.evolution.trigger_every_n_turns,
             mcp_servers: super::mcp_config::convert_mcp_servers(&app_config.mcp_servers),
             hooks: {
                 // Honor --config: hooks must come from the same file(s) as the
@@ -121,7 +123,9 @@ impl RuntimeCore {
             deployment: app_config.deployment.clone(),
             backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),
+            multi_agent: app_config.multi_agent.clone(),
             agent_max_iterations: app_config.agent.max_iterations,
+            agent_compaction_threshold_percent: app_config.agent.compaction_threshold,
             harness_kind: app_config.agent.harness_kind,
             integrations,
             embodiment_provider: app_config
@@ -135,6 +139,10 @@ impl RuntimeCore {
         let bus = Arc::new(CanonicalEventBus::default());
 
         let cancel_token = CancellationToken::new();
+        // Kernel owns the concrete time source. The composition root creates
+        // exactly one instance so every daemon component shares a monotonic
+        // epoch and deadlines remain comparable across subsystem boundaries.
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
 
         // ── LlmPulse ────────────────────────────────────────────────
         let pulse_handle = if !app_config.providers.is_empty() {
@@ -162,15 +170,14 @@ impl RuntimeCore {
                 provider_timeouts: app_config.agent.provider_timeouts,
             };
 
-            let scheduler_clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-            match LlmScheduler::new(&scheduler_config, scheduler_clock.clone()) {
+            match LlmScheduler::new(&scheduler_config, clock.clone()) {
                 Ok(scheduler) => {
                     let scheduler = Arc::new(scheduler);
                     let pulse = LlmPulse::new(
                         scheduler,
                         bus.clone(),
                         PulseConfig::default(),
-                        scheduler_clock,
+                        clock.clone(),
                     );
                     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -207,13 +214,13 @@ impl RuntimeCore {
                 .map(PathBuf::from)
                 .collect();
             let enable_journald = perception_config.enable_journald;
-            let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
+            let perception_clock = clock.clone();
             tokio::spawn(async move {
                 let mut manager = dasein::perception::manager::PerceptionManager::new(
                     event_tx,
                     watch_paths,
                     enable_journald,
-                    clock,
+                    perception_clock,
                 );
                 if let Err(e) = manager.start().await {
                     tracing::error!(error = %e, "Perception manager failed");
@@ -228,6 +235,7 @@ impl RuntimeCore {
         info!("Creating request handler...");
         let request_handler = RequestHandler::new(
             &config,
+            clock,
             Arc::new(crate::core::RegistryInferencePort::new(Arc::new(
                 registry.clone(),
             ))),
@@ -236,6 +244,8 @@ impl RuntimeCore {
             app_config.goal_runtime.clone().unwrap_or_default(),
             app_config.pi_runtime.clone(),
             app_config.grok_hardening.clone(),
+            app_config.evaluation.clone(),
+            app_config.governed_review.clone(),
             app_config.sandbox_profiles.clone(),
             app_config.network_policy.clone(),
             app_config.agent_profiles.clone(),

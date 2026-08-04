@@ -3,6 +3,8 @@
 wire-exposed	ClientRpcRequest/ClientRpcResponse	crates/fabric/src/protocol/client.rs	aletheon,interact,executive	fabric	CLIENT_PROTOCOL_VERSION and JSON_RPC_VERSION	reject unsupported protocol versions; additive fields only within v1	1,9
 wire-exposed	ConsciousCore protocol	crates/fabric/src/protocol/conscious_core.rs	executive,interact	fabric	type-level serde contract	additive evolution; version before incompatible field changes	1
 wire-exposed	Fabric protocol module	crates/fabric/src/protocol/mod.rs	fabric consumers	fabric	module exports	compatibility exports only decrease	1,9
+wire-exposed	Memory Gateway v1 contracts	crates/fabric/src/protocol/memory.rs	aletheon clients,executive,fabric	fabric	MEMORY_GATEWAY_SCHEMA_V1	additive fields only within v1; incompatible change uses v2	1,9
+wire-exposed	Memory maintenance v1 contracts	crates/fabric/src/protocol/memory_maintenance.rs	aletheon Memory Agent,executive,fabric	fabric	MEMORY_MAINTENANCE_SCHEMA_V1	additive fields only within v1; incompatible change uses v2	1,9
 wire-exposed	execd Request/Response/Handshake	crates/execd/src/protocol.rs	executive,execd	execd	handshake protocol_version	fail closed on version mismatch; preserve JSON-RPC error codes	2,8e
 wire-exposed	Core RPC protocol	crates/executive/src/host/core_rpc/protocol.rs	executive core,host	executive	request schema	version before incompatible request changes	2,8e
 wire-exposed	PolicyGateway service	crates/cognit/proto/aletheon/policy/gateway/v1/policy.proto	cognit,policy gateway	cognit	protobuf package v1	new fields/services additive; incompatible change uses v2	7
@@ -15,3 +17,4 @@ internal-shared	Agent run state	crates/executive/src/application/agent_control/r
 internal-shared	Memory/spool DTOs	crates/mnemosyne/src/backends/supplemental/migrations.rs	mnemosyne,supplemental backend	mnemosyne	SQLite PRAGMA user_version	idempotent ordered migration; compatibility read old/write new	5,8c
 internal-shared	Audit/HIL evidence	crates/metacog/src/hil_evidence_verifier.rs	metacog,executive	metacog	schema_version field	fail closed on unknown schema/evidence integrity failure	8c
 internal-shared	Artifact metadata	crates/platform/src/artifact_store.rs	executive,platform	platform	typed metadata plus receipt	preserve receipt validation; version before incompatible persistence	2
+wire-exposed	Extension lifecycle and connector v1 contracts	crates/fabric/src/protocol/extension.rs	aletheon,executive,corpus,fabric	fabric	EXTENSION_PROTOCOL_SCHEMA_V1	additive fields only within v1; incompatible change uses v2	1,8d,9

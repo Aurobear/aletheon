@@ -9,6 +9,7 @@ import json
 import os
 import asyncio
 import re
+import unicodedata
 
 from . import analyze as analyze_mod
 from . import logs as logs_mod
@@ -37,15 +38,29 @@ INFRASTRUCTURE_ERRORS = (
 def frame_assertions(frame: str, prompt_visible: bool,
                      forbidden_strings: list[str] | None = None) -> list[dict]:
     """Return semantic TUI assertions; prompt/input text alone is not success."""
-    forbidden = list(INFRASTRUCTURE_ERRORS)
-    forbidden.extend(forbidden_strings or [])
+    # Runtime failures are rendered by the TUI as a system line prefixed with
+    # ``Error:``. Do not reject a legitimate repository-analysis answer merely
+    # because it discusses a stable error code such as provider_unavailable.
+    # Tool failures are checked independently from authoritative event records.
+    error_lines = [
+        line.lower()
+        for line in frame.splitlines()
+        if re.search(r"(^|\s)error\s*:", line, re.IGNORECASE)
+    ]
     assertions = [
+        {
+            "name": f"forbidden:{text}",
+            "passed": not any(text.lower() in line for line in error_lines),
+        }
+        for text in INFRASTRUCTURE_ERRORS
+    ]
+    assertions.extend(
         {
             "name": f"forbidden:{text}",
             "passed": text.lower() not in frame.lower(),
         }
-        for text in dict.fromkeys(forbidden)
-    ]
+        for text in dict.fromkeys(forbidden_strings or [])
+    )
     infrastructure_clean = all(item["passed"] for item in assertions)
     assertions.append({
         "name": "final_answer",
@@ -66,6 +81,331 @@ def provider_metrics(daemon_logs: dict) -> dict:
         "retry_attempts": retry_attempts,
         "provider_error_markers": provider_errors,
     }
+
+
+def _repo_inspect_entry_paths(results: list[dict], call_id: str | None) -> list[str]:
+    """Extract exact files proved present by the authoritative tool result."""
+    if not call_id:
+        return []
+    record = next(
+        (item for item in results if item.get("params", {}).get("call_id") == call_id),
+        None,
+    )
+    output = record.get("params", {}).get("output") if record else None
+    if not isinstance(output, str):
+        return []
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return []
+    entry_files = payload.get("entry_files", []) if isinstance(payload, dict) else []
+    return [
+        item["path"]
+        for item in entry_files
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    ]
+
+
+def _contradicted_presence_claims(text: str, found_paths: list[str]) -> list[dict]:
+    """Find absence claims contradicted by repo_inspect presence evidence."""
+    aliases: dict[str, str] = {}
+    for path in found_paths:
+        normalized = path.replace("\\", "/").strip("/")
+        if not normalized:
+            continue
+        aliases[normalized.casefold()] = path
+        basename = normalized.rsplit("/", 1)[-1]
+        aliases[basename.casefold()] = path
+        if "." in basename:
+            aliases[basename.rsplit(".", 1)[0].casefold()] = path
+        if "/" in normalized:
+            root = normalized.split("/", 1)[0]
+            aliases[f"{root.casefold()}/"] = f"{root}/"
+    strong_absence = re.compile(
+        r"(?:\b(?:is|are)\s+(?:missing|absent|not\s+found)\b|"
+        r"\bdoes\s+not\s+exist\b|不存在|缺少|缺失)",
+        re.IGNORECASE,
+    )
+    prefix_absence = re.compile(r"(?:\b(?:no|without)\b|无|没有)", re.IGNORECASE)
+    conflicts = []
+    for clause in re.split(r"[\n。；;,，:：]+", text):
+        folded = clause.casefold()
+        strong = strong_absence.search(clause)
+        prefixes = list(prefix_absence.finditer(clause))
+        if not strong and not prefixes:
+            continue
+        for alias, evidence_path in aliases.items():
+            alias_index = folded.find(alias)
+            prefix_targets_alias = any(
+                match.start() < alias_index and alias_index - match.end() <= 6
+                for match in prefixes
+            )
+            if alias_index >= 0 and (strong or prefix_targets_alias):
+                conflicts.append({
+                    "claimed_absent": alias,
+                    "evidence_path": evidence_path,
+                    "clause": clause.strip()[:240],
+                })
+    return list({
+        (item["claimed_absent"], item["evidence_path"], item["clause"]): item
+        for item in conflicts
+    }.values())
+
+
+def _unsupported_staffing_inferences(text: str) -> list[str]:
+    """Flag staffing-count conclusions that repository metadata cannot prove."""
+    subject = re.compile(
+        r"(?:maintainer|contributor|developer|team|staff(?:ing)?|"
+        r"维护者|贡献者|开发者|团队|作者|项目)",
+        re.IGNORECASE,
+    )
+    count = re.compile(
+        r"(?:\b(?:single|solo|one[- ]person|one[- ]developer)\b|"
+        r"单人|个人项目|一人|唯一(?:维护者|开发者)|只有一)",
+        re.IGNORECASE,
+    )
+    disclaimer = re.compile(r"(?:do not infer|cannot establish|无法推断|不能证明)", re.IGNORECASE)
+    return [
+        clause.strip()[:240]
+        for clause in re.split(r"[\n。；;]+", text)
+        if subject.search(clause) and count.search(clause) and not disclaimer.search(clause)
+    ]
+
+
+def event_acceptance(path: str | None, require_repository_overview: bool = False) -> dict:
+    """Check authoritative events for hidden tool and output failures."""
+    summary = {
+        "available": False,
+        "event_count": 0,
+        "inference_rounds": 0,
+        "tool_calls": 0,
+        "tool_errors": [],
+        "text_source": None,
+        "delta_text_chars": 0,
+        "text_chars": 0,
+        "assertions": [],
+    }
+    if not path or not os.path.isfile(path):
+        return summary
+    try:
+        with open(path, encoding="utf-8") as handle:
+            records = [json.loads(line) for line in handle if line.strip()]
+    except (OSError, json.JSONDecodeError) as error:
+        summary["assertions"].append({
+            "name": "event_evidence_valid",
+            "passed": False,
+            "detail": type(error).__name__,
+        })
+        return summary
+
+    summary["available"] = True
+    summary["event_count"] = len(records)
+    summary["inference_rounds"] = sum(
+        record.get("type") == "usage" for record in records
+    )
+    starts = {
+        record.get("params", {}).get("call_id")
+        for record in records
+        if record.get("type") == "tool_call_start"
+    }
+    results = [
+        record for record in records
+        if record.get("type") == "tool_call_result"
+    ]
+    result_ids = {
+        record.get("params", {}).get("call_id") for record in results
+    }
+    summary["tool_calls"] = len(starts)
+    summary["tool_errors"] = [
+        {
+            "tool": record.get("params", {}).get("tool"),
+            "call_id": record.get("params", {}).get("call_id"),
+        }
+        for record in results
+        if record.get("params", {}).get("is_error") is True
+    ]
+    completed_calls = [
+        record.get("params", {})
+        for record in records
+        if record.get("type") == "tool_call_complete"
+    ]
+    delta_text = "".join(
+        record.get("params", {}).get("text", "")
+        for record in records
+        if record.get("type") == "text_delta"
+    )
+    snapshots = [
+        (
+            index,
+            record.get("params", {}).get("text", ""),
+        )
+        for index, record in enumerate(records)
+        if record.get("type") == "text_snapshot"
+    ]
+    turn_done_indices = [
+        index for index, record in enumerate(records)
+        if record.get("type") == "turn_done"
+    ]
+    text = (snapshots[-1][1] if snapshots else delta_text).strip()
+    summary["text_source"] = "text_snapshot" if snapshots else "text_delta"
+    summary["delta_text_chars"] = len(delta_text.strip())
+    summary["text_chars"] = len(text)
+    last = text[-1:] or ""
+    last_line = next(
+        (line.strip() for line in reversed(text.splitlines()) if line.strip()),
+        "",
+    )
+    complete_markdown_table_row = (
+        last_line.startswith("|")
+        and last_line.endswith("|")
+        and last_line.count("|") >= 3
+    )
+    terminal_boundary = bool(
+        last
+        and (
+            unicodedata.category(last).startswith("P")
+            or last in ")]}）】』」"
+            or complete_markdown_table_row
+        )
+    )
+    summary["assertions"] = [
+        {
+            "name": "event_turn_done",
+            "passed": bool(turn_done_indices),
+        },
+        {
+            "name": "authoritative_text_snapshot",
+            "passed": (
+                len(snapshots) == 1
+                and bool(turn_done_indices)
+                and snapshots[0][0] < turn_done_indices[-1]
+            ),
+            "count": len(snapshots),
+        },
+        {
+            "name": "tool_results_complete",
+            "passed": bool(starts) and starts == result_ids,
+            "started": len(starts),
+            "result_count": len(result_ids),
+        },
+        {
+            "name": "tool_results_successful",
+            "passed": not summary["tool_errors"],
+            "errors": summary["tool_errors"],
+        },
+        {
+            "name": "terminal_text_substantive",
+            "passed": len(text) >= 80,
+            "chars": len(text),
+        },
+        {
+            "name": "terminal_text_boundary",
+            "passed": terminal_boundary,
+            "last_character": last,
+        },
+        {
+            "name": "markdown_backticks_balanced",
+            "passed": text.count("`") % 2 == 0,
+            "count": text.count("`"),
+        },
+        {
+            "name": "terminal_text_encoding",
+            "passed": "\ufffd" not in text,
+        },
+    ]
+    if require_repository_overview:
+        first_tool = completed_calls[0].get("tool") if completed_calls else None
+        first_repo_call = next(
+            (call for call in completed_calls if call.get("tool") == "repo_inspect"),
+            None,
+        )
+        first_repo_call_id = (
+            first_repo_call.get("call_id") if first_repo_call else None
+        )
+        found_entry_paths = _repo_inspect_entry_paths(results, first_repo_call_id)
+        presence_conflicts = _contradicted_presence_claims(text, found_entry_paths)
+        staffing_inferences = _unsupported_staffing_inferences(text)
+        calls_before_repo = (
+            completed_calls[:completed_calls.index(first_repo_call)]
+            if first_repo_call in completed_calls
+            else completed_calls
+        )
+        entry_phase_only = all(
+            call.get("tool") == "file_read" for call in calls_before_repo
+        )
+        first_repo_result_index = next(
+            (
+                index
+                for index, record in enumerate(records)
+                if record.get("type") == "tool_call_result"
+                and record.get("params", {}).get("call_id") == first_repo_call_id
+            ),
+            None,
+        )
+        premature_discovery = [
+            record.get("params", {}).get("tool")
+            for index, record in enumerate(records)
+            if first_repo_result_index is not None
+            and index < first_repo_result_index
+            and record.get("type") == "tool_call_complete"
+            and record.get("params", {}).get("call_id") != first_repo_call_id
+            and record.get("params", {}).get("tool") != "file_read"
+        ]
+        broad_globs = []
+        for call in completed_calls:
+            if call.get("tool") != "glob":
+                continue
+            args = call.get("args", {})
+            patterns = args.get("patterns", []) if isinstance(args, dict) else []
+            if isinstance(patterns, list) and len(patterns) > 6:
+                broad_globs.extend(
+                    pattern for pattern in patterns if isinstance(pattern, str)
+                )
+            broad_globs.extend(
+                pattern
+                for pattern in patterns
+                if isinstance(pattern, str)
+                and (
+                    "**" in pattern
+                    or any(
+                        any(marker in segment for marker in ("*", "?", "["))
+                        for segment in pattern.replace("\\", "/").split("/")[:-1]
+                    )
+                )
+            )
+        broad_globs = list(dict.fromkeys(broad_globs))
+        summary["assertions"].extend([
+            {
+                "name": "repository_overview_starts_with_repo_inspect",
+                "passed": first_repo_call is not None and entry_phase_only,
+                "first_tool": first_tool,
+            },
+            {
+                "name": "repository_overview_waits_for_repo_inspect",
+                "passed": (
+                    first_repo_result_index is not None
+                    and not premature_discovery
+                ),
+                "premature_tools": premature_discovery,
+            },
+            {
+                "name": "repository_overview_avoids_broad_glob",
+                "passed": not broad_globs,
+                "patterns": broad_globs,
+            },
+            {
+                "name": "repository_overview_presence_claims_match_evidence",
+                "passed": not presence_conflicts,
+                "found_entry_paths": found_entry_paths,
+                "conflicts": presence_conflicts,
+            },
+            {
+                "name": "repository_overview_avoids_staffing_inference",
+                "passed": not staffing_inferences,
+                "claims": staffing_inferences,
+            },
+        ])
+    return summary
 
 
 def _audit_tail(n: int = 20) -> list[str]:
@@ -103,22 +443,15 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
                    timeout: float = 120.0, cols: int = 120,
                    rows: int = 50, working_dir: str | None = None,
                    expected_cwd: str | None = None,
-                   forbidden_strings: list[str] | None = None) -> dict:
+                   forbidden_strings: list[str] | None = None,
+                   require_repository_overview: bool = False) -> dict:
     """Drive the TUI with `task`, capture the settled frame, and bundle it
     with daemon-side analysis, logs, audit tail, and a merged timeline.
 
-    COMPLETION IS HEURISTIC. There is currently no authoritative turn-complete
-    signal available to this tool: the daemon's journal/status RPCs run on a
-    *different* session than the TUI client creates (and journals aren't
-    persisted — see the I2 bug), and this build's TUI does not render a
-    machine-detectable busy/idle indicator. So the response phase waits until
-    the frame has changed beyond the submitted-input baseline and then stayed
-    unchanged for `settle_secs`. A multi-step turn whose inter-step LLM gap
-    exceeds `settle_secs` may be captured mid-turn; raise `settle_secs` (and
-    `timeout`) for slow/complex tasks. `settle_secs` defaults to 6s — larger
-    than typical observed inter-step gaps but still a heuristic, not a
-    guarantee. Robust completion needs upstream work (shared TUI/RPC session or
-    a TUI idle marker)."""
+    Completion requires the durable TUI recorder's authoritative `turn_done`
+    event plus a stable frame whose input prompt is visible and no busy spinner
+    remains. The event stream is also checked for failed/missing tool results
+    and structurally incomplete terminal text."""
     # Phase 0: launch the TUI (ready-gated) WITHOUT sending the task yet.
     # NOTE: ratatui uses the terminal ALTERNATE screen (no tmux scrollback),
     # and the TUI keeps its own internal scroll, auto-scrolling to the input
@@ -179,13 +512,20 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     frame = cap.get("frame", "")
     expected = os.path.realpath(expected_cwd) if expected_cwd else None
     if expected:
-        assertions.append({"name": "expected_cwd", "passed": expected in frame,
+        actual_cwd = os.path.realpath(started.get("working_dir", ""))
+        assertions.append({"name": "expected_cwd", "passed": actual_cwd == expected,
+                           "actual": actual_cwd,
                            "expected": expected})
     assertions.extend(frame_assertions(
         frame,
         cap.get("prompt_visible") is True,
         forbidden_strings,
     ))
+    event_summary = event_acceptance(
+        cap.get("event_path"),
+        require_repository_overview=require_repository_overview,
+    )
+    assertions.extend(event_summary["assertions"])
     if any(not item["passed"] for item in assertions):
         verdict = "fail"
 
@@ -204,9 +544,11 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         "git_commit": await command("git", "rev-parse", "HEAD"),
         "git_toplevel": await command("git", "rev-parse", "--show-toplevel"),
         "binary": await command("aletheon", "version"),
-        "service_active": await command("systemctl", "is-active", "aletheon"),
+        "service_active": await command(
+            "systemctl", "--user", "is-active", "aletheon.service"),
         "service_started": await command(
-            "systemctl", "show", "aletheon", "-p", "ActiveEnterTimestamp"),
+            "systemctl", "--user", "show", "aletheon.service",
+            "-p", "ActiveEnterTimestamp"),
     }
 
     return {
@@ -214,8 +556,16 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         "rendered_frame": cap.get("frame", ""),
         "stable": cap.get("stable"),
         "prompt_visible": cap.get("prompt_visible"),
-        "completion": f"heuristic (settled {settle_secs}s beyond input echo; "
-                      "may be mid-turn if an inter-step gap exceeds that)",
+        "turn_done_count": cap.get("turn_done_count"),
+        "completion_source": cap.get("completion_source"),
+        "event_path": cap.get("event_path"),
+        "event_evidence": cap.get("event_evidence"),
+        "event_acceptance": event_summary,
+        "completion": (
+            "authoritative client_event:turn_done with durable event evidence"
+            if cap.get("turn_done") is True
+            else f"heuristic (settled {settle_secs}s beyond input echo; may be mid-turn)"
+        ),
         "tui_checks": cap.get("checks", []),
         "daemon": {"analyze": daemon_analyze, "logs": daemon_logs},
         "audit_tail": audit_tail,

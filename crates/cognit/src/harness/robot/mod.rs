@@ -2,16 +2,18 @@
 //! Cognit owns the state machine; it does NOT depend on Executive or Hardware.
 
 pub mod proposal_validator;
+pub mod session;
 pub mod state;
 
 use crate::harness::robot::proposal_validator::validate_proposal;
 use crate::harness::robot::state::{RobotHarnessConfig, RobotState, VerificationSignal};
 use crate::ports::policy_provider::PolicyProviderPort;
 use async_trait::async_trait;
-use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillId, SkillRequest, SkillResult};
+use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillRequest, SkillResult};
 use fabric::types::expected_outcome::ExpectedOutcome;
 use fabric::types::outcome_verification::VerificationReport;
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
+use fabric::types::world_state::{WorldSnapshot, WorldStatePort, ANY_SCHEMA};
+use fabric::OperationId;
 use std::sync::Arc;
 
 /// Port for executing an embodied skill. Injected by Executive.
@@ -22,12 +24,15 @@ pub trait EmbodiedExecutionPort: Send + Sync {
     async fn safe_stop(&self, device: &DeviceId) -> Result<(), String>;
 }
 
-/// Port for verifying outcomes. Injected by Executive (delegates to Metacog).
+/// Port for verifying outcomes. Injected by Executive.
+/// The `device` lets the verifier wait for post-execution observations via the
+/// world state (`observe_until`) to satisfy a continuous stable window.
 #[async_trait]
 pub trait OutcomeVerifierPort: Send + Sync {
     async fn verify(
         &self,
         expected: &ExpectedOutcome,
+        device: &DeviceId,
         before: Option<&WorldSnapshot>,
         after: Option<&WorldSnapshot>,
         attempt: u32,
@@ -59,7 +64,8 @@ pub trait EpisodeSink: Send + Sync {
         &self,
         episode_id: &str,
         attempt: u32,
-        operation_id: &str,
+        attempt_id: &str,
+        operation_id: Option<&OperationId>,
         expected: &ExpectedOutcome,
         before: Option<&WorldSnapshot>,
         after: Option<&WorldSnapshot>,
@@ -67,6 +73,47 @@ pub trait EpisodeSink: Send + Sync {
         verification: Option<&VerificationReport>,
     ) -> Result<(), String>;
     async fn close_episode(&self, episode_id: &str, outcome: &str) -> Result<(), String>;
+    /// Record the post-execution verification for a previously appended attempt.
+    /// Attempts are appended before execution completes; the verification lands
+    /// later (Verify step), so it is persisted as an update to keep the durable
+    /// record authoritative for report building and the promotion gate.
+    async fn update_verification(
+        &self,
+        episode_id: &str,
+        attempt_id: &str,
+        verification: &VerificationReport,
+    ) -> Result<(), String>;
+    /// Load an episode's recorded attempts in order for report building. The
+    /// durable sink is authoritative — the terminal harness state only carries
+    /// the latest attempt.
+    async fn load_attempts(
+        &self,
+        episode_id: &str,
+    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String>;
+}
+
+/// Port for distilling a settled, matched robot episode into long-term memory.
+/// Only reports where `EpisodeReport::can_promote()` holds are presented.
+#[async_trait]
+pub trait EpisodePromotionPort: Send + Sync {
+    async fn promote(
+        &self,
+        report: &fabric::types::episode_report::EpisodeReport,
+    ) -> Result<(), String>;
+}
+
+/// No-op promoter for tests and unconfigured compositions — promotion stays
+/// absent rather than silently failing.
+pub struct NoopEpisodePromotion;
+
+#[async_trait]
+impl EpisodePromotionPort for NoopEpisodePromotion {
+    async fn promote(
+        &self,
+        _report: &fabric::types::episode_report::EpisodeReport,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +129,10 @@ pub struct RobotHarnessState {
     pub latest_skill_request: Option<SkillRequest>,
     pub latest_skill_result: Option<SkillResult>,
     pub latest_verification: Option<VerificationReport>,
+    /// Expected outcome carried from the validated policy proposal.
+    pub latest_expected_outcome: Option<ExpectedOutcome>,
+    /// Host/provider-issued operation id of the latest executed attempt.
+    pub latest_operation_id: Option<OperationId>,
     pub error: Option<String>,
 }
 
@@ -120,6 +171,12 @@ impl RobotHarness {
         }
     }
 
+    /// Durable episode sink accessor — used to rebuild the full attempt list
+    /// for report building (the terminal state only carries the latest one).
+    pub fn episodes(&self) -> Arc<dyn EpisodeSink> {
+        self.episodes.clone()
+    }
+
     pub fn init(&self, device: DeviceId, goal: String, episode_id: String) -> RobotHarnessState {
         RobotHarnessState {
             state: RobotState::Observe,
@@ -133,16 +190,44 @@ impl RobotHarness {
             latest_skill_request: None,
             latest_skill_result: None,
             latest_verification: None,
+            latest_expected_outcome: None,
+            latest_operation_id: None,
             error: None,
         }
+    }
+
+    /// Resolve the expected outcome for Execute/Verify: the validated proposal's
+    /// outcome first, then the configured default. Fail closed when neither exists —
+    /// never silently fall back to a hardcoded predicate.
+    fn resolve_expected(&self, s: &RobotHarnessState) -> Result<ExpectedOutcome, String> {
+        s.latest_expected_outcome
+            .clone()
+            .or(self.config.default_expected_outcome.clone())
+            .ok_or_else(|| "no expected outcome available (proposal carried none)".to_string())
     }
 
     pub async fn step(&self, mut harness_state: RobotHarnessState) -> RobotHarnessState {
         match harness_state.state {
             RobotState::Observe => {
-                let snap = self.world_state.latest(&harness_state.device).await;
-                harness_state.latest_snapshot = snap;
-                harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
+                // Observation gate: without a fresh snapshot the harness must
+                // NOT proceed to Plan — a production policy must never receive
+                // empty snapshots.
+                let snap = self
+                    .world_state
+                    .latest(&harness_state.device, ANY_SCHEMA)
+                    .await;
+                match &snap {
+                    Some(snapshot) if !snapshot.stale => {
+                        harness_state.latest_snapshot = snap;
+                        harness_state.state =
+                            harness_state.state.next(&VerificationSignal::Matched);
+                    }
+                    _ => {
+                        harness_state.error =
+                            Some("no fresh observation available before planning".into());
+                        harness_state.state = RobotState::Failed;
+                    }
+                }
             }
             RobotState::Plan => {
                 let snapshots: Vec<WorldSnapshot> =
@@ -162,6 +247,8 @@ impl RobotHarness {
                         let mut valid_request = None;
                         for proposal in &proposals {
                             if validate_proposal(proposal, &self.allowed_skills, 0, 0).is_ok() {
+                                harness_state.latest_expected_outcome =
+                                    Some(proposal.expected_outcome.clone());
                                 valid_request = Some(SkillRequest {
                                     skill: proposal.skill.clone(),
                                     device: proposal.device.clone(),
@@ -195,71 +282,134 @@ impl RobotHarness {
             }
             RobotState::Execute => {
                 harness_state.attempt += 1;
-                let request = harness_state
-                    .latest_skill_request
-                    .clone()
-                    .unwrap_or_else(|| SkillRequest {
-                        skill: SkillId("kuavo.stance".into()),
-                        device: harness_state.device.clone(),
-                        parameters: serde_json::json!({}),
-                    });
+                // Fail closed when Plan produced no skill request — never fall
+                // back to a hardcoded skill.
+                let Some(request) = harness_state.latest_skill_request.clone() else {
+                    harness_state.error =
+                        Some("no skill request available (Plan produced none)".into());
+                    harness_state.state = RobotState::Failed;
+                    return harness_state;
+                };
                 let before_snap = harness_state.latest_snapshot.clone();
                 match self.executor.execute(request).await {
                     Ok(result) => {
+                        let operation_id = result.operation_id;
+                        harness_state.latest_operation_id = Some(operation_id);
                         harness_state.latest_skill_result = Some(result);
-                        let _ = self
+                        let expected = match self.resolve_expected(&harness_state) {
+                            Ok(e) => e,
+                            Err(reason) => {
+                                harness_state.error = Some(reason);
+                                harness_state.state = RobotState::Failed;
+                                return harness_state;
+                            }
+                        };
+                        if let Err(reason) = self
                             .episodes
                             .append_attempt(
                                 &harness_state.episode_id,
                                 harness_state.attempt,
-                                "op",
-                                &ExpectedOutcome {
-                                    predicate:
-                                        fabric::types::expected_outcome::OutcomePredicate::Equals {
-                                            path: "mode".into(),
-                                            value: serde_json::json!("stance"),
-                                        },
-                                    freshness_ms: 500,
-                                    stable_window_ms: 0,
-                                    timeout_ms: 5000,
-                                },
+                                &operation_id.0.to_string(),
+                                Some(&operation_id),
+                                &expected,
                                 before_snap.as_ref(),
                                 None,
                                 harness_state.latest_skill_result.as_ref(),
                                 None,
                             )
-                            .await;
+                            .await
+                        {
+                            // Persistence is part of the completion condition:
+                            // a failed attempt write must not report success.
+                            harness_state.error = Some(format!("append_attempt failed: {reason}"));
+                            harness_state.state = RobotState::Failed;
+                            return harness_state;
+                        }
                         harness_state.state =
                             harness_state.state.next(&VerificationSignal::Matched);
                     }
                     Err(e) => {
                         harness_state.error = Some(e);
+                        // Operation was never created: keep latest_operation_id = None and
+                        // record the failed attempt under an INDEPENDENT attempt id — never
+                        // a fabricated OperationId, and operation_id stays None.
+                        if let Ok(expected) = self.resolve_expected(&harness_state) {
+                            let attempt_id = format!(
+                                "attempt:{}-{}",
+                                harness_state.episode_id, harness_state.attempt
+                            );
+                            if let Err(reason) = self
+                                .episodes
+                                .append_attempt(
+                                    &harness_state.episode_id,
+                                    harness_state.attempt,
+                                    &attempt_id,
+                                    None,
+                                    &expected,
+                                    before_snap.as_ref(),
+                                    None,
+                                    harness_state.latest_skill_result.as_ref(),
+                                    None,
+                                )
+                                .await
+                            {
+                                harness_state.error =
+                                    Some(format!("failed attempt record error: {reason}"));
+                            }
+                        }
                         harness_state.state = RobotState::Failed;
                     }
                 }
             }
             RobotState::Verify => {
-                let after_snap = self.world_state.latest(&harness_state.device).await;
-                // Use a simple default expected outcome — in production this comes from the plan
-                let expected = ExpectedOutcome {
-                    predicate: fabric::types::expected_outcome::OutcomePredicate::Equals {
-                        path: "mode".into(),
-                        value: serde_json::json!("stance"),
-                    },
-                    freshness_ms: 500,
-                    stable_window_ms: 0,
-                    timeout_ms: 5000,
+                let after_snap = self
+                    .world_state
+                    .latest(&harness_state.device, ANY_SCHEMA)
+                    .await;
+                let expected = match self.resolve_expected(&harness_state) {
+                    Ok(e) => e,
+                    Err(reason) => {
+                        harness_state.error = Some(reason);
+                        harness_state.state = RobotState::Failed;
+                        return harness_state;
+                    }
                 };
                 let report = self
                     .verifier
                     .verify(
                         &expected,
+                        &harness_state.device,
                         harness_state.latest_snapshot.as_ref(),
                         after_snap.as_ref(),
                         harness_state.attempt,
                     )
                     .await;
                 harness_state.latest_verification = Some(report.clone());
+                // Persist the verification on the durable attempt — the attempt
+                // row is written before execution, so the verification lands as
+                // an update here. A failed write keeps the report non-promotable
+                // (fail closed) but does not abort the retry/replan flow.
+                let attempt_id = harness_state
+                    .latest_operation_id
+                    .as_ref()
+                    .map(|op| op.0.to_string())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "attempt:{}-{}",
+                            harness_state.episode_id, harness_state.attempt
+                        )
+                    });
+                if let Err(reason) = self
+                    .episodes
+                    .update_verification(&harness_state.episode_id, &attempt_id, &report)
+                    .await
+                {
+                    tracing::warn!(
+                        episode_id = %harness_state.episode_id,
+                        %reason,
+                        "failed to persist verification on durable attempt"
+                    );
+                }
 
                 let remaining_retries = self
                     .config
@@ -315,19 +465,44 @@ impl RobotHarness {
                 harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
             }
             RobotState::Settle => {
-                let _ = self
+                // Settlement is authoritative: if the episode cannot be closed,
+                // the episode stays un-settled (recoverable) and the harness must
+                // NOT report success.
+                match self
                     .episodes
                     .close_episode(&harness_state.episode_id, "completed")
-                    .await;
-                harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
+                    .await
+                {
+                    Ok(()) => {
+                        harness_state.state =
+                            harness_state.state.next(&VerificationSignal::Matched);
+                    }
+                    Err(reason) => {
+                        harness_state.error = Some(format!("settle failed: {reason}"));
+                        harness_state.state = RobotState::Failed;
+                    }
+                }
             }
             RobotState::SafeStop => {
-                let _ = self.executor.safe_stop(&harness_state.device).await;
-                let _ = self
+                // Safe-stop and its settlement must both be confirmed before the
+                // harness reports the failure as handled.
+                let mut failures = Vec::new();
+                if let Err(e) = self.executor.safe_stop(&harness_state.device).await {
+                    failures.push(format!("safe_stop: {e}"));
+                }
+                if let Err(e) = self
                     .episodes
                     .close_episode(&harness_state.episode_id, "failed")
-                    .await;
-                harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
+                    .await
+                {
+                    failures.push(format!("close_episode: {e}"));
+                }
+                if failures.is_empty() {
+                    harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
+                } else {
+                    harness_state.error = Some(failures.join("; "));
+                    harness_state.state = RobotState::Failed;
+                }
             }
             RobotState::Completed | RobotState::Failed => {}
         }

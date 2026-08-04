@@ -1,12 +1,12 @@
-> New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> New document — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 # Driver Subsystem
 
-> Hardware and OS interface layer — display, input, OCR, accessibility, process, I/O, and sandbox drivers.
+> Optional Linux desktop adapters for display, input, OCR, accessibility, and sandbox primitives.
 
 **Crate:** `corpus`
-**Module:** `crates/corpus/src/drivers/driver/`
-**Last updated:** 2026-06-14
+**Module:** `crates/corpus/src/drivers/`
+**Last updated:** 2026-07-30
 
 ---
 
@@ -14,16 +14,13 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| DriverFactory | ✅ Implemented | `driver/factory.rs` | Auto-detect and create real drivers |
-| InputDriver (uinput) | ✅ Implemented | `driver/input/` | Linux uinput virtual device |
-| DisplayDriver (X11) | ✅ Implemented | `driver/display/` | X11 screenshot, framebuffer fallback |
-| WindowManager (EWMH) | ✅ Implemented | `driver/display/` | EWMH window management via X11 |
-| ClipboardDriver | ✅ Implemented | `driver/display/` | X11 clipboard operations |
-| A11yDriver (AT-SPI) | ✅ Implemented | `driver/a11y/` | AT-SPI2 accessibility tree via D-Bus |
-| OcrDriver (Tesseract) | ✅ Implemented | `driver/ocr/` | Tesseract OCR integration |
-| ProcessDriver | ✅ Implemented | `driver/proc/` | Process management utilities |
-| IoDriver | ✅ Implemented | `driver/io/` | File and stream I/O operations |
-| SandboxDriver | ✅ Implemented | `driver/sandbox_driver/` | Sandbox primitives for driver layer |
+| DriverFactory | ✅ Implemented | `crates/corpus/src/drivers/factory.rs` | Feature-aware adapter construction |
+| InputDriver (uinput) | 🔶 Optional | `crates/corpus/src/drivers/input/` | Linux uinput, behind `input` feature |
+| Display/clipboard/window | 🔶 Optional | `crates/corpus/src/drivers/display/` | Linux X11/DRM adapters, behind `display` feature |
+| A11yDriver (AT-SPI) | 🔶 Optional | `crates/corpus/src/drivers/a11y/` | Behind `a11y` feature |
+| OcrDriver (Tesseract) | 🔶 Optional | `crates/corpus/src/drivers/ocr/` | Behind `ocr-tesseract` feature |
+| ProcessDriver / IoDriver | Removed | — | Empty public placeholders were removed; host operations belong to `platform` |
+| SandboxDriver | 🔶 Optional | `crates/corpus/src/drivers/sandbox_driver/` | Low-level primitives behind `sandbox-primitives` |
 
 ---
 
@@ -130,13 +127,11 @@ Priority: AccessibilityTree > OcrFallback > ScreenshotOnly. The `computer` modul
 
 ## 7. Process & I/O Drivers
 
-### 7.1 ProcessDriver (`driver/proc/`)
+### 7.1 Host process and filesystem operations
 
-Process management utilities — listing, querying, and signaling processes.
-
-### 7.2 IoDriver (`driver/io/`)
-
-File and stream I/O operations — reading, writing, and monitoring file descriptors.
+These capabilities are owned by `crates/platform/src/process.rs` and
+`crates/platform/src/filesystem.rs`; Corpus no longer publishes empty driver
+names for them.
 
 ## 8. Sandbox Driver
 
@@ -153,11 +148,10 @@ Provides low-level sandbox primitives used by the sandbox execution layer (see [
 | `a11y` | AtSpiDriver | D-Bus session bus |
 | `ocr-tesseract` | TesseractOcrDriver | Tesseract library |
 | `sandbox-primitives` | SandboxDriver | Linux namespace support |
-| `fuse` | FUSE mount | libfuse3 |
 
 ## 10. Implementation Notes
 
-**Code location:** `crates/corpus/src/drivers/driver/` (8 subdirectories + `mod.rs`, `types.rs`, `factory.rs`)
+**Code location:** `crates/corpus/src/drivers/`
 
 **Key design decisions:**
 - All drivers are optional — `DriverFactory::try_*()` returns `Option<Box<dyn Trait>>`

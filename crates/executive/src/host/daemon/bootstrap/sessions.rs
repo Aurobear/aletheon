@@ -13,6 +13,7 @@ pub(super) struct SessionCompositionInput<'a> {
     pub(super) data_dir: &'a Path,
     pub(super) session_id: String,
     pub(super) context_window: usize,
+    pub(super) compaction_threshold_percent: usize,
     pub(super) clock: Arc<dyn Clock>,
 }
 
@@ -33,6 +34,7 @@ pub(super) async fn compose(
             input.data_dir,
             input.session_id.clone(),
             input.context_window,
+            input.compaction_threshold_percent,
             input.clock.clone(),
         )
         .await?,
@@ -66,6 +68,7 @@ mod tests {
             data_dir: root.path(),
             session_id: "session-1".into(),
             context_window: 4096,
+            compaction_threshold_percent: 80,
             clock: Arc::new(kernel::chronos::TestClock::new(100, 0)),
         })
         .await
@@ -91,6 +94,7 @@ mod tests {
             data_dir: root.path(),
             session_id: String::new(),
             context_window: 0,
+            compaction_threshold_percent: 80,
             clock: Arc::new(kernel::chronos::TestClock::new(100, 0)),
         })
         .await

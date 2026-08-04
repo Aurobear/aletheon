@@ -5,11 +5,13 @@
 
 mod rpc_admin;
 mod rpc_approval;
+mod rpc_evaluation;
+mod rpc_extension;
 mod rpc_goal;
 mod rpc_google;
 mod rpc_health;
 mod rpc_memory;
-mod rpc_reflection;
+mod rpc_review;
 mod rpc_session;
 mod rpc_skill;
 mod rpc_turn;
@@ -45,10 +47,21 @@ impl RequestHandler {
             // ── Health / status ───────────────────────────────────────
             "status" => self.handle_status(&id, &request).await,
             "health" => self.handle_health(&id, &request).await,
+            "evaluation.get" => self.handle_evaluation_get(connection, &id, &request).await,
+            "evaluation.latest" => {
+                self.handle_evaluation_latest(connection, &id, &request)
+                    .await
+            }
+            "evaluation.list" => self.handle_evaluation_list(connection, &id, &request).await,
             "conscious.diagnostics" => {
                 self.handle_conscious_diagnostics(connection, &id, &request)
                     .await
             }
+            "review.capabilities" => self.handle_review_capabilities(&id).await,
+            "review.submit" => self.handle_review_submit(connection, &id, &request).await,
+            "review.status" => self.handle_review_status(connection, &id, &request).await,
+            "review.wait" => self.handle_review_wait(connection, &id, &request).await,
+            "review.cancel" => self.handle_review_cancel(connection, &id, &request).await,
 
             // ── Admin / meta ──────────────────────────────────────────
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,
@@ -63,6 +76,7 @@ impl RequestHandler {
                 self.handle_approval_response(connection, &id, &request)
                     .await
             }
+            "diff_artifact.get" => self.handle_diff_artifact_get(&id, &request).await,
             "approval.list" => self.handle_approval_list(connection, &id, &request).await,
             "approval.show" => self.handle_approval_show(connection, &id, &request).await,
             "approval.approve" => {
@@ -109,16 +123,17 @@ impl RequestHandler {
             "google.accounts.list" => self.handle_google_accounts_list(&id, &request).await,
             "google.accounts.revoke" => self.handle_google_account_revoke(&id, &request).await,
             "google.token.refresh" => self.handle_google_token_refresh(&id, &request).await,
-            "hooks_list" => self.handle_hooks_list(&id, &request).await,
             "sub_agents" => self.handle_sub_agents(&id, &request).await,
             "agent.profile.list" => self.handle_agent_profile_list(&id, &request).await,
             "agent.profile.set" => self.handle_agent_profile_set(&id, &request).await,
 
-            // ── Reflection / self-awareness ───────────────────────────
-            "reflect" => self.handle_reflect(&id, &request).await,
-            "reflect_now" => self.handle_reflect_now(&id, &request).await,
-            "genome" => self.handle_genome(&id, &request).await,
-            "evolution" => self.handle_evolution(&id, &request).await,
+            // ── Extension package lifecycle ──────────────────────────
+            "extension.install" | "extension.enable" | "extension.disable"
+            | "extension.upgrade" | "extension.rollback" | "extension.remove"
+            | "extension.purge" | "extension.list" | "extension.show" | "extension.doctor" => {
+                self.handle_extension_rpc(connection, &id, &request, method)
+                    .await
+            }
 
             // ── Memory (fact store) ───────────────────────────────────
             "memory.add" => self.handle_memory_add(&id, &request).await,

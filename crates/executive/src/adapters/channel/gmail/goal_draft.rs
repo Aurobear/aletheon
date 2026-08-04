@@ -350,7 +350,7 @@ impl GmailGoalDraftCoordinator {
             let approval = self
                 .approvals
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .get(id)?
                 .ok_or_else(|| anyhow::anyhow!("draft approval not found"))?;
             return Ok(row.into_result(goal, approval));
@@ -369,7 +369,7 @@ impl GmailGoalDraftCoordinator {
             .collect::<Vec<_>>();
         let unavailable = row.artifacts.iter().filter(|item| !item.available).count();
         let intent_preview: String = goal.spec.original_intent.chars().take(2_000).collect();
-        let approval = self.approvals.lock().unwrap().create(ApprovalCreate {
+        let approval = self.approvals.lock().unwrap_or_else(|e| e.into_inner()).create(ApprovalCreate {
             subject: ApprovalSubject {
                 category: ApprovalCategory::ActivateGoal,
                 goal_id,

@@ -70,7 +70,16 @@ impl RequestHandler {
                 }
             }
         };
-        self.execute_explicit_chat(connection, id, message, thread_id, workspace)
-            .await
+        self.execute_explicit_chat(
+            connection,
+            id,
+            message,
+            thread_id,
+            workspace,
+            Vec::new(),
+            None,
+            fabric::permission::HostPermissionMode::Safe,
+        )
+        .await
     }
 }

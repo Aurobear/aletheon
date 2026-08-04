@@ -414,6 +414,222 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
     }
 }
 
+/// Deterministic biped-stance provider for the robot harness main chain.
+///
+/// Phase 1 simulator: emits `robot.state/v1` observations carrying
+/// `mode` / `base.height_m` / `joint_error.max_rad` / `fall_detected` with a
+/// monotonic sequence, so the deterministic verifier can satisfy a stability
+/// window after executing `kuavo.stance` — without needing the MuJoCo bridge.
+pub struct SimulatedKuavo {
+    id: fabric::types::embodiment::DeviceId,
+    clock: Arc<dyn MonotonicClock>,
+    mode: tokio::sync::Mutex<String>,
+    fall_detected: AtomicU64,
+    sequence: AtomicU64,
+}
+
+impl SimulatedKuavo {
+    pub fn biped(id: &str, clock: Arc<dyn MonotonicClock>) -> Self {
+        Self {
+            id: fabric::types::embodiment::DeviceId(id.into()),
+            clock,
+            mode: tokio::sync::Mutex::new("idle".into()),
+            fall_detected: AtomicU64::new(0),
+            sequence: AtomicU64::new(0),
+        }
+    }
+
+    async fn observation(&self) -> fabric::types::embodiment::EmbodiedObservation {
+        let mode = self.mode.lock().await.clone();
+        let fall = self.fall_detected.load(Ordering::SeqCst) != 0;
+        let sequence = self.sequence.fetch_add(1, Ordering::SeqCst) + 1;
+        let now = fabric::MonoTime(self.clock.now().0);
+        fabric::types::embodiment::EmbodiedObservation {
+            schema: "robot.state/v1".into(),
+            schema_version: 1,
+            source: format!("sim-kuavo:{}", self.id.0),
+            sequence,
+            source_time: now,
+            received_at: now,
+            valid_until: Some(fabric::MonoDeadline::after(now, 2_000)),
+            confidence: 1.0,
+            frame_ref: None,
+            payload: serde_json::json!({
+                "mode": mode,
+                "base": {"height_m": 0.8},
+                "joint_error": {"max_rad": 0.02},
+                "fall_detected": fall,
+            }),
+            evidence: vec![],
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::EmbodimentProvider for SimulatedKuavo {
+    async fn observe(
+        &self,
+        device: &fabric::types::embodiment::DeviceId,
+    ) -> Result<Vec<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
+        Ok(vec![self
+            .get_state(device)
+            .await?
+            .expect("kuavo always exposes state")])
+    }
+
+    async fn get_state(
+        &self,
+        device: &fabric::types::embodiment::DeviceId,
+    ) -> Result<Option<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
+        if self.id != *device {
+            return Err(crate::ProviderError::Rejected("device mismatch".into()));
+        }
+        Ok(Some(self.observation().await))
+    }
+
+    async fn list_skills(
+        &self,
+        device: &fabric::types::embodiment::DeviceId,
+    ) -> Result<Vec<fabric::types::embodiment::SkillDescriptor>, crate::ProviderError> {
+        if self.id != *device {
+            return Err(crate::ProviderError::Rejected("device mismatch".into()));
+        }
+        Ok(vec![fabric::types::embodiment::SkillDescriptor {
+            skill: fabric::types::embodiment::SkillId("kuavo.stance".into()),
+            device: device.clone(),
+            summary: "enter and hold a stable stance".into(),
+            input_schema: serde_json::json!({"type": "object", "required": []}),
+            risk: fabric::types::embodiment::RiskClass::Low,
+            timeout_ms: 10_000,
+            cancellable: false,
+            preconditions: vec!["control mode ready".into(), "fresh state available".into()],
+            success_criteria: vec!["stable stance window confirmed".into()],
+        }])
+    }
+
+    async fn execute_skill(
+        &self,
+        command: crate::ValidatedSkillCommand<'_>,
+        progress: Arc<dyn crate::SkillProgressSink>,
+    ) -> Result<fabric::types::embodiment::SkillResult, crate::ProviderError> {
+        let request = command.request();
+        if request.skill.0 != "kuavo.stance" {
+            return Err(crate::ProviderError::Rejected(format!(
+                "unsupported skill {}",
+                request.skill.0
+            )));
+        }
+        let operation_id = command
+            .permit()
+            .operation
+            .0
+            .parse()
+            .map_err(|_| crate::ProviderError::Rejected("invalid operation mapping".into()))?;
+        // Enter stance; subsequent observations report mode == "stance" with a
+        // stable, monotonically increasing sequence.
+        *self.mode.lock().await = "stance".into();
+        self.fall_detected.store(0, Ordering::SeqCst);
+        progress
+            .progress(fabric::types::embodiment::SkillProgress {
+                operation_id,
+                skill: request.skill.clone(),
+                fraction: 1.0,
+                note: "stance entered".into(),
+                at: fabric::MonoTime(self.clock.now().0),
+            })
+            .await;
+        Ok(fabric::types::embodiment::SkillResult {
+            operation_id,
+            skill: request.skill.clone(),
+            device: request.device.clone(),
+            outcome: fabric::types::embodiment::SkillOutcome::Succeeded,
+            duration_ms: 0,
+            evidence: vec![],
+        })
+    }
+
+    async fn cancel(
+        &self,
+        device: &fabric::types::embodiment::DeviceId,
+        _operation: &crate::OperationId,
+    ) -> Result<crate::CancelAck, crate::ProviderError> {
+        if self.id != *device {
+            return Err(crate::ProviderError::Rejected("device mismatch".into()));
+        }
+        *self.mode.lock().await = "idle".into();
+        Ok(crate::CancelAck {
+            device: device.clone(),
+        })
+    }
+
+    async fn safe_stop(
+        &self,
+        device: &fabric::types::embodiment::DeviceId,
+    ) -> Result<crate::StopReceipt, crate::ProviderError> {
+        if self.id != *device {
+            return Err(crate::ProviderError::Rejected("device mismatch".into()));
+        }
+        self.fall_detected.store(1, Ordering::SeqCst);
+        Ok(crate::StopReceipt {
+            device: device.clone(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod kuavo_sim_tests {
+    use super::*;
+    use crate::{skill::authorized_fixture, EmbodimentProvider, ManualClock, SkillProgressSink};
+    use fabric::types::embodiment::{DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest};
+
+    struct NullSink;
+    #[async_trait::async_trait]
+    impl SkillProgressSink for NullSink {
+        async fn progress(&self, _update: SkillProgress) {}
+    }
+
+    #[tokio::test]
+    async fn stance_execution_switches_observation_to_stance_with_increasing_sequence() {
+        let clock = Arc::new(ManualClock::new(0));
+        let provider = SimulatedKuavo::biped("kuavo-mujoco-01", clock.clone());
+        let device = DeviceId("kuavo-mujoco-01".into());
+
+        let before = provider.get_state(&device).await.unwrap().unwrap();
+        assert_eq!(before.payload["mode"], "idle");
+
+        let request = SkillRequest {
+            skill: SkillId("kuavo.stance".into()),
+            device: device.clone(),
+            parameters: serde_json::json!({}),
+        };
+        let authorized = authorized_fixture(request);
+        let result = provider
+            .execute_skill(
+                crate::ValidatedSkillCommand(&authorized),
+                Arc::new(NullSink),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.outcome, SkillOutcome::Succeeded);
+
+        let after = provider.get_state(&device).await.unwrap().unwrap();
+        assert_eq!(after.payload["mode"], "stance");
+        assert_eq!(after.payload["fall_detected"], false);
+        assert_eq!(after.payload["base"]["height_m"], 0.8);
+        assert!(after.sequence > before.sequence, "sequence must increase");
+    }
+
+    #[tokio::test]
+    async fn safe_stop_sets_fall_detected() {
+        let clock = Arc::new(ManualClock::new(0));
+        let provider = SimulatedKuavo::biped("kuavo-mujoco-01", clock.clone());
+        let device = DeviceId("kuavo-mujoco-01".into());
+        provider.safe_stop(&device).await.unwrap();
+        let state = provider.get_state(&device).await.unwrap().unwrap();
+        assert_eq!(state.payload["fall_detected"], true);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

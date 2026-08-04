@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
 use super::super::chat::{ChatWidget, Role as ChatRole};
+use super::super::session_picker::SessionPickerAction;
 use super::super::App;
 use super::submit::{submit_message, write_request};
 
@@ -15,6 +16,17 @@ pub(crate) fn refresh_command_completion(app: &mut App) {
     } else {
         app.completion.hide();
     }
+}
+
+fn accept_selected_completion(app: &mut App) -> bool {
+    let Some(selected) = app.completion.selected().map(ToOwned::to_owned) else {
+        return false;
+    };
+    app.input_buf = selected;
+    app.cursor = app.input_buf.len();
+    app.completion.hide();
+    app.check_cjk();
+    true
 }
 
 pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
@@ -41,6 +53,26 @@ pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
 }
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) {
+    if let Some(mut picker) = app.session_picker.take() {
+        match picker.handle_key(key) {
+            SessionPickerAction::Continue => app.session_picker = Some(picker),
+            SessionPickerAction::Close => {}
+            SessionPickerAction::Resume(session_id) => {
+                let request_id =
+                    write_request(app, ClientRpcRequest::resume(session_id.clone())).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::Resume {
+                        previous_session_id: app.app_state.session_id.clone(),
+                    },
+                );
+                app.chat
+                    .add_text(ChatRole::System, format!("恢复会话 {session_id}..."));
+            }
+        }
+        return;
+    }
+
     // If pager overlay is active, route key to pager
     if let Some(ref mut pager) = app.pager {
         if pager.handle_key(key) {
@@ -58,19 +90,88 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
+        app.detail = if app.detail.is_some() {
+            None
+        } else {
+            app.latest_diff
+                .clone()
+                .map(super::super::diff_view::DiffView::new)
+        };
+        return;
+    }
+    if let Some(detail) = app.detail.as_mut() {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                detail.scroll_down();
+                return;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                detail.scroll_up();
+                return;
+            }
+            KeyCode::Char('f') => {
+                if let Some(diff) = app.latest_diff.clone() {
+                    app.pager = Some(super::super::pager::PagerOverlay::new("Diff", diff));
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
     // If approval dialog is active, route key to dialog
     if app.pending_approval.is_some() {
+        if matches!(key.code, KeyCode::Char('j') | KeyCode::Down) {
+            if let Some(dialog) = app.pending_approval.as_mut() {
+                dialog.scroll = dialog.scroll.saturating_add(1);
+            }
+            return;
+        }
+        if matches!(key.code, KeyCode::Char('k') | KeyCode::Up) {
+            if let Some(dialog) = app.pending_approval.as_mut() {
+                dialog.scroll = dialog.scroll.saturating_sub(1);
+            }
+            return;
+        }
         if let KeyCode::Char(c) = key.code {
             if let Some(decision) = ApprovalDialog::key_to_decision(c) {
                 let dialog = app.pending_approval.take().unwrap();
+                let scope_hint = match decision {
+                    DialogDecision::ApprovePathForSession => {
+                        dialog.scope_subject.as_ref().and_then(|subject| {
+                            subject.path_candidates.first().cloned().map(|path_root| {
+                                fabric::protocol::client::TransientApprovalScopeHint {
+                                    path_root,
+                                    subject_version: subject.subject_version,
+                                    subject_sha256: subject.subject_sha256.clone(),
+                                }
+                            })
+                        })
+                    }
+                    _ => None,
+                };
+                if decision == DialogDecision::ApprovePathForSession && scope_hint.is_none() {
+                    app.pending_approval = Some(dialog);
+                    return;
+                }
                 let decision = match decision {
                     DialogDecision::Approve => TransientApprovalDecision::Approve,
                     DialogDecision::ApproveForSession => {
                         TransientApprovalDecision::ApproveForSession
                     }
                     DialogDecision::Deny => TransientApprovalDecision::Deny,
+                    DialogDecision::ApprovePathForSession => {
+                        TransientApprovalDecision::ApprovePathForSession
+                    }
                 };
-                let resp = ClientRpcRequest::approval_response(dialog.approval_id, decision)
+                let request = match scope_hint {
+                    Some(hint) => {
+                        ClientRpcRequest::scoped_approval_response(dialog.approval_id, hint)
+                    }
+                    None => ClientRpcRequest::approval_response(dialog.approval_id, decision),
+                };
+                let resp = request
                     .to_json_rpc(None)
                     .expect("typed approval response serializes");
                 use tokio::io::AsyncWriteExt;
@@ -159,8 +260,21 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Ctrl+B: toggle last tool card (find last ExecEntry in chat history)
+    // Alt+Up/Down: navigate the complete tool activity timeline.
+    if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Up {
+        app.chat.select_previous_exec();
+        return;
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Down {
+        app.chat.select_next_exec();
+        return;
+    }
+
+    // Ctrl+B: toggle selected tool card, falling back to the last card.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+        if app.chat.toggle_selected_exec() {
+            return;
+        }
         // Iterate entries in reverse, find the last ExecEntry and toggle it
         let call_id = {
             let mut found = None;
@@ -275,11 +389,21 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     match key.code {
-        // Tab: trigger completion for slash commands
+        // Tab: accept the selected slash-command completion.
         KeyCode::Tab => {
             if app.input_buf.starts_with('/') {
                 app.completion
                     .show_commands(&app.input_buf, &app.registry, app.turn_active);
+                accept_selected_completion(app);
+            }
+        }
+
+        // Shift+Tab: move backward without accepting so users can inspect options.
+        KeyCode::BackTab => {
+            if app.input_buf.starts_with('/') {
+                app.completion
+                    .show_commands(&app.input_buf, &app.registry, app.turn_active);
+                app.completion.prev();
             }
         }
 
@@ -287,15 +411,10 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             // Accept completion if visible
             if app.completion.visible {
-                if let Some(selected) = app.completion.selected() {
-                    if selected != app.input_buf {
-                        app.input_buf = selected.to_string();
-                        app.cursor = app.input_buf.len();
-                        app.completion.hide();
-                        return;
-                    }
-                    app.completion.hide();
+                if accept_selected_completion(app) {
+                    return;
                 }
+                app.completion.hide();
             }
 
             // Shift+Enter or Alt+Enter → newline
@@ -466,8 +585,15 @@ mod tests {
             "test".into(),
             Arc::new(ClientClock::new()),
             workspace,
+            Vec::new(),
         );
         app.streaming = true;
+        app
+    }
+
+    async fn idle_app() -> App {
+        let mut app = streaming_app().await;
+        app.streaming = false;
         app
     }
 
@@ -493,5 +619,19 @@ mod tests {
         handle_key(&mut app, ctrl_c()).await;
 
         assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn tab_accepts_selected_slash_command_completion() {
+        let mut app = idle_app().await;
+        app.input_buf = "/mem".to_string();
+        app.cursor = app.input_buf.len();
+        refresh_command_completion(&mut app);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Tab)).await;
+
+        assert_eq!(app.input_buf, "/memory");
+        assert_eq!(app.cursor, app.input_buf.len());
+        assert!(!app.completion.visible);
     }
 }

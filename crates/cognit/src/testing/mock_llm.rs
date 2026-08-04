@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use futures::stream;
 
 use crate::adapters::inference::{
-    LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, ToolDefinition, Usage,
+    InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, ToolDefinition,
 };
 use fabric::message::{ContentBlock, Message};
 
@@ -37,12 +37,7 @@ impl MockLlmProvider {
         q.push_back(LlmResponse {
             content: vec![ContentBlock::Text { text: text.into() }],
             stop_reason: stop,
-            usage: Usage {
-                input_tokens: 10,
-                output_tokens: 5,
-            },
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
+            usage: InferenceUsage::unsupported(Some(10), Some(5)),
         });
     }
 
@@ -114,8 +109,7 @@ impl LlmProvider for MockLlmProvider {
             }
         }
         chunks.push(Ok(StreamChunk::Usage {
-            input_tokens: response.usage.input_tokens,
-            output_tokens: response.usage.output_tokens,
+            usage: response.usage,
         }));
         chunks.push(Ok(StreamChunk::Done {
             stop_reason: response.stop_reason.clone(),

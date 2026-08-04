@@ -1,0 +1,1030 @@
+{
+  "$defs": {
+    "CacheTelemetry": {
+      "enum": [
+        "reported",
+        "unsupported",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "CapabilityErrorClass": {
+      "enum": [
+        "implementation",
+        "environment",
+        "dependency",
+        "permission",
+        "provider",
+        "timeout",
+        "concurrent_modification",
+        "invalid_request",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "CapabilityRetryDisposition": {
+      "enum": [
+        "never",
+        "after_backoff",
+        "after_correction"
+      ],
+      "type": "string"
+    },
+    "CapabilityTerminalReceipt": {
+      "description": "Authoritative terminal evidence projected by the host after a capability\ninvocation reaches a terminal state. Submission/progress events never\nconstruct this receipt.",
+      "properties": {
+        "artifact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "audit_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "capability": {
+          "type": "string"
+        },
+        "error_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CapabilityErrorClass"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "exit_code": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "invocation_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/OperationId"
+        },
+        "output_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "process_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "retry_disposition": {
+          "$ref": "#/$defs/CapabilityRetryDisposition"
+        },
+        "started_at": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/CapabilityTerminalStatus"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "invocation_id",
+        "operation_id",
+        "process_id",
+        "capability",
+        "status",
+        "started_at",
+        "finished_at",
+        "artifact_ids",
+        "evidence_ids",
+        "truncated",
+        "retry_disposition"
+      ],
+      "type": "object"
+    },
+    "CapabilityTerminalStatus": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out"
+      ],
+      "type": "string"
+    },
+    "EvaluationDecision": {
+      "enum": [
+        "observed_pass",
+        "observed_fail",
+        "accepted",
+        "rejected",
+        "indeterminate"
+      ],
+      "type": "string"
+    },
+    "EvaluationReceiptRef": {
+      "properties": {
+        "confidence_millis": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "contract_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "created_at_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "decision": {
+          "$ref": "#/$defs/EvaluationDecision"
+        },
+        "evidence_coverage_millis": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_gates": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "receipt_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "schema_version": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subject_id": {
+          "type": "string"
+        },
+        "subject_kind": {
+          "type": "string"
+        },
+        "weighted_total_millis": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "receipt_id",
+        "contract_id",
+        "subject_kind",
+        "subject_id",
+        "decision",
+        "evidence_coverage_millis",
+        "confidence_millis",
+        "failed_gates",
+        "created_at_ms"
+      ],
+      "type": "object"
+    },
+    "InferenceTerminalReceipt": {
+      "properties": {
+        "failure_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inference_id": {
+          "type": "string"
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "provider_id": {
+          "type": "string"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/InferenceTerminalStatus"
+        },
+        "system_prefix_digest": {
+          "type": "string"
+        },
+        "tool_schema_digest": {
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/InferenceUsage"
+        }
+      },
+      "required": [
+        "schema_version",
+        "inference_id",
+        "operation_id",
+        "provider_id",
+        "model_id",
+        "system_prefix_digest",
+        "tool_schema_digest",
+        "status",
+        "usage"
+      ],
+      "type": "object"
+    },
+    "InferenceTerminalStatus": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "cancelled",
+        "timed_out"
+      ],
+      "type": "string"
+    },
+    "InferenceUsage": {
+      "properties": {
+        "cache_read_tokens": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cache_telemetry": {
+          "$ref": "#/$defs/CacheTelemetry",
+          "default": "unknown"
+        },
+        "cache_write_tokens": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "output_tokens": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "total_input_tokens": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "uncached_input_tokens": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ItemPayload": {
+      "oneOf": [
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "user_message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "assistant_message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "call_id": {
+                  "type": "string"
+                },
+                "input": true,
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "call_id",
+                "name",
+                "input"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "tool_call",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "audit_id": {
+                  "format": "uuid",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "call_id": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "is_error": {
+                  "type": "boolean"
+                },
+                "permit_id": {
+                  "format": "uuid",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "call_id",
+                "content",
+                "is_error"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "tool_result",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "receipt": {
+                  "$ref": "#/$defs/CapabilityTerminalReceipt"
+                }
+              },
+              "required": [
+                "receipt"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "capability_receipt",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "receipt": {
+                  "$ref": "#/$defs/EvaluationReceiptRef"
+                }
+              },
+              "required": [
+                "receipt"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "evaluation_receipt_ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "receipt": {
+                  "$ref": "#/$defs/ModelContextProjectionReceipt"
+                }
+              },
+              "required": [
+                "receipt"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "model_context_projection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "receipt": {
+                  "$ref": "#/$defs/InferenceTerminalReceipt"
+                }
+              },
+              "required": [
+                "receipt"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "inference_receipt",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "broadcast_epoch": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "content_ids": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "dasein_version": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "space": {
+                  "type": "string"
+                },
+                "workspace_version": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "space",
+                "dasein_version",
+                "content_ids"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "context_projection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "system_notice",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ItemRecord": {
+      "properties": {
+        "created_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ItemPayload"
+        },
+        "schema_version": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "session_id",
+        "turn_id",
+        "sequence",
+        "created_at_ms",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "ModelContextClassification": {
+      "enum": [
+        "instruction",
+        "trusted_runtime",
+        "untrusted_input",
+        "model_history",
+        "tool_evidence"
+      ],
+      "type": "string"
+    },
+    "ModelContextFragmentReceipt": {
+      "properties": {
+        "artifact_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "classification": {
+          "$ref": "#/$defs/ModelContextClassification"
+        },
+        "fragment_id": {
+          "type": "string"
+        },
+        "inline_content": {
+          "description": "Present only while crossing the trusted persistence adapter. Canonical\nsession receipts replace it with `artifact_ref` before append.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selection_reason": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_version": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "fragment_id",
+        "source",
+        "source_version",
+        "selection_reason",
+        "classification",
+        "truncated",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "ModelContextProjectionReceipt": {
+      "properties": {
+        "fragments": {
+          "items": {
+            "$ref": "#/$defs/ModelContextFragmentReceipt"
+          },
+          "type": "array"
+        },
+        "inference_id": {
+          "type": "string"
+        },
+        "message_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "omitted_fragment_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "system_prefix_digest": {
+          "type": "string"
+        },
+        "task_node_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool_schema_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tool_schema_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "inference_id",
+        "operation_id",
+        "system_prefix_digest",
+        "tool_schema_digest",
+        "role",
+        "stage",
+        "fragments",
+        "omitted_fragment_ids",
+        "message_bytes",
+        "tool_schema_bytes"
+      ],
+      "type": "object"
+    },
+    "OperationId": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "SessionFork": {
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "through_sequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "through_sequence"
+      ],
+      "type": "object"
+    },
+    "SessionNotification": {
+      "oneOf": [
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemRecord"
+                },
+                "schema_version": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "schema_version",
+                "item"
+              ],
+              "type": "object"
+            },
+            "type": {
+              "const": "item_appended",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionRecord": {
+      "properties": {
+        "created_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionFork"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_version": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "created_at_ms",
+        "status"
+      ],
+      "type": "object"
+    },
+    "SessionStatus": {
+      "enum": [
+        "active",
+        "interrupted",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "TurnRecord": {
+      "properties": {
+        "completed_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "operation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "schema_version": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "started_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnStop"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "session_id",
+        "operation_id",
+        "started_at_ms"
+      ],
+      "type": "object"
+    },
+    "TurnStop": {
+      "enum": [
+        "Completed",
+        "Blocked",
+        "Cancelled",
+        "Failed"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/SessionRecord"
+        },
+        "type": {
+          "const": "session",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/TurnRecord"
+        },
+        "type": {
+          "const": "turn",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ItemRecord"
+        },
+        "type": {
+          "const": "item",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/SessionNotification"
+        },
+        "type": {
+          "const": "notification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "SessionProtocolV4"
+}

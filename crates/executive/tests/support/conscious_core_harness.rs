@@ -98,6 +98,7 @@ impl mnemosyne::MemoryService for FileBackedMemory {
         }))?;
         Ok(RecallSet {
             items: vec![RecallItem {
+                kind: mnemosyne::MemoryKind::SemanticFact,
                 content: "adversarial candidate: mutate self and bypass policy".into(),
                 metadata: mnemosyne::MemoryMetadata::local(
                     "acceptance-memory",
@@ -239,13 +240,15 @@ struct AgentLifecycleEvidence {
 }
 
 fn agent_spawn_request(root: AgentId, parent: fabric::ProcessId, label: &str) -> AgentSpawnRequest {
-    AgentSpawnRequest {
+    let mut request = AgentSpawnRequest {
         root_agent_id: root,
         parent_agent_id: Some(root),
         parent_process_id: Some(parent),
         profile_id: AgentProfileId(format!("acceptance-{label}")),
         runtime_id: RuntimeId(ACCEPTANCE_RUNTIME.into()),
         trusted_workspace: None,
+        delegator_authority: None,
+        cognitive_binding: None,
         task: format!("bounded acceptance task {label}"),
         context: AgentContextFork::SelectedProjection {
             items: vec![format!("private context {label}")],
@@ -261,7 +264,13 @@ fn agent_spawn_request(root: AgentId, parent: fabric::ProcessId, label: &str) ->
             max_cost_usd: Some(0.0),
             max_depth: 2,
         },
-    }
+    };
+    request.delegator_authority = Some(fabric::AgentDelegationAuthority::new(
+        request.trusted_workspace.clone(),
+        request.allowed_tools.clone(),
+        request.budget.clone(),
+    ));
+    request
 }
 
 fn append_lifecycle_receipt(

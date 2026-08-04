@@ -13,8 +13,7 @@ use crate::tui::host_time::ClientTimer;
 use fabric::Timer;
 
 use super::super::response::{
-    format_evolution, format_genome, format_models, format_reflections, format_sessions,
-    format_status, try_read_socket_with_recorder,
+    format_models, format_sessions, format_status, try_read_socket_with_recorder,
 };
 use super::super::term_compat::TermCaps;
 use super::super::test_infra::{EventRecorder, FrameRecorder, TestConfig, TestInputReader};
@@ -31,8 +30,18 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     is_test_mode: bool,
     clock: Arc<dyn Clock>,
     workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
 ) -> anyhow::Result<()> {
-    let mut app = App::new(stream, caps, model_name.clone(), clock, workspace);
+    let mut app = App::new(
+        stream,
+        caps,
+        model_name.clone(),
+        clock,
+        workspace,
+        turn_requirements,
+    );
+    app.requested_task_kind = task_kind;
 
     // ── Test infrastructure setup ──
     let mut frame_recorder: Option<FrameRecorder> = test_config
@@ -174,11 +183,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             // Use turn_active (set by turn_start, cleared by turn_done) instead
             // of streaming (which is also cleared by process_response and would
             // trigger premature auto-submit before the turn actually completes).
-            if !app.turn_active && !reader.is_exhausted() {
+            if !app.turn_active {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
                     ClientTimer.sleep(Duration::from_millis(100)).await;
                     submit_message(&mut app, next).await;
+                    needs_redraw = true;
                 }
             }
             // All inputs consumed and last turn done
@@ -203,6 +213,8 @@ pub async fn simple_line_mode(
     model_name: String,
     _clock: Arc<dyn Clock>,
     workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -211,6 +223,7 @@ pub async fn simple_line_mode(
 
     let stdin = io::stdin();
     let mut read_buf = vec![0u8; 8192];
+    let mut response_buf = super::super::json_lines::JsonLineBuffer::default();
 
     loop {
         print!("> ");
@@ -239,10 +252,6 @@ pub async fn simple_line_mode(
                 None => (cmd, ""),
             };
             match name {
-                "reflect" | "r" => ClientRpcRequest::Reflect,
-                "reflect_now" | "rn" => ClientRpcRequest::ReflectNow,
-                "evolution" | "evo" => ClientRpcRequest::Evolution,
-                "genome" | "gene" => ClientRpcRequest::Genome,
                 "clear" => ClientRpcRequest::Clear,
                 "status" | "st" => ClientRpcRequest::Status,
                 "sessions" | "sess" => ClientRpcRequest::Sessions,
@@ -253,10 +262,28 @@ pub async fn simple_line_mode(
                     println!("{}", workspace.cwd().display());
                     continue;
                 }
-                _ => ClientRpcRequest::chat(trimmed, &workspace),
+                "reflect" | "r" | "reflect_now" | "rn" | "evolution" | "evo" | "genome"
+                | "gene" | "hooks" | "hk" | "task" | "evaluation" | "eval" | "approve" | "a"
+                | "plan" | "p" | "computer" => {
+                    println!("Unknown command: /{name}");
+                    continue;
+                }
+                _ => ClientRpcRequest::chat_with_task_kind(
+                    trimmed,
+                    None,
+                    &workspace,
+                    turn_requirements.clone(),
+                    task_kind,
+                ),
             }
         } else {
-            ClientRpcRequest::chat(trimmed, &workspace)
+            ClientRpcRequest::chat_with_task_kind(
+                trimmed,
+                None,
+                &workspace,
+                turn_requirements.clone(),
+                task_kind,
+            )
         };
         let msg = request.to_json_rpc(Some(1))?;
         let payload = serde_json::to_string(&msg)?;
@@ -285,8 +312,21 @@ pub async fn simple_line_mode(
                         return Ok(());
                     }
                     Ok(n) => {
-                        let chunk = String::from_utf8_lossy(&read_buf[..n]);
-                        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(chunk.trim()) {
+                        response_buf.push(&read_buf[..n]);
+                        loop {
+                            let line = match response_buf.take_line() {
+                                Ok(Some(line)) => line,
+                                Ok(None) => break,
+                                Err(error) => {
+                                    eprintln!(
+                                        "Error: daemon protocol contained invalid UTF-8: {error}"
+                                    );
+                                    return Ok(());
+                                }
+                            };
+                            if let Ok(msg) =
+                                serde_json::from_str::<serde_json::Value>(line.trim())
+                            {
                             // Handle out-of-band approval_request notification
                             if msg.get("method").and_then(|v| v.as_str()) == Some("approval_request")
                                 && msg.get("result").is_none()
@@ -332,6 +372,15 @@ pub async fn simple_line_mode(
                             let is_notification = msg.get("method").is_some()
                                 && msg.get("id").is_none_or(|v| v.is_null());
                             if is_notification {
+                                if let Some(receipt) = evaluation_receipt_from_protocol_message(&msg)
+                                {
+                                    println!(
+                                        "{}",
+                                        super::super::reducer::format_evaluation_receipt_ref(
+                                            &receipt
+                                        )
+                                    );
+                                }
                                 // Print streaming events that carry text content
                                 if let Some(event_type) = msg.pointer("/params/type").and_then(|v| v.as_str()) {
                                     match event_type {
@@ -362,12 +411,6 @@ pub async fn simple_line_mode(
                             // This is the actual JSON-RPC response — process it
                             if let Some(text) = msg["result"]["response"].as_str() {
                                 println!("\n{text}\n");
-                            } else if !msg["result"]["reflections"].is_null() {
-                                println!("\n{}\n", format_reflections(&msg["result"]["reflections"]));
-                            } else if !msg["result"]["genome"].is_null() {
-                                println!("\n{}\n", format_genome(&msg["result"]["genome"]));
-                            } else if !msg["result"]["evolution"].is_null() {
-                                println!("\n{}\n", format_evolution(&msg["result"]["evolution"]));
                             } else if !msg["result"]["status"].is_null() {
                                 println!("\n{}\n", format_status(&msg["result"]["status"]));
                             } else if !msg["result"]["sessions"].is_null() {
@@ -379,7 +422,8 @@ pub async fn simple_line_mode(
                             } else if let Some(err) = msg["error"]["message"].as_str() {
                                 eprintln!("Error: {err}\n");
                             }
-                            return Ok(());
+                                return Ok(());
+                            }
                         }
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -399,4 +443,25 @@ pub async fn simple_line_mode(
     }
 
     Ok(())
+}
+
+fn evaluation_receipt_from_protocol_message(
+    message: &serde_json::Value,
+) -> Option<fabric::EvaluationReceiptRef> {
+    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage, ItemPhase};
+
+    let candidate = message
+        .get("params")
+        .or_else(|| message.get("result"))
+        .unwrap_or(message);
+    let message = serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone()).ok()?;
+    match message.into_v1().ok()? {
+        ProtocolEvent::Item(item) if item.phase == ItemPhase::Completed => {
+            item.item.and_then(|record| match record.payload {
+                fabric::ItemPayload::EvaluationReceiptRef { receipt } => Some(receipt),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
 }

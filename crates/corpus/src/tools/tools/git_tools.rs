@@ -41,17 +41,11 @@ impl Tool for GitStatusTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        ToolResult {
-            content: output
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|e| format!("git_status error: {e}")),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
+        let mut result = git_command_result(ctx, start, "git_status", output);
+        if !result.is_error && result.content.trim().is_empty() {
+            result.content = "(working tree clean — no changes)".to_string();
         }
+        result
     }
 }
 
@@ -96,17 +90,11 @@ impl Tool for GitDiffTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        ToolResult {
-            content: output
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|e| format!("git_diff error: {e}")),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
+        let mut result = git_command_result(ctx, start, "git_diff", output);
+        if !result.is_error && result.content.trim().is_empty() {
+            result.content = "(no differences)".to_string();
         }
+        result
     }
 }
 
@@ -120,7 +108,7 @@ impl Tool for GitLogTool {
         "git_log"
     }
     fn description(&self) -> &str {
-        "Show recent commit history (oneline format)."
+        "Show recent commit activity (oneline format). Commit history is activity evidence only; it does not establish maintainer, contributor, team, or staffing count."
     }
     fn input_schema(&self) -> serde_json::Value {
         json!({"type":"object","properties":{"path":{"type":"string","description":"Repo path"},"count":{"type":"integer","description":"Number of commits (default: 10)"}},"required":[]})
@@ -144,17 +132,14 @@ impl Tool for GitLogTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        ToolResult {
-            content: output
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|e| format!("git_log error: {e}")),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
+        let mut result = git_command_result(ctx, start, "git_log", output);
+        if !result.is_error {
+            result.content = format!(
+                "Evidence scope: commit activity only; do not infer maintainer, contributor, team, or staffing count.\n{}",
+                result.content
+            );
         }
+        result
     }
 }
 
@@ -195,21 +180,531 @@ impl Tool for GitShowTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        ToolResult {
-            content: output
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|e| format!("git_show error: {e}")),
+        git_command_result(ctx, start, "git_show", output)
+    }
+}
+
+// ── git_restore ────────────────────────────────────────────────────────────
+
+/// Restores working-tree (and optionally staged) files to HEAD, discarding
+/// uncommitted changes for the given pathspecs. Refuses to run against an
+/// empty pathspec unless `all:true` is explicitly passed, to avoid silently
+/// nuking the entire working tree.
+pub struct GitRestoreTool;
+
+#[async_trait]
+impl Tool for GitRestoreTool {
+    fn name(&self) -> &str {
+        "git_restore"
+    }
+    fn description(&self) -> &str {
+        "Discard uncommitted changes by restoring working-tree files to HEAD. \
+         Destructive: edits to the given paths are lost."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "paths":{"type":"array","items":{"type":"string"},"description":"Pathspecs to restore (required unless all:true)"},
+            "staged":{"type":"boolean","description":"Also restore the index (unstage) before restoring the worktree (default: false)"},
+            "all":{"type":"boolean","description":"Explicitly restore the entire working tree; required to omit paths"}
+        },"required":[]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitRestoreTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let staged = input
+            .get("staged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let all = input.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+        let paths: Vec<String> = input
+            .get("paths")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|p| p.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if paths.is_empty() && !all {
+            return refused(
+                ctx,
+                start,
+                "git_restore refused: `paths` is empty. Pass explicit pathspecs, or set \
+                 `all:true` to discard changes across the entire working tree.",
+            );
+        }
+
+        let mut args: Vec<&str> = vec!["-C", path, "restore"];
+        if staged {
+            args.push("--staged");
+        }
+        args.push("--");
+        if all {
+            args.push(".");
+        }
+        for p in &paths {
+            args.push(p.as_str());
+        }
+
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_restore", output)
+    }
+}
+
+// ── git_stash ──────────────────────────────────────────────────────────────
+
+pub struct GitStashTool;
+
+#[async_trait]
+impl Tool for GitStashTool {
+    fn name(&self) -> &str {
+        "git_stash"
+    }
+    fn description(&self) -> &str {
+        "Save, list, restore, or drop stashed working-tree changes (git stash push|pop|list|drop)."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "action":{"type":"string","enum":["push","pop","list","drop"],"description":"Stash subcommand"},
+            "message":{"type":"string","description":"Optional message for `push`"}
+        },"required":["action"]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitStashTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let action = input.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        let message = input.get("message").and_then(|v| v.as_str());
+
+        let mut args: Vec<&str> = vec!["-C", path, "stash"];
+        match action {
+            "push" => {
+                args.push("push");
+                if let Some(m) = message {
+                    args.push("-m");
+                    args.push(m);
+                }
+            }
+            "pop" => args.push("pop"),
+            "list" => args.push("list"),
+            "drop" => args.push("drop"),
+            other => {
+                return refused(
+                    ctx,
+                    start,
+                    &format!(
+                        "git_stash refused: unknown action `{other}` (expected push|pop|list|drop)"
+                    ),
+                );
+            }
+        }
+
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_stash", output)
+    }
+}
+
+// ── git_reset ──────────────────────────────────────────────────────────────
+
+/// Moves HEAD to a target ref. Only `soft` and `mixed` are permitted by
+/// default. `hard` discards uncommitted working-tree changes irreversibly and
+/// is refused unless `confirm_hard:true` is explicitly passed.
+pub struct GitResetTool;
+
+#[async_trait]
+impl Tool for GitResetTool {
+    fn name(&self) -> &str {
+        "git_reset"
+    }
+    fn description(&self) -> &str {
+        "Move HEAD to a target ref. `soft`/`mixed` leave the working tree untouched; \
+         `hard` irreversibly discards uncommitted changes and requires confirm_hard:true."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "mode":{"type":"string","enum":["soft","mixed","hard"],"description":"Reset mode. `hard` requires confirm_hard:true"},
+            "target":{"type":"string","description":"Target ref, e.g. HEAD~1"},
+            "confirm_hard":{"type":"boolean","description":"Must be true to allow mode:hard (irreversibly discards working-tree changes)"}
+        },"required":["mode","target"]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitResetTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let mode = input.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+        let target = input.get("target").and_then(|v| v.as_str()).unwrap_or("");
+        let confirm_hard = input
+            .get("confirm_hard")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if target.is_empty() {
+            return refused(
+                ctx,
+                start,
+                "git_reset refused: `target` is required (e.g. HEAD~1)",
+            );
+        }
+        if !matches!(mode, "soft" | "mixed" | "hard") {
+            return refused(
+                ctx,
+                start,
+                &format!("git_reset refused: unknown mode `{mode}` (expected soft|mixed|hard)"),
+            );
+        }
+        if mode == "hard" && !confirm_hard {
+            return refused(
+                ctx,
+                start,
+                "git_reset refused: mode `hard` discards uncommitted working-tree changes \
+                 irreversibly; pass confirm_hard:true to proceed",
+            );
+        }
+
+        let output = Command::new("git")
+            .args(["-C", path, "reset", &format!("--{mode}"), target])
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_reset", output)
+    }
+}
+
+// ── shared helpers ───────────────────────────────────────────────────────────
+
+fn refused(ctx: &ToolContext, start: fabric::MonoTime, message: &str) -> ToolResult {
+    ToolResult {
+        content: message.to_string(),
+        is_error: true,
+        metadata: ToolResultMeta {
+            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+            truncated: false,
+            patch_delta: None,
+        },
+    }
+}
+
+/// Renders a completed `Command::output()` into a `ToolResult`, reporting
+/// stdout on success and stderr (with the tool name prefixed) on failure or
+/// spawn error.
+fn git_command_result(
+    ctx: &ToolContext,
+    start: fabric::MonoTime,
+    tool_name: &str,
+    output: std::io::Result<std::process::Output>,
+) -> ToolResult {
+    let elapsed = || ctx.clock.mono_now().0.saturating_sub(start.0);
+    match output {
+        Ok(o) if o.status.success() => ToolResult {
+            content: String::from_utf8_lossy(&o.stdout).to_string(),
             is_error: false,
             metadata: ToolResultMeta {
-                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                execution_time_ms: elapsed(),
                 truncated: false,
                 patch_delta: None,
             },
-        }
+        },
+        Ok(o) => ToolResult {
+            content: format!("{tool_name} error: {}", String::from_utf8_lossy(&o.stderr)),
+            is_error: true,
+            metadata: ToolResultMeta {
+                execution_time_ms: elapsed(),
+                truncated: false,
+                patch_delta: None,
+            },
+        },
+        Err(e) => ToolResult {
+            content: format!("{tool_name} error: {e}"),
+            is_error: true,
+            metadata: ToolResultMeta {
+                execution_time_ms: elapsed(),
+                truncated: false,
+                patch_delta: None,
+            },
+        },
     }
 }
 
 // ── registration helper ────────────────────────────────────────────────────
+
+// ── git_add ──────────────────────────────────────────────────────────────
+
+pub struct GitAddTool;
+
+#[async_trait]
+impl Tool for GitAddTool {
+    fn name(&self) -> &str {
+        "git_add"
+    }
+    fn description(&self) -> &str {
+        "Stage changes for commit. Provide `paths` (array) or `all:true` to stage everything."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "paths":{"type":"array","items":{"type":"string"},"description":"Pathspecs to stage"},
+            "all":{"type":"boolean","description":"Stage all changes (git add -A)"}
+        },"required":[]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitAddTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let all = input.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+        let paths: Vec<String> = input
+            .get("paths")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !all && paths.is_empty() {
+            return refused(ctx, start, "git_add refused: provide `paths` or all:true");
+        }
+        let mut args: Vec<String> = vec!["-C".into(), path.into(), "add".into()];
+        if all {
+            args.push("-A".into());
+        } else {
+            args.push("--".into());
+            args.extend(paths);
+        }
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_add", output)
+    }
+}
+
+// ── git_commit ─────────────────────────────────────────────────────────────
+
+pub struct GitCommitTool;
+
+#[async_trait]
+impl Tool for GitCommitTool {
+    fn name(&self) -> &str {
+        "git_commit"
+    }
+    fn description(&self) -> &str {
+        "Create a commit with a message. `all:true` also stages tracked changes first (-a). \
+         Uses the configured git author; does not amend."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "message":{"type":"string","description":"Commit message"},
+            "all":{"type":"boolean","description":"Stage all tracked changes before committing (-a)"}
+        },"required":["message"]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitCommitTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let message = input
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if message.is_empty() {
+            return refused(ctx, start, "git_commit refused: `message` is required");
+        }
+        let all = input.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+        let mut args: Vec<&str> = vec!["-C", path, "commit"];
+        if all {
+            args.push("-a");
+        }
+        args.push("-m");
+        args.push(message);
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_commit", output)
+    }
+}
+
+// ── git_branch ─────────────────────────────────────────────────────────────
+
+pub struct GitBranchTool;
+
+#[async_trait]
+impl Tool for GitBranchTool {
+    fn name(&self) -> &str {
+        "git_branch"
+    }
+    fn description(&self) -> &str {
+        "List, create, checkout, or delete branches. `delete` uses -d; force-delete (-D) \
+         requires force:true."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "action":{"type":"string","enum":["list","create","checkout","delete"],"description":"Branch operation"},
+            "name":{"type":"string","description":"Branch name (required for create/checkout/delete)"},
+            "force":{"type":"boolean","description":"Force-delete (-D) for `delete`"}
+        },"required":["action"]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitBranchTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let action = input.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let force = input
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let needs_name = matches!(action, "create" | "checkout" | "delete");
+        if needs_name && name.is_empty() {
+            return refused(
+                ctx,
+                start,
+                &format!("git_branch refused: `{action}` requires `name`"),
+            );
+        }
+        let args: Vec<&str> = match action {
+            "list" => vec!["-C", path, "branch", "--all"],
+            "create" => vec!["-C", path, "checkout", "-b", name],
+            "checkout" => vec!["-C", path, "checkout", name],
+            "delete" => vec!["-C", path, "branch", if force { "-D" } else { "-d" }, name],
+            other => {
+                return refused(
+                    ctx,
+                    start,
+                    &format!("git_branch refused: unknown action `{other}` (list|create|checkout|delete)"),
+                );
+            }
+        };
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_branch", output)
+    }
+}
+
+// ── git_push ───────────────────────────────────────────────────────────────
+
+/// Pushes commits to a remote. This is network egress (a potential data-
+/// exfiltration path), so it is NOT a universal tool — only profiles that
+/// explicitly grant it can push. Force pushes require `force:true` and use
+/// `--force-with-lease` to avoid clobbering others' work.
+pub struct GitPushTool;
+
+#[async_trait]
+impl Tool for GitPushTool {
+    fn name(&self) -> &str {
+        "git_push"
+    }
+    fn description(&self) -> &str {
+        "Push commits to a remote (network egress). Defaults to the current branch on `origin`. \
+         Force push requires force:true (uses --force-with-lease)."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "remote":{"type":"string","description":"Remote name (default: origin)"},
+            "branch":{"type":"string","description":"Branch to push (default: current)"},
+            "set_upstream":{"type":"boolean","description":"Set upstream tracking (-u)"},
+            "force":{"type":"boolean","description":"Force push with lease"}
+        },"required":[]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitPushTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let remote = input
+            .get("remote")
+            .and_then(|v| v.as_str())
+            .unwrap_or("origin");
+        let branch = input.get("branch").and_then(|v| v.as_str());
+        let set_upstream = input
+            .get("set_upstream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let force = input
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mut args: Vec<&str> = vec!["-C", path, "push"];
+        if set_upstream {
+            args.push("-u");
+        }
+        if force {
+            args.push("--force-with-lease");
+        }
+        args.push(remote);
+        if let Some(b) = branch {
+            args.push(b);
+        }
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_push", output)
+    }
+}
 
 pub fn git_tools() -> Vec<Arc<dyn Tool>> {
     vec![
@@ -217,6 +712,13 @@ pub fn git_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(GitDiffTool),
         Arc::new(GitLogTool),
         Arc::new(GitShowTool),
+        Arc::new(GitRestoreTool),
+        Arc::new(GitStashTool),
+        Arc::new(GitResetTool),
+        Arc::new(GitAddTool),
+        Arc::new(GitCommitTool),
+        Arc::new(GitBranchTool),
+        Arc::new(GitPushTool),
     ]
 }
 
@@ -226,12 +728,36 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn all_git_tools_are_read_only() {
-        for t in git_tools() {
+    fn read_only_git_tools_are_read_only() {
+        let read_only: Vec<Box<dyn Tool>> = vec![
+            Box::new(GitStatusTool),
+            Box::new(GitDiffTool),
+            Box::new(GitLogTool),
+            Box::new(GitShowTool),
+        ];
+        for t in read_only {
             assert_eq!(t.permission_level(), PermissionLevel::L0, "{}", t.name());
             assert_eq!(
                 t.concurrency_class(),
                 ConcurrencyClass::ReadOnly,
+                "{}",
+                t.name()
+            );
+        }
+    }
+
+    #[test]
+    fn write_git_tools_are_l1_side_effect() {
+        let writes: Vec<Box<dyn Tool>> = vec![
+            Box::new(GitRestoreTool),
+            Box::new(GitStashTool),
+            Box::new(GitResetTool),
+        ];
+        for t in writes {
+            assert_eq!(t.permission_level(), PermissionLevel::L1, "{}", t.name());
+            assert_eq!(
+                t.concurrency_class(),
+                ConcurrencyClass::SideEffect,
                 "{}",
                 t.name()
             );
@@ -268,6 +794,142 @@ mod tests {
         };
         let result = tool
             .execute(json!({"path": tmp.path().to_str().unwrap()}), &ctx)
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+    }
+
+    async fn init_repo_with_commit(tmp: &std::path::Path) {
+        for args in [
+            vec!["init"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "test"],
+        ] {
+            tokio::process::Command::new("git")
+                .args(&args)
+                .current_dir(tmp)
+                .output()
+                .await
+                .unwrap();
+        }
+        tokio::fs::write(tmp.join("a.txt"), "hello\n")
+            .await
+            .unwrap();
+        for args in [vec!["add", "."], vec!["commit", "-m", "init"]] {
+            tokio::process::Command::new("git")
+                .args(&args)
+                .current_dir(tmp)
+                .output()
+                .await
+                .unwrap();
+        }
+    }
+
+    fn test_ctx(working_dir: std::path::PathBuf) -> ToolContext {
+        ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir,
+            session_id: "test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn git_restore_refuses_empty_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo_with_commit(tmp.path()).await;
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        let result = GitRestoreTool
+            .execute(json!({"path": tmp.path().to_str().unwrap()}), &ctx)
+            .await;
+        assert!(result.is_error, "{}", result.content);
+    }
+
+    #[tokio::test]
+    async fn git_restore_discards_uncommitted_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo_with_commit(tmp.path()).await;
+        tokio::fs::write(tmp.path().join("a.txt"), "modified\n")
+            .await
+            .unwrap();
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        let result = GitRestoreTool
+            .execute(
+                json!({"path": tmp.path().to_str().unwrap(), "paths": ["a.txt"]}),
+                &ctx,
+            )
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        let contents = tokio::fs::read_to_string(tmp.path().join("a.txt"))
+            .await
+            .unwrap();
+        assert_eq!(contents, "hello\n");
+    }
+
+    #[tokio::test]
+    async fn git_stash_push_and_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo_with_commit(tmp.path()).await;
+        tokio::fs::write(tmp.path().join("a.txt"), "modified\n")
+            .await
+            .unwrap();
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        let push = GitStashTool
+            .execute(
+                json!({"path": tmp.path().to_str().unwrap(), "action": "push"}),
+                &ctx,
+            )
+            .await;
+        assert!(!push.is_error, "{}", push.content);
+        let list = GitStashTool
+            .execute(
+                json!({"path": tmp.path().to_str().unwrap(), "action": "list"}),
+                &ctx,
+            )
+            .await;
+        assert!(!list.is_error, "{}", list.content);
+        assert!(!list.content.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn git_stash_refuses_unknown_action() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo_with_commit(tmp.path()).await;
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        let result = GitStashTool
+            .execute(
+                json!({"path": tmp.path().to_str().unwrap(), "action": "nuke"}),
+                &ctx,
+            )
+            .await;
+        assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn git_reset_hard_requires_confirmation() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo_with_commit(tmp.path()).await;
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        let result = GitResetTool
+            .execute(
+                json!({"path": tmp.path().to_str().unwrap(), "mode": "hard", "target": "HEAD"}),
+                &ctx,
+            )
+            .await;
+        assert!(result.is_error, "{}", result.content);
+    }
+
+    #[tokio::test]
+    async fn git_reset_mixed_runs() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo_with_commit(tmp.path()).await;
+        let ctx = test_ctx(tmp.path().to_path_buf());
+        let result = GitResetTool
+            .execute(
+                json!({"path": tmp.path().to_str().unwrap(), "mode": "mixed", "target": "HEAD"}),
+                &ctx,
+            )
             .await;
         assert!(!result.is_error, "{}", result.content);
     }

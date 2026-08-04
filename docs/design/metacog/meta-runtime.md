@@ -1,5 +1,9 @@
 # MetaRuntime — Self-Modification Engine
 
+> **Status:** Historical design. Metacog no longer uses the former
+> `impl/meta_runtime` layout; current evidence-backed governance is documented
+> in `crates/metacog/README.md`.
+
 > New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 > The MetaRuntime is Aletheon's self-modification engine. It reads its own genome, generates candidate runtime modifications, tests them in sandbox, evaluates results, and migrates to improved versions. No direct production updates — all changes go through the evaluate-then-migrate pipeline.

@@ -73,6 +73,7 @@ mod goal_runtime_tests {
             models: vec!["model".into()],
             max_context_length: None,
             pricing: None,
+            backpressure: Default::default(),
         }
     }
 
@@ -210,6 +211,7 @@ mod goal_runtime_tests {
             inference,
             llm,
             &definitions,
+            &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
@@ -222,6 +224,57 @@ mod goal_runtime_tests {
         assert_eq!(profile.max_iterations, 3);
         assert_eq!(profile.max_tool_calls, 128);
         assert!(registry.resolve(&profile.id).is_ok());
+    }
+
+    #[tokio::test]
+    async fn universal_tools_are_merged_into_every_profile() {
+        let directory = tempfile::tempdir().unwrap();
+        // A narrow profile that does NOT list git or task tools.
+        std::fs::write(
+            directory.path().join("narrow.md"),
+            "---\nname: narrow\ndescription: narrow\ntools: [file_read]\n---\nNarrow.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
+        // Catalog includes universal tools the profile did not declare.
+        let definitions = ["file_read", "git_status", "git_reset", "task_create"]
+            .into_iter()
+            .map(|name| fabric::ToolDefinition {
+                name: name.into(),
+                description: name.into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            })
+            .collect::<Vec<_>>();
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &definitions,
+            &crate::composition::config::ExecutiveConfig::default(),
+            &crate::composition::config::AgentProfilesConfig::default(),
+        )
+        .await
+        .unwrap();
+        let profile = result.profiles.get("narrow").unwrap();
+        assert!(profile.allowed_tools.contains(&"file_read".to_string()));
+        assert!(
+            profile.allowed_tools.contains(&"git_status".to_string()),
+            "git_status must be universally available regardless of profile"
+        );
+        assert!(
+            !profile.allowed_tools.contains(&"git_reset".to_string()),
+            "mutating git tools must not bypass profile and transaction governance"
+        );
+        assert!(
+            profile.allowed_tools.contains(&"task_create".to_string()),
+            "task_create must be universally available"
+        );
     }
 
     #[tokio::test]
@@ -257,6 +310,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &profiles,
@@ -298,6 +352,7 @@ mod goal_runtime_tests {
             inference.clone(),
             llm.clone(),
             &definitions,
+            &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &unknown_default,
         )
@@ -313,6 +368,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &unknown_default,
@@ -347,6 +403,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
@@ -387,6 +444,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
@@ -433,6 +491,7 @@ mod goal_runtime_tests {
             inference,
             llm,
             &definitions,
+            &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
@@ -471,6 +530,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),

@@ -6,7 +6,8 @@
 > An Agent that is not merely executed, but continuously exists.
 > Deep integration with operating system kernels and system services.
 
-**Platform:** Linux (Arch Linux primary) / Android / Embedded
+**Production platform:** Linux (Arch Linux primary)<br>
+**Designed targets:** Android / Embedded (not implemented)
 **Created:** 2026-06-06
 **Author:** aurobear
 
@@ -61,7 +62,7 @@ with perception, memory, decision-making, and execution.
 | **Full-stack perception** | From kernel events to user behavior |
 | **Autonomous decision** | Self-directed planning and execution based on perception and memory |
 | **Security by default** | Tiered permissions, auditable, rollback-capable |
-| **Offline-first** | Local inference preferred, cloud fallback for complex tasks |
+| **Hybrid inference target** | Cloud is the shipped default; configured local Ollama can participate in provider failover |
 | **Cross-platform** | Linux / Android / Embedded with unified architecture |
 
 ---
@@ -103,21 +104,24 @@ Linux has all the building blocks:
 
 ## 3. How It Differs
 
+The table below describes the intended end-state differentiation. For current
+production status, use the evidence-backed matrix in [Section 6](#6-current-capabilities).
+
 ```
 +----------------+-------------------+---------------------+
 |                |  Existing Agents  |  Aletheon           |
 |                |  (Claude/GPT etc) |  (this project)     |
 +----------------+-------------------+---------------------+
 | Runs in        |  Cloud            |  Local system svc   |
-| System sense   |  None / via tools |  eBPF + /proc       |
+| System sense   |  None / via tools |  /proc today; eBPF planned |
 | Execution      |  API calls        |  Direct syscall     |
 | Persistence    |  Session-level    |  Always-on (systemd)|
 | Memory         |  Context window   |  Persistent store   |
 | Autonomy       |  Human-triggered  |  Event-driven       |
 | Security       |  Platform-managed |  Local policy       |
-| Latency        |  100ms+ network   |  Local (no network) |
-| Privacy        |  Data to cloud    |  Data stays local   |
-| Dependency     |  Online required  |  Offline capable    |
+| Latency        |  100ms+ network   |  Local runtime; inference may use cloud |
+| Privacy        |  Data to cloud    |  Local state; configured providers receive prompts |
+| Dependency     |  Online required  |  Cloud inference today; local inference planned |
 | Role           |  "Tool"           |  "Part of the OS"   |
 +----------------+-------------------+---------------------+
 ```
@@ -180,7 +184,8 @@ See [the architecture overview](docs/design/architecture-overview.md) and [desig
 
 ## 5. Crate Architecture
 
-Aletheon is organized as nine domain crates plus one executable assembly package:
+Aletheon is organized as sixteen domain/runtime crates plus one executable
+assembly crate and two example crates:
 
 | Crate | Concept | Role |
 |---|---|---|
@@ -193,7 +198,13 @@ Aletheon is organized as nine domain crates plus one executable assembly package
 | `interact` | Interface | reusable CLI and TUI implementation |
 | `mnemosyne` | Memory | cognitive memory backends (episodic/semantic/procedural/self) |
 | `metacog` | Meta | self-evolution scaffolding |
-| `bin` | Assembly | unified `aletheon` executable entry point; no domain logic |
+| `gateway` | Channels | channel-neutral intent/effect dispatch and transports |
+| `kernel` | Kernel services | clock/timer implementations and process/operation foundations |
+| `platform` | Host platform | Linux host capability contracts and adapters (Android/macOS/Windows not implemented) |
+| `runtime` | Agent runtime contracts | external runtime manifests and deterministic selection |
+| `hardware` | Embodiment | typed hardware permits, receipts, and deterministic simulator |
+| `execd` | Isolated executor | privileged/isolated filesystem execution daemon |
+| `aletheon` | Assembly | unified executable entry point; no domain logic |
 
 Executable entry point:
 - `aletheon` — assembled by `crates/aletheon` (`crates/aletheon/Cargo.toml`); provides TUI, `daemon`, and `exec` modes.
@@ -201,13 +212,18 @@ Executable entry point:
 ### Crate Dependency Graph
 
 ```
-aletheon (crates/aletheon) ---> interact, executive, fabric, cognit, corpus
-interact               ---> fabric, corpus
-executive              ---> fabric, cognit, corpus, dasein, mnemosyne, metacog
-cognit                 ---> fabric
+aletheon  ---> executive, interact, fabric
+executive ---> agora, cognit, corpus, dasein, gateway, hardware,
+              kernel, metacog, mnemosyne, runtime, fabric
+interact  ---> executive, fabric
+corpus    ---> platform, kernel, fabric
+agora/cognit/dasein/metacog/mnemosyne ---> kernel, fabric
+gateway/hardware/kernel ---> fabric
+execd     ---> platform
 ```
 
-> `crates/aletheon` is an assembly boundary only. Domain behavior remains in the nine domain crates.
+> `crates/aletheon` is an assembly boundary only. Domain behavior remains in
+> the domain/runtime crates listed above.
 
 ---
 
@@ -220,18 +236,18 @@ cognit                 ---> fabric
 | DaemonHost (Unix socket JSON-RPC) | ✅ Stable | `crates/executive/src/host/mod.rs` | `crates/executive/tests/` |
 | SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/executive/src/host/systemd.rs` | `crates/executive/tests/` |
 | ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/executive/src/host/container.rs` | `crates/executive/tests/` |
-| JSON-RPC server (line-delimited) | ✅ Stable | `crates/executive/src/impl/daemon/server.rs` | `crates/executive/tests/` |
+| JSON-RPC server (line-delimited) | ✅ Stable | `crates/executive/src/host/daemon/server.rs` | `crates/executive/tests/` |
 | TUI client (`interact`, assembled by `bin`) | ✅ Stable | `crates/interact/src/tui/` | `crates/interact/src/tui/test_infra.rs` |
 | ReActLoop inference engine | ✅ Stable | `crates/cognit/src/harness/linear/mod.rs` | `crates/executive/tests/` |
-| Multi-session support | ✅ Stable | `crates/executive/src/impl/daemon/session_manager.rs` | `crates/executive/tests/` |
-| Health check endpoint | ✅ Stable | `crates/executive/src/impl/daemon/handler/rpc.rs` | `crates/executive/tests/` |
+| Multi-session support | ✅ Stable | `crates/executive/src/host/daemon/session_manager.rs` | `crates/executive/tests/` |
+| Health check endpoint | ✅ Stable | `crates/executive/src/host/daemon/handler/rpc.rs` | `crates/executive/tests/` |
 | Bash/File/Grep tools | ✅ Stable | `crates/corpus/src/tools/tools/` | `crates/corpus/src/tools/` |
-| Provider abstraction (Anthropic / OpenAI compatible) | ✅ Stable | `crates/cognit/src/impl/provider_registry.rs` | `crates/executive/tests/` |
-| Session persistence (SQLite) | ✅ Stable | `crates/executive/src/impl/session/store.rs` | `crates/executive/tests/` |
+| Provider abstraction (Anthropic / OpenAI compatible) | ✅ Stable | `crates/cognit/src/composition/provider_registry.rs` | `crates/executive/tests/` |
+| Session persistence (SQLite) | ✅ Stable | `crates/executive/src/adapters/session/store.rs` | `crates/executive/tests/` |
 | Hook system (lifecycle hooks) | ✅ Stable | `crates/corpus/src/hook/` | `crates/executive/tests/` |
 | Bubblewrap Sandbox | ✅ Stable | `crates/corpus/src/security/sandbox/bubblewrap.rs` | `crates/corpus/tests/` |
-| Multi-agent Collaboration | ✅ Stable | `crates/executive/src/impl/orchestration/agent.rs` | `crates/executive/tests/` |
-| io_uring IPC backend | 🔧 Experimental | `crates/fabric/src/ipc/backends/io_uring.rs` | `crates/fabric/tests/` |
+| Multi-agent Collaboration | ✅ Stable | `crates/executive/src/application/orchestration/agent.rs` | `crates/executive/tests/` |
+| io_uring IPC backend | 🔧 Experimental | `crates/fabric/src/ipc/backends/io_uring_transport.rs` | `crates/fabric/tests/` |
 | Local/Offline Model | 🔧 Experimental | — | — |
 | Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/evolution_loop/` | `crates/executive/tests/self_evolution_loop_test.rs` |
 | eBPF kernel awareness | 📋 Design | `crates/fabric/src/ipc/bus/kernel_bus.rs` | — |
@@ -263,7 +279,9 @@ These have code but are gated behind features, environment variables, or exist o
 - **io_uring backend** — High-performance IPC backend using Linux io_uring. Code exists but not yet the default transport.
 - **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/evolution_loop/`. Requires explicit opt-in.
 - **eBPF probes** — Kernel-level perception via eBPF. Partial implementation in `kernel_bus.rs`.
-- **Local/Offline Model** — Support for locally-hosted inference engines (llama.cpp, Ollama). Experimental integration path.
+- **Local/Offline Model** — Configured Ollama is supported through the
+  OpenAI-compatible scheduler/failover path but is disabled in shipped
+  configuration. llama.cpp routing remains planned.
 
 ### 6.4 Planned (design only, no implementation)
 
@@ -279,6 +297,9 @@ These are documented in design docs but have no working code:
 ---
 
 ## 7. Linux Platform Design
+
+This section is a design target. eBPF and FUSE are not production capabilities;
+their current status is recorded in Section 6.
 
 ### eBPF Perception
 
@@ -348,6 +369,8 @@ world-writable to work around stale login credentials.
 
 ## 8. Android Platform Design
 
+Design only; there is no Android build target in the current workspace.
+
 - AccessibilityService for screen perception
 - NotificationListenerService for notification capture
 - Foreground Service for persistent runtime
@@ -357,6 +380,9 @@ world-writable to work around stale login credentials.
 ---
 
 ## 9. Embedded/Board Design
+
+Design only; the repository currently contains a deterministic hardware
+simulator, not real board transports.
 
 | Board | NPU | Use Case | Cost |
 |-------|-----|----------|------|
@@ -392,6 +418,21 @@ L3 - Forbidden (never execute)
   +-- Disable security services
 ```
 
+The installed CLI exposes three host permission profiles:
+
+| Mode | Short command | Filesystem / commands | Network | Approvals |
+|---|---|---|---|---|
+| `safe` (default) | `aletheon -P safe` | Workspace-scoped and policy-guarded | Configured allowlist | On request |
+| `dev` | `aletheon -P dev` | Workspace-scoped and policy-guarded | Open | On request |
+| `full` | `aletheon -P full` or `aletheon --full` | Host-wide, unsandboxed | Open | Never |
+
+`full` is intended only for a trusted, single-user development machine. It lets
+model-selected tools invoke host commands (including `sudo` when the operating
+system permits it) without an Aletheon confirmation. Command and tool audit
+events remain enabled. The compatibility names `restricted`, `developer`, and
+`unrestricted` are accepted by `--permission-mode`; launchers may alternatively
+set `ALETHEON_PERMISSION_MODE=safe|dev|full`.
+
 ---
 
 ## 11. Cognitive Engine
@@ -404,6 +445,9 @@ ReAct (Think-Act-Observe) loop with multiple reasoning modes:
 ---
 
 ## 12. Memory System
+
+The diagram is a target hierarchy. SQLite-backed memory is implemented; vector
+database and cross-device shared memory tiers are planned.
 
 ```
 L1: Working Memory (RAM, context window)
@@ -421,6 +465,9 @@ L4: Shared Memory (Cloud/NAS, E2E encrypted)
 ---
 
 ## 13. Perception Layer
+
+The list below is the target perception surface. Individual sources are not all
+implemented; consult Section 6 before relying on one operationally.
 
 Four perception domains:
 - **System**: eBPF, /proc, /sys, journald, inotify, udev
@@ -441,6 +488,9 @@ Execution sandbox per tool call:
 ---
 
 ## 15. Hybrid Inference
+
+Design target only. Production inference currently uses configured cloud or
+OpenAI-compatible providers; the local-model branch shown below is experimental.
 
 ```
 User Request / System Event
@@ -476,7 +526,7 @@ User Request / System Event
 | Phase 3.5 | Hook + MCP + Plugin + Agent system | Done |
 | Phase 4 | Streaming + context compression + perception-to-engine | Done |
 | P0 (stabilization) | cargo check/clippy clean, all tests pass, Legacy Engine removal | Done |
-| P1 (stabilization) | EventBus to CommunicationBus partial migration, large file decomposition | Done |
+| P1 (stabilization) | EventBus migration and initial large-file decomposition | Done |
 | P2 (stabilization) | ReActLoop circuit breaker, goal tracker, reflection, tool exec sub-modules | Done |
 | P3 (stabilization) | Docs alignment with codebase reality | Done |
 | Phase 5 | eBPF perception + vector memory + FUSE | Experimental/Planned |
@@ -492,23 +542,23 @@ See [Section 6 (Current Capabilities)](#6-current-capabilities) for detailed Sta
 |-------|-----------|-----------|
 | **Core language** | Rust | Safe, performant, system-level, cross-platform |
 | **Scripting** | Python | Rich ecosystem, rapid development |
-| **Local inference** | llama.cpp | Lightweight, cross-platform, active community |
-| **Vector store** | LanceDB | Local, Rust-native |
+| **Local inference (planned)** | llama.cpp | Lightweight, cross-platform, active community |
+| **Vector store (planned)** | LanceDB | Local, Rust-native |
 | **Relational store** | SQLite | Embedded, zero-config |
 | **IPC** | Unix Socket + serde_json | Low latency, simple |
-| **Sandbox** | bubblewrap + seccomp + landlock | Lightweight isolation |
-| **FUSE** | fuse3 (libfuse 3.x) | Userland filesystem |
-| **eBPF** | libbpf + BPF CO-RE | Kernel-level perception |
+| **Sandbox** | bubblewrap namespaces | Filesystem/network isolation; seccomp and landlock remain planned hardening |
+| **FUSE (planned)** | fuse3 (libfuse 3.x) | Userland filesystem |
+| **eBPF (planned)** | libbpf + BPF CO-RE | Kernel-level perception |
 | **Build** | Cargo workspace | Rust ecosystem |
 
-The minimum supported Rust version is **1.85**. The repository pins that
+The minimum supported Rust version is **1.88**. The repository pins that
 toolchain for reproducible builds, while CI also verifies the current stable
 release used by rolling distributions such as Arch Linux.
 
 ```bash
 rustup show
-cargo +1.85.0 check --workspace
-cargo +stable check --workspace
+bash scripts/cargo-agent.sh +1.88.0 check --workspace
+bash scripts/cargo-agent.sh +stable check --workspace
 ```
 
 ---
@@ -557,5 +607,5 @@ cargo +stable check --workspace
 
 ---
 
-*Document version: 0.2.0*
-*Last updated: 2026-06-14*
+*Document version: 0.3.0*
+*Last updated: 2026-07-31*

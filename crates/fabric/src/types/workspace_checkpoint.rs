@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+pub use crate::types::workspace_identity::WorkspaceIdentity;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CheckpointId(pub Uuid);
 
@@ -28,21 +30,6 @@ impl CheckpointId {
 impl Default for CheckpointId {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Canonical workspace identity, resisting path-alias / symlink bypass.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkspaceIdentity {
-    pub canonical_path: PathBuf,
-    pub repo_fingerprint: Option<String>,
-}
-
-impl WorkspaceIdentity {
-    /// Whether a restore against `other` is allowed: identities must match
-    /// exactly (fail-closed defense against restoring into the wrong tree).
-    pub fn matches(&self, other: &WorkspaceIdentity) -> bool {
-        self == other
     }
 }
 

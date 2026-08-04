@@ -96,6 +96,7 @@ fn request(
                 .unwrap(),
             session_id: "test".into(),
             working_dir: std::env::temp_dir(),
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
         },
         control: InvocationControl::default(),
     }

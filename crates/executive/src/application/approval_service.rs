@@ -62,6 +62,7 @@ pub trait ApprovalUseCases: Send + Sync {
 pub struct ApprovalService {
     repository: Arc<Mutex<ApprovalRepository>>,
     apply: Option<Arc<ApplyCoordinator>>,
+    dasein: Option<Arc<dyn DaseinMutationCoordinator>>,
     clock: Arc<dyn Clock>,
     owner_process: Arc<tokio::sync::Mutex<Option<ProcessId>>>,
 }
@@ -76,9 +77,18 @@ impl ApprovalService {
         Self {
             repository,
             apply,
+            dasein: None,
             clock,
             owner_process,
         }
+    }
+
+    pub fn with_dasein_coordinator(
+        mut self,
+        coordinator: Arc<dyn DaseinMutationCoordinator>,
+    ) -> Self {
+        self.dasein = Some(coordinator);
+        self
     }
 
     fn map_repository_error(error: ApprovalRepositoryError) -> ApprovalServiceError {
@@ -135,6 +145,35 @@ impl ApprovalUseCases for ApprovalService {
         &self,
         request: ResolveApprovalRequest,
     ) -> Result<ApprovalSnapshot, ApprovalServiceError> {
+        // A Metacog apply may have failed after the human decision became
+        // durable. Repeating the same approve request resumes idempotent apply
+        // instead of asking the operator to create a second approval.
+        if matches!(request.decision, ApprovalDecision::Approve) {
+            let existing = {
+                self.repository
+                    .lock()
+                    .unwrap()
+                    .get(request.approval_id)
+                    .map_err(Self::map_repository_error)?
+            };
+            if let Some(existing) = existing {
+                if existing.category == ApprovalCategory::DaseinModification
+                    && existing.status == fabric::ApprovalStatus::Approved
+                    && existing.owner_id == request.context.principal_id
+                {
+                    self.dasein
+                        .as_ref()
+                        .ok_or_else(|| {
+                            ApprovalServiceError::RuntimeUnavailable(
+                                "approved metacognition runtime is unavailable".into(),
+                            )
+                        })?
+                        .apply(existing.clone())
+                        .await?;
+                    return Ok(existing);
+                }
+            }
+        }
         let approval = self
             .repository
             .lock()
@@ -166,7 +205,24 @@ impl ApprovalUseCases for ApprovalService {
                 .coordinate(approval.id, owner, CancellationToken::new())
                 .await
                 .map_err(|error| ApprovalServiceError::Store(error.to_string()))?;
+        } else if approval.category == ApprovalCategory::DaseinModification
+            && matches!(approval.status, fabric::ApprovalStatus::Approved)
+        {
+            self.dasein
+                .as_ref()
+                .ok_or_else(|| {
+                    ApprovalServiceError::RuntimeUnavailable(
+                        "approved metacognition runtime is unavailable".into(),
+                    )
+                })?
+                .apply(approval.clone())
+                .await?;
         }
         Ok(approval)
     }
+}
+
+#[async_trait]
+pub trait DaseinMutationCoordinator: Send + Sync {
+    async fn apply(&self, approval: ApprovalSnapshot) -> Result<(), ApprovalServiceError>;
 }

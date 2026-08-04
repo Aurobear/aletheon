@@ -39,6 +39,9 @@ fn request() -> TurnRequest {
         input: "current request".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 
@@ -81,6 +84,7 @@ fn recalled() -> RecallSet {
     let observed = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
     RecallSet {
         items: vec![RecallItem {
+            kind: mnemosyne::MemoryKind::SemanticFact,
             content: "selected memory marker".into(),
             metadata: MemoryMetadata {
                 record_id: "memory-1".into(),

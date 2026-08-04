@@ -5,12 +5,18 @@ root=$(cd -- "$(dirname -- "$0")/../../.." && pwd -P)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/candidate" "$tmp/installed" "$tmp/runtime" \
-  "$tmp/proc/101" "$tmp/proc/202" "$tmp/state"
+  "$tmp/proc/101" "$tmp/proc/202" "$tmp/proc/303" "$tmp/state"
 
 cat >"$tmp/candidate/aletheon" <<'EOF'
 #!/usr/bin/env bash
 case "${FAKE_CLIENT_MODE:-success}" in
-  success) printf 'ALETHEON_DEPLOYMENT_OK\n' ;;
+  success)
+    if [[ ${1:-} == memory-agent ]]; then
+      printf '{"dry_run": true}\n'
+    else
+      printf 'ALETHEON_DEPLOYMENT_OK\n'
+    fi
+    ;;
   empty) exit 0 ;;
   fail) exit 7 ;;
 esac
@@ -19,10 +25,13 @@ chmod +x "$tmp/candidate/aletheon"
 cp "$tmp/candidate/aletheon" "$tmp/installed/aletheon"
 cp "$tmp/candidate/aletheon" "$tmp/runtime/core"
 cp "$tmp/candidate/aletheon" "$tmp/runtime/user"
+cp "$tmp/candidate/aletheon" "$tmp/runtime/memory-agent"
 ln -s "$tmp/installed/aletheon" "$tmp/proc/101/exe"
 ln -s "$tmp/installed/aletheon" "$tmp/proc/202/exe"
+ln -s "$tmp/installed/aletheon" "$tmp/proc/303/exe"
 printf '0\n' >"$tmp/state/core.restarts"
 printf '0\n' >"$tmp/state/user.restarts"
+printf '0\n' >"$tmp/state/memory.restarts"
 
 cat >"$tmp/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -32,16 +41,25 @@ if [[ ${1:-} == --user ]]; then scope=user; shift; fi
 [[ ${1:-} == show ]] || exit 0
 shift
 unit=${1:-}
+if [[ "$unit" == aletheon-memory-agent.service ]]; then scope=memory; fi
 shift
 property=
 for arg in "$@"; do
   case "$arg" in --property=*) property=${arg#--property=} ;; esac
 done
 case "$property" in
-  MainPID) [[ "$scope" == core ]] && echo 101 || echo 202 ;;
+  MainPID)
+    case "$scope" in core) echo 101 ;; user) echo 202 ;; memory) echo 303 ;; esac
+    ;;
   ActiveState) echo active ;;
   NRestarts) cat "$FIXTURE_STATE/$scope.restarts" ;;
-  ExecStart) echo "{ path=$ALETHEON_INSTALLED_BINARY ; argv[]=$ALETHEON_INSTALLED_BINARY daemon ; }" ;;
+  ExecStart)
+    if [[ "$scope" == memory ]]; then
+      echo "{ path=$ALETHEON_INSTALLED_BINARY ; argv[]=$ALETHEON_INSTALLED_BINARY memory-agent serve --official-user-socket ; }"
+    else
+      echo "{ path=$ALETHEON_INSTALLED_BINARY ; argv[]=$ALETHEON_INSTALLED_BINARY daemon ; }"
+    fi
+    ;;
   *) echo "unsupported property: $property for $unit" >&2; exit 2 ;;
 esac
 EOF
@@ -79,6 +97,7 @@ export ALETHEON_SMOKE_TIMEOUT_SECONDS=2
 export ALETHEON_USER_SOCKET="$tmp/aletheon.sock"
 export ALETHEON_CORE_UNIT=aletheon-core.service
 export ALETHEON_USER_UNIT=aletheon.service
+export ALETHEON_MEMORY_AGENT_UNIT=aletheon-memory-agent.service
 
 source "$root/scripts/lib/aletheon/common.sh"
 source "$root/scripts/lib/aletheon/runtime_gate.sh"
@@ -114,11 +133,12 @@ case ${1:-all} in
       cmd_verify_runtime_provenance
     ln -sfn "$tmp/installed/aletheon" "$tmp/proc/202/exe"
 
-    rm "$tmp/proc/101/exe" "$tmp/proc/202/exe"
+    rm "$tmp/proc/101/exe" "$tmp/proc/202/exe" "$tmp/proc/303/exe"
     cmd_verify_runtime_provenance >"$tmp/out"
     grep -Fq 'installed runtime provenance verified' "$tmp/out"
     ln -s "$tmp/installed/aletheon" "$tmp/proc/101/exe"
     ln -s "$tmp/installed/aletheon" "$tmp/proc/202/exe"
+    ln -s "$tmp/installed/aletheon" "$tmp/proc/303/exe"
     ;;
 esac
 

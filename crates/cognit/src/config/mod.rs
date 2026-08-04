@@ -408,6 +408,9 @@ pub struct AgentConfig {
     pub compaction_enabled: bool,
     #[serde(default = "default_compaction_keep_recent")]
     pub compaction_keep_recent: usize,
+    /// Percent of the context window (e.g. `80` = 80%) at which automatic
+    /// compaction triggers. Carried through to the compressor threshold via
+    /// `ExecutiveConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: usize,
     #[serde(default = "default_system_prompt")]
@@ -573,7 +576,7 @@ fn default_compaction_keep_recent() -> usize {
     10
 }
 fn default_compaction_threshold() -> usize {
-    30
+    80
 }
 
 fn default_system_prompt() -> String {
@@ -606,13 +609,49 @@ pub struct ProviderConfig {
     pub transport: Transport,
     #[serde(default)]
     pub models: Vec<String>,
-    /// Override the default max context length for this provider's models.
-    /// If not set, the provider uses its built-in default (128K for OpenAI, 200K for Anthropic).
+    /// Context length for a private model absent from the embedded catalog.
+    /// Known models derive this value from their canonical capability record;
+    /// a conflicting override is rejected rather than silently changing reality.
     #[serde(default)]
     pub max_context_length: Option<usize>,
     /// Optional static pricing for per-provider cost accounting. `None` = unpriced.
     #[serde(default)]
     pub pricing: Option<ProviderPricing>,
+    /// Machine/provider-scoped admission and cooldown policy. Every provider
+    /// instance built by the canonical factory shares this policy by canonical
+    /// endpoint and model.
+    #[serde(default)]
+    pub backpressure: ProviderBackpressureConfig,
+}
+
+/// Provider-level backpressure. Unlike turn admission this coordinates all
+/// sessions and role children through the machine-core process that use the
+/// same canonical provider endpoint and model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProviderBackpressureConfig {
+    /// Maximum simultaneous requests for one provider identity.
+    pub max_concurrent_requests: usize,
+    /// Minimum spacing between request starts for one provider identity.
+    ///
+    /// This is a machine-wide pacing boundary, not a per-session retry delay.
+    /// Zero preserves providers that do not require proactive rate pacing.
+    pub min_request_interval_ms: u64,
+    /// Maximum time a caller may wait for cooldown, pacing, and a fair permit.
+    pub queue_timeout_ms: u64,
+    /// Upper bound applied to provider-advised shared cooldown.
+    pub max_cooldown_ms: u64,
+}
+
+impl Default for ProviderBackpressureConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_requests: 2,
+            min_request_interval_ms: 0,
+            queue_timeout_ms: 120_000,
+            max_cooldown_ms: 60_000,
+        }
+    }
 }
 
 /// Optional static per-provider pricing (USD per 1K tokens) for cost accounting.
@@ -693,6 +732,10 @@ pub struct EvolutionSettings {
     /// When false (default), the loop is inert regardless of other settings.
     #[serde(default)] // bool default = false
     pub enabled: bool,
+    /// Operator gate for creating governed mutation proposals. This never
+    /// bypasses human approval and defaults to false independently of enabled.
+    #[serde(default)]
+    pub evolution_permitted: bool,
     /// Trigger evolution every N turns.
     #[serde(default = "default_evolution_trigger_every_n_turns")]
     pub trigger_every_n_turns: usize,
@@ -706,6 +749,7 @@ impl Default for EvolutionSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            evolution_permitted: false,
             trigger_every_n_turns: default_evolution_trigger_every_n_turns(),
         }
     }
@@ -752,15 +796,34 @@ mod tests {
             "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. \
              When independent inspection work is known up front, batch it in one tool call (for example, \
              use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with \
-             each file or pattern. For an unfamiliar workspace overview, make `file_read.paths` the first \
-             inspection call and include conventional entry candidates such as README, the root manifest, \
-             repository instructions, and architecture status; batch reads tolerate candidates that do not \
-             exist. Use glob only afterward when a specific required path remains unknown, and never inventory \
-             every language or extension. Base conclusions on file contents rather than filenames. Stop \
-             searching once the evidence needed to answer is sufficient. \
+             each file or pattern. For an unfamiliar repository or workspace overview, the first and only \
+             initial inspection call MUST be `repo_inspect`; wait for its result before choosing further tools. \
+             It batch-reads conventional entry files and returns content-backed evidence. Treat every \
+             `missing_candidates` item as one exact unavailable candidate path only: never generalize it to \
+             absence of an alternative file, a file category, a capability, or its parent directory, and never \
+             contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only \
+             when exact evidence is still missing. Use glob only when a specific required path remains unknown. \
+             During a repository overview, never use recursive `**` patterns or wildcard crate/directory scopes; \
+             read only exact paths returned by `repo_inspect` or identified in returned content. Never inventory \
+             languages, file extensions, tests, or conventional filenames merely to infer maturity. A missing \
+             conventional file is not proof that a \
+             capability, deployment path, or integration is absent; verify absence against scoped content. \
+             Repository instructions describe operating and acceptance policy, not proof that a named runtime \
+             failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do \
+             not infer maintainer count or staffing risk from an author line or commit history. Before claiming \
+             that routing, failover, tests, or deployment support is absent, read its scoped implementation or \
+             authoritative architecture/status evidence. Never infer the effective production provider or route \
+             from examples or checked-in sample configuration; inspect typed host state and effective configuration, \
+             or label the production route unverified. Base conclusions on returned file contents rather than \
+             filenames. For repository analysis, cite the returned path or typed runtime source for every \
+             architecture, maturity, and risk conclusion; label unsupported conclusions unverified. Never claim \
+             to have reviewed a file, module, crate, test, or runtime path when only its name or discovery result \
+             was returned. Stop searching once the evidence needed to answer is sufficient. \
              Before stating any conclusion about your own runtime state, logs, or configuration, \
              you MUST read the actual logs and the actually-effective config file first — never guess \
-             or invent an explanation."
+             or invent an explanation. Distinguish documented design, observed runtime fact, and \
+             unverified inference in runtime conclusions, and disclose every failed or denied probe \
+             that limits the answer."
         );
     }
 

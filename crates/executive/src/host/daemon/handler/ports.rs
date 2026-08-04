@@ -29,17 +29,26 @@ pub(crate) struct HandlerPorts {
     pub(crate) sessions: Arc<dyn LegacySessionUseCases>,
     pub(crate) session_lifecycle: Arc<dyn SessionLifecycleUseCases>,
     pub(crate) health: Arc<dyn HealthUseCases>,
-    pub(crate) reflection: Arc<dyn ReflectionUseCases>,
+    // Retained for host-owned governance/diagnostics; no public RPC route may
+    // call this port directly.
+    pub(crate) _reflection: Arc<dyn ReflectionUseCases>,
     pub(crate) google: Arc<dyn ExternalSourceUseCases>,
     pub(crate) workflow: Arc<dyn WorkflowUseCases>,
     pub(crate) turn: Arc<dyn TurnUseCases>,
+    pub(crate) evaluation: Arc<crate::application::evaluation::EvaluationService>,
     pub(crate) session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
     pub(crate) conscious_workspaces:
         Arc<crate::application::conscious_workspace::ConsciousWorkspaceRegistry>,
     pub(crate) debug: Arc<DebugHandler>,
     pub(crate) session_gateway: Arc<crate::core::session_gateway::SessionGateway>,
     pub(crate) recall_service: Arc<dyn mnemosyne::MemoryService>,
+    pub(crate) memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
+    pub(crate) memory_maintenance:
+        Arc<crate::application::memory_maintenance::MemoryMaintenanceController>,
     pub(crate) memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
+    pub(crate) inference: Arc<dyn crate::application::inference_port::InferencePort>,
+    pub(crate) review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
+    pub(crate) extensions: Arc<crate::application::extension_coordinator::ExtensionCoordinator>,
     pub(crate) transport: Arc<TransportPorts>,
 }
 
@@ -65,6 +74,7 @@ impl HandlerPorts {
         google: Arc<dyn ExternalSourceUseCases>,
         workflow: Arc<dyn WorkflowUseCases>,
         turn: Arc<dyn TurnUseCases>,
+        evaluation: Arc<crate::application::evaluation::EvaluationService>,
         session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
         conscious_workspaces: Arc<
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry,
@@ -72,7 +82,14 @@ impl HandlerPorts {
         debug: Arc<DebugHandler>,
         session_gateway: Arc<crate::core::session_gateway::SessionGateway>,
         recall_service: Arc<dyn mnemosyne::MemoryService>,
+        memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
+        memory_maintenance: Arc<
+            crate::application::memory_maintenance::MemoryMaintenanceController,
+        >,
         memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
+        inference: Arc<dyn crate::application::inference_port::InferencePort>,
+        review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
+        extensions: Arc<crate::application::extension_coordinator::ExtensionCoordinator>,
         transport: Arc<TransportPorts>,
     ) -> Self {
         Self {
@@ -85,16 +102,22 @@ impl HandlerPorts {
             sessions,
             session_lifecycle,
             health,
-            reflection,
+            _reflection: reflection,
             google,
             workflow,
             turn,
+            evaluation,
             session_input,
             conscious_workspaces,
             debug,
             session_gateway,
             recall_service,
+            memory_gateway,
+            memory_maintenance,
             memory_health,
+            inference,
+            review,
+            extensions,
             transport,
         }
     }

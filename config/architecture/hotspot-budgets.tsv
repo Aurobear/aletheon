@@ -1,0 +1,7 @@
+# path	max_lines	owner	responsibility
+crates/corpus/src/security/runner.rs	2042	corpus-security	tool admission and approval enforcement
+crates/executive/src/application/agent_control/mod.rs	1843	executive-agent-control	child lifecycle orchestration
+crates/executive/src/application/agent_control/settlement.rs	1557	executive-agent-control	durable child settlement
+crates/cognit/src/harness/linear/mod.rs	2177	cognit-harness	linear inference loop
+crates/mnemosyne/src/service.rs	1469	mnemosyne	memory service composition
+crates/executive/src/host/daemon/bootstrap/request.rs	1600	executive-composition	daemon request composition staging

@@ -133,6 +133,10 @@ impl Tool for WebSearchTool {
         };
 
         // Validate the API URL against network policy before making the request.
+        if !ctx
+            .approval_authority
+            .as_ref()
+            .is_some_and(|authority| authority.permission_mode.permits_open_network())
         {
             if let Err(reason) = self.network_policy.allows_url(&config.api_url) {
                 return ToolResult {

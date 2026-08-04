@@ -47,15 +47,10 @@ fn lifecycle_commands_use_real_service_errors() {
 }
 
 #[test]
-fn empty_legacy_import_is_a_successful_noop() {
+fn legacy_import_is_not_an_external_mutation_command() {
     let store = TempDir::new().unwrap();
     let output = run(&store, &["extension", "import-legacy"]);
-    assert!(
-        output.status.success(),
-        "empty import failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Imported 0"));
+    assert!(!output.status.success());
 }
 
 #[test]

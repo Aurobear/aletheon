@@ -24,6 +24,8 @@ pub struct RequestHandler {
     pub(crate) notify_tx: Option<mpsc::Sender<String>>,
     /// Active connection count.
     pub(crate) active_connections: Arc<AtomicUsize>,
+    /// Host-owned connection admission limit.
+    pub(crate) max_connections: Option<usize>,
     /// User-state-root-scoped immutable thread authority records.
     pub(crate) thread_authority: Arc<crate::application::thread_authority::ThreadAuthorityStore>,
     /// Feature flags for Grok-hardening mechanisms (folder_trust, etc.).
@@ -35,6 +37,99 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
+    pub(crate) async fn memory_observe(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryObservationRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryObservationReceiptV1> {
+        self.ports
+            .memory_gateway
+            .observe(&connection.principal_id, "versioned_local_rpc", request)
+            .await
+    }
+
+    pub(crate) async fn memory_receipt(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryReceiptGetRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryLifecycleReceiptV1> {
+        self.ports
+            .memory_gateway
+            .receipt(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_recall(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryRecallRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryRecallResultV1> {
+        self.ports
+            .memory_gateway
+            .recall(&connection.principal_id, "versioned_local_rpc", request)
+            .await
+    }
+
+    pub(crate) async fn memory_feedback(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryFeedbackRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryFeedbackReceiptV1> {
+        self.ports
+            .memory_gateway
+            .feedback(&connection.principal_id, "versioned_local_rpc", request)
+            .await
+    }
+
+    pub(crate) async fn memory_workspace_preview_bind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspacePreviewBindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingPreviewV1> {
+        self.ports
+            .memory_gateway
+            .preview_workspace_bind(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_workspace_bind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspaceBindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingViewV1> {
+        self.ports
+            .memory_gateway
+            .bind_workspace(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_workspace_unbind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspaceUnbindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingViewV1> {
+        self.ports
+            .memory_gateway
+            .unbind_workspace(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_maintenance_status(
+        &self,
+        request: fabric::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory_maintenance::MemoryMaintenanceStatusV1> {
+        self.ports.memory_maintenance.status(request).await
+    }
+
+    pub(crate) async fn memory_maintenance_run(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1> {
+        let owner = format!("memory-agent:{}", connection.connection_id.0);
+        self.ports.memory_maintenance.run(&owner, request).await
+    }
+
     pub(crate) async fn resolve_versioned_approval(
         &self,
         connection: &super::server::ConnectionContext,
@@ -297,16 +392,26 @@ impl RequestHandler {
         request: serde_json::Value,
     ) -> serde_json::Value {
         let message = request["params"]["message"].as_str().unwrap_or("");
-        let workspace = match resolve_requested_workspace(&request["params"]) {
-            Ok(workspace) => workspace,
-            Err(error) => {
-                return serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32602, "message": error }
-                });
-            }
+        let requirements = match parse_turn_requirements(&request["params"]["requirements"]) {
+            Ok(requirements) => requirements,
+            Err(error) => return rpc_error(&id, -32602, error),
         };
+        let task_kind = match parse_task_kind(&request["params"]["task_kind"]) {
+            Ok(task_kind) => task_kind,
+            Err(error) => return rpc_error(&id, -32602, error),
+        };
+        let permission_mode = parse_host_permission_mode(&request["params"]["permission_mode"]);
+        let workspace =
+            match resolve_requested_workspace_with_mode(&request["params"], permission_mode) {
+                Ok(workspace) => workspace,
+                Err(error) => {
+                    return serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": error }
+                    });
+                }
+            };
         let thread_id = if let Some(session_id) = request["params"]["session_id"]
             .as_str()
             .filter(|value| !value.trim().is_empty())
@@ -324,8 +429,17 @@ impl RequestHandler {
                 }
             }
         };
-        self.execute_explicit_chat(connection, id, message.to_owned(), thread_id, workspace)
-            .await
+        self.execute_explicit_chat(
+            connection,
+            id,
+            message.to_owned(),
+            thread_id,
+            workspace,
+            requirements,
+            task_kind,
+            permission_mode,
+        )
+        .await
     }
 
     /// Versioned chat boundary. `thread_id` is protocol data in its own right;
@@ -337,6 +451,9 @@ impl RequestHandler {
         message: String,
         thread_id: fabric::ThreadId,
         workspace: fabric::WorkspacePolicy,
+        requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
+        permission_mode: fabric::permission::HostPermissionMode,
     ) -> serde_json::Value {
         if thread_id.0.trim().is_empty() || message.trim().is_empty() {
             return rpc_error(&id, -32602, "thread_id and message are required");
@@ -347,8 +464,16 @@ impl RequestHandler {
             connection.connection_id.clone(),
             thread_id,
             workspace,
-            fabric::PermissionProfileId::workspace_write(),
-            fabric::ApprovalPolicy::OnRequest,
+            if permission_mode.is_full() {
+                fabric::PermissionProfileId::danger_full_access()
+            } else {
+                fabric::PermissionProfileId::workspace_write()
+            },
+            if permission_mode.is_full() {
+                fabric::ApprovalPolicy::Never
+            } else {
+                fabric::ApprovalPolicy::OnRequest
+            },
         );
         if let Err(error) = self.bind_thread_authority(&context, None) {
             return serde_json::json!({
@@ -383,7 +508,17 @@ impl RequestHandler {
             "evaluated repository executable configuration trust"
         );
         tracing::info!(message = %message, thread_id = %context.thread_id.0, "Chat request received");
-        self.ports.turn.execute(id, message, context).await
+        self.ports
+            .turn
+            .execute(
+                id,
+                message,
+                context,
+                requirements,
+                task_kind,
+                self.notify_tx.clone(),
+            )
+            .await
     }
 
     /// Keep local conversation history scoped to its canonical workspace.
@@ -416,6 +551,56 @@ impl RequestHandler {
     }
 }
 
+fn parse_turn_requirements(
+    value: &serde_json::Value,
+) -> Result<Vec<fabric::TurnRequirement>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let requirements: Vec<fabric::TurnRequirement> = serde_json::from_value(value.clone())
+        .map_err(|error| format!("invalid turn requirements: {error}"))?;
+    if requirements.len() > 16 {
+        return Err("at most 16 turn requirements are allowed".into());
+    }
+    for requirement in &requirements {
+        let value = match requirement {
+            fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => runtime_id,
+            fabric::TurnRequirement::InvokeCapability { name } => name,
+            fabric::TurnRequirement::ObserveTerminal { .. } => continue,
+            fabric::TurnRequirement::RunRoleGraph {
+                workspace_scope,
+                expected_evidence,
+                ..
+            } => {
+                if workspace_scope.len() > 64 || expected_evidence.len() > 64 {
+                    return Err("role graph requirement lists are limited to 64 items".into());
+                }
+                if workspace_scope
+                    .iter()
+                    .chain(expected_evidence)
+                    .any(|item| item.trim().is_empty() || item.len() > 4096)
+                {
+                    return Err("role graph requirement values must contain 1..=4096 bytes".into());
+                }
+                continue;
+            }
+        };
+        if value.trim().is_empty() || value.len() > 512 {
+            return Err("turn requirement identifiers must contain 1..=512 bytes".into());
+        }
+    }
+    Ok(requirements)
+}
+
+fn parse_task_kind(value: &serde_json::Value) -> Result<Option<fabric::TaskKind>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(value.clone())
+        .map(Some)
+        .map_err(|error| format!("invalid task kind: {error}"))
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -439,6 +624,13 @@ impl LegacySessionThreadAdapter {
 fn resolve_requested_workspace(
     params: &serde_json::Value,
 ) -> Result<fabric::WorkspacePolicy, String> {
+    resolve_requested_workspace_with_mode(params, fabric::permission::HostPermissionMode::Safe)
+}
+
+fn resolve_requested_workspace_with_mode(
+    params: &serde_json::Value,
+    permission_mode: fabric::permission::HostPermissionMode,
+) -> Result<fabric::WorkspacePolicy, String> {
     let requested = params["working_dir"]
         .as_str()
         .ok_or_else(|| "missing working_dir".to_string())?;
@@ -460,8 +652,23 @@ fn resolve_requested_workspace(
         Some(PathBuf::from(requested)),
         roots.into_iter().skip(1).collect(),
     )
-    .resolve(Path::new(requested))
+    .resolve_with_profile(
+        Path::new(requested),
+        &if permission_mode.is_full() {
+            fabric::PermissionProfileId::danger_full_access()
+        } else {
+            fabric::PermissionProfileId::workspace_write()
+        },
+    )
     .map_err(|error| error.to_string())
+}
+
+fn parse_host_permission_mode(value: &serde_json::Value) -> fabric::permission::HostPermissionMode {
+    match value.as_str() {
+        Some("full" | "unrestricted") => fabric::permission::HostPermissionMode::Full,
+        Some("developer" | "dev") => fabric::permission::HostPermissionMode::Developer,
+        _ => fabric::permission::HostPermissionMode::Safe,
+    }
 }
 
 #[cfg(test)]
@@ -490,5 +697,53 @@ mod working_dir_tests {
         .unwrap();
         assert_eq!(workspace.writable_roots().len(), 2);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn accepts_typed_agent_runtime_requirement() {
+        let requirements = super::parse_turn_requirements(&serde_json::json!([
+            {"InvokeAgentRuntime":{"runtime_id":"pi-rpc"}}
+        ]))
+        .unwrap();
+        assert_eq!(
+            requirements,
+            vec![fabric::TurnRequirement::InvokeAgentRuntime {
+                runtime_id: "pi-rpc".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_requirement_identifier() {
+        assert!(super::parse_turn_requirements(&serde_json::json!([
+            {"InvokeAgentRuntime":{"runtime_id":"  "}}
+        ]))
+        .is_err());
+    }
+
+    #[test]
+    fn task_kind_parser_accepts_only_typed_coding_value() {
+        assert_eq!(
+            super::parse_task_kind(&serde_json::json!("coding")).unwrap(),
+            Some(fabric::TaskKind::Coding)
+        );
+        assert!(super::parse_task_kind(&serde_json::json!("write code")).is_err());
+        assert_eq!(
+            super::parse_task_kind(&serde_json::Value::Null).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn permission_mode_parser_is_fail_closed() {
+        assert!(super::parse_host_permission_mode(&serde_json::json!("full")).is_full());
+        assert_eq!(
+            super::parse_host_permission_mode(&serde_json::json!("dev")),
+            fabric::permission::HostPermissionMode::Developer
+        );
+        assert_eq!(
+            super::parse_host_permission_mode(&serde_json::json!("unknown")),
+            fabric::permission::HostPermissionMode::Safe
+        );
     }
 }

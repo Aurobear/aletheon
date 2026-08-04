@@ -15,12 +15,23 @@ pub struct MessageLaunch {
     pub socket: Option<PathBuf>,
     pub workspace: WorkspaceLaunch,
     pub message: String,
+    pub required_agent_runtimes: Vec<String>,
+    pub task_kind: Option<fabric::TaskKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuiLaunch {
     pub socket: Option<PathBuf>,
     pub workspace: WorkspaceLaunch,
+    pub required_agent_runtimes: Vec<String>,
+    pub task_kind: Option<fabric::TaskKind>,
+}
+
+fn agent_runtime_requirements(runtime_ids: Vec<String>) -> Vec<fabric::TurnRequirement> {
+    runtime_ids
+        .into_iter()
+        .map(|runtime_id| fabric::TurnRequirement::InvokeAgentRuntime { runtime_id })
+        .collect()
 }
 
 fn resolve_socket_with(
@@ -49,27 +60,58 @@ pub(crate) fn resolve_user_socket(explicit: Option<PathBuf>) -> anyhow::Result<P
 fn resolve_workspace(selection: WorkspaceLaunch) -> anyhow::Result<fabric::WorkspacePolicy> {
     let process_cwd = std::env::current_dir()
         .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
-    Ok(
-        fabric::WorkspaceSelection::new(selection.cwd, selection.add_dirs).resolve_with_profile(
-            &process_cwd,
-            &fabric::PermissionProfileId::workspace_write(),
-        )?,
-    )
+    let mode = permission_mode_from_environment();
+    let profile = if mode.is_full() {
+        fabric::PermissionProfileId::danger_full_access()
+    } else {
+        fabric::PermissionProfileId::workspace_write()
+    };
+    let mut add_dirs = selection.add_dirs;
+    if mode.is_full()
+        && !add_dirs
+            .iter()
+            .any(|path| path == std::path::Path::new("/"))
+    {
+        add_dirs.push(PathBuf::from("/"));
+    }
+    Ok(fabric::WorkspaceSelection::new(selection.cwd, add_dirs)
+        .resolve_with_profile(&process_cwd, &profile)?)
+}
+
+pub(crate) fn permission_mode_from_environment() -> fabric::permission::HostPermissionMode {
+    match std::env::var("ALETHEON_PERMISSION_MODE").as_deref() {
+        Ok("full" | "unrestricted") => fabric::permission::HostPermissionMode::Full,
+        Ok("dev" | "developer") => fabric::permission::HostPermissionMode::Developer,
+        _ => fabric::permission::HostPermissionMode::Safe,
+    }
 }
 
 pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
-    crate::cli::single_message(&socket, &request.message).await
+    crate::cli::single_message_with_workspace_requirements_and_task_kind(
+        &socket,
+        &request.message,
+        &workspace,
+        agent_runtime_requirements(request.required_agent_runtimes),
+        request.task_kind,
+    )
+    .await
 }
 
 pub async fn run_tui(request: TuiLaunch, config: crate::tui::TestConfig) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
-    crate::tui::run_with_workspace_config(socket.to_string_lossy().as_ref(), config, workspace)
-        .await
+    crate::tui::run_with_workspace_requirements_and_task_kind(
+        socket.to_string_lossy().as_ref(),
+        config,
+        workspace,
+        agent_runtime_requirements(request.required_agent_runtimes),
+        request.task_kind,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -115,6 +157,21 @@ mod tests {
         assert_eq!(
             resolve_socket_with(None, &xdg).unwrap(),
             Path::new("/run/user/1001/aletheon/aletheon.sock")
+        );
+    }
+
+    #[test]
+    fn runtime_ids_become_typed_turn_requirements() {
+        assert_eq!(
+            agent_runtime_requirements(vec!["pi-rpc".into(), "native-cognit".into()]),
+            vec![
+                fabric::TurnRequirement::InvokeAgentRuntime {
+                    runtime_id: "pi-rpc".into(),
+                },
+                fabric::TurnRequirement::InvokeAgentRuntime {
+                    runtime_id: "native-cognit".into(),
+                },
+            ]
         );
     }
 }

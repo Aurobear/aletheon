@@ -3,6 +3,8 @@
 use async_trait::async_trait;
 use serde_json::json;
 
+use crate::tools::artifact::ArtifactStore;
+
 use super::{ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct FileSearchTool;
@@ -187,41 +189,19 @@ async fn try_ripgrep(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().take(max_results).collect();
     let truncated = stdout.lines().count() > max_results;
 
-    if lines.is_empty() {
-        return Some(ToolResult {
-            content: format!("No matches found for '{query}' in {path}"),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
-        });
-    }
-
-    let content = if truncated {
-        format!(
-            "{}\n... ({} results shown, more available)",
-            lines.join("\n"),
-            lines.len()
-        )
-    } else {
-        lines.join("\n")
-    };
-    let (content, byte_truncated) = bound_search_output(content);
-
-    Some(ToolResult {
-        content,
-        is_error: false,
-        metadata: ToolResultMeta {
-            execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-            truncated: truncated || byte_truncated,
-            patch_delta: None,
-        },
-    })
+    Some(structured_search_result(
+        query,
+        path,
+        include,
+        max_results,
+        "ripgrep",
+        &stdout,
+        truncated,
+        start,
+        clock,
+    ))
 }
 
 fn bound_search_output(content: String) -> (String, bool) {
@@ -268,41 +248,19 @@ async fn try_grep(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().take(max_results).collect();
     let truncated = stdout.lines().count() > max_results;
 
-    if lines.is_empty() {
-        return Some(ToolResult {
-            content: format!("No matches found for '{query}' in {path}"),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
-        });
-    }
-
-    let content = if truncated {
-        format!(
-            "{}\n... (showing {} of more results)",
-            lines.join("\n"),
-            lines.len()
-        )
-    } else {
-        lines.join("\n")
-    };
-    let (content, byte_truncated) = bound_search_output(content);
-
-    Some(ToolResult {
-        content,
-        is_error: false,
-        metadata: ToolResultMeta {
-            execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-            truncated: truncated || byte_truncated,
-            patch_delta: None,
-        },
-    })
+    Some(structured_search_result(
+        query,
+        path,
+        include,
+        max_results,
+        "grep",
+        &stdout,
+        truncated,
+        start,
+        clock,
+    ))
 }
 
 /// Fallback: find + grep
@@ -348,41 +306,89 @@ async fn try_find_grep(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().take(max_results).collect();
     let truncated = stdout.lines().count() > max_results;
 
-    if lines.is_empty() {
-        return Some(ToolResult {
-            content: format!("No files matching '{query}' found in {path}"),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
-        });
-    }
+    Some(structured_search_result(
+        query,
+        path,
+        include,
+        max_results,
+        "find_grep",
+        &stdout,
+        truncated,
+        start,
+        clock,
+    ))
+}
 
-    let content = if truncated {
-        format!(
-            "{}\n... (showing {} of more results)",
-            lines.join("\n"),
-            lines.len()
-        )
-    } else {
-        lines.join("\n")
-    };
-    let (content, byte_truncated) = bound_search_output(content);
-
-    Some(ToolResult {
-        content,
+#[allow(clippy::too_many_arguments)]
+fn structured_search_result(
+    query: &str,
+    path: &str,
+    include: Option<&str>,
+    max_results: usize,
+    engine: &str,
+    stdout: &str,
+    result_truncated: bool,
+    start: fabric::MonoTime,
+    clock: &dyn fabric::Clock,
+) -> ToolResult {
+    let all_lines = stdout.lines().collect::<Vec<_>>();
+    let visible = all_lines
+        .iter()
+        .take(max_results)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (visible, byte_truncated) = bound_search_output(visible);
+    let matches = visible
+        .lines()
+        .filter(|line| !line.starts_with("... [search output truncated"))
+        .map(|line| {
+            let mut parts = line.splitn(3, ':');
+            let matched_path = parts.next().unwrap_or_default();
+            let second = parts.next();
+            let third = parts.next();
+            let line_number = second.and_then(|value| value.parse::<u64>().ok());
+            json!({
+                "path": matched_path,
+                "line": line_number,
+                "text": if line_number.is_some() { third.unwrap_or_default() } else { line },
+            })
+        })
+        .collect::<Vec<_>>();
+    let store = ArtifactStore::new(
+        super::output::OutputConfig::default()
+            .overflow_dir
+            .join("artifacts"),
+    );
+    let artifact_ref = store
+        .store(stdout.as_bytes(), "text/plain; charset=utf-8")
+        .ok()
+        .map(|artifact| artifact.uri());
+    let truncated = result_truncated || byte_truncated || all_lines.len() > max_results;
+    ToolResult {
+        content: json!({
+            "kind": "file_search_receipt",
+            "query": query,
+            "searched_root": path,
+            "include": include,
+            "engine": engine,
+            "max_results": max_results,
+            "total_matches_observed": all_lines.len(),
+            "returned_matches": matches,
+            "truncated": truncated,
+            "completeness_boundary": if truncated { "limited_by_result_or_byte_cap" } else { "complete_for_engine_and_scope" },
+            "artifact_ref": artifact_ref,
+            "message": if all_lines.is_empty() { "No matches found" } else { "Matches found" },
+        }).to_string(),
         is_error: false,
         metadata: ToolResultMeta {
             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-            truncated: truncated || byte_truncated,
+            truncated,
             patch_delta: None,
         },
-    })
+    }
 }
 
 #[cfg(test)]
@@ -432,6 +438,16 @@ mod tests {
             "Expected match, got: {}",
             result.content
         );
+        let receipt: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(receipt["kind"], "file_search_receipt");
+        assert_eq!(receipt["engine"], "ripgrep");
+        assert_eq!(
+            receipt["completeness_boundary"],
+            "complete_for_engine_and_scope"
+        );
+        assert!(receipt["artifact_ref"]
+            .as_str()
+            .is_some_and(|reference| reference.starts_with("artifact://sha256/")));
     }
 
     #[tokio::test]

@@ -454,6 +454,7 @@ mod tests {
             output_tokens: 2,
             cost_usd: Some(0.1),
             elapsed_ms: 50,
+            observability: Default::default(),
         }
     }
 

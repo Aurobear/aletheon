@@ -28,6 +28,8 @@ pub struct UserRuntimeConfig {
     goal_runtime: cognit::config::GoalRuntimeConfig,
     pi_runtime: crate::composition::config::CodingRuntimeConfig,
     grok_hardening: crate::composition::config::GrokHardeningConfig,
+    evaluation: crate::composition::config::EvaluationSettings,
+    governed_review: crate::composition::config::GovernedReviewSettings,
     sandbox_profiles: fabric::SandboxProfiles,
     network_policy: fabric::network_policy::NetworkPolicy,
     agent_profiles: crate::composition::config::AgentProfilesConfig,
@@ -49,6 +51,10 @@ impl UserRuntimeConfig {
         // CLI activation is additive: an absent flag preserves the layered
         // config value, while `--execd` can only enable the backend.
         apply_execd_override(&mut app.grok_hardening, enable_execd);
+        app.memory
+            .policy
+            .validate()
+            .context("validating memory judgment policy")?;
         let crate::composition::config::AppConfig {
             memory: crate::composition::config::MemoryConfig { supplemental, .. },
             ..
@@ -85,6 +91,8 @@ impl UserRuntimeConfig {
                 app.bootstrap.conscious_arbitration_mode.as_deref(),
             )?,
             enable_evolution,
+            evolution_permitted: app.evolution.evolution_permitted,
+            evolution_trigger_every_n_turns: app.evolution.trigger_every_n_turns,
             mcp_servers: crate::core::mcp_config::convert_mcp_servers(&app.mcp_servers),
             hooks: app.hooks.clone(),
             telegram: app.telegram.clone(),
@@ -93,7 +101,9 @@ impl UserRuntimeConfig {
             deployment,
             backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
+            multi_agent: app.multi_agent.clone(),
             agent_max_iterations: app.agent.max_iterations,
+            agent_compaction_threshold_percent: app.agent.compaction_threshold,
             harness_kind: app.agent.harness_kind,
             integrations,
             embodiment_provider: app.integrations.embodiment.clone().unwrap_or_default(),
@@ -107,6 +117,8 @@ impl UserRuntimeConfig {
             goal_runtime: app.goal_runtime.unwrap_or_default(),
             pi_runtime: app.pi_runtime,
             grok_hardening: app.grok_hardening,
+            evaluation: app.evaluation,
+            governed_review: app.governed_review,
             sandbox_profiles: app.sandbox_profiles,
             network_policy: app.network_policy,
             agent_profiles: app.agent_profiles,
@@ -187,14 +199,20 @@ impl UserRuntime {
     ) -> anyhow::Result<Self> {
         config.paths.prepare()?;
         let cancel = CancellationToken::new();
+        // User runtime follows the same kernel-clock composition rule as the
+        // machine runtime: one monotonic epoch shared by handler and server.
+        let clock: Arc<dyn fabric::Clock> = Arc::new(SystemClock::new());
         let handler = RequestHandler::new(
             &config.request,
+            clock.clone(),
             inference,
             config.model_routing,
             config.model_aliases,
             config.goal_runtime,
             config.pi_runtime,
             config.grok_hardening,
+            config.evaluation,
+            config.governed_review,
             config.sandbox_profiles.clone(),
             config.network_policy.clone(),
             config.agent_profiles.clone(),
@@ -205,7 +223,6 @@ impl UserRuntime {
         .await?;
         let uid = nix::unistd::Uid::effective().as_raw();
         let gid = nix::unistd::Gid::effective().as_raw();
-        let clock = handler.clock();
         let server = match process_inherited_listener()? {
             Some(listener) => UnixServer::from_listener(
                 listener,
@@ -213,7 +230,7 @@ impl UserRuntime {
                 cancel.clone(),
                 uid,
                 gid,
-                clock,
+                clock.clone(),
             ),
             None => {
                 UnixServer::new_user_private(
@@ -222,7 +239,7 @@ impl UserRuntime {
                     cancel.clone(),
                     uid,
                     gid,
-                    Arc::new(SystemClock::new()),
+                    clock,
                 )
                 .await?
             }

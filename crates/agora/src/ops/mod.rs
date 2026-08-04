@@ -1,6 +1,7 @@
 //! AgoraRegistry — manages per-session Workspaces and implements AgoraOps.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -19,6 +20,7 @@ pub struct AgoraRegistry {
     sessions: Mutex<HashMap<String, Arc<SpaceSlot>>>,
     proposal_index: Mutex<HashMap<uuid::Uuid, String>>,
     persistence: Option<Arc<dyn AgoraPersistence>>,
+    recovered_sessions: Mutex<HashSet<String>>,
     clock: Arc<dyn fabric::Clock>,
 }
 
@@ -42,6 +44,7 @@ impl AgoraRegistry {
             sessions: Mutex::new(HashMap::new()),
             proposal_index: Mutex::new(HashMap::new()),
             persistence: None,
+            recovered_sessions: Mutex::new(HashSet::new()),
             clock,
         }
     }
@@ -59,11 +62,12 @@ impl AgoraRegistry {
             sessions: Mutex::new(HashMap::new()),
             proposal_index: Mutex::new(HashMap::new()),
             persistence: Some(persistence),
+            recovered_sessions: Mutex::new(HashSet::new()),
             clock,
         }
     }
 
-    async fn space(&self, session: &str) -> Arc<SpaceSlot> {
+    async fn raw_space(&self, session: &str) -> Arc<SpaceSlot> {
         let mut sessions = self.sessions.lock().await;
         sessions
             .entry(session.to_string())
@@ -71,8 +75,29 @@ impl AgoraRegistry {
             .clone()
     }
 
-    async fn existing_space(&self, session: &str) -> Option<Arc<SpaceSlot>> {
-        self.sessions.lock().await.get(session).cloned()
+    async fn space(&self, session: &str) -> Result<Arc<SpaceSlot>> {
+        let slot = self.raw_space(session).await;
+        if self.recovered_sessions.lock().await.contains(session) {
+            return Ok(slot);
+        }
+        let _gate = slot.commit_gate.lock().await;
+        if self.recovered_sessions.lock().await.contains(session) {
+            return Ok(slot.clone());
+        }
+        if let Some(persistence) = &self.persistence {
+            let commits = persistence.recover(session).await?;
+            let mut workspace = slot.workspace.lock().await;
+            let mut recovered = workspace.clone();
+            for commit in commits {
+                recovered.apply_commit(commit)?;
+            }
+            *workspace = recovered;
+        }
+        self.recovered_sessions
+            .lock()
+            .await
+            .insert(session.to_owned());
+        Ok(slot.clone())
     }
 
     async fn commit_transaction(
@@ -81,7 +106,10 @@ impl AgoraRegistry {
         proposal_id: uuid::Uuid,
         permit: Option<&WorkspaceCommitPermit>,
     ) -> Result<AgoraCommit, String> {
-        let slot = self.space(session).await;
+        let slot = self
+            .space(session)
+            .await
+            .map_err(|error| error.to_string())?;
         let _gate = slot.commit_gate.lock().await;
         let prepared = {
             let workspace = slot.workspace.lock().await;
@@ -120,20 +148,39 @@ impl AgoraRegistry {
         let commits = persistence.recover(session).await?;
         let count = commits.len();
         if count == 0 {
+            self.recovered_sessions
+                .lock()
+                .await
+                .insert(session.to_owned());
             return Ok(0);
         }
 
-        let slot = self.space(session).await;
+        let slot = self.raw_space(session).await;
         let _gate = slot.commit_gate.lock().await;
         let mut workspace = slot.workspace.lock().await;
         let mut recovered = workspace.clone();
         let mut replayed = 0;
         for commit in commits {
-            if recovered.apply_commit(commit)? {
-                replayed += 1;
+            match recovered.apply_commit(commit) {
+                Ok(true) => replayed += 1,
+                Ok(false) => {}
+                Err(error) => {
+                    // Explicit recovery is an administrative boundary: retain
+                    // the previous atomic workspace and remember that this
+                    // attempt was handled so later reads cannot partially replay.
+                    self.recovered_sessions
+                        .lock()
+                        .await
+                        .insert(session.to_owned());
+                    return Err(error);
+                }
             }
         }
         *workspace = recovered;
+        self.recovered_sessions
+            .lock()
+            .await
+            .insert(session.to_owned());
 
         Ok(replayed)
     }
@@ -142,45 +189,41 @@ impl AgoraRegistry {
 #[async_trait]
 impl AgoraOps for AgoraRegistry {
     async fn recall(&self, session: &str, key: &str) -> Result<Option<Value>> {
-        let Some(slot) = self.existing_space(session).await else {
-            return Ok(None);
-        };
+        let slot = self.space(session).await?;
         let workspace = slot.workspace.lock().await;
         Ok(workspace.blackboard.get(key).cloned())
     }
 
     async fn snapshot(&self, session: &str) -> Result<Value> {
-        let Some(slot) = self.existing_space(session).await else {
-            return Ok(Value::Null);
-        };
+        let slot = self.space(session).await?;
         let snapshot = slot.workspace.lock().await.snapshot();
         Ok(snapshot)
     }
 
     async fn version(&self, session: &str) -> Result<u64> {
-        let Some(slot) = self.existing_space(session).await else {
-            return Ok(0);
-        };
+        let slot = self.space(session).await?;
         let version = slot.workspace.lock().await.version;
         Ok(version)
     }
 
     async fn clear(&self, session: &str) -> Result<()> {
-        if let Some(slot) = self.existing_space(session).await {
-            let _gate = slot.commit_gate.lock().await;
-            let mut workspace = slot.workspace.lock().await;
-            let ids: Vec<_> = workspace.proposals.keys().copied().collect();
-            workspace.clear();
-            let mut index = self.proposal_index.lock().await;
-            for id in ids {
-                index.remove(&id);
-            }
+        let slot = self.space(session).await?;
+        let _gate = slot.commit_gate.lock().await;
+        let mut workspace = slot.workspace.lock().await;
+        let ids: Vec<_> = workspace.proposals.keys().copied().collect();
+        workspace.clear();
+        let mut index = self.proposal_index.lock().await;
+        for id in ids {
+            index.remove(&id);
+        }
+        if let Some(persistence) = &self.persistence {
+            persistence.clear_session(session).await?;
         }
         Ok(())
     }
 
     async fn trace(&self, session: &str, kind: &str, content: Value) -> Result<()> {
-        let slot = self.space(session).await;
+        let slot = self.space(session).await?;
         slot.workspace.lock().await.trace.push(kind, content);
         Ok(())
     }
@@ -192,7 +235,10 @@ impl AgoraOps for AgoraRegistry {
         operation: AgoraOperation,
         author: ProcessId,
     ) -> Result<AgoraProposal, String> {
-        let slot = self.space(session).await;
+        let slot = self
+            .space(session)
+            .await
+            .map_err(|error| error.to_string())?;
         let proposal = slot
             .workspace
             .lock()
@@ -234,7 +280,10 @@ impl AgoraOps for AgoraRegistry {
         proposal_id: uuid::Uuid,
         reason: fabric::RejectReason,
     ) -> Result<(), String> {
-        let slot = self.space(session).await;
+        let slot = self
+            .space(session)
+            .await
+            .map_err(|error| error.to_string())?;
         let _gate = slot.commit_gate.lock().await;
         slot.workspace
             .lock()
@@ -246,7 +295,7 @@ impl AgoraOps for AgoraRegistry {
     }
 
     async fn changes_since(&self, session: &str, since_version: u64) -> Vec<AgoraCommit> {
-        let Some(slot) = self.existing_space(session).await else {
+        let Ok(slot) = self.space(session).await else {
             return Vec::new();
         };
         let changes = slot.workspace.lock().await.changes_since(since_version);
@@ -269,7 +318,7 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
 
     async fn propose(&self, proposal: AgoraProposal) -> Result<uuid::Uuid> {
         let session = proposal.space.0.clone();
-        let slot = self.space(&session).await;
+        let slot = self.space(&session).await?;
         let id = proposal.id;
         slot.workspace.lock().await.propose_full(proposal)?;
         self.proposal_index.lock().await.insert(id, session);
@@ -312,6 +361,28 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
     ) -> Result<Vec<AgoraCommit>> {
         Ok(<Self as AgoraOps>::changes_since(self, &space.0, version).await)
     }
+
+    async fn project_task(
+        &self,
+        request: fabric::cognitive_workflow::AgoraProjectionRequest,
+    ) -> Result<fabric::cognitive_workflow::AgoraTaskProjection> {
+        let slot = self.space(&request.space.0).await?;
+        let projection = slot.workspace.lock().await.project_task(request)?;
+        Ok(projection)
+    }
+
+    async fn list_tasks(
+        &self,
+        space: fabric::AgoraSpaceId,
+    ) -> Result<fabric::cognitive_workflow::AgoraTaskList> {
+        let slot = self.space(&space.0).await?;
+        let workspace = slot.workspace.lock().await;
+        Ok(fabric::cognitive_workflow::AgoraTaskList {
+            space,
+            workspace_version: workspace.version,
+            tasks: workspace.task_graph.cognitive_nodes(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -346,6 +417,202 @@ mod tests {
         let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
         let id = fabric::AgoraService::propose(reg, proposal).await.unwrap();
         fabric::AgoraService::commit(reg, id, permit).await.unwrap();
+    }
+
+    async fn commit_operation(
+        reg: &AgoraRegistry,
+        session: &str,
+        base_version: u64,
+        operation: AgoraOperation,
+        author: fabric::ProcessId,
+    ) -> fabric::AgoraCommit {
+        let proposal = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: fabric::AgoraSpaceId(session.into()),
+            author,
+            base_version,
+            operation,
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
+        };
+        let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
+        let id = fabric::AgoraService::propose(reg, proposal).await.unwrap();
+        fabric::AgoraService::commit(reg, id, permit)
+            .await
+            .unwrap()
+            .commit
+    }
+
+    fn cognitive_task(
+        id: &str,
+        owner: fabric::ProcessId,
+    ) -> fabric::cognitive_workflow::CognitiveTaskNode {
+        use fabric::cognitive_workflow::*;
+        CognitiveTaskNode {
+            id: CognitiveTaskNodeId(id.into()),
+            parent_id: None,
+            objective: "produce a grounded change".into(),
+            role: CognitiveRole::Executor,
+            stage: CognitiveStage::Execution,
+            status: CognitiveTaskStatus::Running,
+            owner: Some(owner),
+            role_profile: CognitiveRoleProfile::canonical(CognitiveRole::Executor).reference,
+            budget: CognitiveRoleProfile::canonical(CognitiveRole::Executor).budget,
+            dependencies: Vec::new(),
+            acceptance_criteria: vec!["focused validation passes".into()],
+            workspace_scope: vec!["crates/agora".into()],
+            required_artifact_kinds: vec![
+                CognitiveArtifactKind::ChangeSet,
+                CognitiveArtifactKind::Validation,
+            ],
+            artifact_refs: Vec::new(),
+            unresolved_finding_ids: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn cognitive_artifact_is_shared_only_after_versioned_commit() {
+        use fabric::cognitive_workflow::*;
+        let reg = AgoraRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
+        let author = test_author();
+        let child_author = fabric::ProcessId(uuid::Uuid::from_u128(44));
+        commit_operation(
+            &reg,
+            "work-a",
+            0,
+            AgoraOperation::UpsertCognitiveTask {
+                task: cognitive_task("execute", author),
+            },
+            author,
+        )
+        .await;
+        let artifact = CognitiveArtifactEnvelope::proposed(
+            fabric::AgoraSpaceId("work-a".into()),
+            CognitiveTaskNodeId("execute".into()),
+            child_author,
+            vec!["workspace:v1".into()],
+            vec!["artifact://diff/1".into()],
+            1.0,
+            CognitiveArtifact::ChangeSet(CognitiveChangeSetReceipt {
+                transaction_id: "tx-1".into(),
+                workspace_version: "workspace:v1".into(),
+                changed_paths: vec!["crates/agora/src/ops/mod.rs".into()],
+                diff_artifact_ref: "artifact://diff/1".into(),
+            }),
+        )
+        .unwrap();
+        let proposal = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: fabric::AgoraSpaceId("work-a".into()),
+            author,
+            base_version: 1,
+            operation: AgoraOperation::CommitCognitiveArtifact {
+                artifact: artifact.clone(),
+            },
+            evidence: artifact.evidence_refs.clone(),
+            confidence: artifact.confidence,
+            expires_at_ms: None,
+        };
+        let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
+        let id = fabric::AgoraService::propose(&reg, proposal).await.unwrap();
+
+        let before = fabric::AgoraService::project_task(
+            &reg,
+            AgoraProjectionRequest {
+                space: fabric::AgoraSpaceId("work-a".into()),
+                task_node_id: CognitiveTaskNodeId("execute".into()),
+                role: CognitiveRole::Reviewer,
+                max_artifacts: 8,
+                include_kinds: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            before.artifacts.is_empty(),
+            "proposal leaked as shared fact"
+        );
+
+        fabric::AgoraService::commit(&reg, id, permit)
+            .await
+            .unwrap();
+        let after = fabric::AgoraService::project_task(
+            &reg,
+            AgoraProjectionRequest {
+                space: fabric::AgoraSpaceId("work-a".into()),
+                task_node_id: CognitiveTaskNodeId("execute".into()),
+                role: CognitiveRole::Reviewer,
+                max_artifacts: 8,
+                include_kinds: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(after.workspace_version, 2);
+        assert_eq!(after.artifacts.len(), 1);
+        assert_eq!(after.artifacts[0].lifecycle, ArtifactLifecycle::Committed);
+        assert_eq!(after.artifacts[0].author, child_author);
+        assert_eq!(after.receipt.included_artifact_ids, vec![artifact.id]);
+    }
+
+    #[tokio::test]
+    async fn stale_cognitive_proposal_is_rejected_and_refresh_can_reapply() {
+        let reg = AgoraRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
+        let author = test_author();
+        commit_operation(
+            &reg,
+            "work-b",
+            0,
+            AgoraOperation::UpsertCognitiveTask {
+                task: cognitive_task("root", author),
+            },
+            author,
+        )
+        .await;
+        let stale = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: fabric::AgoraSpaceId("work-b".into()),
+            author,
+            base_version: 0,
+            operation: AgoraOperation::PublishFact {
+                key: "stale".into(),
+                value: json!(true),
+            },
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
+        };
+        let error = fabric::AgoraService::propose(&reg, stale)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("version conflict"));
+
+        let refreshed = fabric::AgoraService::view(
+            &reg,
+            AgoraViewRequest {
+                space: fabric::AgoraSpaceId("work-b".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(refreshed.version, 1);
+        commit_operation(
+            &reg,
+            "work-b",
+            refreshed.version,
+            AgoraOperation::PublishFact {
+                key: "fresh".into(),
+                value: json!(true),
+            },
+            author,
+        )
+        .await;
+        assert_eq!(
+            reg.recall("work-b", "fresh").await.unwrap(),
+            Some(json!(true))
+        );
     }
 
     #[tokio::test]

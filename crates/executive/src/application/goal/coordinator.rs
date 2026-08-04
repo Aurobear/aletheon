@@ -109,7 +109,10 @@ impl GoalCoordinator {
         let Some((quota, expected_bytes)) = &self.storage_quota else {
             return Ok(());
         };
-        let mut reservations = self.storage_reservations.lock().unwrap();
+        let mut reservations = self
+            .storage_reservations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let std::collections::hash_map::Entry::Vacant(entry) = reservations.entry(goal_id) {
             let reservation = quota
                 .reserve(StorageClass::Total, *expected_bytes, 1)
@@ -120,7 +123,10 @@ impl GoalCoordinator {
     }
 
     pub fn release_attempt_storage(&self, goal_id: GoalId) {
-        self.storage_reservations.lock().unwrap().remove(&goal_id);
+        self.storage_reservations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&goal_id);
     }
 
     /// Project only an immutable summary that can be read back from durable
@@ -132,7 +138,7 @@ impl GoalCoordinator {
     ) -> Option<ProjectionStatus> {
         let projection = self.memory_projection.as_ref()?;
         let loaded = {
-            let store = self.store.lock().unwrap();
+            let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
             let summary = match store.load_goal_completion_summary(approval_id) {
                 Ok(Some(summary)) => summary,
                 Ok(None) => return None,
@@ -247,7 +253,7 @@ impl GoalCoordinator {
         goal_id: GoalId,
         now_ms: i64,
     ) -> Result<GoalTickOutcome, GoalTransitionError> {
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
 
         let current = match store.get_goal(goal_id)? {
             Some(g) => g,
@@ -260,7 +266,10 @@ impl GoalCoordinator {
 
         match current.state {
             GoalState::Completed | GoalState::Failed | GoalState::Cancelled => {
-                self.storage_reservations.lock().unwrap().remove(&goal_id);
+                self.storage_reservations
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&goal_id);
                 Ok(GoalTickOutcome::Noop {
                     state: current.state,
                 })
@@ -326,7 +335,7 @@ impl GoalCoordinator {
         principal: &PrincipalId,
         event: &ExternalEventEnvelope,
     ) -> Result<Vec<GoalId>, GoalTransitionError> {
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let goals = store.list_goals(
             &[
                 GoalState::AwaitingHuman,
@@ -372,7 +381,7 @@ impl GoalCoordinator {
         expected_version: u64,
         process_id: Option<ProcessId>,
     ) -> Result<GoalSnapshot, GoalTransitionError> {
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
 
         let current = match store.get_goal(goal_id)? {
             Some(g) => g,

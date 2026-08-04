@@ -63,8 +63,15 @@ pub(crate) fn open(
             "filesystem authority has no path admitted by both workspace and permit".into(),
         );
     }
+    let mut traversal_roots = Vec::new();
+    for root in roots {
+        let traversal = writable_traversal_root(&root)?;
+        if !traversal_roots.contains(&traversal) {
+            traversal_roots.push(traversal);
+        }
+    }
     let host = platform::open_filesystem(FilesystemScope {
-        roots: roots.into_iter().map(HostPath::new).collect(),
+        roots: traversal_roots.into_iter().map(HostPath::new).collect(),
         readable_paths: readable_paths.into_iter().map(HostPath::new).collect(),
         access,
         symlink_policy: SymlinkPolicy::WithinRoot,
@@ -73,6 +80,31 @@ pub(crate) fn open(
     Ok(ScopedFilesystem {
         host,
         path: HostPath::new(candidate),
+    })
+}
+
+fn writable_traversal_root(path: &Path) -> Result<PathBuf, String> {
+    let mut ancestor = path;
+    while !ancestor.exists() {
+        ancestor = ancestor.parent().ok_or_else(|| {
+            format!(
+                "writable path has no existing directory ancestor: {}",
+                path.display()
+            )
+        })?;
+    }
+    let directory = if ancestor.is_dir() {
+        ancestor
+    } else {
+        ancestor
+            .parent()
+            .ok_or_else(|| format!("writable file has no parent directory: {}", path.display()))?
+    };
+    std::fs::canonicalize(directory).map_err(|error| {
+        format!(
+            "writable traversal root '{}' cannot be resolved: {error}",
+            directory.display()
+        )
     })
 }
 
@@ -143,6 +175,7 @@ mod tests {
                     allowed_paths,
                     ..Default::default()
                 },
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             }),
             working_dir: root.to_path_buf(),
             session_id: "test".into(),
@@ -224,6 +257,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exact_writable_file_scope_allows_target_and_rejects_sibling() {
+        let workspace = tempfile::tempdir().unwrap();
+        let target = workspace.path().join("target.txt");
+        let sibling = workspace.path().join("sibling.txt");
+        std::fs::write(&target, "original").unwrap();
+        std::fs::write(&sibling, "sibling").unwrap();
+        let policy = fabric::WorkspacePolicy::from_resolved_roots(
+            workspace.path().to_path_buf(),
+            Vec::new(),
+        )
+        .unwrap()
+        .narrow_to_declared_paths(&["target.txt".into()])
+        .unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: Some(fabric::ToolApprovalAuthority {
+                principal_id: fabric::PrincipalId("test".into()),
+                connection_id: fabric::ConnectionId::new(),
+                thread_id: fabric::ThreadId("test".into()),
+                turn_id: fabric::TurnId::new(),
+                call_id: "call".into(),
+                workspace: policy,
+                granted_scope: fabric::CapabilityScope {
+                    allowed_paths: vec![target.to_string_lossy().into_owned()],
+                    ..Default::default()
+                },
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
+            }),
+            working_dir: workspace.path().to_path_buf(),
+            session_id: "test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let accepted = FileWriteTool
+            .execute(json!({"path": target, "content": "changed"}), &context)
+            .await;
+        let rejected = FileWriteTool
+            .execute(json!({"path": sibling, "content": "escaped"}), &context)
+            .await;
+
+        assert!(!accepted.is_error, "{}", accepted.content);
+        assert!(rejected.is_error);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "changed");
+        assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "sibling");
+    }
+
+    #[tokio::test]
     async fn file_tools_read_and_write_inside_the_admitted_workspace() {
         let workspace = tempfile::tempdir().unwrap();
         let root = workspace.path().canonicalize().unwrap();
@@ -234,12 +315,24 @@ mod tests {
             .execute(json!({"path": path, "content": "hello\nworld\n"}), &context)
             .await;
         assert!(!write.is_error, "{}", write.content);
+        let delta = write
+            .metadata
+            .patch_delta
+            .expect("successful file_write emits a typed delta");
+        assert_eq!(delta.files_changed.len(), 1);
+        assert_eq!(delta.files_changed[0].path, "nested/file.txt");
+        assert_eq!(delta.files_changed[0].bytes_before, 0);
+        assert_eq!(delta.files_changed[0].bytes_after, 12);
 
         let read = FileReadTool
             .execute(json!({"path": path, "offset": 1, "limit": 1}), &context)
             .await;
         assert!(!read.is_error, "{}", read.content);
-        assert_eq!(read.content, "    2\tworld");
+        let receipt: serde_json::Value = serde_json::from_str(&read.content).unwrap();
+        assert_eq!(receipt["files"][0]["content"], "    2\tworld");
+        assert_eq!(receipt["files"][0]["line_range"]["start"], 2);
+        assert_eq!(receipt["files"][0]["line_range"]["end"], 2);
+        assert_eq!(receipt["files"][0]["sha256"].as_str().unwrap().len(), 64);
     }
 
     #[tokio::test]
@@ -258,10 +351,24 @@ mod tests {
             .await;
 
         assert!(!read.is_error, "{}", read.content);
-        assert!(read.content.contains("== Cargo.toml =="));
-        assert!(read.content.contains("name = \"demo\""));
-        assert!(read.content.contains("== README.md =="));
-        assert!(read.content.contains("# Demo"));
+        let receipt: serde_json::Value = serde_json::from_str(&read.content).unwrap();
+        assert_eq!(receipt["files"][0]["path"], "Cargo.toml");
+        assert!(receipt["files"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("name = \"demo\""));
+        assert_eq!(receipt["files"][1]["path"], "README.md");
+        assert!(receipt["files"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("# Demo"));
+        assert!(receipt["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| file["artifact_ref"]
+                .as_str()
+                .is_some_and(|reference| reference.starts_with("artifact://sha256/"))));
     }
 
     #[tokio::test]
@@ -279,9 +386,9 @@ mod tests {
             .await;
 
         assert!(!read.is_error, "{}", read.content);
-        assert!(read.content.contains("== README.md =="));
+        assert!(read.content.contains("README.md"));
         assert!(read.content.contains("# Demo"));
-        assert!(read.content.contains("== package.json =="));
+        assert!(read.content.contains("package.json"));
         assert!(read.content.contains("Failed to read package.json"));
     }
 

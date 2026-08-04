@@ -68,6 +68,9 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
         input: "hello".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     };
 
     let result = coordinator
@@ -90,6 +93,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
                         projector,
                         outcome: PostTurnOutcome {
                             session_id: request.context.thread_id.0,
+                            principal_id: request.context.principal_id,
                             input: request.input,
                             output: "answer".into(),
                             turn: 1,
@@ -103,6 +107,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
                         },
                     }),
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             }
         })

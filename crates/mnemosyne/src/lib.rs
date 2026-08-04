@@ -9,6 +9,7 @@ mod adapters;
 pub mod agent_scope;
 mod application;
 mod backends;
+pub mod binding;
 pub mod composite_service;
 pub mod consolidation;
 pub mod credential;
@@ -16,6 +17,7 @@ mod domain;
 pub mod embodied_episode;
 pub mod fact_service;
 mod host;
+pub mod intake;
 pub mod knowledge_graph;
 pub mod lifecycle;
 pub mod model;
@@ -26,14 +28,31 @@ pub mod promotion;
 mod recall;
 pub mod retention;
 pub mod service;
+pub mod workspace;
 
+pub mod embedding {
+    pub use crate::adapters::embedding::{
+        EmbeddingAdapterError, EmbeddingTransport, RemoteEmbeddingProvider,
+    };
+}
 pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
+pub use binding::{
+    capability_digest, SupplementalCapabilityGrant, WorkspaceMemoryBinding,
+    WorkspaceMemoryBindingError, WorkspaceMemoryBindingPreview, WorkspaceMemoryBindingProposal,
+    WorkspaceMemoryBindingRegistry, WorkspaceMemoryBindingState,
+};
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
 };
+pub use embedding::{EmbeddingAdapterError, EmbeddingTransport, RemoteEmbeddingProvider};
 pub use fact_service::{
     AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
     ListFactsRequest, SearchFactsRequest,
+};
+pub use intake::{
+    GovernedMemoryObservation, MemoryIntakeError, MemoryIntakeLedger, MemoryIntakeLimits,
+    MemoryLifecycleUpdate, MemoryMaintenanceClaim, MemoryMaintenanceLease, MemoryMaintenancePhase,
+    MemoryMaintenanceStatus,
 };
 pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 
@@ -41,6 +60,9 @@ pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDec
 // intentionally not re-exported here — it would collide with the existing
 // multi-agent `MemoryScope` re-exported below (`r#impl::core_memory::scope`).
 // Reach the facade's scope type via `mnemosyne::service::MemoryScope`.
+pub use backends::vector_sqlite::{
+    EmbeddedRecord, SqliteVectorBackend, VectorIndexState, VectorIndexWriter,
+};
 pub use model::{
     MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProvenance, MemoryRecord, MemoryRecordId,
     MemoryScope, MemorySensitivity, MemoryStatus, ScopeAncestry, TemporalState,
@@ -67,6 +89,7 @@ pub use service::{
     ForgetSelector, MemoryService, RecallItem, RecallRequest, RecallSet, SynthesisCitation,
     SynthesisContextBlock, SynthesisGap, SynthesisRequest, SynthesisResult,
 };
+pub use workspace::WorkspaceMemoryKey;
 
 // Wave 1: Recall pipeline enhancements
 pub use recall::autocut::{apply_autocut, AutocutDecision};
@@ -98,7 +121,7 @@ pub use ops::decay;
 pub use ops::schema;
 
 #[cfg(feature = "cognitive-memory")]
-pub use ops::consolidation;
+pub use ops::consolidation as cognitive_consolidation;
 #[cfg(feature = "cognitive-memory")]
 pub use ops::router;
 
@@ -113,7 +136,9 @@ pub mod runtime {
     pub use crate::application::compressor::budget::{
         BudgetAction, ContextBudgetInput, ContextBudgetPlan, ContextBudgetPlanner,
     };
-    pub use crate::application::compressor::{AdvancedCompressor, CompactionLineage};
+    pub use crate::application::compressor::{
+        AdvancedCompressor, CompactionLineage, DEFAULT_COMPACTION_THRESHOLD_FRACTION,
+    };
     pub use crate::backends::EpisodicMemory;
     #[cfg(feature = "cognitive-memory")]
     pub use crate::backends::{ProceduralMemory, SelfMemory, SemanticMemory};

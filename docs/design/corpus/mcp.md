@@ -1,4 +1,4 @@
-> Migrated from docs/design/execution/mcp-integration.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from docs/design/execution/mcp-integration.md — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 # MCP 集成 (Model Context Protocol Integration)
 
@@ -7,7 +7,7 @@
 **模块编号:** 03 (MCP 子系统)
 **关联模块:** [tool-system.md](tools.md), [sandbox.md](sandbox.md), [shared/traits.md](../fabric/types.md)
 **最后更新:** 2026-06-07
-**来源:** 从 `03-tool-system.md` 的 S3.4、S3.5、S3.7、S4.4、S4.5、S4.7 节提取。
+**来源:** 从早期工具系统设计合并；原拆分文档已移除。
 
 ---
 

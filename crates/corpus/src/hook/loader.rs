@@ -22,6 +22,7 @@ pub struct HookConfig {
     pub point: HookPoint,
     pub priority: i32,
     pub script: PathBuf,
+    pub timeout_ms: Option<u64>,
 }
 
 /// Loads user hook definitions from TOML files.
@@ -54,7 +55,7 @@ impl HookLoader {
                     .extension()
                     .is_some_and(|e| e.eq_ignore_ascii_case("toml"))
             {
-                match load_hook_file(&path) {
+                match load_hook_path(&path, None) {
                     Ok(hook) => hooks.push(hook),
                     Err(e) => {
                         tracing::warn!(path = %path.display(), error = %e, "Failed to load hook");
@@ -77,13 +78,14 @@ impl HookLoader {
                 script_path: Some(config.script),
                 point: config.point,
                 priority: config.priority,
+                timeout_ms: config.timeout_ms,
             });
         }
         count
     }
 }
 
-fn load_hook_file(path: &Path) -> anyhow::Result<HookConfig> {
+pub fn load_hook_path(path: &Path, package_root: Option<&Path>) -> anyhow::Result<HookConfig> {
     let content = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("reading {}: {}", path.display(), e))?;
 
@@ -91,6 +93,7 @@ fn load_hook_file(path: &Path) -> anyhow::Result<HookConfig> {
     let mut point_str = String::new();
     let mut priority: i32 = 100;
     let mut script = PathBuf::new();
+    let mut timeout_ms = None;
 
     let mut in_hook_section = false;
     for line in content.lines() {
@@ -117,6 +120,12 @@ fn load_hook_file(path: &Path) -> anyhow::Result<HookConfig> {
                     }
                 }
                 "script" => script = PathBuf::from(unquote(&value)),
+                "timeout_ms" => {
+                    timeout_ms =
+                        Some(value.parse::<u64>().map_err(|_| {
+                            anyhow::anyhow!("timeout_ms must be an unsigned integer")
+                        })?);
+                }
                 _ => {}
             }
         }
@@ -135,11 +144,51 @@ fn load_hook_file(path: &Path) -> anyhow::Result<HookConfig> {
         _ => return Err(anyhow::anyhow!("Unknown hook point: {point_str}")),
     };
 
+    if let Some(timeout_ms) = timeout_ms {
+        anyhow::ensure!(
+            (1..=120_000).contains(&timeout_ms),
+            "timeout_ms must be within 1..=120000"
+        );
+    }
+
+    if let Some(package_root) = package_root {
+        anyhow::ensure!(
+            !script.is_absolute(),
+            "package hook script must be package-relative"
+        );
+        let canonical_root = package_root.canonicalize().map_err(|error| {
+            anyhow::anyhow!(
+                "canonicalizing package root {}: {error}",
+                package_root.display()
+            )
+        })?;
+        let canonical_manifest = path.canonicalize().map_err(|error| {
+            anyhow::anyhow!("canonicalizing hook manifest {}: {error}", path.display())
+        })?;
+        anyhow::ensure!(
+            canonical_manifest.starts_with(&canonical_root),
+            "hook manifest escapes its package root"
+        );
+        let canonical_script = canonical_root
+            .join(&script)
+            .canonicalize()
+            .map_err(|error| {
+                anyhow::anyhow!("canonicalizing hook script {}: {error}", script.display())
+            })?;
+        anyhow::ensure!(
+            canonical_script.starts_with(&canonical_root),
+            "hook script escapes its package root"
+        );
+        anyhow::ensure!(canonical_script.is_file(), "hook script is not a file");
+        script = canonical_script;
+    }
+
     Ok(HookConfig {
         name,
         point,
         priority,
         script,
+        timeout_ms,
     })
 }
 
@@ -184,6 +233,7 @@ script = "/usr/local/bin/block-dangerous.sh"
         assert_eq!(hooks.len(), 1);
         assert_eq!(hooks[0].name, "block-dangerous");
         assert_eq!(hooks[0].priority, 1);
+        assert_eq!(hooks[0].timeout_ms, None);
     }
 
     #[test]

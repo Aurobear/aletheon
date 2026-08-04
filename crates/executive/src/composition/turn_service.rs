@@ -140,6 +140,7 @@ impl TurnService {
                     items: recording.take_items().await,
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             })
             .await?;
@@ -194,6 +195,37 @@ impl TurnServices for RecordingTurnServices {
         });
         result
     }
+    async fn record_capability_receipt(&self, receipt: fabric::CapabilityTerminalReceipt) {
+        self.items
+            .lock()
+            .await
+            .push(ItemPayload::CapabilityReceipt {
+                receipt: receipt.clone(),
+            });
+        self.inner.record_capability_receipt(receipt).await;
+    }
+    async fn record_model_context_projection(
+        &self,
+        mut receipt: fabric::model_projection::ModelContextProjectionReceipt,
+    ) {
+        materialize_projection_artifacts(&mut receipt);
+        self.items
+            .lock()
+            .await
+            .push(ItemPayload::ModelContextProjection {
+                receipt: receipt.clone(),
+            });
+        self.inner.record_model_context_projection(receipt).await;
+    }
+    async fn record_inference_receipt(
+        &self,
+        receipt: fabric::types::inference_receipt::InferenceTerminalReceipt,
+    ) {
+        self.items.lock().await.push(ItemPayload::InferenceReceipt {
+            receipt: receipt.clone(),
+        });
+        self.inner.record_inference_receipt(receipt).await;
+    }
     fn llm_provider(&self) -> Option<&dyn fabric::LlmProvider> {
         self.inner.llm_provider()
     }
@@ -205,11 +237,114 @@ impl TurnServices for RecordingTurnServices {
         seed.extend(self.canonical_seed.clone());
         seed
     }
+    fn turn_requirements(&self, request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
+        self.inner.turn_requirements(request)
+    }
 
     async fn plan_capability_batch(
         &self,
         calls: Vec<CapabilityCall>,
     ) -> anyhow::Result<fabric::CapabilityBatchPlan> {
         self.inner.plan_capability_batch(calls).await
+    }
+}
+
+pub(crate) fn materialize_projection_artifacts(
+    receipt: &mut fabric::model_projection::ModelContextProjectionReceipt,
+) {
+    let store = corpus::tools::artifact::ArtifactStore::new(
+        corpus::tools::tools::output::OutputConfig::default()
+            .overflow_dir
+            .join("artifacts"),
+    );
+    for fragment in &mut receipt.fragments {
+        let Some(content) = fragment.inline_content.take() else {
+            continue;
+        };
+        match store.store(content.as_bytes(), "application/json") {
+            Ok(artifact) => fragment.artifact_ref = Some(artifact.uri()),
+            Err(error) => {
+                tracing::warn!(%error, fragment = %fragment.fragment_id, "context projection artifact persistence failed");
+                fragment.inline_content = Some(content);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn recording_services_persist_terminal_receipt_as_distinct_item() {
+        let services = RecordingTurnServices::new(Arc::new(fabric::StubTurnServices), Vec::new());
+        let receipt = fabric::CapabilityTerminalReceipt {
+            invocation_id: "call".into(),
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            capability: "validation_run".into(),
+            status: fabric::CapabilityTerminalStatus::Succeeded,
+            started_at: fabric::MonoTime(1),
+            finished_at: fabric::MonoTime(2),
+            exit_code: Some(0),
+            error_class: None,
+            artifact_ids: Vec::new(),
+            evidence_ids: vec!["evidence".into()],
+            output_ref: Some("command-session:id".into()),
+            truncated: false,
+            retry_disposition: fabric::CapabilityRetryDisposition::Never,
+            audit_id: None,
+        };
+
+        services.record_capability_receipt(receipt.clone()).await;
+
+        let items = services.take_items().await;
+        assert_eq!(items.len(), 1);
+        assert!(matches!(
+            &items[0],
+            ItemPayload::CapabilityReceipt { receipt: stored } if stored == &receipt
+        ));
+    }
+
+    #[tokio::test]
+    async fn recording_services_persist_model_projection_as_control_item() {
+        let services = RecordingTurnServices::new(Arc::new(fabric::StubTurnServices), Vec::new());
+        let receipt = fabric::model_projection::ModelContextProjectionReceipt {
+            inference_id: "inference-1".into(),
+            operation_id: "operation-1".into(),
+            system_prefix_digest: "sha256:system".into(),
+            tool_schema_digest: "sha256:tools".into(),
+            role: "worker".into(),
+            stage: "execute".into(),
+            task_node_id: Some("task-1".into()),
+            fragments: vec![fabric::model_projection::ModelContextFragmentReceipt {
+                fragment_id: "fragment-1".into(),
+                source: "system_prompt".into(),
+                source_version: "version-1".into(),
+                artifact_ref: None,
+                inline_content: Some("{\"role\":\"system\"}".into()),
+                selection_reason: "role_instruction".into(),
+                classification: fabric::model_projection::ModelContextClassification::Instruction,
+                truncated: false,
+                bytes: 17,
+            }],
+            omitted_fragment_ids: Vec::new(),
+            message_bytes: 10,
+            tool_schema_bytes: 20,
+        };
+
+        services
+            .record_model_context_projection(receipt.clone())
+            .await;
+
+        let items = services.take_items().await;
+        let [ItemPayload::ModelContextProjection { receipt: stored }] = items.as_slice() else {
+            panic!("projection receipt was not persisted as a distinct item")
+        };
+        assert!(stored.fragments[0].inline_content.is_none());
+        assert!(stored.fragments[0]
+            .artifact_ref
+            .as_deref()
+            .is_some_and(|reference| reference.starts_with("artifact://sha256/")));
     }
 }

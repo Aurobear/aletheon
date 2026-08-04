@@ -88,6 +88,7 @@ mod tests {
             action_summary: "rm -rf /tmp/x".into(),
             risk_level: "high".into(),
             detail: None,
+            scope_subject: None,
         };
         let decision = gate.request(&req).await;
         assert_eq!(decision, ApprovalDecision::Approve);
@@ -114,6 +115,7 @@ mod tests {
             action_summary: "ls".into(),
             risk_level: "low".into(),
             detail: None,
+            scope_subject: None,
         };
         let decision = gate.request(&req).await;
         assert_eq!(decision, ApprovalDecision::Deny);

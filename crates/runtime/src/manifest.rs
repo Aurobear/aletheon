@@ -41,6 +41,7 @@ pub enum RuntimeCapability {
     Browser,
     DeviceObserve,
     DeviceCommand,
+    MemoryProposal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -55,6 +56,7 @@ pub enum InteractionMode {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceMode {
+    WorkspaceLess,
     SharedReadOnly,
     SharedWritable,
     IsolatedWorktree,

@@ -76,6 +76,9 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
         input: "hello".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 
@@ -109,6 +112,7 @@ async fn create_session_on_first_turn() {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )
@@ -170,6 +174,7 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )
@@ -229,6 +234,7 @@ async fn append_items_in_sequence_order() {
                     ],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )
@@ -291,6 +297,7 @@ async fn settle_operation_on_success() {
                         items: vec![],
                         projection: None,
                         context_projection: None,
+                        evaluation_artifacts: Default::default(),
                     })
                 }
             },
@@ -399,6 +406,7 @@ async fn cancel_mid_turn() {
                         items: vec![],
                         projection: None,
                         context_projection: None,
+                        evaluation_artifacts: Default::default(),
                     })
                 }
             },
@@ -448,6 +456,7 @@ async fn concurrent_turns_different_sessions_dont_interfere() {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         ),
@@ -467,6 +476,7 @@ async fn concurrent_turns_different_sessions_dont_interfere() {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         ),
@@ -523,6 +533,7 @@ async fn event_spine_sequence_monotonic_across_turns() {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )
@@ -547,6 +558,7 @@ async fn event_spine_sequence_monotonic_across_turns() {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )
@@ -617,6 +629,7 @@ async fn context_projection_stored_as_item() {
                         dasein_version: fabric::dasein::SelfVersion(3),
                         content_ids: vec![fabric::ContentId(uuid::Uuid::from_u128(1))],
                     }),
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )

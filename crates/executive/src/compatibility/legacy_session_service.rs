@@ -125,6 +125,7 @@ impl LegacySessionService {
             &self.data_dir,
             session_id.to_owned(),
             self.context_window,
+            80, // legacy path: default threshold (80% == legacy 0.8)
             self.clock.clone(),
         )
         .await
@@ -189,6 +190,7 @@ impl LegacySessionService {
             &self.data_dir,
             session_id.clone(),
             self.context_window,
+            80, // legacy path: default threshold (80% == legacy 0.8)
             self.clock.clone(),
         )
         .await

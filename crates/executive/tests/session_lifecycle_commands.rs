@@ -16,6 +16,9 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
         input: "hello".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 
@@ -54,6 +57,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )
@@ -111,6 +115,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                         items: vec![],
                         projection: None,
                         context_projection: None,
+                        evaluation_artifacts: Default::default(),
                     })
                 },
             )

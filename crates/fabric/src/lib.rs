@@ -58,7 +58,9 @@ pub use types::agent;
 pub use types::agent_control;
 pub use types::attempt;
 pub use types::capability;
+pub use types::change_transaction;
 pub use types::channel;
+pub use types::cognitive_workflow;
 pub use types::conscious_arbitration;
 pub use types::conscious_core;
 pub use types::context;
@@ -74,10 +76,12 @@ pub use types::hook;
 pub use types::hook_ext;
 pub use types::llm_types;
 pub use types::message;
+pub use types::model_projection;
 pub use types::network_policy;
 pub use types::objective;
 pub use types::paths;
 pub use types::permission;
+pub use types::repository;
 pub use types::resource;
 pub use types::sandbox;
 pub use types::session;
@@ -180,9 +184,10 @@ pub use include::self_field::{
 pub use include::space::SpaceManager;
 pub use include::subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
 pub use include::turn::{
-    AgoraView, CapabilityAuthority, CapabilityCall, CapabilityRequest, CapabilityResult,
-    DaseinView, InvocationControl, NoopTurnEventSink, RecallRequest, RecallSet, StubTurnServices,
-    TurnEventSink, TurnServices,
+    AgoraView, CapabilityAuthority, CapabilityCall, CapabilityErrorClass, CapabilityReceiptDetails,
+    CapabilityRequest, CapabilityResult, CapabilityRetryDisposition, CapabilityTerminalReceipt,
+    CapabilityTerminalStatus, DaseinView, InvocationControl, NoopTurnEventSink, RecallRequest,
+    RecallSet, StubTurnServices, TurnEventSink, TurnRequirement, TurnServices,
 };
 
 // Shared types (from types/)
@@ -195,8 +200,9 @@ pub use types::admission::{
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{
-    AgentApprovalPolicy, AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork,
-    AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
+    AgentApprovalPolicy, AgentArtifact, AgentAttenuationReport, AgentBroadcastRef, AgentBudget,
+    AgentBudgetField, AgentContextFork, AgentControlError, AgentControlErrorKind,
+    AgentControlMessage, AgentControlPort, AgentDelegationAuthority, AgentHandle,
     AgentInteractionMode, AgentListRequest, AgentMessageDeliveryState, AgentMessageKind,
     AgentMessagePayload, AgentMessageReceipt, AgentProfile, AgentRecoveryDecision,
     AgentRecoveryReceipt, AgentResult, AgentRunStatus, AgentRuntimeCapability, AgentSendRequest,
@@ -219,7 +225,7 @@ pub use types::approval::{
 };
 pub use types::attempt::{
     AttemptEvidence, AttemptId, AttemptStatus, AttemptUsage, CognitiveRole, FailureClass,
-    RuntimeFailure, RuntimeId, RuntimeResult,
+    RuntimeFailure, RuntimeId, RuntimeObservability, RuntimeResult,
 };
 pub use types::capability::{Capability, CapabilityLevel, CapabilitySet};
 pub use types::channel::{
@@ -232,6 +238,13 @@ pub use types::coding_job::{
     WorkspaceBoundary,
 };
 pub use types::context::{Context, TraceState};
+pub use types::evaluation::{
+    EvaluationContractError, EvaluationContractId, EvaluationDecision, EvaluationEvidenceSnapshot,
+    EvaluationExecutionContext, EvaluationMode, EvaluationReceipt, EvaluationReceiptId,
+    EvaluationReceiptRef, EvaluationSnapshotId, EvaluationSubject, EvaluationThresholds,
+    EvidenceRef, RequiredEvidence, RequiredGate, TaskEvaluationContract, TaskKind,
+    EVALUATION_SCHEMA_V1,
+};
 pub use types::extension::{
     ActivationConstraints, ExtensionCatalog, ExtensionContractError, ExtensionDescriptor,
     ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
@@ -258,8 +271,9 @@ pub use types::goal::{
 pub use types::hook::{HookContext, HookMode, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
 pub use types::llm_types::{
-    InferenceCapabilities, LlmProvider, LlmResponse, LlmStream, ModelInfo, ModelRuntimeFacts,
-    StopReason, StreamChunk, ToolDefinition, Usage,
+    canonicalize_tool_definitions, tool_schema_digest, CacheTelemetry, InferenceCapabilities,
+    InferenceUsage, LlmProvider, LlmResponse, LlmStream, ModelInfo, ModelRuntimeFacts, StopReason,
+    StreamChunk, ToolDefinition, ToolDefinitionCanonicalizationError,
 };
 pub use types::local_authority::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalContext,
@@ -279,7 +293,6 @@ pub use types::process::{
     ProcessIdentity, ProcessOwnership, ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState,
     SpaceId, SpawnSpec,
 };
-pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
     resolve_profile, IsolationLevel, ProfileName, ProfileResolveError, ResolvedSandboxPolicy,
     SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig, SandboxExecutor,
@@ -289,8 +302,8 @@ pub use types::sandbox::{
 pub use types::sandbox_glob::expand_deny_globs;
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
-    SessionForkedEvent, SessionNotification, SessionProtocolV1, SessionRecord, SessionStatus,
-    TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
+    SessionForkedEvent, SessionNotification, SessionProtocolV2, SessionProtocolV3,
+    SessionProtocolV4, SessionRecord, SessionStatus, TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,
@@ -337,14 +350,8 @@ pub use ipc::ipc_types::{
     AgentId as IpcAgentId, AgentMessage, IpcBackend, IpcPreference, IpcPriority, IpcProbeError,
     MessageType,
 };
-pub use ipc::protocol::Protocol;
-pub use ipc::transport::{
-    HealthStatus, Transport as EnvelopeTransport, TransportHealth, TransportKind,
-};
 
 // Kernel foundations (from kernel/)
-pub use kernel::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
-pub use kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 pub use kernel::error::{
     handle_tool_error, llm_backoff, llm_degradation_chain, tool_backoff, tool_degradation_chain,
     AgentError, BackoffStrategy, DegradationChain, DegradationStrategy, ErrorCategory,

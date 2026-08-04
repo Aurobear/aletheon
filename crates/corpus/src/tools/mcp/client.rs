@@ -8,12 +8,12 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Mutex};
 
 use super::auth::{
-    BearerTokenAuth, McpEndpointCredentialGrant, McpHttpAuth, McpOAuthProvider,
-    OAuthClientAuthMethod, OAuthEndpoints, TokenStore,
+    BearerTokenAuth, McpClientCredentialsAuth, McpEndpointCredentialGrant, McpHttpAuth,
+    McpOAuthProvider, OAuthClientAuthMethod, OAuthEndpoints, TokenStore,
 };
 use super::config::{
-    McpConfig, McpOAuthClientAuthMethod, McpPermissionLevel, McpServerConfig, McpTransportConfig,
-    McpTrustLevel,
+    McpConfig, McpOAuthClientAuthMethod, McpOAuthGrantType, McpPermissionLevel, McpServerConfig,
+    McpTransportConfig, McpTrustLevel,
 };
 use super::supervisor::{
     McpHealthSnapshot, McpShutdownReport, McpTaskExitPolicy, McpTaskSupervisor,
@@ -156,7 +156,6 @@ async fn configured_oauth(
     let Some(config) = server.oauth.as_ref().filter(|config| config.enabled) else {
         return Ok(None);
     };
-    validate_oauth_redirect_uri(&config.redirect_uri)?;
     let policy = endpoint_policy(server.trust);
     let discovered = match config.issuer.as_deref() {
         Some(issuer) => {
@@ -164,20 +163,11 @@ async fn configured_oauth(
         }
         None => None,
     };
-    let auth_url = discovered
-        .as_ref()
-        .map(|value| value.authorization_endpoint.clone())
-        .or_else(|| config.authorization_endpoint.clone())
-        .context("OAuth requires issuer discovery or authorization_endpoint")?;
     let token_url = discovered
         .as_ref()
         .map(|value| value.token_endpoint.clone())
         .or_else(|| config.token_endpoint.clone())
         .context("OAuth requires issuer discovery or token_endpoint")?;
-    policy
-        .approve(&auth_url)
-        .await
-        .context("MCP OAuth authorization endpoint denied")?;
     policy
         .approve(&token_url)
         .await
@@ -220,6 +210,38 @@ async fn configured_oauth(
             "OAuth discovery does not support configured token endpoint auth method"
         );
     }
+    if config.grant_type == McpOAuthGrantType::ClientCredentials {
+        anyhow::ensure!(
+            method != OAuthClientAuthMethod::None && client_secret.is_some(),
+            "client_credentials requires confidential client authentication"
+        );
+        let auth = McpClientCredentialsAuth::new(
+            client_id,
+            client_secret.expect("validated client secret"),
+            token_url,
+            config.scopes.clone(),
+            server.name.clone(),
+            resource_url,
+            method,
+            policy,
+            TokenStore::ephemeral(),
+            Arc::new(kernel::chronos::SystemClock::new()),
+        )?;
+        let auth = McpHttpAuth::ClientCredentials(auth);
+        auth.prepare_for_request(Some(resource_url)).await?;
+        return Ok(Some(auth));
+    }
+
+    validate_oauth_redirect_uri(&config.redirect_uri)?;
+    let auth_url = discovered
+        .as_ref()
+        .map(|value| value.authorization_endpoint.clone())
+        .or_else(|| config.authorization_endpoint.clone())
+        .context("OAuth requires issuer discovery or authorization_endpoint")?;
+    policy
+        .approve(&auth_url)
+        .await
+        .context("MCP OAuth authorization endpoint denied")?;
     let mut provider = McpOAuthProvider::new(
         client_id,
         OAuthEndpoints {
@@ -877,6 +899,7 @@ impl ElicitationHandler for McpElicitationHandler {
         use crate::security::approval::{ApprovalDecision, ApprovalRequest};
 
         let req = ApprovalRequest {
+            scope_subject: None,
             owner: fabric::ApprovalOwner::new(
                 fabric::PrincipalId("mcp".into()),
                 fabric::ThreadId("mcp".into()),
@@ -900,7 +923,7 @@ impl ElicitationHandler for McpElicitationHandler {
 
         match self.gate.request(&req).await {
             ApprovalDecision::Approve | ApprovalDecision::ApproveForSession => Ok(true),
-            ApprovalDecision::Deny => Ok(false),
+            ApprovalDecision::Deny | ApprovalDecision::ApprovePathForSession => Ok(false),
         }
     }
 }
@@ -1319,6 +1342,21 @@ impl McpConnectionManager {
                 continue;
             };
             for resource in &client.resources {
+                let allowed = self
+                    .config
+                    .servers
+                    .iter()
+                    .find(|server| server.name == *server_name)
+                    .is_none_or(|server| {
+                        server.resource_allowlist.is_empty()
+                            || server
+                                .resource_allowlist
+                                .iter()
+                                .any(|entry| entry == &resource.name || entry == &resource.uri)
+                    });
+                if !allowed {
+                    continue;
+                }
                 let normalized_name = format!("mcp.{}.resource.{}", server_name, resource.name);
                 providers.push(McpResourceProvider {
                     uri: resource.uri.clone(),
@@ -1442,7 +1480,7 @@ impl McpConnectionManager {
 
 #[cfg(test)]
 mod oauth_selection_tests {
-    use super::super::config::McpOAuthConfig;
+    use super::super::config::{McpOAuthConfig, McpOAuthGrantType};
     use super::*;
 
     fn http_server() -> McpServerConfig {
@@ -1455,6 +1493,7 @@ mod oauth_selection_tests {
                 enabled: true,
                 client_id_env: "MCP_CLIENT_ID".into(),
                 client_secret_env: None,
+                grant_type: McpOAuthGrantType::AuthorizationCode,
                 redirect_uri: "http://127.0.0.1:8765/callback".into(),
                 scopes: vec!["tools:read".into()],
                 token_endpoint_auth_method: McpOAuthClientAuthMethod::None,
@@ -1506,6 +1545,7 @@ mod oauth_selection_tests {
             enabled: true,
             client_id_env: "ALETHEON_TEST_MISSING_CLIENT_ID".into(),
             client_secret_env: Some("ALETHEON_TEST_MISSING_CLIENT_SECRET".into()),
+            grant_type: McpOAuthGrantType::AuthorizationCode,
             redirect_uri: "http://127.0.0.1:8765/callback".into(),
             scopes: vec!["tools:read".into()],
             token_endpoint_auth_method: McpOAuthClientAuthMethod::ClientSecretPost,

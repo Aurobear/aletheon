@@ -148,6 +148,41 @@ impl FactStore {
             END;",
         )?;
 
+        // Canonical records retain the complete governed envelope. The legacy
+        // facts table cannot preserve canonical IDs or equal claims in separate
+        // workspaces, so maintenance promotion uses this additive store.
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS canonical_memory_records (
+                row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                record_id TEXT NOT NULL UNIQUE,
+                content TEXT NOT NULL,
+                record_json TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                authority TEXT NOT NULL,
+                sensitivity_ord INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                updated_ms INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_canonical_memory_scope
+              ON canonical_memory_records(scope_key, sensitivity_ord, authority, status);
+            CREATE VIRTUAL TABLE IF NOT EXISTS canonical_memory_fts USING fts5(
+                content,
+                content=canonical_memory_records,
+                content_rowid=row_id,
+                tokenize='porter unicode61'
+            );
+            CREATE TRIGGER IF NOT EXISTS canonical_memory_ai
+              AFTER INSERT ON canonical_memory_records BEGIN
+                INSERT INTO canonical_memory_fts(rowid, content)
+                VALUES (new.row_id, new.content);
+            END;
+            CREATE TRIGGER IF NOT EXISTS canonical_memory_ad
+              AFTER DELETE ON canonical_memory_records BEGIN
+                INSERT INTO canonical_memory_fts(canonical_memory_fts, rowid, content)
+                VALUES ('delete', old.row_id, old.content);
+            END;",
+        )?;
+
         // ── entities table ───────────────────────────────────────────────────
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS entities (

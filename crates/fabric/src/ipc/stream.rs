@@ -199,6 +199,9 @@ pub enum TurnEventV1 {
         content: String,
         is_error: bool,
         execution_time_ms: u64,
+        /// Structured filesystem delta from apply_patch (None for other tools).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        patch_delta: Option<crate::PatchDelta>,
     },
     /// Streaming tool progress (G2). Does not enter the model context by
     /// default; clients may display it. Zero-to-many precede the single
@@ -226,10 +229,8 @@ pub enum TurnEventV1 {
 
     // -- Bookkeeping --
     Usage {
-        tokens_in: u32,
-        tokens_out: u32,
-        cache_hit_tokens: u32,
-        cache_miss_tokens: u32,
+        #[serde(flatten)]
+        usage: crate::InferenceUsage,
     },
     ContextUpdate {
         used_tokens: u32,

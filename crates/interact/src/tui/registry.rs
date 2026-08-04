@@ -5,6 +5,27 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::command::{BuiltinCommand, CommandType};
 
+const RETIRED_GOVERNANCE_COMMAND_NAMES: &[&str] = &[
+    "reflect",
+    "r",
+    "reflect_now",
+    "rn",
+    "evolution",
+    "evo",
+    "genome",
+    "gene",
+    "hooks",
+    "hk",
+    "task",
+    "evaluation",
+    "eval",
+    "approve",
+    "a",
+    "plan",
+    "p",
+    "computer",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandExecutor {
     Local,
@@ -42,21 +63,13 @@ enum BuiltinId {
     Permissions,
     Context,
     Interrupt,
-    Reflect,
-    ReflectNow,
-    Evolution,
-    Genome,
-    Plan,
     Copy,
     Mode,
-    Approve,
     Quit,
     Agents,
     Agent,
-    Hooks,
     Skills,
     Profile,
-    Computer,
     Diff,
     Mention,
     Input,
@@ -193,7 +206,7 @@ impl CommandRegistry {
             CommandDescriptor::builtin(
                 "resume",
                 &[],
-                "恢复指定会话",
+                "选择历史会话，或按 ID 恢复",
                 "会话",
                 "/resume <id>",
                 Rpc,
@@ -251,56 +264,6 @@ impl CommandRegistry {
                 B::Interrupt,
             ),
             CommandDescriptor::builtin(
-                "reflect",
-                &["r"],
-                "查看反思记录",
-                "自省",
-                "/reflect",
-                Rpc,
-                Always,
-                B::Reflect,
-            ),
-            CommandDescriptor::builtin(
-                "reflect_now",
-                &["rn"],
-                "执行即时反思",
-                "自省",
-                "/reflect_now",
-                Rpc,
-                Idle,
-                B::ReflectNow,
-            ),
-            CommandDescriptor::builtin(
-                "evolution",
-                &["evo"],
-                "查看演化历史",
-                "自省",
-                "/evolution",
-                Rpc,
-                Always,
-                B::Evolution,
-            ),
-            CommandDescriptor::builtin(
-                "genome",
-                &["gene"],
-                "查看当前基因组",
-                "自省",
-                "/genome",
-                Rpc,
-                Always,
-                B::Genome,
-            ),
-            CommandDescriptor::builtin(
-                "plan",
-                &["p"],
-                "切换 Plan 模式",
-                "自省",
-                "/plan",
-                Rpc,
-                Idle,
-                B::Plan,
-            ),
-            CommandDescriptor::builtin(
                 "copy",
                 &["cp"],
                 "复制最后回复到剪贴板",
@@ -319,16 +282,6 @@ impl CommandRegistry {
                 Rpc,
                 Idle,
                 B::Mode,
-            ),
-            CommandDescriptor::builtin(
-                "approve",
-                &["a"],
-                "批准待审批操作",
-                "动作",
-                "/approve",
-                Rpc,
-                Always,
-                B::Approve,
             ),
             CommandDescriptor::builtin(
                 "quit",
@@ -361,16 +314,6 @@ impl CommandRegistry {
                 B::Agent,
             ),
             CommandDescriptor::builtin(
-                "hooks",
-                &["hk"],
-                "列出已注册 Hook",
-                "信息",
-                "/hooks",
-                Rpc,
-                Always,
-                B::Hooks,
-            ),
-            CommandDescriptor::builtin(
                 "skills",
                 &["sk"],
                 "列出可用 Skill",
@@ -389,16 +332,6 @@ impl CommandRegistry {
                 Rpc,
                 Idle,
                 B::Profile,
-            ),
-            CommandDescriptor::builtin(
-                "computer",
-                &[],
-                "查看或控制计算机交互",
-                "信息",
-                "/computer [args]",
-                Local,
-                Always,
-                B::Computer,
             ),
             CommandDescriptor::builtin(
                 "diff",
@@ -576,13 +509,18 @@ impl CommandRegistry {
             self.stale = true;
             return;
         };
-        let reserved: BTreeSet<String> = self
+        let mut reserved: BTreeSet<String> = self
             .builtins
             .iter()
             .flat_map(|command| {
                 std::iter::once(command.name.clone()).chain(command.aliases.clone())
             })
             .collect();
+        reserved.extend(
+            RETIRED_GOVERNANCE_COMMAND_NAMES
+                .iter()
+                .map(|name| (*name).to_string()),
+        );
         let mut skills = Vec::new();
         let mut diagnostics = Vec::new();
         let mut seen = BTreeSet::new();
@@ -692,18 +630,11 @@ fn to_builtin(id: BuiltinId, args: &str) -> BuiltinCommand {
         BuiltinId::Permissions => BuiltinCommand::Permissions,
         BuiltinId::Context => BuiltinCommand::Context,
         BuiltinId::Interrupt => BuiltinCommand::Interrupt,
-        BuiltinId::Reflect => BuiltinCommand::Reflect,
-        BuiltinId::ReflectNow => BuiltinCommand::ReflectNow,
-        BuiltinId::Evolution => BuiltinCommand::Evolution,
-        BuiltinId::Genome => BuiltinCommand::Genome,
-        BuiltinId::Plan => BuiltinCommand::Plan,
         BuiltinId::Copy => BuiltinCommand::Copy,
         BuiltinId::Mode => BuiltinCommand::Mode { name: args.into() },
-        BuiltinId::Approve => BuiltinCommand::Approve,
         BuiltinId::Quit => BuiltinCommand::Quit,
         BuiltinId::Agents => BuiltinCommand::Agents,
         BuiltinId::Agent => BuiltinCommand::AgentDetail { id: args.into() },
-        BuiltinId::Hooks => BuiltinCommand::Hooks,
         BuiltinId::Skills => BuiltinCommand::Skills,
         BuiltinId::Profile => {
             if args.is_empty() {
@@ -712,7 +643,6 @@ fn to_builtin(id: BuiltinId, args: &str) -> BuiltinCommand {
                 BuiltinCommand::ProfileSet { name: args.into() }
             }
         }
-        BuiltinId::Computer => BuiltinCommand::Computer { args: args.into() },
         BuiltinId::Diff => BuiltinCommand::Diff,
         BuiltinId::Mention => BuiltinCommand::Mention { path: args.into() },
         BuiltinId::Input => BuiltinCommand::Input,
@@ -760,7 +690,51 @@ mod tests {
     }
 
     #[test]
-    fn required_production_commands_are_registered() {
+    fn public_builtin_command_set_is_exact() {
+        let registry = CommandRegistry::new();
+        let actual = registry
+            .builtins()
+            .iter()
+            .map(|command| command.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual,
+            vec![
+                "agent",
+                "agents",
+                "clear",
+                "compact",
+                "context",
+                "copy",
+                "diff",
+                "fork",
+                "help",
+                "input",
+                "interrupt",
+                "memory",
+                "mention",
+                "mode",
+                "model",
+                "new",
+                "permissions",
+                "profile",
+                "quit",
+                "resume",
+                "sessions",
+                "skills",
+                "status",
+            ]
+        );
+        for retired in RETIRED_GOVERNANCE_COMMAND_NAMES {
+            assert!(
+                !registry.is_builtin(retired),
+                "retired /{retired} remains public"
+            );
+        }
+    }
+
+    #[test]
+    fn required_session_commands_are_registered() {
         let registry = CommandRegistry::new();
         for name in [
             "help",
@@ -776,21 +750,13 @@ mod tests {
             "diff",
             "mention",
             "skills",
-            "hooks",
             "agents",
             "interrupt",
             "copy",
             "quit",
-            "reflect",
-            "reflect_now",
-            "evolution",
-            "genome",
             "mode",
-            "plan",
-            "approve",
             "context",
             "profile",
-            "computer",
             "memory",
         ] {
             assert!(registry.is_builtin(name), "missing /{name}");
@@ -822,6 +788,27 @@ mod tests {
         assert!(
             matches!(registry.parse("/review src"), Some(CommandType::Skill { name, args }) if name == "skill.review" && args == "src")
         );
+    }
+
+    #[test]
+    fn retired_governance_names_cannot_be_reintroduced_by_skills() {
+        let mut registry = CommandRegistry::new();
+        registry.set_skills_from_json(&serde_json::json!([
+            {"id":"skill.reflect","name":"reflect","extension_id":"pack","enabled":true},
+            {"id":"skill.hooks","name":"hooks","enabled":true}
+        ]));
+
+        assert!(registry.is_skill("pack:reflect"));
+        assert!(!registry.is_skill("reflect"));
+        assert!(!registry.is_skill("hooks"));
+        assert!(matches!(
+            registry.parse("/reflect"),
+            Some(CommandType::Unknown { .. })
+        ));
+        assert!(matches!(
+            registry.parse("/hooks"),
+            Some(CommandType::Unknown { .. })
+        ));
     }
 
     #[test]

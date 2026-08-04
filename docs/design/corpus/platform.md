@@ -1,8 +1,13 @@
-> Migrated from docs/design/platform/ — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from docs/design/platform/ — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 # Platform Subsystem
 
 > Cross-platform adaptation, boot integration, agent awareness, kernel IPC, and multi-device collaboration.
+
+> **Status:** Historical design and future target. The former Corpus platform, boot, and
+> awareness modules were removed. Current host contracts and partial
+> Linux/macOS/Windows backends live in `crates/platform/src/`; Android,
+> embedded, multi-device discovery, and custom kernel IPC are not implemented.
 
 ---
 
@@ -20,11 +25,11 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| PlatformAdapter trait | ✅ Implemented | `platform/adapter.rs` | Trait with PlatformCapabilities, ServiceInfo, ServiceStatus |
-| LinuxPlatformAdapter | ✅ Implemented | `platform/linux.rs` | systemd, /proc, /sys integration |
-| AndroidPlatformAdapter | ✅ Implemented | `platform/android.rs` | Android platform adapter (stub) |
-| BasicLinuxAdapter | ✅ Implemented | `platform/mod.rs` | Fallback Linux adapter |
-| create_platform_adapter() | ✅ Implemented | `platform/mod.rs` | Factory function with feature-flag based selection |
+| Host platform contracts | ✅ Implemented | `crates/platform/src/lib.rs` | Filesystem/process/PTY/service/sandbox contracts |
+| Linux backend | 🔶 Partial | `crates/platform/src/backend/linux/` | Current installed host backend |
+| macOS/Windows backends | 🔶 Partial | `crates/platform/src/backend/` | Backend modules exist but are not installed acceptance targets |
+| Android/embedded adapters | ⬜ Planned | — | No current workspace target |
+| Legacy boot/awareness subsystem | Removed | — | Historical design retained below |
 
 ---
 
@@ -103,7 +108,7 @@ Aletheon 需要运行在 Linux PC、Android 和嵌入式开发板上。核心运
 
 ## Implementation Summary
 
-**Code location:** `crates/corpus/src/drivers/platform/`
+**Code location:** `removed legacy Corpus platform module`
 
 **Key types/traits implemented:**
 - `PlatformAdapter` trait (`adapter.rs`) — cross-platform abstraction with send/recv, process spawn/kill, fs read/write/watch, permission check/elevate
@@ -300,11 +305,11 @@ Agent 检测到服务启动失败
 
 | Component | Code Location | Notes |
 |-----------|---------------|-------|
-| BootMonitor | `crates/corpus/src/drivers/platform/boot.rs` | Boot phase FSM + dependency tracking + lazy stages |
-| BootPhase | `crates/corpus/src/drivers/platform/boot.rs` | Initializing → Monitoring → Ready / Degraded |
-| ServiceDependencyGraph | `crates/corpus/src/drivers/platform/boot.rs` | Topological sort + `would_create_cycle()` cycle detection |
-| LazyLoadStage | `crates/corpus/src/drivers/platform/boot.rs` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
-| BootDiagnosis | `crates/corpus/src/drivers/platform/boot.rs` | Resource/service/historical checks |
+| BootMonitor | `removed legacy implementation` | Boot phase FSM + dependency tracking + lazy stages |
+| BootPhase | `removed legacy implementation` | Initializing → Monitoring → Ready / Degraded |
+| ServiceDependencyGraph | `removed legacy implementation` | Topological sort + `would_create_cycle()` cycle detection |
+| LazyLoadStage | `removed legacy implementation` | 5 stages: immediate / 500ms / 2s / 5s / on-demand |
+| BootDiagnosis | `removed legacy implementation` | Resource/service/historical checks |
 | systemd service | `config/aletheon.service` | Service file exists |
 
 
@@ -492,11 +497,11 @@ Registered → Active ↔ Idle ↔ Busy → Degraded → Offline
 
 | Component | Code Location | Notes |
 |-----------|---------------|-------|
-| Core types (AgentId, AgentInfo, etc.) | `crates/corpus/src/drivers/platform/awareness/mod.rs` | AgentId, AgentKind, TrustLevel, Capability, Endpoint, AgentInfo |
-| AgentDiscovery | `crates/corpus/src/drivers/platform/awareness/discovery.rs` | Unix socket scan, L2 local discovery |
-| ConflictDetector | `crates/corpus/src/drivers/platform/awareness/conflict.rs` | File/service/resource/memory conflicts |
-| AgentLifecycle | `crates/corpus/src/drivers/platform/awareness/lifecycle.rs` | FSM: Starting→Running→Paused/Degraded→Stopped/Crashed |
-| AgentCommunication trait | `crates/corpus/src/drivers/platform/awareness/communication.rs` | JSON-RPC 2.0 over Unix socket |
+| Core types (AgentId, AgentInfo, etc.) | `removed legacy implementation` | AgentId, AgentKind, TrustLevel, Capability, Endpoint, AgentInfo |
+| AgentDiscovery | `removed legacy implementation` | Unix socket scan, L2 local discovery |
+| ConflictDetector | `removed legacy implementation` | File/service/resource/memory conflicts |
+| AgentLifecycle | `removed legacy implementation` | FSM: Starting→Running→Paused/Degraded→Stopped/Crashed |
+| AgentCommunication trait | `removed legacy implementation` | JSON-RPC 2.0 over Unix socket |
 | L3 mDNS discovery | — | 未实现 |
 | L4 WAN discovery | — | 未实现 |
 
@@ -1196,4 +1201,3 @@ enum ArbitrationResult {
 
 
 ---
-

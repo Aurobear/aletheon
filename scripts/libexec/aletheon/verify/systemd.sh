@@ -2,11 +2,11 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --preflight --binary PATH --config PATH | --readiness --socket PATH [--timeout SEC] | --core-unit UNIT --binary PATH | --user-units SERVICE SOCKET --binary PATH" >&2
+  echo "usage: $0 --preflight --binary PATH --config PATH | --readiness --socket PATH [--timeout SEC] | --core-unit UNIT --binary PATH | --user-units SERVICE SOCKET [MEMORY_AGENT] --binary PATH" >&2
   exit 64
 }
 
-mode="" binary="" config="" socket="" unit="" service_unit="" socket_unit="" timeout=30
+mode="" binary="" config="" socket="" unit="" service_unit="" socket_unit="" memory_agent_unit="" timeout=30
 while (($#)); do
   case "$1" in
     --preflight|--readiness) mode="$1"; shift ;;
@@ -14,10 +14,16 @@ while (($#)); do
     --user-units)
       mode=--user-units
       if (($# >= 3)) && [[ ${2-} != --* && ${3-} != --* ]]; then
-        service_unit=$2; socket_unit=$3; shift 3
+        service_unit=$2; socket_unit=$3
+        if (($# >= 4)) && [[ ${4-} != --* ]]; then
+          memory_agent_unit=$4; shift 4
+        else
+          memory_agent_unit=config/aletheon-memory-agent.user.service; shift 3
+        fi
       else
         service_unit=config/aletheon.user.service
         socket_unit=config/aletheon.user.socket
+        memory_agent_unit=config/aletheon-memory-agent.user.service
         shift
       fi
       ;;
@@ -84,15 +90,17 @@ case "$mode" in
     fi
     ;;
   --user-units)
-    [[ -f "$service_unit" && -f "$socket_unit" && -x "$binary" ]] || usage
+    [[ -f "$service_unit" && -f "$socket_unit" && -f "$memory_agent_unit" && -x "$binary" ]] || usage
     binary=$(realpath "$binary")
     staged_dir=$(mktemp -d)
     trap 'rm -rf "$staged_dir"' EXIT
     staged_service="$staged_dir/aletheon.service"
     staged_socket="$staged_dir/aletheon.socket"
+    staged_memory_agent="$staged_dir/aletheon-memory-agent.service"
     stage_unit "$service_unit" "$staged_service"
     stage_unit "$socket_unit" "$staged_socket"
-    systemd-analyze verify "$staged_socket" "$staged_service"
+    stage_unit "$memory_agent_unit" "$staged_memory_agent"
+    systemd-analyze verify "$staged_socket" "$staged_service" "$staged_memory_agent"
     for contract in \
       '^ExecStart=.* daemon$' '^NoNewPrivileges=yes$' '^LimitCORE=0$'; do
       require_contract "$staged_service" "$contract" 'user unit verification'
@@ -114,6 +122,20 @@ case "$mode" in
       '^DirectoryMode=0700$' '^SocketMode=0600$' '^WantedBy=sockets\.target$'; do
       require_contract "$staged_socket" "$contract" 'user socket verification'
     done
+    for contract in \
+      '^ExecStart=.* memory-agent serve --official-user-socket$' \
+      '^Requires=aletheon.socket$' '^After=aletheon.socket$' \
+      '^Restart=on-failure$' '^NoNewPrivileges=yes$' \
+      '^ProtectSystem=strict$' '^ProtectHome=read-only$' \
+      '^PrivateTmp=yes$' \
+      '^RestrictAddressFamilies=AF_UNIX$' '^LimitCORE=0$'; do
+      require_contract "$staged_memory_agent" "$contract" 'Memory Agent unit verification'
+    done
+    if grep -Eq '^(EnvironmentFile|StateDirectory|CacheDirectory|ReadWritePaths|WorkingDirectory)=' \
+        "$staged_memory_agent"; then
+      echo 'Memory Agent unit verification: state, workspace, or credential authority is forbidden' >&2
+      exit 1
+    fi
     ;;
   --preflight)
     [[ -x "$binary" && -f "$config" && ! -L "$config" ]] || {
@@ -126,6 +148,7 @@ case "$mode" in
     "$binary" core --help | grep -q -- '--socket <SOCKET>'
     "$binary" daemon --help | grep -q -- '--config <CONFIG>'
     "$binary" daemon --help | grep -q -- '--socket <SOCKET>'
+    "$binary" memory-agent serve --help | grep -q -- '--official-user-socket'
     python3 - "$config" <<'PY'
 import pathlib, sys, tomllib
 path = pathlib.Path(sys.argv[1])

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 use super::mutation_path::validate_mutation_path;
 use super::scoped_filesystem;
@@ -9,6 +10,7 @@ use super::structured_patch::{
     FailedOperation, FileChangeSummary, PatchOperation, StructuredPatchResult,
 };
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use crate::tools::artifact::ArtifactStore;
 
 pub struct ApplyPatchTool;
 
@@ -37,6 +39,10 @@ impl Tool for ApplyPatchTool {
                 "base_dir": {
                     "type": "string",
                     "description": "Base directory for applying the patch (default: current dir)"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, compute and return a preview (unified diff plus per-file summary) of what the patch would change without writing to the filesystem. Default: false."
                 }
             },
             "anyOf": [
@@ -50,6 +56,60 @@ impl Tool for ApplyPatchTool {
         PermissionLevel::L1
     }
 
+    fn approval_descriptor(
+        &self,
+        input: &serde_json::Value,
+        workspace: &fabric::WorkspacePolicy,
+    ) -> anyhow::Result<Option<fabric::tool::ToolApprovalDescriptor>> {
+        let base = input["base_dir"]
+            .as_str()
+            .map(std::path::PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    workspace.cwd().join(path)
+                }
+            })
+            .unwrap_or_else(|| workspace.cwd().to_path_buf());
+        let base = validate_mutation_path(workspace, workspace.protected_paths(), &base)
+            .map_err(anyhow::Error::msg)?;
+        let operations = if let Some(value) = input.get("patch_json").filter(|v| !v.is_null()) {
+            parse_structured_patch_json(&value.to_string())
+                .map_err(anyhow::Error::msg)?
+                .operations
+        } else {
+            let patch = input["patch"].as_str().unwrap_or_default();
+            if patch.trim_start().starts_with("*** Begin Patch") {
+                parse_structured_patch(patch)
+                    .map_err(anyhow::Error::msg)?
+                    .operations
+            } else {
+                platform::structured_patch::parse_unified_diff(patch)
+                    .map_err(anyhow::Error::msg)?
+                    .operations
+            }
+        };
+        let mut targets = Vec::new();
+        for operation in &operations {
+            for path in operation_paths(operation) {
+                targets.push(
+                    validate_mutation_path(
+                        workspace,
+                        workspace.protected_paths(),
+                        &base.join(path),
+                    )
+                    .map_err(anyhow::Error::msg)?,
+                );
+            }
+        }
+        targets.sort();
+        targets.dedup();
+        Ok(Some(fabric::tool::ToolApprovalDescriptor {
+            mutation_targets: targets,
+        }))
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ApplyPatchTool)
     }
@@ -58,6 +118,7 @@ impl Tool for ApplyPatchTool {
         let patch = input["patch"].as_str().unwrap_or("");
         let patch_json = input.get("patch_json").filter(|value| !value.is_null());
         let base_dir = input["base_dir"].as_str();
+        let dry_run = input["dry_run"].as_bool().unwrap_or(false);
 
         let start = ctx.clock.mono_now();
 
@@ -130,16 +191,24 @@ impl Tool for ApplyPatchTool {
                 }
             }
 
+            if dry_run {
+                return preview_result(&structured.operations, &base_path, ctx, start).await;
+            }
+
+            let (preview_files, preview_failures) =
+                preview_structured_operations(&structured.operations, &base_path, ctx).await;
+            let diff_text = render_patch_preview(&preview_files, &preview_failures);
+            let before = snapshot_operation_digests(&structured.operations, &base_path);
             let result = apply_structured_scoped(&structured.operations, &base_path, ctx).await;
+            let after = snapshot_operation_digests(&structured.operations, &base_path);
             let is_error = !result.failed.is_empty();
             return ToolResult {
-                content: serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|error| format!("failed to serialize patch result: {error}")),
+                content: patch_receipt(&result, before, after),
                 is_error,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
-                    patch_delta: Some(patch_delta(&result)),
+                    patch_delta: Some(patch_delta(&result, Some(&diff_text))),
                 },
             };
         }
@@ -162,19 +231,83 @@ impl Tool for ApplyPatchTool {
             Ok(patch) => patch,
             Err(error) => return tool_error(format!("Invalid unified patch: {error}"), start, ctx),
         };
+
+        if dry_run {
+            return preview_result(&structured.operations, &base_path, ctx, start).await;
+        }
+
+        let before = snapshot_operation_digests(&structured.operations, &base_path);
         let result = apply_structured_scoped(&structured.operations, &base_path, ctx).await;
+        let after = snapshot_operation_digests(&structured.operations, &base_path);
         let is_error = !result.failed.is_empty();
         ToolResult {
-            content: serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|error| format!("failed to serialize patch result: {error}")),
+            content: patch_receipt(&result, before, after),
             is_error,
             metadata: ToolResultMeta {
                 execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
-                patch_delta: Some(patch_delta(&result)),
+                patch_delta: Some(patch_delta(&result, Some(patch))),
             },
         }
     }
+}
+
+fn snapshot_operation_digests(
+    operations: &[PatchOperation],
+    base_dir: &std::path::Path,
+) -> BTreeMap<String, Option<String>> {
+    let mut snapshots = BTreeMap::new();
+    for operation in operations {
+        for path in operation_paths(operation) {
+            snapshots.entry(path.to_string()).or_insert_with(|| {
+                std::fs::read(base_dir.join(path))
+                    .ok()
+                    .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+            });
+        }
+    }
+    snapshots
+}
+
+fn patch_receipt(
+    result: &StructuredPatchResult,
+    before: BTreeMap<String, Option<String>>,
+    after: BTreeMap<String, Option<String>>,
+) -> String {
+    let change_scope_version_before = digest_serializable(&before);
+    let change_scope_version_after = digest_serializable(&after);
+    let payload = json!({
+        "kind": "apply_patch_receipt",
+        "terminal_status": if result.failed.is_empty() { "succeeded" } else { "failed" },
+        "change_scope_version_before": change_scope_version_before,
+        "change_scope_version_after": change_scope_version_after,
+        "before_sha256": before,
+        "after_sha256": after,
+        "applied": result.applied,
+        "failed": result.failed,
+        "files_changed": result.files_changed,
+    });
+    let bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    let store = ArtifactStore::new(
+        super::output::OutputConfig::default()
+            .overflow_dir
+            .join("artifacts"),
+    );
+    let change_set_artifact = store
+        .store(&bytes, "application/json")
+        .ok()
+        .map(|artifact| artifact.uri());
+    let mut receipt = payload;
+    receipt["change_set_artifact_ref"] = json!(change_set_artifact);
+    serde_json::to_string_pretty(&receipt)
+        .unwrap_or_else(|error| format!("failed to serialize patch receipt: {error}"))
+}
+
+fn digest_serializable(value: &impl serde::Serialize) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(value).unwrap_or_default())
+    )
 }
 
 fn operation_paths(operation: &PatchOperation) -> Vec<&str> {
@@ -204,7 +337,31 @@ fn tool_error(message: String, start: fabric::MonoTime, ctx: &ToolContext) -> To
     }
 }
 
-fn patch_delta(result: &super::structured_patch::StructuredPatchResult) -> fabric::PatchDelta {
+fn patch_delta(
+    result: &super::structured_patch::StructuredPatchResult,
+    diff_text: Option<&str>,
+) -> fabric::PatchDelta {
+    const PREVIEW_BYTES: usize = 64 * 1024;
+    let artifact = diff_text.and_then(|diff| {
+        ArtifactStore::new(
+            super::output::OutputConfig::default()
+                .overflow_dir
+                .join("artifacts"),
+        )
+        .store(diff.as_bytes(), "text/x-diff")
+        .ok()
+    });
+    let (diff_preview, diff_preview_truncated) = diff_text.map_or((None, false), |diff| {
+        if diff.len() <= PREVIEW_BYTES {
+            (Some(diff.to_string()), false)
+        } else {
+            let mut end = PREVIEW_BYTES;
+            while !diff.is_char_boundary(end) {
+                end -= 1;
+            }
+            (Some(diff[..end].to_string()), true)
+        }
+    });
     fabric::PatchDelta {
         applied: result
             .applied
@@ -236,8 +393,16 @@ fn patch_delta(result: &super::structured_patch::StructuredPatchResult) -> fabri
                 hunks_applied: change.hunks_applied,
                 bytes_before: change.bytes_before,
                 bytes_after: change.bytes_after,
+                is_binary: false,
             })
             .collect(),
+        diff_preview,
+        diff_artifact: artifact.map(|artifact| fabric::tool::PatchDiffArtifactRef {
+            sha256: artifact.sha256,
+            size_bytes: artifact.size_bytes,
+            mime: artifact.mime,
+        }),
+        diff_preview_truncated,
     }
 }
 
@@ -452,6 +617,268 @@ async fn apply_structured_operation(
     }
 }
 
+/// Build a successful `ToolResult` describing what a patch would change,
+/// without writing anything to the filesystem. Mirrors the same operation
+/// dispatch and read-only validation as `apply_structured_scoped`, but stops
+/// short of the mutating `scoped_write`/`scoped_remove` calls.
+async fn preview_result(
+    operations: &[PatchOperation],
+    base_dir: &std::path::Path,
+    ctx: &ToolContext,
+    start: fabric::MonoTime,
+) -> ToolResult {
+    let (files, failed) = preview_structured_operations(operations, base_dir, ctx).await;
+    let is_error = !failed.is_empty();
+    ToolResult {
+        content: render_patch_preview(&files, &failed),
+        is_error,
+        metadata: ToolResultMeta {
+            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+            truncated: false,
+            patch_delta: None,
+        },
+    }
+}
+
+struct PreviewFile {
+    path: String,
+    change_type: &'static str,
+    bytes_before: u64,
+    bytes_after: u64,
+    lines_added: usize,
+    lines_removed: usize,
+    diff: String,
+}
+
+async fn preview_structured_operations(
+    operations: &[PatchOperation],
+    base_dir: &std::path::Path,
+    ctx: &ToolContext,
+) -> (Vec<PreviewFile>, Vec<FailedOperation>) {
+    let mut files = Vec::new();
+    let mut failed = Vec::new();
+    for operation in operations {
+        let path = operation_paths(operation)[0].to_owned();
+        let operation_name = operation_name(operation);
+        match preview_structured_operation(operation, base_dir, ctx).await {
+            Ok(file) => files.push(file),
+            Err((error, hunks_applied)) => failed.push(FailedOperation {
+                op_type: operation_name.to_string(),
+                path,
+                error,
+                hunks_applied_before_failure: hunks_applied,
+            }),
+        }
+    }
+    (files, failed)
+}
+
+/// Read-only counterpart of `apply_structured_operation`. Performs the same
+/// scoped-filesystem validation and diff computation, but never calls
+/// `scoped_write` or `scoped_remove`.
+async fn preview_structured_operation(
+    operation: &PatchOperation,
+    base_dir: &std::path::Path,
+    ctx: &ToolContext,
+) -> Result<PreviewFile, (String, Option<usize>)> {
+    let failed = |error: String| (error, None);
+    match operation {
+        PatchOperation::AddFile { path, content } => {
+            let target = base_dir.join(path);
+            let filesystem =
+                scoped_filesystem::open(ctx, &target, platform::FilesystemAccess::ReadWrite)
+                    .map_err(failed)?;
+            match filesystem.host.metadata(&filesystem.path).await {
+                Ok(_) => {
+                    return Err(failed(format!(
+                        "cannot add '{path}': target already exists"
+                    )))
+                }
+                Err(platform::HostError {
+                    kind: platform::HostErrorKind::NotFound(_),
+                    ..
+                }) => {}
+                Err(error) => return Err(failed(format!("cannot inspect '{path}': {error}"))),
+            }
+            Ok(PreviewFile {
+                path: path.clone(),
+                change_type: "created",
+                bytes_before: 0,
+                bytes_after: content.len() as u64,
+                lines_added: count_lines(content),
+                lines_removed: 0,
+                diff: added_lines_diff(content),
+            })
+        }
+        PatchOperation::DeleteFile { path } => {
+            let target = base_dir.join(path);
+            let (bytes, _expected) = scoped_read_for_update(ctx, &target).await.map_err(failed)?;
+            let existing = String::from_utf8_lossy(&bytes).into_owned();
+            Ok(PreviewFile {
+                path: path.clone(),
+                change_type: "deleted",
+                bytes_before: bytes.len() as u64,
+                bytes_after: 0,
+                lines_added: 0,
+                lines_removed: count_lines(&existing),
+                diff: removed_lines_diff(&existing),
+            })
+        }
+        PatchOperation::AppendFile { path, content } => {
+            let target = base_dir.join(path);
+            let (bytes, _expected) = scoped_read_for_update(ctx, &target).await.map_err(failed)?;
+            let bytes_before = bytes.len() as u64;
+            let existing_line_count = String::from_utf8_lossy(&bytes).lines().count() as u64;
+            Ok(PreviewFile {
+                path: path.clone(),
+                change_type: "appended",
+                bytes_before,
+                bytes_after: bytes_before + content.len() as u64,
+                lines_added: count_lines(content),
+                lines_removed: 0,
+                diff: appended_lines_diff(existing_line_count, content),
+            })
+        }
+        PatchOperation::UpdateFile {
+            path,
+            move_to,
+            hunks,
+        } => {
+            let source = base_dir.join(path);
+            let (bytes, _expected) = scoped_read_for_update(ctx, &source).await.map_err(failed)?;
+            let bytes_before = bytes.len() as u64;
+            let existing = String::from_utf8(bytes).map_err(|error| failed(error.to_string()))?;
+            let modified = apply_patch_hunks(&existing, hunks)
+                .map_err(|(error, applied)| (error, Some(applied)))?;
+            let result_path = move_to.as_ref().unwrap_or(path);
+            let (lines_added, lines_removed) = count_hunk_lines(hunks);
+            Ok(PreviewFile {
+                path: result_path.clone(),
+                change_type: if move_to.is_some() {
+                    "moved"
+                } else {
+                    "modified"
+                },
+                bytes_before,
+                bytes_after: modified.len() as u64,
+                lines_added,
+                lines_removed,
+                diff: hunks_diff(hunks),
+            })
+        }
+    }
+}
+
+fn count_lines(content: &str) -> usize {
+    if content.is_empty() {
+        0
+    } else {
+        content.lines().count()
+    }
+}
+
+fn added_lines_diff(content: &str) -> String {
+    let count = count_lines(content);
+    let mut diff = format!("@@ -0,0 +1,{count} @@\n");
+    for line in content.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    diff
+}
+
+fn removed_lines_diff(content: &str) -> String {
+    let count = count_lines(content);
+    let mut diff = format!("@@ -1,{count} +0,0 @@\n");
+    for line in content.lines() {
+        diff.push('-');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    diff
+}
+
+fn appended_lines_diff(existing_line_count: u64, content: &str) -> String {
+    let count = count_lines(content);
+    let mut diff = format!(
+        "@@ -{existing_line_count},0 +{},{count} @@\n",
+        existing_line_count + 1
+    );
+    for line in content.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    diff
+}
+
+fn hunks_diff(hunks: &[platform::structured_patch::PatchHunk]) -> String {
+    let mut diff = String::new();
+    for hunk in hunks {
+        diff.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
+        ));
+        diff.push_str(&hunk.content);
+        if !hunk.content.ends_with('\n') {
+            diff.push('\n');
+        }
+    }
+    diff
+}
+
+fn count_hunk_lines(hunks: &[platform::structured_patch::PatchHunk]) -> (usize, usize) {
+    let mut added = 0;
+    let mut removed = 0;
+    for hunk in hunks {
+        for line in hunk.content.lines() {
+            if line.starts_with('+') {
+                added += 1;
+            } else if line.starts_with('-') {
+                removed += 1;
+            }
+        }
+    }
+    (added, removed)
+}
+
+fn render_patch_preview(files: &[PreviewFile], failed: &[FailedOperation]) -> String {
+    let mut out = String::from("DRY RUN — no files were modified\n\n");
+    for file in files {
+        let marker = match file.change_type {
+            "created" => "+",
+            "deleted" => "-",
+            _ => "~",
+        };
+        out.push_str(&format!(
+            "{marker} {} ({}) [+{}/-{}, {} -> {} bytes]\n",
+            file.path,
+            file.change_type,
+            file.lines_added,
+            file.lines_removed,
+            file.bytes_before,
+            file.bytes_after,
+        ));
+        if !file.diff.is_empty() {
+            out.push_str(&file.diff);
+        }
+        out.push('\n');
+    }
+    for failure in failed {
+        out.push_str(&format!(
+            "! {} {} FAILED: {}\n\n",
+            failure.op_type, failure.path, failure.error
+        ));
+    }
+    out.push_str(&format!(
+        "Summary: {} file(s) previewed, {} failed\n",
+        files.len(),
+        failed.len()
+    ));
+    out
+}
+
 async fn scoped_read_for_update(
     ctx: &ToolContext,
     path: &std::path::Path,
@@ -591,6 +1018,7 @@ mod tests {
                     allowed_paths,
                     ..Default::default()
                 },
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             }),
             agent: None,
             working_dir: root.to_path_buf(),
@@ -634,6 +1062,30 @@ mod tests {
             .await;
 
         assert!(!allowed.is_error, "{}", allowed.content);
+        let receipt: serde_json::Value = serde_json::from_str(&allowed.content).unwrap();
+        assert_eq!(receipt["kind"], "apply_patch_receipt");
+        assert_eq!(receipt["terminal_status"], "succeeded");
+        assert!(
+            receipt["change_scope_version_before"]
+                .as_str()
+                .unwrap()
+                .len()
+                == 64
+        );
+        assert!(
+            receipt["change_scope_version_after"]
+                .as_str()
+                .unwrap()
+                .len()
+                == 64
+        );
+        assert_ne!(
+            receipt["change_scope_version_before"],
+            receipt["change_scope_version_after"]
+        );
+        assert!(receipt["change_set_artifact_ref"]
+            .as_str()
+            .is_some_and(|reference| reference.starts_with("artifact://sha256/")));
         assert_eq!(
             std::fs::read_to_string(root.join("admitted.txt")).unwrap(),
             "yes"
@@ -734,6 +1186,87 @@ mod tests {
 
         assert!(!result.is_error, "Expected success: {}", result.content);
         assert!(!file_path.exists(), "File should have been deleted");
+    }
+
+    #[tokio::test]
+    async fn dry_run_previews_new_file_without_writing() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let patch = "--- /dev/null\n+++ b/new_file.txt\n@@ -0,0 +1,3 @@\n+line one\n+line two\n+line three\n";
+
+        let tool = ApplyPatchTool;
+        let result = tool
+            .execute(json!({ "patch": patch, "dry_run": true }), &ctx)
+            .await;
+
+        assert!(!result.is_error, "Expected success: {}", result.content);
+        assert!(result.content.contains("DRY RUN"));
+        assert!(result.content.contains("new_file.txt"));
+        assert!(result.content.contains("+line one"));
+        assert!(result.metadata.patch_delta.is_none());
+        assert!(
+            !tmp.path().join("new_file.txt").exists(),
+            "dry run must not create the file"
+        );
+    }
+
+    #[tokio::test]
+    async fn dry_run_previews_modification_without_writing() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("existing.txt");
+        fs::write(&file_path, "line one\nline two\nline three\n")
+            .await
+            .unwrap();
+
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let patch = "--- a/existing.txt\n+++ b/existing.txt\n@@ -1,3 +1,3 @@\n line one\n-line two\n+line TWO\n line three\n";
+
+        let tool = ApplyPatchTool;
+        let result = tool
+            .execute(json!({ "patch": patch, "dry_run": true }), &ctx)
+            .await;
+
+        assert!(!result.is_error, "Expected success: {}", result.content);
+        assert!(result.content.contains("DRY RUN"));
+        assert!(result.content.contains("existing.txt"));
+        assert!(result.content.contains("-line two"));
+        assert!(result.content.contains("+line TWO"));
+        assert_eq!(
+            fs::read_to_string(&file_path).await.unwrap(),
+            "line one\nline two\nline three\n",
+            "dry run must leave the file unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn dry_run_still_reports_scope_rejections() {
+        let tmp = TempDir::new().unwrap();
+        let context = governed_context(tmp.path(), vec![]);
+        let patch = "*** Begin Patch\nAdd File: denied.txt\n>>>\nno\n>>>\n*** End Patch";
+
+        let result = ApplyPatchTool
+            .execute(json!({"patch": patch, "dry_run": true}), &context)
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("empty path scope"));
+        assert!(!tmp.path().join("denied.txt").exists());
     }
 
     #[tokio::test]

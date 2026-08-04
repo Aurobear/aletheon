@@ -18,7 +18,13 @@ use super::agent_control::{
 
 #[derive(Default)]
 pub struct ExtensionRuntimeRouter {
-    providers: RwLock<HashMap<RuntimeId, Arc<dyn AgentRuntimeProvider>>>,
+    state: RwLock<RouterState>,
+}
+
+#[derive(Default)]
+struct RouterState {
+    providers: HashMap<RuntimeId, Arc<dyn AgentRuntimeProvider>>,
+    package_owners: HashMap<RuntimeId, String>,
 }
 
 /// Adapts the stable Provider contract into Executive's governed Agent
@@ -105,29 +111,95 @@ impl ExtensionRuntimeRouter {
             !runtime_id.0.trim().is_empty(),
             "extension runtime ID must not be empty"
         );
-        let mut providers = self.providers.write();
+        let mut state = self.state.write();
         anyhow::ensure!(
-            !providers.contains_key(&runtime_id),
+            !state.providers.contains_key(&runtime_id),
             "extension runtime is already registered: {}",
             runtime_id.0
         );
-        providers.insert(runtime_id, provider);
+        state.providers.insert(runtime_id, provider);
         Ok(())
     }
 
     pub fn unregister(&self, runtime_id: &RuntimeId) -> bool {
-        self.providers.write().remove(runtime_id).is_some()
+        let mut state = self.state.write();
+        state.package_owners.remove(runtime_id);
+        state.providers.remove(runtime_id).is_some()
+    }
+
+    pub fn validate_package_providers(
+        &self,
+        replaced_owners: &[String],
+        replacements: &[(String, RuntimeId, Arc<dyn AgentRuntimeProvider>)],
+    ) -> Result<()> {
+        let replaced = replaced_owners
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let state = self.state.read();
+        let mut ids = std::collections::HashSet::new();
+        for (owner, id, _) in replacements {
+            anyhow::ensure!(
+                replaced.contains(owner),
+                "runtime owner is outside replacement set"
+            );
+            anyhow::ensure!(
+                !id.0.trim().is_empty(),
+                "extension runtime ID must not be empty"
+            );
+            anyhow::ensure!(
+                ids.insert(id.clone()),
+                "duplicate extension runtime ID: {}",
+                id.0
+            );
+            if state.providers.contains_key(id)
+                && state
+                    .package_owners
+                    .get(id)
+                    .is_none_or(|existing| !replaced.contains(existing))
+            {
+                anyhow::bail!("extension runtime is already registered: {}", id.0);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn replace_package_providers(
+        &self,
+        replaced_owners: &[String],
+        replacements: Vec<(String, RuntimeId, Arc<dyn AgentRuntimeProvider>)>,
+    ) -> Result<()> {
+        self.validate_package_providers(replaced_owners, &replacements)?;
+        let replaced = replaced_owners
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let mut state = self.state.write();
+        let removed = state
+            .package_owners
+            .iter()
+            .filter(|(_, owner)| replaced.contains(owner))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in removed {
+            state.package_owners.remove(&id);
+            state.providers.remove(&id);
+        }
+        for (owner, id, provider) in replacements {
+            state.package_owners.insert(id.clone(), owner);
+            state.providers.insert(id, provider);
+        }
+        Ok(())
     }
 
     pub fn registered(&self) -> Vec<RuntimeId> {
-        let mut ids: Vec<_> = self.providers.read().keys().cloned().collect();
+        let mut ids: Vec<_> = self.state.read().providers.keys().cloned().collect();
         ids.sort_by(|left, right| left.0.cmp(&right.0));
         ids
     }
 
     fn resolve(&self, runtime_id: &RuntimeId) -> Result<Arc<dyn AgentRuntimeProvider>> {
-        self.providers
+        self.state
             .read()
+            .providers
             .get(runtime_id)
             .cloned()
             .with_context(|| format!("extension runtime is not registered: {}", runtime_id.0))
@@ -169,8 +241,9 @@ impl ExtensionRuntimeRouter {
 
     pub async fn health(&self) -> HashMap<RuntimeId, Result<(), String>> {
         let providers: Vec<_> = self
-            .providers
+            .state
             .read()
+            .providers
             .iter()
             .map(|(id, provider)| (id.clone(), provider.clone()))
             .collect();
@@ -243,6 +316,8 @@ mod tests {
             profile_id: AgentProfileId("test".into()),
             runtime_id,
             trusted_workspace: None,
+            delegator_authority: None,
+            cognitive_binding: None,
             task: "test".into(),
             context: AgentContextFork::default(),
             broadcast_refs: Vec::new(),

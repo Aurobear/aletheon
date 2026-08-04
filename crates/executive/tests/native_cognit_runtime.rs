@@ -9,17 +9,39 @@ use executive::application::agent_control::{
 use executive::application::harness_factory::LinearCognitiveSessionFactory;
 use executive::application::{CapabilityExecutionContext, CapabilityService};
 use executive::testing::coding_runtime::{
-    AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources, ResolvedAgentProfile,
+    pi_manifest, AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources,
+    ResolvedAgentProfile,
+};
+use fabric::cognitive_workflow::{
+    CognitiveRole, CognitiveRoleProfile, CognitiveTaskNodeId, CognitiveTaskRuntimeBinding,
 };
 use fabric::{
     AgentApprovalPolicy, AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle,
     AgentId, AgentMessageKind, AgentMessagePayload, AgentProfile, AgentProfileId,
-    AgentSpawnRequest, CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse,
-    LlmStream, OperationId, ParentRestriction, ProcessId, RiskTier, RuntimeId, StopReason,
-    ToolDefinition, Usage, AGENT_MESSAGE_SCHEMA_V1,
+    AgentSpawnRequest, CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider,
+    LlmResponse, LlmStream, OperationId, ParentRestriction, ProcessId, RiskTier, RuntimeId,
+    StopReason, ToolDefinition, AGENT_MESSAGE_SCHEMA_V1,
 };
 use kernel::chronos::TestClock;
 use tokio_util::sync::CancellationToken;
+
+#[test]
+fn workspace_less_memory_proposals_select_the_native_runtime_not_pi() {
+    let native = NativeCognitRuntime::manifest(["safe-agent".to_owned()]);
+    let decision = runtime::RuntimeSelectionRequest {
+        selector: runtime::RuntimeSelector::Auto,
+        profile_id: "safe-agent".into(),
+        required_capabilities: vec![runtime::RuntimeCapability::MemoryProposal],
+        interaction_mode: runtime::InteractionMode::Resident,
+        workspace_mode: runtime::WorkspaceMode::WorkspaceLess,
+        task_encoding: runtime::TaskEncoding::StructuredJson,
+        max_input_tokens: 1024,
+    }
+    .select([pi_manifest(), &native])
+    .unwrap();
+
+    assert_eq!(decision.selected_runtime_id, "native-cognit");
+}
 
 struct ScriptedLlm {
     responses: Mutex<VecDeque<anyhow::Result<LlmResponse>>>,
@@ -127,12 +149,7 @@ fn response(content: Vec<ContentBlock>, stop_reason: StopReason) -> anyhow::Resu
     Ok(LlmResponse {
         content,
         stop_reason,
-        usage: Usage {
-            input_tokens: 10,
-            output_tokens: 4,
-        },
-        cache_hit_tokens: 0,
-        cache_miss_tokens: 0,
+        usage: InferenceUsage::unsupported(Some(10), Some(4)),
     })
 }
 
@@ -166,6 +183,8 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        delegator_authority: None,
+        cognitive_binding: None,
         task: "perform the task".into(),
         context: AgentContextFork::SelectedProjection {
             items: vec!["reference context".into()],
@@ -213,6 +232,23 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
     }
 }
 
+fn cognitive_binding(
+    role: CognitiveRole,
+    workspace_scope: Vec<String>,
+) -> CognitiveTaskRuntimeBinding {
+    let profile = CognitiveRoleProfile::canonical(role);
+    CognitiveTaskRuntimeBinding {
+        space: fabric::AgoraSpaceId("root-task".into()),
+        task_node_id: CognitiveTaskNodeId(format!("{role:?}")),
+        expected_workspace_version: 1,
+        expected_owner: ProcessId::new(),
+        role,
+        role_profile: profile.reference,
+        budget: profile.budget,
+        workspace_scope,
+    }
+}
+
 fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> NativeCognitRuntime {
     let clock = Arc::new(TestClock::default());
     let profiles = Arc::new(AgentProfileRegistry::default());
@@ -220,6 +256,11 @@ fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> Nativ
         .register(ResolvedAgentProfile {
             profile: profile(),
             llm,
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),
@@ -339,7 +380,81 @@ async fn tool_calls_use_persisted_lifecycle_context_and_evidence() {
     let context = calls[0].0.as_ref().unwrap();
     assert_eq!(context.process_id, expected.handle.process_id);
     assert_eq!(context.operation_id, expected.handle.operation_id);
-    assert_eq!(result.evidence.len(), 1);
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|evidence| evidence.kind == "tool_result")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn cognitive_tool_calls_use_the_admitted_workspace_policy() {
+    let llm = ScriptedLlm::new(vec![
+        response(
+            vec![ContentBlock::ToolUse {
+                id: "call-1".into(),
+                name: "echo".into(),
+                input: serde_json::json!({"value": 1}),
+            }],
+            StopReason::ToolUse,
+        ),
+        response(
+            vec![ContentBlock::Text {
+                text: "after tool".into(),
+            }],
+            StopReason::EndTurn,
+        ),
+    ]);
+    let capability = Arc::new(RecordingCapability::default());
+    let temporary = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temporary.path().join("src")).unwrap();
+    let allowed = temporary.path().join("src/allowed.rs");
+    std::fs::write(&allowed, "allowed").unwrap();
+    let workspace =
+        fabric::WorkspacePolicy::from_resolved_roots(temporary.path().to_path_buf(), Vec::new())
+            .unwrap()
+            .narrow_to_declared_paths(&["src/allowed.rs".into()])
+            .unwrap();
+    let mut runtime_input = input(CancellationToken::new());
+    runtime_input.workspace = Some(workspace.clone());
+    runtime_input.request.trusted_workspace = Some(workspace);
+    runtime_input.request.cognitive_binding = Some(cognitive_binding(
+        CognitiveRole::Fixer,
+        vec!["src/allowed.rs".into()],
+    ));
+
+    runtime(llm, capability.clone())
+        .launch(runtime_input, Arc::new(RecordingEvents::default()))
+        .await
+        .unwrap();
+
+    let calls = capability.calls.lock().unwrap();
+    let context = calls[0].0.as_ref().unwrap();
+    assert_eq!(context.workspace.writable_roots(), &[allowed]);
+}
+
+#[tokio::test]
+async fn cognitive_runtime_without_admitted_workspace_fails_closed() {
+    let llm = ScriptedLlm::new(vec![response(
+        vec![ContentBlock::Text {
+            text: "must not run".into(),
+        }],
+        StopReason::EndTurn,
+    )]);
+    let mut runtime_input = input(CancellationToken::new());
+    runtime_input.request.cognitive_binding =
+        Some(cognitive_binding(CognitiveRole::Reviewer, Vec::new()));
+
+    let error = runtime(llm.clone(), Arc::new(RecordingCapability::default()))
+        .launch(runtime_input, Arc::new(RecordingEvents::default()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.kind, AgentControlErrorKind::Forbidden);
+    assert!(llm.seen.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -378,6 +493,11 @@ fn profile_registration_rejects_model_mismatch_before_session_creation() {
         .register(ResolvedAgentProfile {
             profile: mismatched,
             llm: ScriptedLlm::new(vec![]),
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),
@@ -452,7 +572,18 @@ async fn multiple_tools_are_governed_and_unknown_tools_never_reach_capability() 
         .await
         .unwrap();
     assert_eq!(capability.calls.lock().unwrap().len(), 2);
-    assert_eq!(result.evidence.len(), 2);
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|evidence| evidence.kind == "tool_result")
+            .count(),
+        2
+    );
+    assert_eq!(result.usage.observability.inference_rounds, Some(2));
+    assert_eq!(result.usage.observability.tool_calls, Some(2));
+    assert_eq!(result.usage.observability.terminal_tool_results, Some(2));
+    assert_eq!(result.usage.observability.active_context_tokens, Some(10));
 
     let llm = ScriptedLlm::new(vec![
         response(
@@ -479,7 +610,9 @@ async fn multiple_tools_are_governed_and_unknown_tools_never_reach_capability() 
         .await
         .unwrap();
     assert!(capability.calls.lock().unwrap().is_empty());
-    assert!(result.evidence[0].content.contains("not allowed"));
+    assert!(result.evidence.iter().any(|evidence| {
+        evidence.kind == "tool_result" && evidence.content.contains("not allowed")
+    }));
 }
 
 #[tokio::test]
@@ -512,6 +645,11 @@ async fn provider_failure_and_iteration_exhaustion_are_bounded_runtime_errors() 
         .register(ResolvedAgentProfile {
             profile: limited,
             llm,
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),

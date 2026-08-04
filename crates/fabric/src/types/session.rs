@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{AuditEventId, OperationId, PermitId, SessionId, TurnStop};
 
-pub const SESSION_SCHEMA_VERSION: u16 = 1;
+pub const SESSION_SCHEMA_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
@@ -127,6 +127,18 @@ pub enum ItemPayload {
         #[schemars(with = "Option<Uuid>")]
         audit_id: Option<AuditEventId>,
     },
+    CapabilityReceipt {
+        receipt: crate::CapabilityTerminalReceipt,
+    },
+    EvaluationReceiptRef {
+        receipt: crate::EvaluationReceiptRef,
+    },
+    ModelContextProjection {
+        receipt: crate::model_projection::ModelContextProjectionReceipt,
+    },
+    InferenceReceipt {
+        receipt: crate::types::inference_receipt::InferenceTerminalReceipt,
+    },
     ContextProjection {
         space: String,
         broadcast_epoch: Option<u64>,
@@ -150,11 +162,69 @@ pub enum SessionNotification {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
-pub enum SessionProtocolV1 {
+pub enum SessionProtocolV2 {
     Session(SessionRecord),
     Turn(TurnRecord),
     Item(ItemRecord),
     Notification(SessionNotification),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum SessionProtocolV3 {
+    Session(SessionRecord),
+    Turn(TurnRecord),
+    Item(ItemRecord),
+    Notification(SessionNotification),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum SessionProtocolV4 {
+    Session(SessionRecord),
+    Turn(TurnRecord),
+    Item(ItemRecord),
+    Notification(SessionNotification),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        EvaluationContractId, EvaluationDecision, EvaluationReceiptId, EVALUATION_SCHEMA_V1,
+    };
+
+    #[test]
+    fn receipt_ref_round_trips_in_session_item() {
+        let payload = ItemPayload::EvaluationReceiptRef {
+            receipt: crate::EvaluationReceiptRef {
+                schema_version: EVALUATION_SCHEMA_V1,
+                receipt_id: EvaluationReceiptId::new(),
+                contract_id: EvaluationContractId::new(),
+                subject_kind: "turn".into(),
+                subject_id: TurnId::new().0.to_string(),
+                decision: EvaluationDecision::ObservedPass,
+                weighted_total_millis: Some(82_000),
+                evidence_coverage_millis: 900,
+                confidence_millis: 850,
+                failed_gates: vec![],
+                created_at_ms: 42,
+            },
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert_eq!(serde_json::from_str::<ItemPayload>(&json).unwrap(), payload);
+    }
+
+    #[test]
+    fn current_payload_decoder_preserves_prior_tagged_items() {
+        let json = r#"{"type":"assistant_message","data":{"content":"done"}}"#;
+        assert_eq!(
+            serde_json::from_str::<ItemPayload>(json).unwrap(),
+            ItemPayload::AssistantMessage {
+                content: "done".into()
+            }
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

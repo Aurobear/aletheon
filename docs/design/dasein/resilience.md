@@ -1,11 +1,17 @@
-> Merged from docs/design/resilience/ — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Merged from docs/design/resilience/ — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 # Resilience
 
 > Error handling, panic recovery, rate limiting, and backpressure — the agent's fault tolerance layer.
 
+> **Status:** Historical target design. The listed Dasein resilience and
+> self-protection implementation modules were removed. Current retry,
+> admission, health, supervision, and backpressure behavior is distributed
+> across Cognit, Kernel, Executive, Corpus, and Fabric and must be verified at
+> those current owners rather than inferred from this document.
+
 **Crate:** `dasein`
-**Module:** `crates/dasein/src/impl/resilience/`
+**Module:** removed legacy implementation
 
 ---
 
@@ -23,9 +29,9 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| AgentError enum | ✅ Implemented | `crates/executive/src/impl/error.rs` | Error severity, categories, degradation chain |
-| ErrorSeverity | ✅ Implemented | `crates/executive/src/impl/error.rs` | Recoverable / Degraded / Unrecoverable / SecurityViolation |
-| DegradationChain | ✅ Implemented | `crates/executive/src/impl/error.rs` | Retry with backoff, fallback strategies |
+| AgentError enum | Removed legacy design | — | Current errors are boundary-specific typed errors |
+| ErrorSeverity | Removed legacy design | — | No current global severity enum |
+| DegradationChain | Removed legacy design | — | Provider retry is owned by Cognit scheduler |
 | RecoveryEngine | ⬜ Planned | — | Session restore from checkpoint not yet built |
 
 ---
@@ -236,10 +242,10 @@ struct RecoveryEngine {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| AgentError enum | ✅ Implemented | `crates/executive/src/impl/error.rs` |
-| ErrorSeverity | ✅ Implemented | Recoverable / Degraded / Unrecoverable / SecurityViolation |
-| DegradationChain | ✅ Implemented | Retry with exponential backoff + jitter |
-| ToolErrorAction | ✅ Implemented | Error-driven action selection |
+| AgentError enum | Historical design | — |
+| ErrorSeverity | Historical design | Recoverable / Degraded / Unrecoverable / SecurityViolation |
+| DegradationChain | Historical design | Retry with exponential backoff + jitter |
+| ToolErrorAction | Historical design | Error-driven action selection |
 | RecoveryEngine | ⬜ Planned | Session restore from checkpoint |
 
 
@@ -259,10 +265,10 @@ struct RecoveryEngine {
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| DaemonGuardian + PanicPolicy | ✅ Implemented | `crates/dasein/src/impl/resilience/guardian.rs` | Crash dump, policy dispatch |
-| WatchdogTimer (3-layer) | ✅ Implemented | `crates/dasein/src/impl/resilience/watchdog.rs` | L1 30s, L2 10s, L3 5min |
-| SafeMode | ✅ Implemented | `crates/dasein/src/impl/resilience/safe_mode.rs` | Auto-exit with cooldown |
-| Crash dump | ✅ Implemented | `guardian.rs` | `{crash_dir}/{timestamp}/` with panic_info.json, state_snapshot.json, version.txt |
+| DaemonGuardian + PanicPolicy | Historical design | — | Crash dump, policy dispatch |
+| WatchdogTimer (3-layer) | Historical design | — | L1 30s, L2 10s, L3 5min |
+| SafeMode | Historical design | — | Auto-exit with cooldown |
+| Crash dump | Historical design | `guardian.rs` | `{crash_dir}/{timestamp}/` with panic_info.json, state_snapshot.json, version.txt |
 | RecoveryEngine | ⬜ Planned | — | Full state restore from snapshot |
 
 ---
@@ -462,10 +468,10 @@ crash/{timestamp}/
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| DaemonGuardian + PanicPolicy | ✅ Implemented | `crates/dasein/src/impl/resilience/guardian.rs` |
-| WatchdogTimer (3-layer) | ✅ Implemented | `crates/dasein/src/impl/resilience/watchdog.rs` — L1 30s, L2 10s, L3 5min |
-| SafeMode | ✅ Implemented | `crates/dasein/src/impl/resilience/safe_mode.rs` — auto-exit with cooldown |
-| Crash dump | ✅ Implemented | `{crash_dir}/{timestamp}/` — panic_info.json, state_snapshot.json, version.txt |
+| DaemonGuardian + PanicPolicy | Historical design | — |
+| WatchdogTimer (3-layer) | Historical design | — — L1 30s, L2 10s, L3 5min |
+| SafeMode | Historical design | — — auto-exit with cooldown |
+| Crash dump | Historical design | `{crash_dir}/{timestamp}/` — panic_info.json, state_snapshot.json, version.txt |
 | RecoveryEngine | ⬜ Planned | Full state restore from snapshot |
 
 
@@ -485,10 +491,10 @@ crash/{timestamp}/
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| TokenRateLimiter | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/token_limiter.rs` | Multi-tier token quota |
-| ToolCallLimiter | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/tool_limiter.rs` | Per-tool and concurrency limits |
-| FloodProtector | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/flood_protector.rs` | Per-source sliding window |
-| BackpressureController | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/backpressure.rs` | Signal propagation |
+| TokenRateLimiter | Historical design | — | Multi-tier token quota |
+| ToolCallLimiter | Historical design | — | Per-tool and concurrency limits |
+| FloodProtector | Historical design | — | Per-source sliding window |
+| BackpressureController | Historical design | — | Signal propagation |
 
 ---
 
@@ -707,11 +713,10 @@ enum BackpressureSignal {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| TokenRateLimiter | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/token_limiter.rs` |
-| ToolCallLimiter | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/tool_limiter.rs` |
-| FloodProtector | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/flood_protector.rs` |
-| BackpressureController | ✅ Implemented | `crates/dasein/src/impl/security/rate_limiting/backpressure.rs` |
+| TokenRateLimiter | Historical design | — |
+| ToolCallLimiter | Historical design | — |
+| FloodProtector | Historical design | — |
+| BackpressureController | Historical design | — |
 
 
 ---
-

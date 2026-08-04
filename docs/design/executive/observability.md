@@ -1,6 +1,11 @@
 # Observability Stack
 
-> Migrated from `docs/design/observability/observability-stack.md` and observability sections of `docs/design/core/session-lifecycle.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
+> **Status:** Historical design. This document preserves the earlier proposed
+> observability inventory. Current evidence is split across event-sourced
+> session adapters, structured logs, runtime health, audit records, and the
+> installed monitor.
+
+> Consolidated from earlier design drafts; current code paths and capability status must be verified against the repository.
 
 > Aletheon's diagnostic core as a system-level service, including event classification, Fragment Accumulator, Debug CLI, Prometheus metrics, structured reasoning logs.
 

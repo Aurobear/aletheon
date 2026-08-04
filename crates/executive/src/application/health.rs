@@ -27,6 +27,10 @@ pub struct ComponentHealth {
     pub error_category: Option<&'static str>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub asset_counts: BTreeMap<String, u64>,
 }
 
 impl ComponentHealth {
@@ -37,6 +41,8 @@ impl ComponentHealth {
             age_seconds: None,
             error_category: None,
             items: Vec::new(),
+            snapshot_digest: None,
+            asset_counts: BTreeMap::new(),
         }
     }
 
@@ -47,6 +53,8 @@ impl ComponentHealth {
             age_seconds: None,
             error_category: None,
             items: Vec::new(),
+            snapshot_digest: None,
+            asset_counts: BTreeMap::new(),
         }
     }
 
@@ -57,6 +65,8 @@ impl ComponentHealth {
             age_seconds: None,
             error_category: Some(category),
             items: Vec::new(),
+            snapshot_digest: None,
+            asset_counts: BTreeMap::new(),
         }
     }
 
@@ -67,6 +77,8 @@ impl ComponentHealth {
             age_seconds: None,
             error_category: Some(category),
             items: Vec::new(),
+            snapshot_digest: None,
+            asset_counts: BTreeMap::new(),
         }
     }
 }
@@ -109,7 +121,10 @@ impl HealthRegistry {
     }
 
     pub fn set(&self, component: &'static str, health: ComponentHealth) {
-        self.components.lock().unwrap().insert(component, health);
+        self.components
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(component, health);
     }
 
     pub fn begin_shutdown(&self) {
@@ -163,7 +178,11 @@ impl HealthRegistry {
     }
 
     pub fn snapshot(&self) -> ProductionHealth {
-        let mut components = self.components.lock().unwrap().clone();
+        let mut components = self
+            .components
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if self.shutting_down.load(Ordering::Acquire) {
             components.insert("daemon", ComponentHealth::unready("shutting_down"));
         }

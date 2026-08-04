@@ -5,9 +5,14 @@
 
 mod agents;
 mod approval_gate;
+mod bundled_profiles;
 mod channels;
+mod cognition;
 pub(crate) mod embodiment;
-mod extensions;
+mod extension_bootstrap;
+pub mod extension_connectors;
+pub mod extension_publisher;
+pub mod extensions;
 mod google;
 mod inference;
 mod integrations;
@@ -16,7 +21,10 @@ mod params;
 pub mod production_embodiment;
 mod request;
 mod request_ports;
+mod robot;
+mod role_profiles;
 mod runtime;
+mod security;
 mod services;
 mod sessions;
 mod storage;
@@ -37,6 +45,7 @@ use crate::host::daemon::handler::RequestHandler;
 pub(super) struct DaemonComposition {
     request: Arc<HandlerPorts>,
     active_connections: Arc<AtomicUsize>,
+    max_connections: Option<usize>,
     thread_authority: Arc<crate::application::thread_authority::ThreadAuthorityStore>,
     grok_hardening: GrokHardeningConfig,
     workspace_trust: Arc<crate::application::workspace_trust::WorkspaceTrustResolver>,
@@ -49,6 +58,7 @@ impl DaemonComposition {
             ports: self.request,
             notify_tx: None,
             active_connections: self.active_connections,
+            max_connections: self.max_connections,
             thread_authority: self.thread_authority,
             grok_hardening: self.grok_hardening,
             workspace_trust: self.workspace_trust,

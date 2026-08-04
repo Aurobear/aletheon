@@ -572,11 +572,19 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
 
 #[async_trait]
 pub trait TurnUseCases: Send + Sync {
+    async fn watchdog_snapshot(
+        &self,
+    ) -> crate::application::turn_coordinator::TurnWatchdogSnapshot {
+        Default::default()
+    }
     async fn execute(
         &self,
         id: serde_json::Value,
         message: String,
         context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
+        notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value;
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult>;
     async fn cancel(&self, id: OperationId) -> anyhow::Result<()>;
@@ -645,13 +653,26 @@ impl ProductionTurnUseCases {
 
 #[async_trait]
 impl TurnUseCases for ProductionTurnUseCases {
+    async fn watchdog_snapshot(
+        &self,
+    ) -> crate::application::turn_coordinator::TurnWatchdogSnapshot {
+        self.orchestrator
+            .coordinator
+            .watchdog_snapshot(15 * 60 * 1000)
+            .await
+    }
     async fn execute(
         &self,
         id: serde_json::Value,
         message: String,
         context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
+        notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
-        self.orchestrator.execute_turn(id, &message, context).await
+        self.orchestrator
+            .execute_turn(id, &message, context, requirements, task_kind, notify)
+            .await
     }
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult> {
         self.orchestrator.wait_turn(id).await

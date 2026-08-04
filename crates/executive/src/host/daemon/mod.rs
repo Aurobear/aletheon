@@ -42,6 +42,10 @@ pub struct DaemonConfig {
     pub conscious_arbitration_mode: fabric::ConsciousArbitrationMode,
     /// Enable self-evolution loop (HIGH-risk autonomy — OFF by default).
     pub enable_evolution: bool,
+    /// Independent operator gate for governed evolution proposals.
+    pub evolution_permitted: bool,
+    /// Bounded verification cadence.
+    pub evolution_trigger_every_n_turns: usize,
     /// MCP server definitions loaded from config (passed through to McpManager at handler init).
     pub mcp_servers: Vec<corpus::tools::mcp::config::McpServerConfig>,
     /// Hook script configuration from the `hooks` config section.
@@ -58,8 +62,12 @@ pub struct DaemonConfig {
     pub backpressure: crate::composition::config::BackpressureConfig,
     /// Root-scoped multi-Agent topology and rollout limits.
     pub agent_admission: cognit::config::AgentAdmissionConfig,
+    pub multi_agent: crate::composition::config::MultiAgentConfig,
     /// 0 = unlimited agent iterations; populated from AppConfig.agent.max_iterations.
     pub agent_max_iterations: usize,
+    /// Percent of the context window at which automatic compaction triggers;
+    /// populated from AppConfig.agent.compaction_threshold. `80` = legacy `0.8`.
+    pub agent_compaction_threshold_percent: usize,
     /// Cognitive harness selected by the typed root application config.
     pub harness_kind: cognit::harness::HarnessKind,
     /// Secret-safe integration settings resolved by the host startup preflight.

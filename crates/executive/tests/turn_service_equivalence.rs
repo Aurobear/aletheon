@@ -42,6 +42,9 @@ async fn turn_service_submits_one_turn() {
                 input: "hello".into(),
                 model_policy: None,
                 deadline: None,
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -54,8 +57,8 @@ async fn turn_service_submits_one_turn() {
 
 use async_trait::async_trait;
 use fabric::{
-    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
-    RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices, Usage,
+    CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider, LlmResponse,
+    LlmStream, RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices,
 };
 use std::sync::Mutex;
 
@@ -80,9 +83,7 @@ impl LlmProvider for EquivalenceLlm {
                     input: serde_json::json!({"text": "same"}),
                 }],
                 stop_reason: StopReason::ToolUse,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         } else {
             Ok(LlmResponse {
@@ -90,9 +91,7 @@ impl LlmProvider for EquivalenceLlm {
                     text: "done: same".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
     }
@@ -201,6 +200,9 @@ async fn daemon_and_exec_turn_services_match_scripted_tool_order_and_output() {
         input: "same request".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     };
 
     let daemon_result = daemon
@@ -240,9 +242,7 @@ impl LlmProvider for HangingLlm {
         Ok(LlmResponse {
             content: vec![ContentBlock::Text { text: "ok".into() }],
             stop_reason: StopReason::EndTurn,
-            usage: Usage::default(),
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
+            usage: InferenceUsage::default(),
         })
     }
 
@@ -326,6 +326,9 @@ async fn deadline_timeout_returns_cancelled() {
                 input: "should timeout".into(),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(100)),
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -355,6 +358,9 @@ async fn no_deadline_completes_normally() {
                 input: "hello".into(),
                 model_policy: None,
                 deadline: None,
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -382,6 +388,9 @@ async fn deadline_not_exceeded_completes_normally() {
                 input: "hello".into(),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(60_000)),
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -412,6 +421,9 @@ async fn clock_measures_elapsed_for_turn_metrics() {
                 input: "hello".into(),
                 model_policy: None,
                 deadline: None,
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -456,6 +468,9 @@ async fn clock_deadline_short_returns_cancelled() {
                 input: "should timeout".into(),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(1)),
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -486,6 +501,9 @@ async fn clock_deadline_long_completes_normally() {
                 input: "hello".into(),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(5000)),
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )

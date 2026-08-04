@@ -44,8 +44,7 @@ pub async fn discover_tool_extensions(
     registry: &Arc<tokio::sync::Mutex<ToolRegistry>>,
 ) -> Result<Vec<ExtensionDescriptor>, CorpusError> {
     let registry = registry.lock().await;
-    let mut definitions = registry.definitions();
-    definitions.sort_by(|left, right| left.name.cmp(&right.name));
+    let definitions = registry.definitions();
     definitions
         .into_iter()
         .map(|definition| {
@@ -160,7 +159,7 @@ impl ToolExecutor for CorpusToolExecutor {
         };
 
         let context = ToolContext {
-            agent: request.authority.agent,
+            agent: request.authority.agent.clone(),
             approval_authority: Some(fabric::ToolApprovalAuthority {
                 principal_id: request.authority.principal.clone(),
                 connection_id: request.authority.connection_id.clone(),
@@ -169,6 +168,7 @@ impl ToolExecutor for CorpusToolExecutor {
                 call_id: request.call.call_id.clone(),
                 workspace: request.authority.workspace.clone(),
                 granted_scope: permit.granted_scope.clone(),
+                permission_mode: request.authority.permission_mode,
             }),
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),
@@ -239,7 +239,7 @@ impl ToolExecutor for CorpusToolExecutor {
         };
 
         let context = ToolContext {
-            agent: request.authority.agent,
+            agent: request.authority.agent.clone(),
             approval_authority: Some(fabric::ToolApprovalAuthority {
                 principal_id: request.authority.principal.clone(),
                 connection_id: request.authority.connection_id.clone(),
@@ -248,6 +248,7 @@ impl ToolExecutor for CorpusToolExecutor {
                 call_id: request.call.call_id.clone(),
                 workspace: request.authority.workspace.clone(),
                 granted_scope: permit.granted_scope.clone(),
+                permission_mode: request.authority.permission_mode,
             }),
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),

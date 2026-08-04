@@ -67,12 +67,19 @@ impl ProviderWorkerRuntime {
             .collect()
     }
 
-    fn usage(&self, input_tokens: u64, output_tokens: u64, started_ms: u64) -> AttemptUsage {
+    fn usage(
+        &self,
+        input_tokens: u64,
+        output_tokens: u64,
+        started_ms: u64,
+        observability: &fabric::attempt::RuntimeObservability,
+    ) -> AttemptUsage {
         AttemptUsage {
             input_tokens,
             output_tokens,
             cost_usd: None,
             elapsed_ms: self.clock.mono_now().0.saturating_sub(started_ms),
+            observability: observability.clone(),
         }
     }
 
@@ -165,6 +172,15 @@ impl ProviderWorkerRuntime {
         let mut output_tokens = 0_u64;
         let mut evidence = Vec::new();
         let mut messages = vec![Message::user(task)];
+        let mut observability = fabric::attempt::RuntimeObservability {
+            provider_retries: Some(0),
+            inference_rounds: Some(0),
+            tool_calls: Some(0),
+            terminal_tool_results: Some(0),
+            cache_read_tokens: Some(0),
+            cache_write_tokens: Some(0),
+            ..Default::default()
+        };
         let approval_authority = execution.as_ref().map(|context| {
             let working_dir = if context.working_dir.is_absolute() {
                 context.working_dir.clone()
@@ -188,19 +204,25 @@ impl ProviderWorkerRuntime {
                     FailureClass::Cancelled,
                     "sub-agent cancelled",
                     false,
-                    self.usage(input_tokens, output_tokens, started_ms),
+                    self.usage(input_tokens, output_tokens, started_ms, &observability),
                     evidence,
                 ));
             }
 
             let tool_defs = self.tool_definitions();
+            observability.inference_rounds = Some(
+                observability
+                    .inference_rounds
+                    .unwrap_or_default()
+                    .saturating_add(1),
+            );
             let response = tokio::select! {
                 _ = cancel.cancelled() => {
                     return Err(self.failure(
                         FailureClass::Cancelled,
                         "sub-agent cancelled",
                         false,
-                        self.usage(input_tokens, output_tokens, started_ms),
+                        self.usage(input_tokens, output_tokens, started_ms, &observability),
                         evidence,
                     ));
                 }
@@ -211,12 +233,30 @@ impl ProviderWorkerRuntime {
                     FailureClass::ProviderTransient,
                     format!("LLM error: {error}"),
                     true,
-                    self.usage(input_tokens, output_tokens, started_ms),
+                    self.usage(input_tokens, output_tokens, started_ms, &observability),
                     evidence.clone(),
                 )
             })?;
-            input_tokens = input_tokens.saturating_add(response.usage.input_tokens.into());
-            output_tokens = output_tokens.saturating_add(response.usage.output_tokens.into());
+            observability.active_context_tokens = response.usage.total_input_tokens;
+            if let Some(read) = response.usage.cache_read_tokens {
+                observability.cache_read_tokens = Some(
+                    observability
+                        .cache_read_tokens
+                        .unwrap_or_default()
+                        .saturating_add(read),
+                );
+            }
+            if let Some(write) = response.usage.cache_write_tokens {
+                observability.cache_write_tokens = Some(
+                    observability
+                        .cache_write_tokens
+                        .unwrap_or_default()
+                        .saturating_add(write),
+                );
+            }
+            input_tokens =
+                input_tokens.saturating_add(response.usage.total_input_tokens.unwrap_or(0));
+            output_tokens = output_tokens.saturating_add(response.usage.output_tokens.unwrap_or(0));
 
             let mut text_parts = Vec::new();
             let mut tool_calls = Vec::new();
@@ -238,7 +278,7 @@ impl ProviderWorkerRuntime {
                 };
                 return Ok(RuntimeResult {
                     output,
-                    usage: self.usage(input_tokens, output_tokens, started_ms),
+                    usage: self.usage(input_tokens, output_tokens, started_ms, &observability),
                     evidence,
                 }
                 .bounded_for_persistence(self.max_persisted_bytes));
@@ -250,12 +290,18 @@ impl ProviderWorkerRuntime {
             });
 
             for (call_id, name, input) in tool_calls {
+                observability.tool_calls = Some(
+                    observability
+                        .tool_calls
+                        .unwrap_or_default()
+                        .saturating_add(1),
+                );
                 if cancel.is_cancelled() {
                     return Err(self.failure(
                         FailureClass::Cancelled,
                         "sub-agent cancelled",
                         false,
-                        self.usage(input_tokens, output_tokens, started_ms),
+                        self.usage(input_tokens, output_tokens, started_ms, &observability),
                         evidence,
                     ));
                 }
@@ -277,6 +323,7 @@ impl ProviderWorkerRuntime {
                                 session_id: context.session_id,
                                 working_dir: context.working_dir,
                                 sandbox: SandboxRequirement::NotRequired,
+                                permission_mode: fabric::permission::HostPermissionMode::Safe,
                                 cancel: cancel.clone(),
                                 turn_count: 0,
                                 repo_hooks_trusted: false,
@@ -314,6 +361,12 @@ impl ProviderWorkerRuntime {
                     summary: format!("{}: {}", name, if is_error { "error" } else { "ok" }),
                     content: content.clone(),
                 });
+                observability.terminal_tool_results = Some(
+                    observability
+                        .terminal_tool_results
+                        .unwrap_or_default()
+                        .saturating_add(1),
+                );
                 messages.push(Message::tool_result(&call_id, &content, is_error));
             }
         }
@@ -322,7 +375,7 @@ impl ProviderWorkerRuntime {
             FailureClass::RepeatedFailure,
             "sub-agent exhausted its reasoning step limit",
             true,
-            self.usage(input_tokens, output_tokens, started_ms),
+            self.usage(input_tokens, output_tokens, started_ms, &observability),
             evidence,
         ))
     }
@@ -334,7 +387,7 @@ mod tests {
     use anyhow::anyhow;
     use corpus::tools::tools::ToolRegistry;
     use fabric::tool::{Tool, ToolContext, ToolResult, ToolResultMeta};
-    use fabric::{LlmResponse, LlmStream, Registry, StopReason, Usage};
+    use fabric::{InferenceUsage, LlmResponse, LlmStream, Registry, StopReason};
     use kernel::chronos::TestClock;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -449,12 +502,7 @@ mod tests {
         LlmResponse {
             content,
             stop_reason: StopReason::EndTurn,
-            usage: Usage {
-                input_tokens: input,
-                output_tokens: output,
-            },
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
+            usage: InferenceUsage::unsupported(Some(input.into()), Some(output.into())),
         }
     }
 
@@ -512,6 +560,10 @@ mod tests {
         assert_eq!(result.output, "done");
         assert_eq!(result.usage.input_tokens, 4);
         assert_eq!(result.usage.output_tokens, 2);
+        assert_eq!(result.usage.observability.inference_rounds, Some(1));
+        assert_eq!(result.usage.observability.provider_retries, Some(0));
+        assert_eq!(result.usage.observability.tool_calls, Some(0));
+        assert_eq!(result.usage.observability.active_context_tokens, Some(4));
     }
 
     #[tokio::test]
@@ -619,6 +671,10 @@ mod tests {
         assert_eq!(result.usage.input_tokens, 8);
         assert_eq!(result.usage.output_tokens, 3);
         assert_eq!(result.evidence.len(), 1);
+        assert_eq!(result.usage.observability.inference_rounds, Some(2));
+        assert_eq!(result.usage.observability.tool_calls, Some(1));
+        assert_eq!(result.usage.observability.terminal_tool_results, Some(1));
+        assert_eq!(result.usage.observability.active_context_tokens, Some(5));
         assert_eq!(provider.seen_tools.lock().await[0], ["count"]);
     }
 

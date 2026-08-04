@@ -1,0 +1,6 @@
+[package]
+name = "dirty_workspace_preservation"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]

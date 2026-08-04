@@ -8,10 +8,13 @@ pub mod backpressure;
 mod channel;
 mod coding;
 pub mod diagnostics;
+mod evaluation;
 mod genome;
+mod governed_review;
 mod grok_hardening;
 mod infra;
 mod integrations;
+pub mod memory_policy;
 mod provenance;
 mod provider;
 pub mod schema;
@@ -19,7 +22,7 @@ mod supplemental_memory;
 
 pub use agent::{
     AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, ExecutiveConfig,
-    HooksConfig, PerceptionConfig,
+    HooksConfig, MultiAgentConfig, PerceptionConfig,
 };
 pub use backpressure::BackpressureConfig;
 pub use channel::TelegramChannelConfig;
@@ -30,7 +33,9 @@ pub use cognit::config::{
     DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, RoleRuntimeConfig,
 };
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
+pub use evaluation::EvaluationSettings;
 pub use genome::GenomeConfig;
+pub use governed_review::GovernedReviewSettings;
 pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{DaemonConfig, McpServerConfig, PluginsConfig, SandboxConfig};
 pub use integrations::{
@@ -39,9 +44,12 @@ pub use integrations::{
     ResolvedIntegrations, ResolvedSearchIntegration, RuntimeBootstrapConfig, SecretRef,
     SecretValue,
 };
+pub use memory_policy::MemoryPolicyConfig;
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
-pub use supplemental_memory::{MemoryConfig, SupplementalMemoryConfig};
+pub use supplemental_memory::{
+    MemoryConfig, SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
+};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -86,6 +94,8 @@ pub struct ProfileOverride {
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
     pub agent: AgentConfig,
+    #[serde(default)]
+    pub multi_agent: MultiAgentConfig,
     pub providers: Vec<ProviderConfig>,
     pub model_aliases: HashMap<String, String>,
     pub model_routing: ModelRoutingConfig,
@@ -97,12 +107,14 @@ pub struct AppConfig {
     pub hooks: HooksConfig,
     pub perception: PerceptionConfig,
     pub evolution: EvolutionSettings,
+    pub evaluation: EvaluationSettings,
+    pub governed_review: GovernedReviewSettings,
     pub telegram: TelegramChannelConfig,
     pub goal_runtime: Option<GoalRuntimeConfig>,
     pub pi_runtime: CodingRuntimeConfig,
     pub deployment: DeploymentConfig,
     pub grok_hardening: GrokHardeningConfig,
-    /// D2-M5-T2: overload/backpressure limits (default unlimited).
+    /// Host-owned overload/backpressure limits with bounded daemon defaults.
     #[serde(default)]
     pub backpressure: BackpressureConfig,
     /// S1 sandbox profiles (from trusted daemon config, never from repo).

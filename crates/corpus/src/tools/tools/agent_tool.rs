@@ -88,7 +88,7 @@ impl Tool for AgentTool {
     }
 
     async fn execute(&self, input: serde_json::Value, context: &ToolContext) -> ToolResult {
-        let Some(trusted) = context.agent else {
+        let Some(trusted) = context.agent.as_ref() else {
             return tool_error("Agent tool requires trusted lifecycle context");
         };
         let Some(agent_type) = input.get("agent_type").and_then(|value| value.as_str()) else {
@@ -110,6 +110,8 @@ impl Tool for AgentTool {
                 Ok(workspace) => Some(workspace),
                 Err(error) => return tool_error(&format!("Invalid Agent workspace: {error}")),
             },
+            delegator_authority: trusted.delegator_authority.clone(),
+            cognitive_binding: None,
             task: prompt.to_string(),
             context: AgentContextFork::None,
             broadcast_refs: vec![],

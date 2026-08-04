@@ -3,7 +3,10 @@
 //! Predicates are evaluated against JSON observation payloads via dot-path
 //! traversal. No scripting, regex, JSONPath, or natural-language judgment.
 
+use crate::types::world_state::WorldSnapshot;
+use crate::MonoTime;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExpectedOutcome {
@@ -193,6 +196,108 @@ fn check_numeric(value: &serde_json::Value) -> Result<(), OutcomeContractError> 
     Ok(())
 }
 
+/// Outcome of evaluating an expected outcome against an observation snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutcomeMatch {
+    /// Predicate satisfied within the freshness window.
+    Match,
+    /// Predicate not satisfied.
+    Mismatch { reason: String },
+    /// Snapshot is stale or older than the freshness window — unusable evidence.
+    Stale,
+}
+
+/// Dot-path traversal into a JSON value (`a.b.c`). Returns `None` for an
+/// unknown or non-object path segment. Empty segments are rejected.
+pub fn get_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for key in path.split('.') {
+        if key.is_empty() {
+            return None;
+        }
+        current = current.get(key)?;
+    }
+    Some(current)
+}
+
+/// Evaluate a predicate against a payload. `before` is required only for
+/// `Change` predicates (delta between before and after payloads).
+pub fn evaluate_predicate(
+    predicate: &OutcomePredicate,
+    payload: &Value,
+    before: Option<&Value>,
+) -> bool {
+    match predicate {
+        OutcomePredicate::Equals { path, value } => {
+            get_path(payload, path).map(|v| v == value).unwrap_or(false)
+        }
+        OutcomePredicate::NotEquals { path, value } => {
+            get_path(payload, path).map(|v| v != value).unwrap_or(true)
+        }
+        OutcomePredicate::Range { path, min, max } => get_path(payload, path)
+            .and_then(|v| v.as_f64())
+            .map(|n| {
+                let within_low = min.map(|lo| n >= lo).unwrap_or(true);
+                let within_high = max.map(|hi| n <= hi).unwrap_or(true);
+                within_low && within_high
+            })
+            .unwrap_or(false),
+        OutcomePredicate::Change {
+            path,
+            min_delta,
+            max_delta,
+        } => {
+            let after = get_path(payload, path).and_then(|v| v.as_f64());
+            let before = before
+                .and_then(|b| get_path(b, path))
+                .and_then(|v| v.as_f64());
+            match (before, after) {
+                (Some(a), Some(b)) => {
+                    let delta = b - a;
+                    let meets_min = min_delta.map(|lo| delta >= lo).unwrap_or(true);
+                    let meets_max = max_delta.map(|hi| delta <= hi).unwrap_or(true);
+                    meets_min && meets_max
+                }
+                _ => false,
+            }
+        }
+        OutcomePredicate::All { predicates } => predicates
+            .iter()
+            .all(|p| evaluate_predicate(p, payload, before)),
+        OutcomePredicate::Any { predicates } => predicates
+            .iter()
+            .any(|p| evaluate_predicate(p, payload, before)),
+    }
+}
+
+/// Evaluate an expected outcome against a snapshot, honoring staleness and
+/// the freshness window. `before` is required only for `Change` predicates.
+pub fn evaluate_expected(
+    expected: &ExpectedOutcome,
+    snapshot: &WorldSnapshot,
+    before: Option<&WorldSnapshot>,
+    now: MonoTime,
+) -> OutcomeMatch {
+    if snapshot.stale {
+        return OutcomeMatch::Stale;
+    }
+    let age_ms = now.0.saturating_sub(snapshot.observed_at.0);
+    if age_ms > expected.freshness_ms {
+        return OutcomeMatch::Stale;
+    }
+    if evaluate_predicate(
+        &expected.predicate,
+        &snapshot.payload,
+        before.map(|b| &b.payload),
+    ) {
+        OutcomeMatch::Match
+    } else {
+        OutcomeMatch::Mismatch {
+            reason: "expected outcome predicate not satisfied".into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,5 +444,114 @@ mod tests {
         let json = serde_json::to_string(&pred).unwrap();
         let back: OutcomePredicate = serde_json::from_str(&json).unwrap();
         assert_eq!(pred, back);
+    }
+
+    fn snapshot(seq: u64, observed_at: u64, stale: bool, payload: Value) -> WorldSnapshot {
+        WorldSnapshot {
+            device: crate::types::embodiment::DeviceId("bot".into()),
+            schema: "robot.state/v1".into(),
+            sequence: seq,
+            payload,
+            observed_at: MonoTime(observed_at),
+            stale,
+        }
+    }
+
+    #[test]
+    fn get_path_traverses_nested_objects() {
+        let payload = serde_json::json!({"robot": {"base": {"height_m": 0.8}}});
+        assert_eq!(
+            get_path(&payload, "robot.base.height_m").and_then(|v| v.as_f64()),
+            Some(0.8)
+        );
+        assert!(get_path(&payload, "robot.missing").is_none());
+        assert!(get_path(&payload, "robot.base.height_m.extra").is_none());
+        assert!(get_path(&payload, "robot..base").is_none());
+    }
+
+    #[test]
+    fn evaluate_equals_range_and_all() {
+        let payload = serde_json::json!({"mode": "stance", "fall_detected": false, "base": {"height_m": 0.8}});
+        let expected = ExpectedOutcome {
+            predicate: OutcomePredicate::All {
+                predicates: vec![
+                    OutcomePredicate::Equals {
+                        path: "mode".into(),
+                        value: serde_json::json!("stance"),
+                    },
+                    OutcomePredicate::Equals {
+                        path: "fall_detected".into(),
+                        value: serde_json::json!(false),
+                    },
+                    OutcomePredicate::Range {
+                        path: "base.height_m".into(),
+                        min: Some(0.75),
+                        max: Some(0.95),
+                    },
+                ],
+            },
+            freshness_ms: 500,
+            stable_window_ms: 0,
+            timeout_ms: 10_000,
+        };
+        let snap = snapshot(1, 0, false, payload);
+        assert_eq!(
+            evaluate_expected(&expected, &snap, None, MonoTime(100)),
+            OutcomeMatch::Match
+        );
+    }
+
+    #[test]
+    fn evaluate_mismatch_and_stale() {
+        let expected = ExpectedOutcome {
+            predicate: OutcomePredicate::Equals {
+                path: "mode".into(),
+                value: serde_json::json!("walk"),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 0,
+            timeout_ms: 10_000,
+        };
+        let snap = snapshot(1, 0, false, serde_json::json!({"mode": "stance"}));
+        assert!(matches!(
+            evaluate_expected(&expected, &snap, None, MonoTime(100)),
+            OutcomeMatch::Mismatch { .. }
+        ));
+        // Snapshot older than freshness window.
+        assert!(matches!(
+            evaluate_expected(&expected, &snap, None, MonoTime(1_000)),
+            OutcomeMatch::Stale
+        ));
+        // Snapshot explicitly stale.
+        let stale = snapshot(1, 0, true, serde_json::json!({"mode": "walk"}));
+        assert!(matches!(
+            evaluate_expected(&expected, &stale, None, MonoTime(0)),
+            OutcomeMatch::Stale
+        ));
+    }
+
+    #[test]
+    fn evaluate_change_uses_before_delta() {
+        let expected = ExpectedOutcome {
+            predicate: OutcomePredicate::Change {
+                path: "base.height_m".into(),
+                min_delta: Some(0.1),
+                max_delta: None,
+            },
+            freshness_ms: 500,
+            stable_window_ms: 0,
+            timeout_ms: 10_000,
+        };
+        let before = snapshot(0, 0, false, serde_json::json!({"base": {"height_m": 0.5}}));
+        let after = snapshot(1, 1, false, serde_json::json!({"base": {"height_m": 0.7}}));
+        assert_eq!(
+            evaluate_expected(&expected, &after, Some(&before), MonoTime(50)),
+            OutcomeMatch::Match
+        );
+        let small = snapshot(1, 1, false, serde_json::json!({"base": {"height_m": 0.52}}));
+        assert!(matches!(
+            evaluate_expected(&expected, &small, Some(&before), MonoTime(50)),
+            OutcomeMatch::Mismatch { .. }
+        ));
     }
 }

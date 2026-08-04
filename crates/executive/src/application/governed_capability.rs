@@ -10,10 +10,11 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, BroadcastEpoch, CapabilityAuthority, CapabilityCall, CapabilityInvoker,
-    CapabilityResult, CapabilityScope, ConsciousArbitrationMode, ContentId, FieldDecisionKind,
-    FieldDecisionReason, InvocationControl, PrincipalId, ProcessId, SalienceVector,
-    SandboxRequirement, UsageReport, WorkspaceAttribution,
+    AdmissionController, AdmissionRequest, BroadcastEpoch, CapabilityAuthority, CapabilityCall,
+    CapabilityId, CapabilityInvoker, CapabilityResult, CapabilityScope, ConsciousArbitrationMode,
+    ContentId, ExecutionPermit, FieldDecisionKind, FieldDecisionReason, InvocationControl,
+    OperationId, PrincipalId, ProcessId, SalienceVector, SandboxRequirement, UsageReport,
+    WorkspaceAttribution,
 };
 use kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,75 @@ pub fn canonical_capability_invoker(
     Arc::new(DefaultCapabilityInvoker::new(admission, executor))
 }
 
+/// Narrow application-owned permit lifecycle for governed system mutations.
+///
+/// Keeping admission construction here prevents approval consumers from
+/// assembling an alternate Kernel policy path.
+#[async_trait]
+pub trait GovernedPermitIssuer: Send + Sync {
+    async fn admit_system_modify(
+        &self,
+        principal: PrincipalId,
+        capability: CapabilityId,
+        action: String,
+        input_summary: String,
+    ) -> Result<ExecutionPermit>;
+
+    async fn settle_system_modify(&self, permit: &ExecutionPermit, success: bool) -> Result<()>;
+}
+
+struct KernelPermitIssuer {
+    admission: Arc<dyn AdmissionController>,
+}
+
+pub fn canonical_permit_issuer(
+    admission: Arc<dyn AdmissionController>,
+) -> Arc<dyn GovernedPermitIssuer> {
+    Arc::new(KernelPermitIssuer { admission })
+}
+
+#[async_trait]
+impl GovernedPermitIssuer for KernelPermitIssuer {
+    async fn admit_system_modify(
+        &self,
+        principal: PrincipalId,
+        capability: CapabilityId,
+        action: String,
+        input_summary: String,
+    ) -> Result<ExecutionPermit> {
+        self.admission
+            .admit(AdmissionRequest {
+                operation_id: OperationId::new(),
+                process_id: ProcessId::new(),
+                principal,
+                capability,
+                action,
+                input_summary,
+                risk: RiskLevel::SystemModify,
+                requested_scope: CapabilityScope::default(),
+                budget: None,
+                lease: None,
+                sandbox: SandboxRequirement::NotRequired,
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn settle_system_modify(&self, permit: &ExecutionPermit, success: bool) -> Result<()> {
+        self.admission
+            .settle(
+                permit.id,
+                UsageReport {
+                    permit_id: permit.id,
+                    exit_code: Some(if success { 0 } else { 1 }),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(Into::into)
+    }
+}
+
 /// Trusted execution context attached by Executive, never by model input.
 #[derive(Clone)]
 pub struct CapabilityExecutionContext {
@@ -40,6 +110,7 @@ pub struct CapabilityExecutionContext {
     pub thread_id: fabric::ThreadId,
     pub turn_id: fabric::TurnId,
     pub workspace: fabric::WorkspacePolicy,
+    pub permission_mode: fabric::permission::HostPermissionMode,
     pub session_id: String,
     pub working_dir: PathBuf,
     pub sandbox: SandboxRequirement,
@@ -482,6 +553,7 @@ pub struct RegistryAuthorityProvider {
     sandbox: SandboxRequirement,
     cancel: CancellationToken,
     turn_event_sender: Option<fabric::ipc::TurnEventSender>,
+    permission_mode: fabric::permission::HostPermissionMode,
 }
 
 impl RegistryAuthorityProvider {
@@ -511,6 +583,7 @@ impl RegistryAuthorityProvider {
             sandbox,
             cancel,
             turn_event_sender: None,
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
         }
     }
 
@@ -521,6 +594,14 @@ impl RegistryAuthorityProvider {
 
     pub fn with_turn_event_sender(mut self, sender: Option<fabric::ipc::TurnEventSender>) -> Self {
         self.turn_event_sender = sender;
+        self
+    }
+
+    pub fn with_permission_mode(
+        mut self,
+        permission_mode: fabric::permission::HostPermissionMode,
+    ) -> Self {
+        self.permission_mode = permission_mode;
         self
     }
 }
@@ -611,7 +692,7 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
         let requested_scope = requested_scope_for_call(call, &self.workspace)?;
         Ok(AuthorizedInvocation {
             authority: CapabilityAuthority {
-                agent: self.agent,
+                agent: self.agent.clone(),
                 principal: self.principal.clone(),
                 action: call.name.clone(),
                 requested_scope,
@@ -625,6 +706,7 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
                 workspace: self.workspace.clone(),
                 session_id: self.session_id.clone(),
                 working_dir: self.working_dir.clone(),
+                permission_mode: self.permission_mode,
             },
             control: InvocationControl {
                 cancel: self.cancel.clone(),

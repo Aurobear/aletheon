@@ -64,6 +64,34 @@ pub struct MemoryProjection {
     health: Arc<Mutex<MemoryProjectionHealth>>,
 }
 
+#[derive(Clone)]
+pub struct MemoryEvaluationProjectionSink {
+    projection: MemoryProjection,
+}
+
+impl MemoryEvaluationProjectionSink {
+    pub fn new(projection: MemoryProjection) -> Self {
+        Self { projection }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::application::evaluation::EvaluationProjectionSink for MemoryEvaluationProjectionSink {
+    fn name(&self) -> &'static str {
+        "mnemosyne"
+    }
+
+    async fn project(
+        &self,
+        record: &crate::application::evaluation::EvaluationProjectionRecord,
+    ) -> anyhow::Result<()> {
+        match self.projection.project_evaluation_receipt(record) {
+            ProjectionStatus::Queued { .. } | ProjectionStatus::Excluded { .. } => Ok(()),
+            ProjectionStatus::Degraded => anyhow::bail!("memory evaluation projection degraded"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct MemoryCandidateSource {
     record_id: String,
@@ -86,6 +114,31 @@ impl MemoryProjection {
 
     pub fn health(&self) -> Arc<Mutex<MemoryProjectionHealth>> {
         self.health.clone()
+    }
+
+    /// Queue an evidence-linked experience from the persisted receipt only.
+    /// The memory reducer decides later whether it is consolidated.
+    pub fn project_evaluation_receipt(
+        &self,
+        record: &crate::application::evaluation::EvaluationProjectionRecord,
+    ) -> ProjectionStatus {
+        let receipt_id = record.receipt.receipt_id.0.to_string();
+        self.queue(
+            format!("evaluation:{receipt_id}"),
+            MemoryCandidateSource {
+                record_id: format!("evaluation:{receipt_id}"),
+                kind: "evaluation_outcome".into(),
+                content: serde_json::json!({
+                    "receipt_ref": record.receipt,
+                    "evidence_ref": format!("evaluation-receipt:{receipt_id}"),
+                    "runtime_id": record.context.runtime_id,
+                    "profile_id": record.context.profile_id,
+                    "rubric_id": record.context.rubric_id,
+                    "rubric_version": record.context.rubric_version,
+                }),
+                sensitivity: MemorySensitivity::Internal,
+            },
+        )
     }
 
     /// Queue an immutable summary only after it has been read back from the
@@ -231,7 +284,7 @@ impl MemoryProjection {
         }
 
         let source_event_id = event.position.event_id.to_string();
-        let mut health = self.health.lock().unwrap();
+        let mut health = self.health.lock().unwrap_or_else(|e| e.into_inner());
         health.last_record_id = Some(record_id.clone());
         health.last_source_event_id = Some(source_event_id.clone());
         ProjectionStatus::Queued {
@@ -241,7 +294,7 @@ impl MemoryProjection {
     }
 
     fn degraded(&self, category: &'static str) -> ProjectionStatus {
-        let mut health = self.health.lock().unwrap();
+        let mut health = self.health.lock().unwrap_or_else(|e| e.into_inner());
         health.degraded = true;
         health.last_error_category = Some(category);
         ProjectionStatus::Degraded

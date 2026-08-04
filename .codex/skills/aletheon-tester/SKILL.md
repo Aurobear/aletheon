@@ -212,7 +212,7 @@ Ask the user or infer from context:
 - **Aletheon source path** — discover with `git rev-parse --show-toplevel`; never hard-code a checkout
 - **Example test tasks**:
   - Simple: "List all Rust source files in crates/ and count them by crate"
-  - Medium: "Read crates/runtime/src/core/config/agent.rs and summarize the AgentLoopConfig struct"
+  - Medium: "Read crates/executive/src/composition/config/agent.rs and summarize the AgentLoopConfig struct"
   - Hard: "Analyze the aletheon project: identify the 3 most complex modules and explain why"
 
 ### 1.2 Pre-Flight Checks
@@ -271,10 +271,17 @@ Expected: returns a list of directories. If this fails, the daemon has fundament
 
 ### 2.4 TUI Track — test what the USER actually sees
 
-`aletheon_ask` uses `session.ask` RPC and **bypasses the TUI entirely**, so it
-cannot see render bugs (duplicate drawing, unrendered markdown, `Reflection:
-Reflection:` double-prefix, `未知技能: /path` slash mis-parse). For anything
-user-facing, drive the real TUI instead:
+`aletheon_ask` uses the `session.ask` RPC, which is **introspection-only**: it
+asks the LLM about the *current session context* and does **NOT** run the ReAct
+tool loop — no tools execute, no new turn is created, and `turn_count` does not
+advance. Do **NOT** use `aletheon_ask` to judge agentic capability (reasoning
+depth, tool use, task completion): it will answer "I cannot answer" from
+whatever stale context the session holds. To exercise real agentic execution
+use `aletheon exec --prompt "<task>" --output json` (non-interactive, runs the
+full loop with tools) or drive the real TUI. `aletheon_ask` also **bypasses the
+TUI entirely**, so it cannot see render bugs (duplicate drawing, unrendered
+markdown, `Reflection: Reflection:` double-prefix, `未知技能: /path` slash
+mis-parse). For anything user-facing, drive the real TUI instead:
 
 ```
 aletheon_diagnose(task="<the task>")
@@ -406,14 +413,17 @@ Common fix locations:
 |-----------|-----------|
 | Sandbox (bubblewrap) | `crates/corpus/src/security/sandbox/bubblewrap.rs` |
 | Sandbox builder | `crates/corpus/src/security/sandbox/bwrap_builder.rs` |
-| ReAct loop | `crates/runtime/src/core/react_loop/mod.rs` |
-| Reflection engine | `crates/runtime/src/core/react_loop/reflection.rs` |
-| Agent loop config | `crates/runtime/src/core/config/agent.rs` |
-| Daemon chat handler | `crates/runtime/src/impl/daemon/handler/chat.rs` |
-| Provider registry | `crates/cognit/src/impl/provider_registry.rs` |
-| Anthropic provider | `crates/cognit/src/impl/llm/anthropic.rs` |
-| OpenAI provider | `crates/cognit/src/impl/llm/openai_provider.rs` |
-| Storm breaker | `crates/runtime/src/core/storm_breaker.rs` |
+| ReAct loop | `crates/cognit/src/harness/linear/mod.rs` and `.../linear/step.rs` |
+| Reflection engine | `crates/cognit/src/harness/linear/reflection.rs` |
+| Harness config (limits) | `crates/cognit/src/harness/config.rs` (HarnessConfig) |
+| Agent loop / executive config | `crates/executive/src/composition/config/agent.rs` (AgentLoopConfig, ExecutiveConfig) |
+| Daemon turn pipeline | `crates/executive/src/application/daemon_turn/execute.rs` |
+| LLM scheduler (routing/failover) | `crates/cognit/src/adapters/inference/scheduler.rs` |
+| Context compressor | `crates/mnemosyne/src/application/compressor/mod.rs` |
+| Provider registry | `crates/cognit/src/composition/provider_registry.rs` |
+| Anthropic provider | `crates/cognit/src/adapters/inference/anthropic.rs` |
+| OpenAI provider | `crates/cognit/src/adapters/inference/openai_provider.rs` |
+| Storm breaker | `crates/executive/src/host/daemon/handler/tool_executor.rs` |
 
 ### 5.2 Build and deploy the installed runtime
 

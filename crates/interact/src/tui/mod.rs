@@ -1,19 +1,21 @@
 //! TUI interface — interactive terminal UI and CLI entry point.
 
 pub mod app;
+mod json_lines;
 pub mod reducer;
 pub mod render;
 pub mod response;
 pub mod session_protocol;
 pub mod test_infra;
 
+pub mod activity_detail;
 pub mod approval_dialog;
 pub mod awareness;
 pub mod chat;
 pub mod command;
 pub mod completion;
-pub mod computer;
 pub mod conscious_core;
+pub mod diff_view;
 
 pub mod help_overlay;
 pub mod history_search;
@@ -23,6 +25,7 @@ pub mod markdown;
 pub mod pager;
 pub mod plan_view;
 pub mod registry;
+pub mod session_picker;
 pub mod state;
 pub mod status;
 pub mod streaming;
@@ -43,6 +46,7 @@ pub use cli::run;
 /// line mode, and `-m` mode from silently diverging.
 pub fn chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> serde_json::Value {
     fabric::protocol::client::ClientRpcRequest::chat(message, workspace)
+        .chat_with_permission_mode(crate::host::permission_mode_from_environment())
         .to_json_rpc(Some(1))
         .expect("typed chat request serializes")
 }
@@ -112,6 +116,32 @@ pub async fn run_with_workspace_config(
     test_config: TestConfig,
     workspace: fabric::WorkspacePolicy,
 ) -> anyhow::Result<()> {
+    run_with_workspace_requirements(socket_path, test_config, workspace, Vec::new()).await
+}
+
+pub async fn run_with_workspace_requirements(
+    socket_path: &str,
+    test_config: TestConfig,
+    workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
+) -> anyhow::Result<()> {
+    run_with_workspace_requirements_and_task_kind(
+        socket_path,
+        test_config,
+        workspace,
+        turn_requirements,
+        None,
+    )
+    .await
+}
+
+pub async fn run_with_workspace_requirements_and_task_kind(
+    socket_path: &str,
+    test_config: TestConfig,
+    workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
+) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
     let clock: Arc<dyn Clock> = Arc::new(self::host_time::ClientClock::new());
 
@@ -135,7 +165,16 @@ pub async fn run_with_workspace_config(
     if (!atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout))
         && test_config.test_input.is_none()
     {
-        return simple_line_mode(stream, caps, model_name, clock, workspace).await;
+        return simple_line_mode(
+            stream,
+            caps,
+            model_name,
+            clock,
+            workspace,
+            turn_requirements,
+            task_kind,
+        )
+        .await;
     }
 
     // Check if we're in test mode (no TTY needed)
@@ -154,6 +193,8 @@ pub async fn run_with_workspace_config(
             true,
             clock,
             workspace.clone(),
+            turn_requirements.clone(),
+            task_kind,
         )
         .await
     } else {
@@ -231,6 +272,8 @@ pub async fn run_with_workspace_config(
             false,
             clock,
             workspace,
+            turn_requirements,
+            task_kind,
         )
         .await;
 
@@ -247,6 +290,8 @@ pub async fn run_with_workspace_config(
 /// Main TUI application state.
 struct App {
     workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
+    requested_task_kind: Option<fabric::TaskKind>,
     chat: ChatWidget,
     input_buf: String,
     /// Cursor position in input_buf (byte index).
@@ -261,7 +306,7 @@ struct App {
     /// cleared by turn_done. Used by auto-submit to know when the next
     /// message can be sent.
     turn_active: bool,
-    response_buf: String,
+    response_buf: json_lines::JsonLineBuffer,
     caps: TermCaps,
     /// Monotonically increasing JSON-RPC request id.
     next_request_id: u64,
@@ -281,6 +326,8 @@ struct App {
     first_render: bool,
     /// Pending approval dialog (shown as modal overlay).
     pending_approval: Option<approval_dialog::ApprovalDialog>,
+    detail: Option<diff_view::DiffView>,
+    latest_diff: Option<String>,
     /// Streaming controller for incremental rendering
     stream_ctrl: StreamController,
     /// Current turn's token count
@@ -293,6 +340,8 @@ struct App {
     completion: CompletionPopup,
     /// Pager overlay (Ctrl+T to open, q/Esc to close)
     pager: Option<pager::PagerOverlay>,
+    /// Canonical session list with keyboard navigation and resume action.
+    session_picker: Option<session_picker::SessionPicker>,
     /// Frame counter for spinner animation.
     frame_counter: u64,
     /// Centralized application state (mode, awareness, context).
@@ -315,13 +364,20 @@ impl App {
         model_name: String,
         clock: Arc<dyn Clock>,
         workspace: fabric::WorkspacePolicy,
+        turn_requirements: Vec<fabric::TurnRequirement>,
     ) -> Self {
         let mut status = StatusBar::new(caps.clone());
         status.connected = true;
         status.model_name = model_name.clone();
+        let app_state = AppState {
+            model_name: model_name.clone(),
+            ..Default::default()
+        };
 
         Self {
             workspace,
+            turn_requirements,
+            requested_task_kind: None,
             chat: ChatWidget::new(caps.clone()),
             input_buf: String::new(),
             cursor: 0,
@@ -330,7 +386,7 @@ impl App {
             running: true,
             streaming: false,
             turn_active: false,
-            response_buf: String::new(),
+            response_buf: json_lines::JsonLineBuffer::default(),
             caps,
             next_request_id: 1,
             pending_commands: BTreeMap::new(),
@@ -342,14 +398,17 @@ impl App {
             pending_submit: None,
             first_render: true,
             pending_approval: None,
+            detail: None,
+            latest_diff: None,
             stream_ctrl: StreamController::new(Arc::clone(&clock)),
             turn_tokens: None,
             total_tokens: 0,
             history: CommandHistory::new(),
             completion: CompletionPopup::new(),
             pager: None,
+            session_picker: None,
             frame_counter: 0,
-            app_state: AppState::default(),
+            app_state,
             plan_view: PlanViewState::default(),
             sub_agents: Vec::new(),
             current_iteration: 0,
@@ -379,6 +438,7 @@ enum PendingCommand {
     InitializeSkills,
     NewSession { clear_screen: bool },
     Resume { previous_session_id: Option<String> },
+    OpenSessionPicker,
 }
 
 #[cfg(test)]

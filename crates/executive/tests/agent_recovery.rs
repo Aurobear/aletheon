@@ -24,6 +24,8 @@ fn record(status: AgentRunStatus, resumability: RuntimeResumability) -> AgentRun
         profile_id: AgentProfileId("recovery-worker".into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        delegator_authority: None,
+        cognitive_binding: None,
         task: "recover without replay".into(),
         context: AgentContextFork::None,
         broadcast_refs: vec![],

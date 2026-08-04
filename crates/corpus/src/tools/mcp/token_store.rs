@@ -171,6 +171,25 @@ pub struct TokenStore {
     tokens: HashMap<TokenKey, TokenEntry>,
 }
 
+/// Process-local persistence for renewable machine credentials.
+///
+/// Client-credentials access tokens are derived from an environment-provided
+/// confidential client on every daemon start. Persisting those short-lived
+/// tokens would add a second secret-at-rest boundary without improving
+/// availability, so their store deliberately retains entries only in memory.
+#[derive(Debug, Default)]
+struct EphemeralTokenPersistence;
+
+impl TokenPersistence for EphemeralTokenPersistence {
+    fn load_all(&self) -> Result<HashMap<TokenKey, TokenEntry>> {
+        Ok(HashMap::new())
+    }
+
+    fn replace_all(&self, _entries: &HashMap<TokenKey, TokenEntry>) -> Result<()> {
+        Ok(())
+    }
+}
+
 impl fmt::Debug for TokenStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TokenStore")
@@ -190,6 +209,13 @@ impl TokenStore {
             persistence,
             tokens,
         })
+    }
+
+    pub fn ephemeral() -> Self {
+        Self {
+            persistence: Box::<EphemeralTokenPersistence>::default(),
+            tokens: HashMap::new(),
+        }
     }
 
     pub fn default_path() -> Result<PathBuf> {
@@ -420,6 +446,15 @@ mod tests {
         let rendered = format!("{:?}", entry("access-secret"));
         assert!(!rendered.contains("access-secret"));
         assert!(!rendered.contains("refresh-access-secret"));
+    }
+
+    #[test]
+    fn ephemeral_store_retains_only_the_current_process_snapshot() {
+        let mut store = TokenStore::ephemeral();
+        store.set("machine-client", entry("short-lived"));
+        store.save().unwrap();
+        assert_eq!(store.get("machine-client"), Some(&entry("short-lived")));
+        assert!(TokenStore::ephemeral().is_empty());
     }
 
     #[test]

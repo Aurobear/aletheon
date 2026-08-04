@@ -6,6 +6,10 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::extension::{
+    ExtensionEnableRequestV1, ExtensionPackageIdRequestV1, ExtensionPackagePathRequestV1,
+};
+
 use crate::{
     ui_event::{CollaborationMode, InterruptReason},
     AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord, LocalOsPrincipal, OperationId,
@@ -25,11 +29,9 @@ pub enum ClientRpcRequest {
     Clear,
     Status,
     StatusFor(SessionParams),
-    Reflect,
-    ReflectNow,
-    ReflectNowFor(SessionParams),
-    Evolution,
-    Genome,
+    EvaluationGet(EvaluationGetParams),
+    EvaluationLatest(EvaluationLatestParams),
+    EvaluationList(EvaluationListParams),
     Sessions,
     Resume(ResumeParams),
     Compact,
@@ -40,16 +42,15 @@ pub enum ClientRpcRequest {
     SkillsList,
     SkillInvoke(SkillInvokeParams),
     ModeSwitch(ModeSwitchParams),
-    PlanApprove,
     Cancel,
     Interrupt(InterruptParams),
-    HooksList,
     DaemonShutdown,
     SessionNew,
     SessionNewFor(SessionParams),
     SessionLoadRecent,
     SessionLoadPrevious(SessionParams),
     ApprovalResponse(ApprovalResponseParams),
+    DiffArtifactGet(DiffArtifactGetParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
     MemorySearch(MemorySearchParams),
@@ -90,7 +91,16 @@ pub enum ClientRpcRequest {
     SessionFork(SessionForkParams),
     SessionInterrupt(SessionInterruptParams),
     SessionReplay(SessionReplayParams),
-    HostComputer(ComputerHostParams),
+    ExtensionInstall(ExtensionPackagePathRequestV1),
+    ExtensionEnable(ExtensionEnableRequestV1),
+    ExtensionDisable(ExtensionPackageIdRequestV1),
+    ExtensionUpgrade(ExtensionPackagePathRequestV1),
+    ExtensionRollback(ExtensionPackageIdRequestV1),
+    ExtensionRemove(ExtensionPackageIdRequestV1),
+    ExtensionPurge(ExtensionPackageIdRequestV1),
+    ExtensionList,
+    ExtensionShow(ExtensionPackageIdRequestV1),
+    ExtensionDoctor(ExtensionPackageIdRequestV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -101,6 +111,15 @@ pub struct ChatParams {
     pub session_id: Option<SessionId>,
     pub working_dir: PathBuf,
     pub workspace_roots: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requirements: Vec<crate::TurnRequirement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_kind: Option<crate::TaskKind>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::permission::HostPermissionMode::is_safe"
+    )]
+    pub permission_mode: crate::permission::HostPermissionMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -126,6 +145,27 @@ pub struct SessionParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationGetParams {
+    pub session_id: String,
+    pub receipt_id: String,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationLatestParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationListParams {
+    pub session_id: String,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SessionForkParams {
     #[schemars(with = "String")]
     pub session_id: SessionId,
@@ -145,12 +185,6 @@ pub struct SessionReplayParams {
     pub after_sequence: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ComputerHostParams {
-    pub operation: String,
-    pub arguments: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ModeSwitchParams {
     pub mode: String,
@@ -166,12 +200,13 @@ pub struct InterruptParams {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransientApprovalDecision {
     Approve,
     ApproveForSession,
     Deny,
+    ApprovePathForSession,
 }
 
 impl TransientApprovalDecision {
@@ -180,14 +215,39 @@ impl TransientApprovalDecision {
             Self::Approve => "approve",
             Self::ApproveForSession => "approve_for_session",
             Self::Deny => "deny",
+            Self::ApprovePathForSession => "approve_path_for_session",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ApprovalResponseParams {
     pub approval_id: String,
     pub decision: TransientApprovalDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_hint: Option<TransientApprovalScopeHint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransientApprovalScopeSubject {
+    pub tool: String,
+    pub path_candidates: Vec<PathBuf>,
+    pub subject_version: u32,
+    pub subject_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransientApprovalScopeHint {
+    pub path_root: PathBuf,
+    pub subject_version: u32,
+    pub subject_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DiffArtifactGetParams {
+    pub sha256: String,
+    pub offset: u64,
+    pub limit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -313,6 +373,9 @@ impl ClientRpcRequest {
             session_id: None,
             working_dir: workspace.cwd().to_path_buf(),
             workspace_roots: workspace.writable_roots().to_vec(),
+            requirements: Vec::new(),
+            task_kind: None,
+            permission_mode: crate::permission::HostPermissionMode::Safe,
         })
     }
 
@@ -327,6 +390,47 @@ impl ClientRpcRequest {
         };
         request.session_id = Some(session_id);
         Self::Chat(request)
+    }
+
+    pub fn chat_with_requirements(
+        message: impl Into<String>,
+        session_id: Option<SessionId>,
+        workspace: &WorkspacePolicy,
+        requirements: Vec<crate::TurnRequirement>,
+    ) -> Self {
+        let mut params = match Self::chat(message, workspace) {
+            Self::Chat(params) => params,
+            _ => unreachable!("chat constructor always returns chat"),
+        };
+        params.session_id = session_id;
+        params.requirements = requirements;
+        Self::Chat(params)
+    }
+
+    pub fn chat_with_task_kind(
+        message: impl Into<String>,
+        session_id: Option<SessionId>,
+        workspace: &WorkspacePolicy,
+        requirements: Vec<crate::TurnRequirement>,
+        task_kind: Option<crate::TaskKind>,
+    ) -> Self {
+        let mut params =
+            match Self::chat_with_requirements(message, session_id, workspace, requirements) {
+                Self::Chat(params) => params,
+                _ => unreachable!("chat constructor always returns chat"),
+            };
+        params.task_kind = task_kind;
+        Self::Chat(params)
+    }
+
+    pub fn chat_with_permission_mode(
+        mut self,
+        permission_mode: crate::permission::HostPermissionMode,
+    ) -> Self {
+        if let Self::Chat(params) = &mut self {
+            params.permission_mode = permission_mode;
+        }
+        self
     }
 
     pub fn skill_invoke(
@@ -369,6 +473,32 @@ impl ClientRpcRequest {
         })
     }
 
+    pub fn evaluation_get(
+        session_id: impl Into<String>,
+        receipt_id: crate::EvaluationReceiptId,
+        include_evidence: bool,
+    ) -> Self {
+        Self::EvaluationGet(EvaluationGetParams {
+            session_id: session_id.into(),
+            receipt_id: receipt_id.0.to_string(),
+            include_evidence,
+        })
+    }
+
+    pub fn evaluation_latest(session_id: impl Into<String>, include_evidence: bool) -> Self {
+        Self::EvaluationLatest(EvaluationLatestParams {
+            session_id: session_id.into(),
+            include_evidence,
+        })
+    }
+
+    pub fn evaluation_list(session_id: impl Into<String>, limit: u16) -> Self {
+        Self::EvaluationList(EvaluationListParams {
+            session_id: session_id.into(),
+            limit,
+        })
+    }
+
     pub fn mode_switch(mode: CollaborationMode) -> Self {
         Self::ModeSwitch(ModeSwitchParams {
             mode: mode.display_name().to_owned(),
@@ -393,6 +523,26 @@ impl ClientRpcRequest {
         Self::ApprovalResponse(ApprovalResponseParams {
             approval_id: approval_id.into(),
             decision,
+            scope_hint: None,
+        })
+    }
+
+    pub fn scoped_approval_response(
+        approval_id: impl Into<String>,
+        scope_hint: TransientApprovalScopeHint,
+    ) -> Self {
+        Self::ApprovalResponse(ApprovalResponseParams {
+            approval_id: approval_id.into(),
+            decision: TransientApprovalDecision::ApprovePathForSession,
+            scope_hint: Some(scope_hint),
+        })
+    }
+
+    pub fn diff_artifact_get(sha256: impl Into<String>, offset: u64, limit: u32) -> Self {
+        Self::DiffArtifactGet(DiffArtifactGetParams {
+            sha256: sha256.into(),
+            offset,
+            limit,
         })
     }
 
@@ -534,11 +684,13 @@ impl ClientRpcRequest {
             Self::Clear => ("clear", None),
             Self::Status => ("status", None),
             Self::StatusFor(params) => ("status", Some(serde_json::to_value(params)?)),
-            Self::Reflect => ("reflect", None),
-            Self::ReflectNow => ("reflect_now", None),
-            Self::ReflectNowFor(params) => ("reflect_now", Some(serde_json::to_value(params)?)),
-            Self::Evolution => ("evolution", None),
-            Self::Genome => ("genome", None),
+            Self::EvaluationGet(params) => ("evaluation.get", Some(serde_json::to_value(params)?)),
+            Self::EvaluationLatest(params) => {
+                ("evaluation.latest", Some(serde_json::to_value(params)?))
+            }
+            Self::EvaluationList(params) => {
+                ("evaluation.list", Some(serde_json::to_value(params)?))
+            }
             Self::Sessions => ("sessions", None),
             Self::Resume(params) => ("resume", Some(serde_json::to_value(params)?)),
             Self::Compact => ("compact", None),
@@ -551,10 +703,8 @@ impl ClientRpcRequest {
             Self::SkillsList => ("skills.list", None),
             Self::SkillInvoke(params) => ("skill.invoke", Some(serde_json::to_value(params)?)),
             Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
-            Self::PlanApprove => ("plan_approve", None),
             Self::Cancel => ("cancel", None),
             Self::Interrupt(params) => ("interrupt", Some(serde_json::to_value(params)?)),
-            Self::HooksList => ("hooks_list", None),
             Self::DaemonShutdown => (
                 "daemon.shutdown",
                 Some(serde_json::to_value(EmptyParams {})?),
@@ -567,6 +717,9 @@ impl ClientRpcRequest {
             }
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
+            }
+            Self::DiffArtifactGet(params) => {
+                ("diff_artifact.get", Some(serde_json::to_value(params)?))
             }
             Self::MemoryAdd(params) => ("memory.add", Some(serde_json::to_value(params)?)),
             Self::MemoryList(params) => ("memory.list", Some(serde_json::to_value(params)?)),
@@ -620,7 +773,32 @@ impl ClientRpcRequest {
                 ("session.interrupt", Some(serde_json::to_value(params)?))
             }
             Self::SessionReplay(params) => ("session.replay", Some(serde_json::to_value(params)?)),
-            Self::HostComputer(params) => ("host.computer", Some(serde_json::to_value(params)?)),
+            Self::ExtensionInstall(params) => {
+                ("extension.install", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionEnable(params) => {
+                ("extension.enable", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionDisable(params) => {
+                ("extension.disable", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionUpgrade(params) => {
+                ("extension.upgrade", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionRollback(params) => {
+                ("extension.rollback", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionRemove(params) => {
+                ("extension.remove", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionPurge(params) => {
+                ("extension.purge", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionList => empty_params("extension.list")?,
+            Self::ExtensionShow(params) => ("extension.show", Some(serde_json::to_value(params)?)),
+            Self::ExtensionDoctor(params) => {
+                ("extension.doctor", Some(serde_json::to_value(params)?))
+            }
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
@@ -641,6 +819,24 @@ fn empty_params(
 pub struct ClientCapabilities {
     pub item_events: bool,
     pub cursors: bool,
+    #[serde(default)]
+    pub memory_gateway_v1: bool,
+    #[serde(default)]
+    pub memory_maintenance_v1: bool,
+    #[serde(default)]
+    pub memory_admin_v1: bool,
+}
+
+impl ClientCapabilities {
+    pub fn intersect(&self, supported: &Self) -> Self {
+        Self {
+            item_events: self.item_events && supported.item_events,
+            cursors: self.cursors && supported.cursors,
+            memory_gateway_v1: self.memory_gateway_v1 && supported.memory_gateway_v1,
+            memory_maintenance_v1: self.memory_maintenance_v1 && supported.memory_maintenance_v1,
+            memory_admin_v1: self.memory_admin_v1 && supported.memory_admin_v1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -702,6 +898,11 @@ pub struct ChatRequest {
     pub working_dir: std::path::PathBuf,
     #[serde(default)]
     pub additional_writable_roots: Vec<std::path::PathBuf>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::permission::HostPermissionMode::is_safe"
+    )]
+    pub permission_mode: crate::permission::HostPermissionMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -741,9 +942,44 @@ pub enum ClientRequest {
     Chat(ChatRequest),
     Approval(ApprovalRequest),
     Cancel(CancelRequest),
+    MemoryObserve(crate::protocol::memory::MemoryObservationRequestV1),
+    MemoryReceiptGet(crate::protocol::memory::MemoryReceiptGetRequestV1),
+    MemoryRecall(crate::protocol::memory::MemoryRecallRequestV1),
+    MemoryFeedback(crate::protocol::memory::MemoryFeedbackRequestV1),
+    MemoryWorkspacePreviewBind(crate::protocol::memory::MemoryWorkspacePreviewBindRequestV1),
+    MemoryWorkspaceBind(crate::protocol::memory::MemoryWorkspaceBindRequestV1),
+    MemoryWorkspaceUnbind(crate::protocol::memory::MemoryWorkspaceUnbindRequestV1),
+    MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1),
+    MemoryMaintenanceRun(crate::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1),
 }
 
 impl ClientRequest {
+    pub fn requires_memory_gateway(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryObserve(_)
+                | Self::MemoryReceiptGet(_)
+                | Self::MemoryRecall(_)
+                | Self::MemoryFeedback(_)
+        )
+    }
+
+    pub fn requires_memory_maintenance(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryMaintenanceStatus(_) | Self::MemoryMaintenanceRun(_)
+        )
+    }
+
+    pub fn requires_memory_admin(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryWorkspacePreviewBind(_)
+                | Self::MemoryWorkspaceBind(_)
+                | Self::MemoryWorkspaceUnbind(_)
+        )
+    }
+
     pub fn to_json_rpc(&self, id: u64) -> serde_json::Result<serde_json::Value> {
         let method = match self {
             Self::Initialize(_) => "initialize",
@@ -753,6 +989,15 @@ impl ClientRequest {
             Self::Chat(_) => "thread.chat",
             Self::Approval(_) => "turn.approval",
             Self::Cancel(_) => "turn.cancel",
+            Self::MemoryObserve(_) => "memory.observe/v1",
+            Self::MemoryReceiptGet(_) => "memory.receipt.get/v1",
+            Self::MemoryRecall(_) => "memory.recall/v1",
+            Self::MemoryFeedback(_) => "memory.feedback/v1",
+            Self::MemoryWorkspacePreviewBind(_) => "memory.workspace.preview_bind/v1",
+            Self::MemoryWorkspaceBind(_) => "memory.workspace.bind/v1",
+            Self::MemoryWorkspaceUnbind(_) => "memory.workspace.unbind/v1",
+            Self::MemoryMaintenanceStatus(_) => "memory.maintenance.status/v1",
+            Self::MemoryMaintenanceRun(_) => "memory.maintenance.run/v1",
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
@@ -861,6 +1106,14 @@ pub enum ClientEvent {
     Approval(ApprovalEvent),
     Agent(AgentEvent),
     Reconnected(EventCursor),
+    MemoryObservationReceipt(crate::protocol::memory::MemoryObservationReceiptV1),
+    MemoryLifecycleReceipt(crate::protocol::memory::MemoryLifecycleReceiptV1),
+    MemoryRecallResult(crate::protocol::memory::MemoryRecallResultV1),
+    MemoryFeedbackReceipt(crate::protocol::memory::MemoryFeedbackReceiptV1),
+    MemoryWorkspaceBindingPreview(crate::protocol::memory::MemoryWorkspaceBindingPreviewV1),
+    MemoryWorkspaceBinding(crate::protocol::memory::MemoryWorkspaceBindingViewV1),
+    MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusV1),
+    MemoryMaintenanceRunReceipt(crate::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1),
     CommandCompleted {
         command: String,
         thread_id: ThreadId,
@@ -963,4 +1216,73 @@ pub struct ClientProtocolSchema {
 pub fn client_schema() -> serde_json::Value {
     serde_json::to_value(schemars::schema_for!(ClientProtocolSchema))
         .expect("client protocol schema serializes")
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+
+    #[test]
+    fn chat_serializes_explicit_typed_agent_requirement() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat_with_requirements(
+            "inspect",
+            Some(SessionId("session-a".into())),
+            &workspace,
+            vec![crate::TurnRequirement::InvokeAgentRuntime {
+                runtime_id: "pi-rpc".into(),
+            }],
+        )
+        .to_json_rpc(Some(9))
+        .unwrap();
+
+        assert_eq!(request["method"], "chat");
+        assert_eq!(
+            request["params"]["requirements"][0]["InvokeAgentRuntime"]["runtime_id"],
+            "pi-rpc"
+        );
+    }
+
+    #[test]
+    fn chat_serializes_explicit_coding_task_kind() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat_with_task_kind(
+            "change code",
+            None,
+            &workspace,
+            vec![],
+            Some(crate::TaskKind::Coding),
+        )
+        .to_json_rpc(Some(7))
+        .unwrap();
+        assert_eq!(request["params"]["task_kind"], "coding");
+    }
+
+    #[test]
+    fn chat_without_task_kind_omits_the_field() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat("hello", &workspace)
+            .to_json_rpc(Some(8))
+            .unwrap();
+        assert!(request["params"].get("task_kind").is_none());
+    }
+
+    #[test]
+    fn evaluation_queries_serialize_session_scope_and_bounds() {
+        let latest = ClientRpcRequest::evaluation_latest("session-a", false)
+            .to_json_rpc(Some(10))
+            .unwrap();
+        assert_eq!(latest["method"], "evaluation.latest");
+        assert_eq!(latest["params"]["session_id"], "session-a");
+        assert_eq!(latest["params"]["include_evidence"], false);
+
+        let list = ClientRpcRequest::evaluation_list("session-a", 100)
+            .to_json_rpc(Some(11))
+            .unwrap();
+        assert_eq!(list["method"], "evaluation.list");
+        assert_eq!(list["params"]["limit"], 100);
+    }
 }

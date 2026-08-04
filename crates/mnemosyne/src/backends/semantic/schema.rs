@@ -134,6 +134,10 @@ impl EmbeddingProvider for HashEmbeddingProvider {
     fn dimension(&self) -> usize {
         self.dimension
     }
+
+    fn model_id(&self) -> &str {
+        "deterministic-test-hash"
+    }
 }
 
 /// Produce a deterministic float vector from text using a simple hash.

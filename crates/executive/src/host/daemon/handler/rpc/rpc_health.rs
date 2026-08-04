@@ -134,6 +134,27 @@ impl RequestHandler {
             .await
             .map_or(0, |items| items.len());
         let health = self.ports.health.health().await;
+        let turn_watchdog = self.ports.turn.watchdog_snapshot().await;
+        let local_providers = cognit::inference::provider_backpressure_metrics();
+        let (core_providers, provider_metrics_error) =
+            match self.ports.inference.provider_backpressure_metrics().await {
+                Ok(providers) => (providers, None),
+                Err(error) => (Default::default(), Some(error.to_string())),
+            };
+        let mut alerts = Vec::new();
+        if turn_watchdog.overdue > 0 || turn_watchdog.stale_without_deadline > 0 {
+            alerts.push("turn_watchdog_stale");
+        }
+        if core_providers
+            .values()
+            .chain(local_providers.values())
+            .any(|provider| provider.rejected > 0)
+        {
+            alerts.push("provider_backpressure_rejected");
+        }
+        if provider_metrics_error.is_some() {
+            alerts.push("provider_metrics_unavailable");
+        }
         let mcp = self.mcp.as_ref().map(|manager| manager.health_snapshot());
         let external_status = mcp_external_status(mcp.as_ref());
         json!({
@@ -150,6 +171,20 @@ impl RequestHandler {
                 "uptime_seconds": health.uptime_seconds,
                 "active_connections": health.active_connections,
                 "session_count": session_count,
+                "metrics": {
+                    "provider_backpressure": {
+                        "machine_core": core_providers,
+                        "user_runtime": local_providers,
+                        "error": provider_metrics_error,
+                    },
+                    "turn_watchdog": turn_watchdog,
+                },
+                "operator_slo": {
+                    "stale_turn_after_ms": 900000,
+                    "provider_rejection_alert_threshold": 1,
+                    "readiness_required": "ready",
+                    "alerts": alerts
+                },
                 "daemon_version": env!("CARGO_PKG_VERSION")
             }
         })

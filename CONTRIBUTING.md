@@ -14,30 +14,34 @@ Thank you for your interest in contributing to Aletheon! This document provides 
 
 ### Prerequisites
 
-- Rust 1.75+ (2021 edition)
+- Rust 1.85+ (2021 edition)
 - Cargo
+
+Repository Cargo commands must run through `scripts/cargo-agent.sh`. The
+wrapper provides a bounded shared target cache and serializes compilation
+across concurrent worktrees.
 
 ### Building
 
 ```bash
-cargo build
+bash scripts/cargo-agent.sh build
 ```
 
 ### Running Tests
 
 ```bash
-cargo test
+bash scripts/cargo-agent.sh test --workspace
 ```
 
 ### Linting
 
 ```bash
-cargo clippy -- -D warnings
+bash scripts/cargo-agent.sh clippy --workspace -- -D warnings
 ```
 
 ## Code Style
 
-- Follow standard Rust formatting (use `cargo fmt`)
+- Follow standard Rust formatting (use `bash scripts/cargo-agent.sh fmt --all`)
 - Use meaningful variable and function names
 - Add comments for complex logic
 - Write documentation for public APIs

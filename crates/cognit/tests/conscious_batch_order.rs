@@ -16,8 +16,8 @@ use cognit::harness::{
 };
 use fabric::{
     CapabilityBatchPlan, CapabilityCall, CapabilityResult, ConsciousArbitrationMode, ContentBlock,
-    LlmProvider, LlmResponse, LlmStream, NoopTurnEventSink, OperationId, ProcessId, StopReason,
-    ToolDefinition, TurnRequest, TurnServices, Usage,
+    InferenceUsage, LlmProvider, LlmResponse, LlmStream, NoopTurnEventSink, OperationId, ProcessId,
+    StopReason, ToolDefinition, TurnRequest, TurnServices,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -42,6 +42,9 @@ fn request() -> TurnRequest {
         input: "run tools".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 
@@ -97,9 +100,7 @@ impl LlmProvider for ThreeToolLlm {
                     },
                 ],
                 stop_reason: StopReason::ToolUse,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         } else {
             Ok(LlmResponse {
@@ -107,9 +108,7 @@ impl LlmProvider for ThreeToolLlm {
                     text: "all done".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
     }
@@ -255,6 +254,7 @@ async fn run_with_plan(
             batch_planner: Some(planner),
             evicted_callback: None,
             verifier: None,
+            grounded_outcome_sink: None,
         },
     );
 

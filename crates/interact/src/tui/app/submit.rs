@@ -135,64 +135,30 @@ pub async fn submit_message(app: &mut App, text: String) {
                 .await;
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Reflect)) => {
-                send_request(app, ClientRpcRequest::Reflect).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询反思记录中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
-                let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat.add_text(
-                        ChatRole::System,
-                        "会话仍在初始化，请稍后重试 /reflect_now".to_string(),
-                    );
-                    return;
-                };
-                send_request(
-                    app,
-                    ClientRpcRequest::ReflectNowFor(fabric::protocol::client::SessionParams {
-                        session_id,
-                    }),
-                )
-                .await;
-                app.chat
-                    .add_text(ChatRole::System, "执行即时反思中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Evolution)) => {
-                send_request(app, ClientRpcRequest::Evolution).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询演化历史中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Genome)) => {
-                send_request(app, ClientRpcRequest::Genome).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询基因组中...".to_string());
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-                send_request(app, ClientRpcRequest::Sessions).await;
+                let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                app.pending_commands
+                    .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
+                app.pending_non_turn.insert(request_id);
+                app.streaming = true;
+                app.status.waiting = true;
                 app.chat
                     .add_text(ChatRole::System, "查询会话列表中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Resume { id })) => {
-                let request = if id.is_empty() {
-                    let Some(session_id) = app.app_state.session_id.clone() else {
-                        app.chat.add_text(
-                            ChatRole::System,
-                            "会话仍在初始化，请稍后重试 /resume".to_string(),
-                        );
-                        return;
-                    };
-                    ClientRpcRequest::SessionLoadPrevious(fabric::protocol::client::SessionParams {
-                        session_id,
-                    })
-                } else {
-                    ClientRpcRequest::resume(id.clone())
-                };
+                if id.is_empty() {
+                    let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                    app.pending_commands
+                        .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
+                    app.pending_non_turn.insert(request_id);
+                    app.streaming = true;
+                    app.status.waiting = true;
+                    app.chat
+                        .add_text(ChatRole::System, "查询可恢复会话中...".to_string());
+                    return;
+                }
+                let request = ClientRpcRequest::resume(id.clone());
                 let request_id = write_request(app, request).await;
                 app.pending_commands.insert(
                     request_id,
@@ -200,14 +166,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                         previous_session_id: app.app_state.session_id.clone(),
                     },
                 );
-                app.chat.add_text(
-                    ChatRole::System,
-                    if id.is_empty() {
-                        "恢复最近的上一会话...".to_string()
-                    } else {
-                        format!("恢复会话 {id}...")
-                    },
-                );
+                app.chat
+                    .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
@@ -299,25 +259,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 );
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Plan)) => {
-                let target = if app.app_state.mode == CollaborationMode::Plan {
-                    CollaborationMode::Default
-                } else {
-                    CollaborationMode::Plan
-                };
-                write_request(app, ClientRpcRequest::mode_switch(target)).await;
-                app.chat.add_text(
-                    ChatRole::System,
-                    format!("Switching to {} mode", target.display_name()),
-                );
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Approve)) => {
-                write_request(app, ClientRpcRequest::PlanApprove).await;
-                app.chat
-                    .add_text(ChatRole::System, "Plan approved".to_string());
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
                 if app.sub_agents.is_empty() {
                     app.chat
@@ -346,12 +287,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.chat
                         .add_text(ChatRole::System, format!("Agent not found: {id}"));
                 }
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Hooks)) => {
-                send_request(app, ClientRpcRequest::HooksList).await;
-                app.chat
-                    .add_text(ChatRole::System, "Querying hooks...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
@@ -448,18 +383,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 );
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Computer { args })) => {
-                match super::super::computer::ComputerHostRequest::parse(&args) {
-                    Ok(request) => {
-                        send_request(app, ClientRpcRequest::HostComputer(request.0)).await;
-                    }
-                    Err(_) => app.chat.add_text(
-                        ChatRole::System,
-                        "用法: /computer <operation> [args...]".to_string(),
-                    ),
-                }
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Diff)) => {
                 let output = std::process::Command::new("git")
                     .args(["diff", "--stat"])
@@ -549,9 +472,23 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
     let request_id = app.next_request_id;
     app.next_request_id = app.next_request_id.saturating_add(1);
     let request = app.app_state.session_id.clone().map_or_else(
-        || ClientRpcRequest::chat(text, &app.workspace),
+        || {
+            ClientRpcRequest::chat_with_task_kind(
+                text,
+                None,
+                &app.workspace,
+                app.turn_requirements.clone(),
+                app.requested_task_kind,
+            )
+        },
         |session_id| {
-            ClientRpcRequest::chat_for(text, fabric::SessionId(session_id), &app.workspace)
+            ClientRpcRequest::chat_with_task_kind(
+                text,
+                Some(fabric::SessionId(session_id)),
+                &app.workspace,
+                app.turn_requirements.clone(),
+                app.requested_task_kind,
+            )
         },
     );
     let msg = request
@@ -596,4 +533,32 @@ fn base64_encode(input: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod governance_command_tests {
+    use super::super::super::command::CommandType;
+    use super::super::super::registry::CommandRegistry;
+
+    #[test]
+    fn internal_governance_text_has_no_tui_dispatch() {
+        let registry = CommandRegistry::new();
+        for command in [
+            "/reflect",
+            "/reflect_now",
+            "/evolution",
+            "/genome",
+            "/hooks",
+            "/task coding",
+            "/evaluation",
+            "/approve",
+            "/plan",
+            "/computer",
+        ] {
+            assert!(
+                matches!(registry.parse(command), Some(CommandType::Unknown { .. })),
+                "{command} still has a TUI dispatch path"
+            );
+        }
+    }
 }

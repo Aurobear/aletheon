@@ -64,6 +64,11 @@ pub struct TurnPipeline {
     pub(crate) lifecycle: Arc<crate::application::lifecycle_contributors::LifecycleRegistry>,
     pub(crate) lifecycle_enabled: bool,
     pub(crate) event_bus: Option<Arc<CanonicalEventBus>>,
+    pub(crate) role_workflow_factory:
+        Option<Arc<crate::application::cognitive_role_workflow::RoleWorkflowFactory>>,
+    pub(crate) active_profile:
+        Arc<dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort>,
+    pub(crate) memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -89,6 +94,11 @@ pub(crate) struct TurnPipelineResources {
     pub(crate) lifecycle: Arc<crate::application::lifecycle_contributors::LifecycleRegistry>,
     pub(crate) lifecycle_enabled: bool,
     pub(crate) event_bus: Option<Arc<CanonicalEventBus>>,
+    pub(crate) role_workflow_factory:
+        Option<Arc<crate::application::cognitive_role_workflow::RoleWorkflowFactory>>,
+    pub(crate) active_profile:
+        Arc<dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort>,
+    pub(crate) memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
 }
 
 impl TurnPipeline {
@@ -113,7 +123,289 @@ impl TurnPipeline {
             lifecycle: resources.lifecycle,
             lifecycle_enabled: resources.lifecycle_enabled,
             event_bus: resources.event_bus,
+            role_workflow_factory: resources.role_workflow_factory,
+            active_profile: resources.active_profile,
+            memory_gateway: resources.memory_gateway,
         }
+    }
+
+    async fn main_delegation_authority(
+        &self,
+        workspace: fabric::WorkspacePolicy,
+    ) -> anyhow::Result<fabric::AgentDelegationAuthority> {
+        let profile = self.active_profile.snapshot().await?;
+        let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
+        allowed_tools.sort();
+        Ok(fabric::AgentDelegationAuthority::new(
+            Some(workspace),
+            allowed_tools,
+            fabric::AgentBudget {
+                max_input_tokens: profile.max_input_tokens,
+                max_output_tokens: profile.max_output_tokens,
+                max_tool_calls: profile.max_tool_calls,
+                max_elapsed_ms: profile.max_elapsed_ms,
+                max_cost_usd: None,
+                max_depth: 1,
+            },
+        ))
+    }
+
+    async fn resume_single_pending_clarification(
+        &self,
+        request: &TurnRequest,
+        response: &str,
+    ) -> anyhow::Result<()> {
+        let Some(agora) = &self.agora else {
+            return Ok(());
+        };
+        let space = AgoraSpaceId(request.context.thread_id.0.clone());
+        let tasks = agora.list_tasks(space.clone()).await?;
+        let mut pending = Vec::new();
+        for task in tasks
+            .tasks
+            .iter()
+            .filter(|task| task.status == fabric::cognitive_workflow::CognitiveTaskStatus::Blocked)
+        {
+            let projection = agora
+                .project_task(fabric::cognitive_workflow::AgoraProjectionRequest {
+                    space: space.clone(),
+                    task_node_id: task.id.clone(),
+                    role: fabric::cognitive_workflow::CognitiveRole::Root,
+                    max_artifacts: 0,
+                    include_kinds: Vec::new(),
+                })
+                .await?;
+            if let (Some(clarification), Some(owner)) = (projection.clarification, task.owner) {
+                pending.push((task.id.clone(), clarification.id, owner));
+            }
+        }
+        // Never guess which question a response addresses. A single pending
+        // question is the only unambiguous automatic resume case.
+        if pending.len() != 1 {
+            return Ok(());
+        }
+        let (task_node_id, clarification_id, owner) = pending.remove(0);
+        let turn_id = request
+            .context
+            .turn_id
+            .ok_or_else(|| anyhow::anyhow!("clarification response lacks canonical turn id"))?;
+        let response_event_id = format!(
+            "session:{}:turn:{}:user_message",
+            request.context.thread_id.0, turn_id.0
+        );
+        crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora.clone())
+            .resume_from_user_response(
+                space,
+                task_node_id,
+                clarification_id,
+                response.to_owned(),
+                response_event_id,
+                tasks.workspace_version,
+                owner,
+            )
+            .await
+            .map_err(anyhow::Error::new)?;
+        Ok(())
+    }
+
+    async fn ensure_root_cognitive_task(
+        &self,
+        request: &TurnRequest,
+        objective: &str,
+        owner: ProcessId,
+    ) -> anyhow::Result<Option<(fabric::cognitive_workflow::CognitiveTaskNodeId, u64)>> {
+        let Some(agora) = &self.agora else {
+            return Ok(None);
+        };
+        use fabric::cognitive_workflow::{
+            CognitiveRole, CognitiveStage, CognitiveTaskNode, CognitiveTaskNodeId,
+            CognitiveTaskStatus,
+        };
+        let space = AgoraSpaceId(request.context.thread_id.0.clone());
+        let tasks = agora.list_tasks(space.clone()).await?;
+        let turn_id = request
+            .context
+            .turn_id
+            .ok_or_else(|| anyhow::anyhow!("cognitive root requires canonical TurnId"))?;
+        let root_id = CognitiveTaskNodeId(format!("root:{}", turn_id.0));
+        if tasks.tasks.iter().any(|task| task.id == root_id) {
+            return Ok(Some((root_id, tasks.workspace_version)));
+        }
+        let bounded_objective = objective.chars().take(4096).collect::<String>();
+        let task = CognitiveTaskNode {
+            id: root_id.clone(),
+            parent_id: None,
+            objective: bounded_objective,
+            role: CognitiveRole::Root,
+            stage: CognitiveStage::Contract,
+            status: CognitiveTaskStatus::Running,
+            owner: Some(owner),
+            role_profile: fabric::cognitive_workflow::CognitiveRoleProfile::canonical(
+                CognitiveRole::Root,
+            )
+            .reference,
+            budget: fabric::cognitive_workflow::CognitiveRoleProfile::canonical(
+                CognitiveRole::Root,
+            )
+            .budget,
+            dependencies: Vec::new(),
+            acceptance_criteria: Vec::new(),
+            workspace_scope: request
+                .context
+                .workspace
+                .writable_roots()
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            required_artifact_kinds: vec![
+                fabric::cognitive_workflow::CognitiveArtifactKind::TaskContract,
+            ],
+            artifact_refs: Vec::new(),
+            unresolved_finding_ids: Vec::new(),
+        };
+        let workspace = crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(
+            agora.clone(),
+        );
+        let version = workspace
+            .commit_task_at(space.clone(), tasks.workspace_version, task, owner)
+            .await
+            .map_err(anyhow::Error::new)?;
+        let requirement_refs = request
+            .evaluation_contract
+            .as_ref()
+            .map(|contract| {
+                contract
+                    .requirement_refs
+                    .iter()
+                    .map(|item| item.0.clone())
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![format!("turn:{}:objective", turn_id.0)]);
+        let acceptance_criteria = request
+            .evaluation_contract
+            .as_ref()
+            .map(|contract| {
+                contract
+                    .required_gates
+                    .iter()
+                    .map(|gate| gate.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let contract = fabric::cognitive_workflow::CognitiveArtifactEnvelope::proposed(
+            space.clone(),
+            root_id.clone(),
+            owner,
+            vec![format!("turn:{}", turn_id.0)],
+            Vec::new(),
+            1.0,
+            fabric::cognitive_workflow::CognitiveArtifact::TaskContract(
+                fabric::cognitive_workflow::CognitiveTaskContractArtifact {
+                    objective: objective.chars().take(4096).collect(),
+                    requirement_refs,
+                    acceptance_criteria,
+                    instruction_refs: Vec::new(),
+                    workspace_scope: request
+                        .context
+                        .workspace
+                        .writable_roots()
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect(),
+                },
+            ),
+        )?;
+        let version = workspace
+            .commit_artifact_at(space, version, contract, owner)
+            .await
+            .map_err(anyhow::Error::new)?;
+        Ok(Some((root_id, version)))
+    }
+
+    async fn prepare_role_graph(
+        &self,
+        request: &TurnRequest,
+        objective: &str,
+        main_pid: ProcessId,
+        root: Option<(fabric::cognitive_workflow::CognitiveTaskNodeId, u64)>,
+        cancellation: CancellationToken,
+    ) -> anyhow::Result<
+        Option<(
+            crate::application::cognitive_role_workflow::CognitiveRoleWorkflow,
+            crate::application::cognitive_role_workflow::CodingWorkflowRequest,
+        )>,
+    > {
+        use cognit::TaskDecompositionPolicy;
+        let config = self.runtime_ports.config.config().await;
+        let profile = self.active_profile.snapshot().await?;
+        let process = self.kernel.inspect_process(main_pid).await?;
+        let budget = fabric::AgentBudget {
+            max_input_tokens: profile.max_input_tokens,
+            max_output_tokens: profile.max_output_tokens,
+            max_tool_calls: profile.max_tool_calls,
+            max_elapsed_ms: profile.max_elapsed_ms,
+            max_cost_usd: None,
+            max_depth: 1,
+        };
+        let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
+        allowed_tools.sort();
+        let authority = fabric::AgentDelegationAuthority::new(
+            Some(request.context.workspace.clone()),
+            allowed_tools,
+            budget.clone(),
+        );
+        let prerequisites_available = root.is_some() && self.role_workflow_factory.is_some();
+        let decomposition = cognit::DeterministicTaskDecompositionPolicy.decompose(
+            &cognit::DecompositionContext {
+                task_kind: request.requested_task_kind,
+                requirements: request.requirements.clone(),
+                multi_agent_enabled: config.multi_agent.enabled,
+                automatic_for_coding: config.multi_agent.automatic_for_coding,
+                agora_available: root.is_some(),
+                parent_authority: prerequisites_available.then_some(authority.clone()),
+                remaining_budget: budget.clone(),
+                objective: objective.to_owned(),
+            },
+        )?;
+        let cognit::TaskDecomposition::RoleGraph {
+            workspace_scope,
+            allowed_capabilities,
+            expected_evidence,
+            ..
+        } = decomposition
+        else {
+            return Ok(None);
+        };
+        let (task_node_id, expected_workspace_version) =
+            root.ok_or_else(|| anyhow::anyhow!("role graph root task unavailable"))?;
+        let factory = self
+            .role_workflow_factory
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("role workflow factory unavailable"))?;
+        let workflow = factory.bind(
+            crate::application::cognitive_role_workflow::TurnRoleLaunchContext {
+                root_agent_id: process.agent_id,
+                parent_agent_id: process.agent_id,
+                parent_process_id: main_pid,
+                workspace: request.context.workspace.clone(),
+                delegator_authority: authority,
+                remaining_budget: budget,
+                cancellation,
+            },
+        )?;
+        Ok(Some((
+            workflow,
+            crate::application::cognitive_role_workflow::CodingWorkflowRequest {
+                space: AgoraSpaceId(request.context.thread_id.0.clone()),
+                task_node_id,
+                expected_workspace_version,
+                current_owner: main_pid,
+                workspace_scope,
+                project_instructions: Vec::new(),
+                allowed_capabilities,
+                expected_evidence,
+            },
+        )))
     }
 
     async fn dispatch_lifecycle(
@@ -230,6 +522,7 @@ impl TurnPipeline {
         main_pid: ProcessId,
         scope_token: CancellationToken,
         principal: PrincipalId,
+        notification_sender: Option<mpsc::Sender<String>>,
     ) -> anyhow::Result<serde_json::Value> {
         // Resolve the authoritative runtime session before policy review. The
         // read is non-mutating; denied turns still never call `begin_user`.
@@ -238,6 +531,24 @@ impl TurnPipeline {
             .runtime_ports
             .sessions
             .current(&requested_session_id)
+            .await?;
+
+        // TurnCoordinator durably appends the user message before invoking this
+        // pipeline, so it is now safe to bind that canonical response to the
+        // one pending clarification in this scoped Agora space.
+        self.resume_single_pending_clarification(&turn_request, &message)
+            .await?;
+        let cognitive_root = self
+            .ensure_root_cognitive_task(&turn_request, &message, main_pid)
+            .await?;
+        let role_graph = self
+            .prepare_role_graph(
+                &turn_request,
+                &message,
+                main_pid,
+                cognitive_root,
+                scope_token.clone(),
+            )
             .await?;
 
         let checkpoint_id = self
@@ -266,6 +577,7 @@ impl TurnPipeline {
         let lifecycle_thread = turn_request.context.thread_id.clone();
         let lifecycle_turn = turn_request.context.turn_id;
         let lifecycle_session = session_id.clone();
+        let native_working_dir = turn_request.context.workspace.cwd().to_path_buf();
         let assistant_protocol_item = format!(
             "turn:{}:assistant",
             lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)).0
@@ -274,6 +586,8 @@ impl TurnPipeline {
         let turn_result: anyhow::Result<serde_json::Value> = async {
 
         pipeline_lifecycle.apply(TurnPipelineEvent::Admit)?;
+
+        let native_turn_id = lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)).0.to_string();
 
         let lifecycle_start = self
             .dispatch_lifecycle(
@@ -342,6 +656,13 @@ impl TurnPipeline {
                 );
             }
             _ => {}
+        }
+        if turn_request
+            .context
+            .permission_profile
+            .permits_filesystem_root()
+        {
+            sandbox_requirement = SandboxRequirement::NotRequired;
         }
 
         // -- Context source preparation --
@@ -430,6 +751,29 @@ impl TurnPipeline {
         let sess_id = begin.session_id;
         let turn_count = begin.turn_count;
 
+        if let Err(error) = self
+            .memory_gateway
+            .observe(
+                &lifecycle_principal,
+                "aletheon_native",
+                fabric::protocol::memory::MemoryObservationRequestV1 {
+                    observation_id: format!("native-{native_turn_id}-user"),
+                    client_session_id: lifecycle_session.clone(),
+                    client_turn_id: Some(native_turn_id.clone()),
+                    working_dir: native_working_dir.clone(),
+                    kind: fabric::protocol::memory::MemoryObservationKindV1::UserMessage,
+                    content: message.clone(),
+                    occurred_at: None,
+                    source_refs: vec![format!("turn:{native_turn_id}:user")],
+                    sensitivity_hint: fabric::protocol::memory::MemorySensitivityV1::Internal,
+                    explicit_user_action: false,
+                },
+            )
+            .await
+        {
+            warn!(%error, "native user memory observation degraded");
+        }
+
         if let Some(conscious) = &self.conscious_core {
             conscious
                 .observe_turn(
@@ -479,7 +823,8 @@ impl TurnPipeline {
         // the per-turn system context so the model never guesses its identity
         // from training priors or a provider-compatible wire protocol.
         let llm = self.runtime_ports.models.select(&message).await;
-        bind_runtime_facts(&mut request_messages, &llm.runtime_facts());
+        let model_runtime_facts = llm.runtime_facts();
+        bind_runtime_facts(&mut request_messages, &model_runtime_facts);
 
         // -- Governed capability setup --
         // Context Space seed — user turn input is private overlay data, not
@@ -570,6 +915,14 @@ impl TurnPipeline {
         }) {
             anyhow::bail!("lifecycle contributor rejected tool batch: {reason}");
         }
+        let main_delegator_authority = if main_agent_id.is_some() {
+            Some(
+                self.main_delegation_authority(turn_request.context.workspace.clone())
+                    .await?,
+            )
+        } else {
+            None
+        };
         let prepared =
             self.runtime_ports
                 .capabilities
@@ -578,6 +931,7 @@ impl TurnPipeline {
                         caller_root_agent_id: agent_id,
                         parent_agent_id: agent_id,
                         parent_process_id: main_pid,
+                        delegator_authority: main_delegator_authority.clone(),
                     }),
                     process_id: main_pid,
                     operation_id,
@@ -588,8 +942,17 @@ impl TurnPipeline {
                         anyhow::anyhow!("turn capability authority has no TurnId")
                     })?,
                     workspace: turn_request.context.workspace.clone(),
+                    permission_mode: if turn_request
+                        .context
+                        .permission_profile
+                        .permits_filesystem_root()
+                    {
+                        fabric::permission::HostPermissionMode::Full
+                    } else {
+                        fabric::permission::HostPermissionMode::Safe
+                    },
                     session_id: sess_id.clone(),
-                    working_dir: turn_request.context.workspace.cwd().to_path_buf(),
+                    working_dir: native_working_dir.clone(),
                     sandbox: sandbox_requirement,
                     cancel: scope_token.clone(),
                     turn_count,
@@ -605,6 +968,11 @@ impl TurnPipeline {
         let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
             crate::application::turn_diff_tracker::TurnDiffTracker::default(),
         ));
+        let evaluation_diff_tracker = turn_diff_tracker.clone();
+        let capability_receipts = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let evaluation_capability_receipts = capability_receipts.clone();
+        let inference_items = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let completed_inference_items = inference_items.clone();
         let diff_session_input = self.session_input.clone();
         let diff_principal = lifecycle_principal.clone();
         let diff_thread = lifecycle_thread.clone();
@@ -630,25 +998,10 @@ impl TurnPipeline {
                     .await;
                 if !result.is_error {
                     let mut tracker = tracker.lock().await;
-                    let changed = if n == "apply_patch" {
-                        serde_json::from_str::<
-                            corpus::tools::tools::structured_patch::StructuredPatchResult,
-                        >(&result.output)
-                        .map(|delta| {
-                            tracker.record_patch(&delta);
-                        })
-                        .is_ok()
-                    } else if n == "file_write" {
-                        inp.get("path")
-                            .and_then(serde_json::Value::as_str)
-                            .zip(inp.get("content").and_then(serde_json::Value::as_str))
-                            .map(|(path, content)| {
-                                tracker.record_file_write(path, content.len() as u64);
-                            })
-                            .is_some()
-                    } else {
-                        false
-                    };
+                    let changed = result.patch_delta.as_ref().is_some_and(|delta| {
+                        tracker.record_patch_delta(delta);
+                        !delta.files_changed.is_empty()
+                    });
                     let injection = changed.then(|| tracker.to_context_injection());
                     drop(tracker);
                     if let Some(injection) = injection.filter(|value| !value.is_empty()) {
@@ -675,13 +1028,32 @@ impl TurnPipeline {
 
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
+        let evaluation_workspace = turn_request.context.workspace.clone();
+        let evaluation_profile_name = turn_request.context.permission_profile.0.clone();
+        let evaluation_effective_model_id = model_runtime_facts.effective_model_id.clone();
+        let evaluation_model_display_name = model_runtime_facts.display_name.clone();
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ToolLoopStarted)?;
 
         // Spawn ReAct loop
-        let mut react_task = tokio::spawn(submit_streaming_daemon_turn(
-            turn_request,
-            DaemonStreamingTurnContext {
+        let mut react_task = if let Some((workflow, workflow_request)) = role_graph {
+            tokio::spawn(async move {
+                let started = std::time::Instant::now();
+                let receipt = workflow.run_full_coding_workflow(workflow_request).await?;
+                Ok(fabric::TurnResult {
+                    output: serde_json::to_string(&receipt)?,
+                    stop: fabric::TurnStop::Completed,
+                    metrics: fabric::TurnMetrics {
+                        elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                        completed_normally: true,
+                        ..Default::default()
+                    },
+                })
+            })
+        } else {
+            tokio::spawn(submit_streaming_daemon_turn(
+                turn_request,
+                DaemonStreamingTurnContext {
                 config,
                 llm: llm.clone(),
                 tool_defs,
@@ -694,17 +1066,29 @@ impl TurnPipeline {
                 batch_planner,
                 session_input: self.session_input.clone(),
                 prompt_queue_enabled: self.prompt_queue_enabled,
-            },
-        ));
+                capability_receipts,
+                inference_items,
+                },
+            ))
+        };
 
         // -- Event + approval pumping loop --
-        let notify_tx = self.notify_tx.clone();
+        // Snapshot the exact request connection once. A concurrent status or
+        // monitor connection must not steal an active Turn's event stream.
+        let notify_tx = match notification_sender {
+            Some(sender) => Some(sender),
+            None => self.notify_tx.lock().await.clone(),
+        };
 
         let mut tool_calls_for_session: Vec<(String, String, serde_json::Value)> = Vec::new();
         let mut tool_results_for_session: Vec<(String, String, bool)> = Vec::new();
         let mut canonical_items: Vec<fabric::ItemPayload> = Vec::new();
         let mut acc_tokens_in: u64 = 0;
         let mut acc_tokens_out: u64 = 0;
+        let mut acc_cache_read_tokens: u64 = 0;
+        let mut cache_read_seen = false;
+        let mut cache_read_complete = true;
+        let mut active_context_tokens: Option<u64> = None;
         let mut terminal_events = TerminalEventBuffer::default();
 
         let text = loop {
@@ -733,16 +1117,24 @@ impl TurnPipeline {
                         }
                         TurnEventV1::ToolCallComplete { call_id, name: _, args } => {
                             if let Some(tc) = tool_calls_for_session.iter_mut().find(|(id, _, _)| id == call_id) {
-                                tc.2 = args.clone();
+                                let projected_args = fabric::types::data_governance::scrub_json_for_projection(
+                                    args,
+                                    fabric::types::data_governance::ContentTrust::ToolUntrusted,
+                                );
+                                tc.2 = projected_args.clone();
                                 canonical_items.push(fabric::ItemPayload::ToolCall {
-                                    call_id: call_id.clone(), name: tc.1.clone(), input: args.clone(),
+                                    call_id: call_id.clone(), name: tc.1.clone(), input: projected_args,
                                 });
                             }
                         }
                         TurnEventV1::ToolResult { name, call_id, content, is_error, .. } => {
-                            tool_results_for_session.push((call_id.clone(), content.clone(), *is_error));
+                            let projected_content = fabric::types::data_governance::scrub_for_projection(
+                                content,
+                                fabric::types::data_governance::ContentTrust::ToolUntrusted,
+                            ).content;
+                            tool_results_for_session.push((call_id.clone(), projected_content.clone(), *is_error));
                             canonical_items.push(fabric::ItemPayload::ToolResult {
-                                call_id: call_id.clone(), content: content.clone(), is_error: *is_error,
+                                call_id: call_id.clone(), content: projected_content, is_error: *is_error,
                                 permit_id: None, audit_id: None,
                             });
                             let evidence = fabric::Evidence::from_tool_result(
@@ -830,16 +1222,25 @@ impl TurnPipeline {
                                 return Err(error);
                             }
                         }
-                        TurnEventV1::Usage { tokens_in, tokens_out, .. } => {
-                            acc_tokens_in += *tokens_in as u64;
-                            acc_tokens_out += *tokens_out as u64;
+                        TurnEventV1::Usage { usage } => {
+                            acc_tokens_in = acc_tokens_in.saturating_add(usage.total_input_tokens.unwrap_or(0));
+                            acc_tokens_out = acc_tokens_out.saturating_add(usage.output_tokens.unwrap_or(0));
+                            match usage.cache_read_tokens {
+                                Some(value) => {
+                                    cache_read_seen = true;
+                                    acc_cache_read_tokens = acc_cache_read_tokens.saturating_add(value);
+                                }
+                                None => cache_read_complete = false,
+                            }
+                        }
+                        TurnEventV1::ContextUpdate { used_tokens, .. } => {
+                            active_context_tokens = Some((*used_tokens).into());
                         }
                         _ => {}
                     }
                     // Forward event to TUI client
                     if !is_terminal {
-                        let sender = notify_tx.lock().await.clone();
-                        if let Some(tx) = sender {
+                        if let Some(tx) = notify_tx.as_ref() {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
                                     if tx.send(json_str).await.is_err() {
@@ -860,11 +1261,11 @@ impl TurnPipeline {
                             "action_summary": pending.action_summary,
                             "risk_level": pending.risk_level,
                             "detail": pending.detail,
+                            "scope_subject": pending.scope_subject,
                         }
                     });
                     {
-                        let sender = notify_tx.lock().await.clone();
-                        if let Some(tx) = sender {
+                        if let Some(tx) = notify_tx.as_ref() {
                             if tx.send(notification.to_string()).await.is_err() {
                                 warn!("Failed to send approval_request notification — client disconnected?");
                             }
@@ -889,9 +1290,25 @@ impl TurnPipeline {
                         &event,
                     ).await?;
                     let is_terminal = terminal_events.observe(&event);
+                    match &event {
+                        TurnEventV1::Usage { usage } => {
+                            acc_tokens_in = acc_tokens_in.saturating_add(usage.total_input_tokens.unwrap_or(0));
+                            acc_tokens_out = acc_tokens_out.saturating_add(usage.output_tokens.unwrap_or(0));
+                            match usage.cache_read_tokens {
+                                Some(value) => {
+                                    cache_read_seen = true;
+                                    acc_cache_read_tokens = acc_cache_read_tokens.saturating_add(value);
+                                }
+                                None => cache_read_complete = false,
+                            }
+                        }
+                        TurnEventV1::ContextUpdate { used_tokens, .. } => {
+                            active_context_tokens = Some((*used_tokens).into());
+                        }
+                        _ => {}
+                    }
                     if !is_terminal {
-                        let sender = notify_tx.lock().await.clone();
-                        if let Some(tx) = sender {
+                        if let Some(tx) = notify_tx.as_ref() {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
                                     if tx.send(json_str).await.is_err() {
@@ -912,27 +1329,18 @@ impl TurnPipeline {
             }
         }
 
-        // Terminal events are buffered while the ReAct task is running so a
-        // failed task always produces one ordered Error -> TurnDone sequence.
-        // Successful tasks produce exactly one TurnDone even when Cognit also
-        // reported completion before its task joined.
-        let turn_error = text.as_ref().err().map(ToString::to_string);
-        let normalized_terminal_events = terminal_events.into_client_events(turn_error);
-        {
-            let sender = notify_tx.lock().await.clone();
-            if let Some(tx) = sender {
-                for event in normalized_terminal_events {
-                    let Ok(json_str) = event_to_json(&event) else {
-                        warn!("Unable to serialize terminal turn event");
-                        continue;
-                    };
-                    if tx.send(json_str).await.is_err() {
-                        warn!("Event sink closed, unable to send terminal turn event");
-                        break;
-                    }
-                }
-            }
-        }
+        // Terminal events are buffered while the ReAct task is running. They
+        // must not be exposed to clients here: the coordinator still owns the
+        // active-turn entry and durable terminal settlement after this
+        // pipeline returns. The daemon orchestration boundary emits the
+        // authoritative Error -> TurnDone sequence only after that settlement.
+        let runtime_faults = text
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .into_iter()
+            .collect::<Vec<_>>();
+        let _buffered_terminal_events = terminal_events;
 
         let turn_succeeded = text.is_ok();
         let result = text.unwrap_or_else(|e| fabric::TurnResult {
@@ -941,6 +1349,7 @@ impl TurnPipeline {
             metrics: fabric::TurnMetrics {
                 tool_calls_made: 0,
                 tool_errors: 0,
+                provider_retries: 0,
                 elapsed_ms: 0,
                 iterations: 0,
                 completed_normally: false,
@@ -948,6 +1357,9 @@ impl TurnPipeline {
         });
         let text = result.output;
         let metrics = result.metrics;
+        canonical_items.extend(
+            std::mem::take(&mut *completed_inference_items.lock().await),
+        );
         info!(len = text.len(), "ReAct loop completed");
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ExecutionFinished)?;
@@ -1014,6 +1426,29 @@ impl TurnPipeline {
             )
             .await?;
 
+        if let Err(error) = self
+            .memory_gateway
+            .observe(
+                &lifecycle_principal,
+                "aletheon_native",
+                fabric::protocol::memory::MemoryObservationRequestV1 {
+                    observation_id: format!("native-{native_turn_id}-assistant"),
+                    client_session_id: lifecycle_session.clone(),
+                    client_turn_id: Some(native_turn_id.clone()),
+                    working_dir: native_working_dir.clone(),
+                    kind: fabric::protocol::memory::MemoryObservationKindV1::AssistantMessage,
+                    content: text.clone(),
+                    occurred_at: None,
+                    source_refs: vec![assistant_protocol_item.clone()],
+                    sensitivity_hint: fabric::protocol::memory::MemorySensitivityV1::Internal,
+                    explicit_user_action: false,
+                },
+            )
+            .await
+        {
+            warn!(%error, "native assistant memory observation degraded");
+        }
+
         // -- PR-3: drain the per-turn OperationScope (guarantees no orphan tasks) --
         {
             let mut guard = self.current_scope.lock().await;
@@ -1045,16 +1480,54 @@ impl TurnPipeline {
         pipeline_lifecycle.apply(TurnPipelineEvent::PostTurnSettled)?;
         pipeline_lifecycle.apply(TurnPipelineEvent::ProjectionFinished)?;
 
+        let mut retained_receipts = evaluation_capability_receipts.lock().await.clone();
+        retained_receipts.sort_by(|left, right| {
+            left.finished_at
+                .cmp(&right.finished_at)
+                .then_with(|| left.invocation_id.cmp(&right.invocation_id))
+        });
+        let evaluation_artifacts =
+            crate::application::evaluation::TurnEvaluationArtifacts {
+                session_id: session_id_for_agora.clone(),
+                runtime_id: "native-turn".into(),
+                effective_model_id: evaluation_effective_model_id,
+                model_display_name: evaluation_model_display_name,
+                workspace: Some(evaluation_workspace),
+                profile_name: evaluation_profile_name,
+                capability_receipts: retained_receipts,
+                file_deltas: evaluation_diff_tracker.lock().await.snapshot(),
+                runtime_faults,
+                supplemental_evidence: Vec::new(),
+                projection_metrics:
+                    crate::application::evaluation::EvaluationProjectionMetrics {
+                        elapsed_ms: Some(metrics.elapsed_ms),
+                        inference_rounds: Some(
+                            metrics.iterations.try_into().unwrap_or(u64::MAX),
+                        ),
+                        provider_retries: Some(metrics.provider_retries),
+                        tool_calls: Some(metrics.tool_calls_made as u64),
+                        tool_errors: Some(metrics.tool_errors as u64),
+                        cumulative_input_tokens: Some(acc_tokens_in),
+                        cumulative_output_tokens: Some(acc_tokens_out),
+                        active_context_tokens,
+                        cache_read_tokens: (cache_read_seen && cache_read_complete)
+                            .then_some(acc_cache_read_tokens),
+                        ..Default::default()
+                    },
+            };
+
         Ok(json!({"jsonrpc": "2.0", "id": id, "result": {
             "response": text, "turn": turn, "succeeded": turn_succeeded,
                 "metrics": {
                     "tool_calls_made": metrics.tool_calls_made,
                     "tool_errors": metrics.tool_errors,
+                    "provider_retries": metrics.provider_retries,
                     "elapsed_ms": metrics.elapsed_ms,
                     "iterations": metrics.iterations,
                     "completed_normally": metrics.completed_normally
                 },
                 "canonical_items": canonical_items,
+                "evaluation_artifacts": evaluation_artifacts,
                 "projection": {
                     "session_id": session_id_for_agora,
                     "agora_start_version": agora_start_version,
@@ -1145,6 +1618,7 @@ impl TerminalEventBuffer {
         }
     }
 
+    #[cfg(test)]
     fn into_client_events(self, turn_error: Option<String>) -> Vec<ClientEvent> {
         let error = self.error.or(turn_error);
         if !self.turn_done {
@@ -1192,12 +1666,14 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             content,
             is_error,
             execution_time_ms,
+            patch_delta,
         } => Some(ClientEvent::ToolCallResult {
             call_id: call_id.clone(),
             tool: name.clone(),
             output: content.clone(),
             is_error: *is_error,
             elapsed_ms: *execution_time_ms,
+            patch_delta: patch_delta.clone(),
         }),
         TurnEventV1::ToolProgress {
             name,
@@ -1225,16 +1701,8 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             applied_count: *applied_count,
             failed_count: *failed_count,
         }),
-        TurnEventV1::Usage {
-            tokens_in,
-            tokens_out,
-            cache_hit_tokens,
-            cache_miss_tokens,
-        } => Some(ClientEvent::Usage {
-            tokens_in: *tokens_in as u64,
-            tokens_out: *tokens_out as u64,
-            cache_hit_tokens: *cache_hit_tokens as u64,
-            cache_miss_tokens: *cache_miss_tokens as u64,
+        TurnEventV1::Usage { usage } => Some(ClientEvent::Usage {
+            usage: usage.clone(),
         }),
         TurnEventV1::TurnDone { .. } => Some(ClientEvent::TurnDone),
         TurnEventV1::Error { message } => Some(ClientEvent::Error {
@@ -1433,6 +1901,7 @@ mod terminal_event_tests {
                 )
                 .unwrap(),
                 granted_scope: fabric::CapabilityScope::default(),
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             }),
             agent: None,
             working_dir: temp.path().to_path_buf(),

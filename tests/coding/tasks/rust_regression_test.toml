@@ -1,0 +1,13 @@
+schema_version = 1
+id = "rust_regression_test"
+category = "regression_test"
+fixture = "rust_regression_test"
+prompt = "修复反斜杠转义分隔符的解析缺陷，并在源码测试模块中添加一个非占位的回归测试。不要修改清单或隐藏验收路径。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/acceptance.rs"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

@@ -8,7 +8,7 @@ use super::goal;
 use super::workflow;
 
 use super::response::deduplicate_consecutive_text as deduplicate_response;
-use super::response::{format_evolution, format_genome, format_reflections, format_status};
+use super::response::format_status;
 use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use fabric::ui_event::ClientEvent;
 
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use crate::tui::host_time::ClientTimer;
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use fabric::Timer;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -49,6 +49,15 @@ pub struct Args {
     /// Agent profile to use for this session
     #[arg(long = "agent-profile", value_name = "NAME", global = true)]
     pub agent_profile: Option<String>,
+
+    /// Require this Agent runtime to be spawned and reach an authoritative
+    /// terminal receipt during every submitted chat turn (repeatable).
+    #[arg(long = "require-agent-runtime", value_name = "RUNTIME", global = true)]
+    pub required_agent_runtimes: Vec<String>,
+
+    /// Explicit task kind sent to the host; ordinary prompts are never classified.
+    #[arg(long = "task-kind", value_enum, global = true)]
+    pub task_kind: Option<TaskKindArg>,
 
     /// Force TUI mode
     #[arg(long)]
@@ -84,6 +93,19 @@ pub struct Args {
     pub test_timeout: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TaskKindArg {
+    Coding,
+}
+
+impl From<TaskKindArg> for fabric::TaskKind {
+    fn from(value: TaskKindArg) -> Self {
+        match value {
+            TaskKindArg::Coding => Self::Coding,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum Command {
     /// Daemon management
@@ -91,22 +113,6 @@ pub enum Command {
         #[command(subcommand)]
         action: DaemonAction,
     },
-
-    /// Show reflections
-    #[command(alias = "r")]
-    Reflect,
-
-    /// Show reflection history (alias: rn)
-    #[command(alias = "rn")]
-    ReflectNow,
-
-    /// Show evolution history (alias: evo)
-    #[command(alias = "evo")]
-    Evolution,
-
-    /// Show genome (alias: gene)
-    #[command(alias = "gene")]
-    Genome,
 
     /// Show daemon status (alias: st)
     #[command(alias = "st")]
@@ -233,16 +239,37 @@ pub async fn run() -> Result<()> {
     let workspace =
         fabric::WorkspaceSelection::new(args.working_directory.clone(), args.add_dirs.clone())
             .resolve(&process_cwd)?;
+    let requirements = args
+        .required_agent_runtimes
+        .iter()
+        .map(|runtime_id| fabric::TurnRequirement::InvokeAgentRuntime {
+            runtime_id: runtime_id.clone(),
+        })
+        .collect::<Vec<_>>();
 
     // Handle positional message args
     if !args.message_args.is_empty() {
         let msg = args.message_args.join(" ");
-        return single_message_with_workspace(&socket, &msg, &workspace).await;
+        return single_message_with_workspace_requirements_and_task_kind(
+            &socket,
+            &msg,
+            &workspace,
+            requirements,
+            args.task_kind.map(Into::into),
+        )
+        .await;
     }
 
     // Handle -m flag
     if let Some(msg) = args.message {
-        return single_message_with_workspace(&socket, &msg, &workspace).await;
+        return single_message_with_workspace_requirements_and_task_kind(
+            &socket,
+            &msg,
+            &workspace,
+            requirements,
+            args.task_kind.map(Into::into),
+        )
+        .await;
     }
 
     // Interactive mode: use the line-based TUI (IME-compatible)
@@ -253,18 +280,20 @@ pub async fn run() -> Result<()> {
         auto_submit: args.auto_submit,
         test_timeout: args.test_timeout,
     };
-    super::run_with_workspace_config(socket.to_string_lossy().as_ref(), test_config, workspace)
-        .await
+    super::run_with_workspace_requirements_and_task_kind(
+        socket.to_string_lossy().as_ref(),
+        test_config,
+        workspace,
+        requirements,
+        args.task_kind.map(Into::into),
+    )
+    .await
 }
 
 /// Handle subcommands.
 async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
     match cmd {
         Command::Daemon { action } => handle_daemon_action(socket, action).await,
-        Command::Reflect => single_message(socket, "/reflect").await,
-        Command::ReflectNow => single_message(socket, "/reflect_now").await,
-        Command::Evolution => single_message(socket, "/evolution").await,
-        Command::Genome => single_message(socket, "/genome").await,
         Command::Status => single_message(socket, "/status").await,
         Command::RestoreTerminal => {
             super::restore_terminal();
@@ -460,6 +489,32 @@ pub async fn single_message_with_workspace(
     msg: &str,
     workspace: &fabric::WorkspacePolicy,
 ) -> Result<()> {
+    single_message_with_workspace_and_requirements(socket, msg, workspace, Vec::new()).await
+}
+
+pub async fn single_message_with_workspace_and_requirements(
+    socket: &PathBuf,
+    msg: &str,
+    workspace: &fabric::WorkspacePolicy,
+    requirements: Vec<fabric::TurnRequirement>,
+) -> Result<()> {
+    single_message_with_workspace_requirements_and_task_kind(
+        socket,
+        msg,
+        workspace,
+        requirements,
+        None,
+    )
+    .await
+}
+
+pub async fn single_message_with_workspace_requirements_and_task_kind(
+    socket: &PathBuf,
+    msg: &str,
+    workspace: &fabric::WorkspacePolicy,
+    requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
+) -> Result<()> {
     let mut stream = UnixStream::connect(socket).await?;
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
@@ -472,19 +527,15 @@ pub async fn single_message_with_workspace(
             None => (cmd, ""),
         };
         match name {
-            "reflect" | "r" => ClientRpcRequest::Reflect,
-            "reflect_now" | "rn" => ClientRpcRequest::ReflectNow,
-            "evolution" | "evo" => ClientRpcRequest::Evolution,
-            "genome" | "gene" => ClientRpcRequest::Genome,
             "status" | "st" => ClientRpcRequest::Status,
             "cwd" => {
                 println!("{}", workspace.cwd().display());
                 return Ok(());
             }
-            _ => benchmark_chat_request(msg, workspace),
+            _ => benchmark_chat_request(msg, workspace, requirements.clone(), task_kind),
         }
     } else {
-        benchmark_chat_request(msg, workspace)
+        benchmark_chat_request(msg, workspace, requirements, task_kind)
     };
     let request = typed_request.to_json_rpc(Some(1))?;
     let req_str = serde_json::to_string(&request)?;
@@ -497,7 +548,7 @@ pub async fn single_message_with_workspace(
     let started_at = std::time::Instant::now();
     let mut tokens_in = 0u64;
     let mut tokens_out = 0u64;
-    let mut cache_hit_tokens = 0u64;
+    let mut cache_read_tokens = 0u64;
     let mut tool_calls = 0u64;
 
     // Use Timer::timeout to wrap the entire response reading loop.
@@ -568,21 +619,23 @@ pub async fn single_message_with_workspace(
                                 tool_calls = tool_calls.saturating_add(1);
                                 eprintln!("[tool] {} {}", tool, serde_json::to_string(&args).unwrap_or_default());
                             }
-                            ClientEvent::Usage {
-                                tokens_in: event_tokens_in,
-                                tokens_out: event_tokens_out,
-                                cache_hit_tokens: event_cache_hit_tokens,
-                                ..
-                            } => {
+                            ClientEvent::Usage { usage } => {
+                                let event_tokens_in = usage.total_input_tokens.unwrap_or(0);
+                                let event_tokens_out = usage.output_tokens.unwrap_or(0);
+                                let event_cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
                                 tokens_in = tokens_in.saturating_add(event_tokens_in);
                                 tokens_out = tokens_out.saturating_add(event_tokens_out);
-                                cache_hit_tokens =
-                                    cache_hit_tokens.saturating_add(event_cache_hit_tokens);
+                                cache_read_tokens =
+                                    cache_read_tokens.saturating_add(event_cache_read_tokens);
                             }
                             ClientEvent::ToolProgress { tool, payload, .. } => {
                                 eprintln!("[tool:{tool}] {payload}");
                             }
                             ClientEvent::TextDelta { .. } => {
+                                had_streaming_text = true;
+                                // skip — result text comes in the final response
+                            }
+                            ClientEvent::TextSnapshot { .. } => {
                                 had_streaming_text = true;
                                 // skip — result text comes in the final response
                             }
@@ -599,12 +652,13 @@ pub async fn single_message_with_workspace(
                 // Deduplicate consecutive identical lines (some models repeat text)
                 let deduped = deduplicate_response(text);
                 println!("{deduped}");
-            } else if !resp["result"]["reflections"].is_null() {
-                println!("{}", format_reflections(&resp["result"]["reflections"]));
-            } else if !resp["result"]["genome"].is_null() {
-                println!("{}", format_genome(&resp["result"]["genome"]));
-            } else if !resp["result"]["evolution"].is_null() {
-                println!("{}", format_evolution(&resp["result"]["evolution"]));
+            } else if resp["result"]["queued"].as_bool() == Some(true) {
+                let prompt_id = resp["result"]["prompt_id"]
+                    .as_str()
+                    .unwrap_or("unknown");
+                return Err(anyhow::anyhow!(
+                    "request was queued as {prompt_id}; this one-shot client did not observe a terminal result"
+                ));
             } else if let Some(_status) = resp["result"]["status"].as_object() {
                 println!("{}", format_status(&resp["result"]["status"]));
             } else if let Some(err) = resp["error"]["message"].as_str() {
@@ -614,9 +668,9 @@ pub async fn single_message_with_workspace(
                 eprintln!(
                     "ALETHEON_BENCHMARK_METRICS={}",
                     serde_json::json!({
-                        "input_tokens": tokens_in,
+                        "total_input_tokens": tokens_in,
                         "output_tokens": tokens_out,
-                        "cache_hit_tokens": cache_hit_tokens,
+                        "cache_read_tokens": cache_read_tokens,
                         "latency_ms": started_at.elapsed().as_millis() as u64,
                         "tool_calls": tool_calls,
                     })
@@ -635,19 +689,105 @@ pub async fn single_message_with_workspace(
     Ok(())
 }
 
-fn benchmark_chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> ClientRpcRequest {
-    match std::env::var("ALETHEON_BENCHMARK_SESSION_ID") {
-        Ok(session_id) if !session_id.trim().is_empty() => {
-            ClientRpcRequest::chat_for(message, fabric::SessionId(session_id), workspace)
-        }
-        _ => ClientRpcRequest::chat(message, workspace),
-    }
+fn benchmark_chat_request(
+    message: &str,
+    workspace: &fabric::WorkspacePolicy,
+    requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
+) -> ClientRpcRequest {
+    let permission_mode = crate::host::permission_mode_from_environment();
+    let explicit_session = std::env::var("ALETHEON_BENCHMARK_SESSION_ID")
+        .ok()
+        .filter(|session_id| !session_id.trim().is_empty());
+    single_message_chat_request(
+        message,
+        workspace,
+        requirements,
+        task_kind,
+        permission_mode,
+        explicit_session,
+    )
+}
+
+fn single_message_chat_request(
+    message: &str,
+    workspace: &fabric::WorkspacePolicy,
+    requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
+    permission_mode: fabric::permission::HostPermissionMode,
+    explicit_session: Option<String>,
+) -> ClientRpcRequest {
+    let request = match explicit_session {
+        Some(session_id) => ClientRpcRequest::chat_with_task_kind(
+            message,
+            Some(fabric::SessionId(session_id)),
+            workspace,
+            requirements,
+            task_kind,
+        ),
+        _ => ClientRpcRequest::chat_with_task_kind(
+            message,
+            Some(fabric::SessionId(format!(
+                "message-{}",
+                uuid::Uuid::new_v4()
+            ))),
+            workspace,
+            requirements,
+            task_kind,
+        ),
+    };
+    request.chat_with_permission_mode(permission_mode)
 }
 
 #[cfg(test)]
 mod workflow_cli_tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn parses_coding_task_kind_for_message_and_tui() {
+        let message = Args::try_parse_from(["aletheon", "--task-kind", "coding", "hello"]).unwrap();
+        assert_eq!(message.task_kind, Some(TaskKindArg::Coding));
+        let tui = Args::try_parse_from(["aletheon", "--task-kind", "coding", "--tui"]).unwrap();
+        assert_eq!(tui.task_kind, Some(TaskKindArg::Coding));
+    }
+
+    #[test]
+    fn one_shot_messages_use_fresh_sessions_unless_explicitly_overridden() {
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), Vec::new()).unwrap();
+        let fresh = single_message_chat_request(
+            "hello",
+            &workspace,
+            Vec::new(),
+            None,
+            fabric::permission::HostPermissionMode::Safe,
+            None,
+        );
+        let explicit = single_message_chat_request(
+            "hello",
+            &workspace,
+            Vec::new(),
+            None,
+            fabric::permission::HostPermissionMode::Safe,
+            Some("shared-session".into()),
+        );
+
+        assert!(matches!(
+            fresh,
+            ClientRpcRequest::Chat(fabric::protocol::client::ChatParams {
+                session_id: Some(fabric::SessionId(id)),
+                ..
+            }) if id.starts_with("message-")
+        ));
+        assert!(matches!(
+            explicit,
+            ClientRpcRequest::Chat(fabric::protocol::client::ChatParams {
+                session_id: Some(fabric::SessionId(id)),
+                ..
+            }) if id == "shared-session"
+        ));
+    }
 
     #[test]
     fn parses_workflow_list() {
@@ -723,5 +863,22 @@ mod workflow_cli_tests {
                 action: workflow::WorkflowAction::List
             })
         ));
+    }
+
+    #[test]
+    fn parses_repeatable_required_agent_runtime() {
+        let args = Args::try_parse_from([
+            "aletheon",
+            "--require-agent-runtime",
+            "pi-rpc",
+            "--require-agent-runtime",
+            "native-cognit",
+            "--tui",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.required_agent_runtimes,
+            vec!["pi-rpc", "native-cognit"]
+        );
     }
 }

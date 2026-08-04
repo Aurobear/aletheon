@@ -1,4 +1,4 @@
-> Migrated from docs/design/perception/system-management.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from docs/design/perception/system-management.md — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 # 系统服务管理 (System Service Management)
 

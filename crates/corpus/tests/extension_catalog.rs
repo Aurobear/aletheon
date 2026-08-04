@@ -108,6 +108,7 @@ fn runtime_skills_and_hooks_are_discovered_before_activation() {
         script_path: None,
         point: fabric::hook::HookPoint::PostTool,
         priority: 10,
+        timeout_ms: None,
     });
 
     let descriptors = corpus::discover_runtime_extensions(&skills, &hooks).unwrap();

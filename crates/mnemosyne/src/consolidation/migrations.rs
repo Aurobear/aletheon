@@ -30,4 +30,14 @@ CREATE TABLE IF NOT EXISTS memory_consolidation_runs(
  candidate_snapshot_json TEXT NOT NULL, watermark TEXT NOT NULL,
  decisions_json TEXT NOT NULL, completed_at_ms INTEGER NOT NULL,
  UNIQUE(scope_key,watermark));
+CREATE TABLE IF NOT EXISTS memory_embedding_jobs(
+ record_id TEXT NOT NULL, operation TEXT NOT NULL,
+ provider_id TEXT NOT NULL, model_id TEXT NOT NULL, dimension INTEGER NOT NULL,
+ rotation_generation INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+ attempts INTEGER NOT NULL DEFAULT 0, lease_owner TEXT, lease_until_ms INTEGER,
+ retry_at_ms INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+ created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
+ PRIMARY KEY(record_id,provider_id,model_id,dimension,rotation_generation));
+CREATE INDEX IF NOT EXISTS idx_memory_embedding_claim
+ ON memory_embedding_jobs(status,retry_at_ms,lease_until_ms);
 "#;

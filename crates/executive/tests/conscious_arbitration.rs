@@ -45,6 +45,7 @@ impl TurnAuthorityProvider for StubAuthority {
                     .unwrap(),
                 session_id: "session-conscious".into(),
                 working_dir: "/tmp".into(),
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             },
             control: InvocationControl::default(),
         })

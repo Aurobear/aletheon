@@ -5,7 +5,7 @@ use executive::application::inference_port::{
 };
 use executive::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use executive::core::{RegistryInferencePort, SystemCoreRuntime};
-use fabric::{LlmResponse, LlmStream, StopReason, Usage};
+use fabric::{InferenceUsage, LlmResponse, LlmStream, StopReason};
 use futures::stream;
 
 #[derive(Default)]
@@ -15,7 +15,11 @@ struct FakeInferencePort;
 impl InferencePort for FakeInferencePort {
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         Ok(ModelCapabilities {
-            model_spec: model_spec.to_owned(),
+            model_spec: if model_spec.is_empty() {
+                "fixture/fixture-model".into()
+            } else {
+                model_spec.to_owned()
+            },
             display_name: "fixture-model".into(),
             max_context_tokens: 1_000_000,
         })
@@ -37,9 +41,7 @@ fn response() -> LlmResponse {
     LlmResponse {
         content: Vec::new(),
         stop_reason: StopReason::EndTurn,
-        usage: Usage::default(),
-        cache_hit_tokens: 0,
-        cache_miss_tokens: 0,
+        usage: InferenceUsage::default(),
     }
 }
 

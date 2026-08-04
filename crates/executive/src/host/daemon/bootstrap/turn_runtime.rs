@@ -64,6 +64,7 @@ pub(super) fn register_configured_hooks(
                 ),
                 point,
                 priority: 100,
+                timeout_ms: None,
             });
         }
     }
@@ -230,6 +231,10 @@ impl ProductionTurnSessions {
             &self.data_dir,
             session_id.clone(),
             self.context_window,
+            // On-demand secondary sessions use the default threshold (80% == the
+            // legacy 0.8); the primary daemon session (see bootstrap::sessions)
+            // carries the configured value.
+            80,
             self.clock.clone(),
         )
         .await?;
@@ -512,12 +517,13 @@ impl TurnApprovalPort for ProductionTurnApprovals {
         let pending = self.receiver.lock().await.recv().await?;
         let approval_id = self
             .pending
-            .insert(
+            .insert_scoped(
                 pending.request.owner.clone(),
                 pending.request.turn_id,
                 pending.request.call_id.clone(),
                 pending.request.tool.clone(),
                 pending.request.connection_id.clone(),
+                pending.request.scope_subject.clone(),
                 pending.respond,
             )
             .await;
@@ -527,6 +533,7 @@ impl TurnApprovalPort for ProductionTurnApprovals {
             action_summary: pending.request.action_summary,
             risk_level: pending.request.risk_level,
             detail: pending.request.detail,
+            scope_subject: pending.request.scope_subject,
         };
         Some(notice)
     }
@@ -657,6 +664,7 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
                 context.cancel,
             )
             .with_agent_context(context.agent)
+            .with_permission_mode(context.permission_mode)
             .with_turn_event_sender(stream_sender.clone()),
         );
         let action_loop = context.action_loop;

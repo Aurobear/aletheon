@@ -15,6 +15,11 @@ use fabric::{
 use tail::{find_tail_cut, TailProtectionConfig};
 use template::{SummaryTemplate, SUMMARY_PREFIX};
 
+/// Default fraction of the context window at which automatic compaction
+/// triggers. `0.8` preserves the historical hardcoded behavior; the effective
+/// value is configurable via [`AdvancedCompressor::with_threshold_fraction`].
+pub const DEFAULT_COMPACTION_THRESHOLD_FRACTION: f64 = 0.8;
+
 /// Immutable record of one compaction run.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CompactionLineage {
@@ -41,6 +46,8 @@ pub struct AdvancedCompressor {
     pub tail_config: TailProtectionConfig,
     pub target_summary_chars: usize,
     context_window_tokens: usize,
+    /// Fraction of the context window at which automatic compaction triggers.
+    threshold_fraction: f64,
     previous_summary: Option<String>,
     template: SummaryTemplate,
     run_counter: u64,
@@ -60,11 +67,30 @@ impl AdvancedCompressor {
             },
             target_summary_chars,
             context_window_tokens,
+            threshold_fraction: DEFAULT_COMPACTION_THRESHOLD_FRACTION,
             previous_summary: None,
             template: SummaryTemplate,
             run_counter: 0,
             lineage: Vec::new(),
         }
+    }
+
+    /// Override the automatic-compaction trigger point, expressed as a fraction
+    /// of the context window. Values are clamped to `[0.1, 0.98]`; non-finite
+    /// input falls back to [`DEFAULT_COMPACTION_THRESHOLD_FRACTION`]. `force_*`
+    /// paths ignore the threshold entirely.
+    pub fn with_threshold_fraction(mut self, fraction: f64) -> Self {
+        self.threshold_fraction = if fraction.is_finite() {
+            fraction.clamp(0.1, 0.98)
+        } else {
+            DEFAULT_COMPACTION_THRESHOLD_FRACTION
+        };
+        self
+    }
+
+    /// The effective automatic-compaction threshold fraction.
+    pub fn threshold_fraction(&self) -> f64 {
+        self.threshold_fraction
     }
 
     /// Check if compaction is needed and perform it. Returns true if performed.
@@ -142,7 +168,7 @@ impl AdvancedCompressor {
         let total_tokens: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
 
         if !force {
-            let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
+            let threshold = (self.context_window_tokens as f64 * self.threshold_fraction) as usize;
             if total_tokens < threshold {
                 return Ok(false);
             }
@@ -284,7 +310,7 @@ impl AdvancedCompressor {
         };
 
         if !force {
-            let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
+            let threshold = (self.context_window_tokens as f64 * self.threshold_fraction) as usize;
             if tokens_before < threshold {
                 return Ok(self.push_lineage(unchanged(None), force));
             }
@@ -599,7 +625,7 @@ mod tests {
 ## Critical Context\nconstraints remain";
     use async_trait::async_trait;
     use fabric::ToolDefinition;
-    use fabric::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
+    use fabric::{InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason};
 
     #[test]
     fn test_new_compressor() {
@@ -654,9 +680,7 @@ mod tests {
                     text: VALID_CHECKPOINT.into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(
@@ -815,9 +839,7 @@ mod tests {
                         .into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(
@@ -848,9 +870,7 @@ mod tests {
                     text: "this is a summary".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(
@@ -1021,9 +1041,9 @@ mod tests {
     #[tokio::test]
     async fn full_replace_applies_good_summary_and_preserves_recent_tail() {
         let mut compressor = AdvancedCompressor::new(100, 200, 100_000);
-        let mut messages = (0..8)
+        let mut messages = (0_usize..8)
             .map(|index| {
-                if index % 2 == 0 {
+                if index.is_multiple_of(2) {
                     Message::user(format!("request {index} {}", "x".repeat(2_000)))
                 } else {
                     Message::assistant(format!("response {index} {}", "y".repeat(2_000)))

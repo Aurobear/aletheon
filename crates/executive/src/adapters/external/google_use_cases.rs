@@ -53,7 +53,7 @@ impl ProductionExternalSourceUseCases {
         };
         let repository = google.repository();
         let (gmail, calendar) = {
-            let repository = repository.lock().unwrap();
+            let repository = repository.lock().unwrap_or_else(|e| e.into_inner());
             (
                 repository.has_active_scope(ExternalCapabilityId::new("mail.read").unwrap())?,
                 repository.has_active_scope(ExternalCapabilityId::new("calendar.read").unwrap())?,
@@ -153,7 +153,7 @@ impl ExternalSourceUseCases for ProductionExternalSourceUseCases {
         google
             .repository()
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .list(&principal)
             .map(|items| {
                 items
@@ -167,7 +167,7 @@ impl ExternalSourceUseCases for ProductionExternalSourceUseCases {
         let (google, principal) = self.context()?;
         let repository = google.repository();
         let identity = {
-            let repository = repository.lock().unwrap();
+            let repository = repository.lock().unwrap_or_else(|e| e.into_inner());
             let id = repository
                 .resolve_account(&principal, &account)
                 .map_err(|_| ExternalSourceUseCaseError::Provider)?
@@ -180,7 +180,7 @@ impl ExternalSourceUseCases for ProductionExternalSourceUseCases {
         };
         repository
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .revoke_local(
                 &principal,
                 identity.id,
@@ -204,7 +204,7 @@ impl ExternalSourceUseCases for ProductionExternalSourceUseCases {
         let (google, principal) = self.context()?;
         let account_id = {
             let repository = google.repository();
-            let repository = repository.lock().unwrap();
+            let repository = repository.lock().unwrap_or_else(|e| e.into_inner());
             let id = repository
                 .resolve_account(&principal, &account)
                 .map_err(|_| ExternalSourceUseCaseError::Provider)?

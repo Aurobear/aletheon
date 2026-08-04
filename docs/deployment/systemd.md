@@ -11,12 +11,18 @@ user-manager aletheon.socket -> aletheon.service
   %t/aletheon/aletheon.sock (0600, owning user)
                 |
       arbitrary per-turn workspaces
+
+user-manager aletheon-memory-agent.service
+  /usr/bin/aletheon memory-agent serve --official-user-socket
+                |
+       private socket only; no workspace/DB/credential access
 ```
 
 The machine service runs only `aletheon core`. Each authorized local user gets a
-private, socket-activated `aletheon daemon`; Goal workers, integrations, Pi, and
-memory workers remain supervised inside that user runtime rather than becoming
-separate system units.
+private, socket-activated `aletheon daemon`; Goal workers, integrations, and Pi
+remain supervised inside that user runtime. The bounded memory maintenance
+scheduler is separate so runtime/provider failure cannot stall the daemon; all
+policy, database, binding, and receipt authority remains behind its socket.
 
 For the supported build/install/deploy command surface, start with the
 [operations guide](README.md):
@@ -46,6 +52,7 @@ that user's login session so supplementary groups are reapplied:
 sudo usermod -aG aletheon USER
 # log out and back in, then as USER:
 systemctl --user enable --now aletheon.socket
+systemctl --user enable --now aletheon-memory-agent.service
 ```
 
 Global socket enablement makes the unit available when a user manager starts;
@@ -80,6 +87,13 @@ For the checked-in user unit, systemd expands `StateDirectory=aletheon` to
 managed state directory. The private socket remains below `$XDG_RUNTIME_DIR`
 and is not durable state.
 
+The Memory Agent runs the same installed executable as the daemon. Maintenance
+capability is granted only when `SO_PEERCRED`, `/proc/PID/exe`, and the exact
+`memory-agent serve --official-user-socket` argv agree. Its unit has strict
+system protection, read-only home visibility, no state/cache directory, no
+credential environment, no writable workspace, and only `AF_UNIX` access. It
+never opens Mnemosyne or GBrain storage directly.
+
 Pi/bubblewrap requires user and mount namespaces, so `RestrictNamespaces` is
 intentionally not set on the relevant runtime. `NoNewPrivileges`, filesystem
 protection, and the application sandbox remain active. Re-run Pi
@@ -100,6 +114,7 @@ scripts/aletheon.sh verify systemd --core-unit config/aletheon-core.service \
   --binary target/release/aletheon
 scripts/aletheon.sh verify systemd --user-units \
   config/aletheon.user.service config/aletheon.user.socket \
+  config/aletheon-memory-agent.user.service \
   --binary target/release/aletheon
 scripts/aletheon.sh verify systemd --preflight --binary target/release/aletheon \
   --config config/production.toml.example
@@ -110,10 +125,13 @@ sudo journalctl -u aletheon-core.service -n 200 --no-pager
 
 # Run these as the authorized user. Stop the activated service before cycling
 # its listener, then let the next client connection start the service again.
-systemctl --user stop aletheon.service aletheon.socket
+systemctl --user stop aletheon-memory-agent.service aletheon.service aletheon.socket
 systemctl --user start aletheon.socket
-systemctl --user status aletheon.socket aletheon.service --no-pager
+systemctl --user start aletheon-memory-agent.service
+systemctl --user status aletheon.socket aletheon.service \
+  aletheon-memory-agent.service --no-pager
 journalctl --user -u aletheon.service -n 200 --no-pager
+journalctl --user -u aletheon-memory-agent.service -n 200 --no-pager
 scripts/aletheon.sh verify systemd --readiness \
   --socket "$XDG_RUNTIME_DIR/aletheon/aletheon.sock"
 ```

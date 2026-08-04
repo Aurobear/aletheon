@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::application::admin_service::{AdminServiceError, AgentProfileCatalogPort};
@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cognit::harness::config::HarnessConfig;
+use fabric::cognitive_workflow::CognitiveTaskRuntimeBinding;
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentProfile, AgentProfileId, AgentResult,
     AgentRunStatus, ApprovalPolicy, AttemptEvidence, AttemptUsage, CapabilityCall,
@@ -19,6 +20,7 @@ use fabric::{
     ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices, TurnStop, WorkspacePolicy,
     SESSION_SCHEMA_VERSION,
 };
+use futures::StreamExt;
 use parking_lot::RwLock;
 use tokio::sync::Mutex;
 
@@ -38,12 +40,16 @@ const MAX_MAILBOX_TURNS: usize = 16;
 pub struct ResolvedAgentProfile {
     pub profile: AgentProfile,
     pub llm: Arc<dyn LlmProvider>,
+    /// Complete host-authorized catalog, including deferred definitions.
+    pub authorized_tools: Vec<ToolDefinition>,
+    /// Initial model-visible projection; deferred definitions are absent.
     pub tools: Vec<ToolDefinition>,
 }
 
 #[derive(Default)]
 pub struct AgentProfileRegistry {
     profiles: RwLock<HashMap<AgentProfileId, ResolvedAgentProfile>>,
+    package_owners: RwLock<HashMap<AgentProfileId, String>>,
 }
 
 impl AgentProfileRegistry {
@@ -63,7 +69,7 @@ impl AgentProfileRegistry {
             .cloned()
             .collect::<HashSet<_>>();
         let supplied = resolved
-            .tools
+            .authorized_tools
             .iter()
             .map(|tool| tool.name.clone())
             .collect::<HashSet<_>>();
@@ -81,6 +87,73 @@ impl AgentProfileRegistry {
             ));
         }
         profiles.insert(id, resolved);
+        Ok(())
+    }
+
+    pub fn resolved_profiles(&self) -> Vec<ResolvedAgentProfile> {
+        self.profiles.read().values().cloned().collect()
+    }
+
+    /// Atomically replace package-owned profiles while preserving built-ins
+    /// and package owners outside the candidate snapshot.
+    pub fn replace_package_profiles(
+        &self,
+        replaced_owners: &[String],
+        replacements: Vec<(String, ResolvedAgentProfile)>,
+    ) -> Result<(), AgentControlError> {
+        let replaced = replaced_owners.iter().cloned().collect::<HashSet<_>>();
+        if replaced.iter().any(|owner| owner.trim().is_empty()) {
+            return Err(AgentControlError::invalid(
+                "package profile owner must not be empty",
+            ));
+        }
+        let profiles = self.profiles.read();
+        let owners = self.package_owners.read();
+        let mut candidate_ids = HashSet::new();
+        for (owner, resolved) in &replacements {
+            if !replaced.contains(owner) {
+                return Err(AgentControlError::invalid(format!(
+                    "package profile owner '{owner}' is outside the replacement set"
+                )));
+            }
+            validate_resolved_profile(resolved)?;
+            let id = &resolved.profile.id;
+            if !candidate_ids.insert(id.clone()) {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    format!("duplicate package Agent profile: {}", id.0),
+                ));
+            }
+            if profiles.contains_key(id)
+                && owners
+                    .get(id)
+                    .is_none_or(|existing| !replaced.contains(existing))
+            {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    format!("Agent profile already registered: {}", id.0),
+                ));
+            }
+        }
+        drop(owners);
+        drop(profiles);
+
+        let mut profiles = self.profiles.write();
+        let mut owners = self.package_owners.write();
+        let removed = owners
+            .iter()
+            .filter(|(_, owner)| replaced.contains(*owner))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in removed {
+            owners.remove(&id);
+            profiles.remove(&id);
+        }
+        for (owner, resolved) in replacements {
+            let id = resolved.profile.id.clone();
+            owners.insert(id.clone(), owner);
+            profiles.insert(id, resolved);
+        }
         Ok(())
     }
 
@@ -124,6 +197,34 @@ impl AgentProfileRegistry {
     pub fn names(&self) -> Vec<String> {
         self.profiles.read().keys().map(|id| id.0.clone()).collect()
     }
+}
+
+fn validate_resolved_profile(resolved: &ResolvedAgentProfile) -> Result<(), AgentControlError> {
+    resolved.profile.validate()?;
+    if resolved.profile.model != resolved.llm.name() {
+        return Err(AgentControlError::invalid(format!(
+            "profile model '{}' does not match resolved provider model '{}'",
+            resolved.profile.model,
+            resolved.llm.name()
+        )));
+    }
+    let declared = resolved
+        .profile
+        .allowed_tools
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let supplied = resolved
+        .authorized_tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<HashSet<_>>();
+    if declared != supplied {
+        return Err(AgentControlError::invalid(
+            "profile tool definitions do not match its allow-list",
+        ));
+    }
+    Ok(())
 }
 
 impl AgentProfileCatalogPort for AgentProfileRegistry {
@@ -177,6 +278,7 @@ impl NativeCognitRuntime {
                 runtime::RuntimeCapability::Git,
                 runtime::RuntimeCapability::Diagnostics,
                 runtime::RuntimeCapability::Browser,
+                runtime::RuntimeCapability::MemoryProposal,
             ]),
             interaction_modes: BTreeSet::from([
                 runtime::InteractionMode::Resident,
@@ -184,10 +286,14 @@ impl NativeCognitRuntime {
                 runtime::InteractionMode::FollowUp,
             ]),
             workspace_modes: BTreeSet::from([
+                runtime::WorkspaceMode::WorkspaceLess,
                 runtime::WorkspaceMode::SharedReadOnly,
                 runtime::WorkspaceMode::SharedWritable,
             ]),
-            task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
+            task_encodings: BTreeSet::from([
+                runtime::TaskEncoding::NaturalLanguage,
+                runtime::TaskEncoding::StructuredJson,
+            ]),
             supported_profiles: Some(supported_profiles.into_iter().collect()),
             tool_governance: runtime::ToolGovernance::Intercepted,
             priority: 20,
@@ -239,7 +345,8 @@ impl NativeCognitRuntime {
         let evidence = Arc::new(Mutex::new(Vec::new()));
         let mut principal_context = agent_principal_context(
             input.handle.agent_id.0.to_string(),
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+            input.workspace.clone(),
+            input.request.cognitive_binding.as_ref(),
         )?;
         principal_context.turn_id = Some(fabric::TurnId::new());
         let mut services = NativeTurnServices {
@@ -258,6 +365,11 @@ impl NativeCognitRuntime {
                     caller_root_agent_id: input.handle.root_agent_id,
                     parent_agent_id: input.handle.agent_id,
                     parent_process_id: input.handle.process_id,
+                    delegator_authority: Some(fabric::AgentDelegationAuthority::new(
+                        input.workspace.clone(),
+                        input.request.allowed_tools.clone(),
+                        input.request.budget.clone(),
+                    )),
                 }),
                 process_id: input.handle.process_id,
                 operation_id: input.handle.operation_id,
@@ -271,6 +383,7 @@ impl NativeCognitRuntime {
                 session_id: input.handle.agent_id.0.to_string(),
                 working_dir: principal_context.workspace.cwd().to_path_buf(),
                 sandbox: SandboxRequirement::NotRequired,
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
                 cancel: input.cancellation.clone(),
                 turn_count: 0,
                 repo_hooks_trusted: principal_context.repo_hooks_trusted,
@@ -294,6 +407,9 @@ impl NativeCognitRuntime {
             input: input.request.task.clone(),
             model_policy: Some(resolved.profile.model.clone()),
             deadline: None,
+            requirements: Vec::new(),
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
         let timeout = Duration::from_millis(
             resolved
@@ -304,6 +420,8 @@ impl NativeCognitRuntime {
         let started = tokio::time::Instant::now();
         let mut completed_turns = 0usize;
         let mut elapsed_ms = 0u64;
+        let mut inference_rounds = 0u64;
+        let mut tool_calls = 0u64;
         let final_output = loop {
             let remaining = timeout.saturating_sub(started.elapsed());
             if remaining.is_zero() {
@@ -331,6 +449,10 @@ impl NativeCognitRuntime {
             }
             completed_turns += 1;
             elapsed_ms = elapsed_ms.saturating_add(turn.metrics.elapsed_ms);
+            inference_rounds = inference_rounds
+                .saturating_add(turn.metrics.iterations.try_into().unwrap_or(u64::MAX));
+            tool_calls = tool_calls
+                .saturating_add(turn.metrics.tool_calls_made.try_into().unwrap_or(u64::MAX));
             let output = turn.output;
             let next = input.inbox.try_recv().await.filter(|payload| {
                 payload.kind == fabric::AgentMessageKind::Input && payload.start_turn
@@ -354,9 +476,14 @@ impl NativeCognitRuntime {
                 input: next.content,
                 model_policy: Some(resolved.profile.model.clone()),
                 deadline: None,
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             };
         };
-        let (input_tokens, output_tokens) = services.llm.usage();
+        let llm_usage = services.llm.usage();
+        let input_tokens = llm_usage.input_tokens;
+        let output_tokens = llm_usage.output_tokens;
         let input_limit = resolved
             .profile
             .max_input_tokens
@@ -389,6 +516,15 @@ impl NativeCognitRuntime {
                 output_tokens,
                 cost_usd: None,
                 elapsed_ms,
+                observability: fabric::attempt::RuntimeObservability {
+                    inference_rounds: Some(llm_usage.inference_rounds.max(inference_rounds)),
+                    provider_retries: None,
+                    tool_calls: Some(tool_calls),
+                    terminal_tool_results: Some(tool_calls),
+                    active_context_tokens: llm_usage.active_context_tokens,
+                    cache_read_tokens: llm_usage.cache_read_tokens,
+                    cache_write_tokens: llm_usage.cache_write_tokens,
+                },
             },
             evidence: evidence.lock().await.clone(),
             artifacts: vec![],
@@ -555,6 +691,33 @@ impl TurnServices for NativeTurnServices {
         result
     }
 
+    async fn record_capability_receipt(&self, receipt: fabric::CapabilityTerminalReceipt) {
+        self.evidence.lock().await.push(AttemptEvidence {
+            kind: "capability_terminal_receipt".into(),
+            summary: format!("{}: {:?}", receipt.capability, receipt.status),
+            content: serde_json::to_string(&receipt)
+                .unwrap_or_else(|error| format!("receipt serialization failed: {error}")),
+        });
+    }
+
+    async fn record_model_context_projection(
+        &self,
+        mut receipt: fabric::model_projection::ModelContextProjectionReceipt,
+    ) {
+        crate::composition::turn_service::materialize_projection_artifacts(&mut receipt);
+        self.evidence.lock().await.push(AttemptEvidence {
+            kind: "model_context_projection".into(),
+            summary: format!(
+                "{} fragments, {} message bytes, {} tool-schema bytes",
+                receipt.fragments.len(),
+                receipt.message_bytes,
+                receipt.tool_schema_bytes
+            ),
+            content: serde_json::to_string(&receipt)
+                .unwrap_or_else(|error| format!("projection serialization failed: {error}")),
+        });
+    }
+
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
         Some(&self.llm)
     }
@@ -593,24 +756,55 @@ impl NativeTurnServices {
 
 struct MeteredLlm {
     inner: Arc<dyn LlmProvider>,
-    input_tokens: AtomicU64,
-    output_tokens: AtomicU64,
+    input_tokens: Arc<AtomicU64>,
+    output_tokens: Arc<AtomicU64>,
+    inference_rounds: Arc<AtomicU64>,
+    active_context_tokens: Arc<AtomicU64>,
+    cache_read_tokens: Arc<AtomicU64>,
+    cache_write_tokens: Arc<AtomicU64>,
+    cache_read_observable: Arc<AtomicBool>,
+    cache_write_observable: Arc<AtomicBool>,
+}
+
+struct MeteredLlmUsage {
+    input_tokens: u64,
+    output_tokens: u64,
+    inference_rounds: u64,
+    active_context_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    cache_write_tokens: Option<u64>,
 }
 
 impl MeteredLlm {
     fn new(inner: Arc<dyn LlmProvider>) -> Self {
         Self {
             inner,
-            input_tokens: AtomicU64::new(0),
-            output_tokens: AtomicU64::new(0),
+            input_tokens: Arc::new(AtomicU64::new(0)),
+            output_tokens: Arc::new(AtomicU64::new(0)),
+            inference_rounds: Arc::new(AtomicU64::new(0)),
+            active_context_tokens: Arc::new(AtomicU64::new(0)),
+            cache_read_tokens: Arc::new(AtomicU64::new(0)),
+            cache_write_tokens: Arc::new(AtomicU64::new(0)),
+            cache_read_observable: Arc::new(AtomicBool::new(true)),
+            cache_write_observable: Arc::new(AtomicBool::new(true)),
         }
     }
 
-    fn usage(&self) -> (u64, u64) {
-        (
-            self.input_tokens.load(Ordering::Relaxed),
-            self.output_tokens.load(Ordering::Relaxed),
-        )
+    fn usage(&self) -> MeteredLlmUsage {
+        let rounds = self.inference_rounds.load(Ordering::Relaxed);
+        let cache_read_observable = self.cache_read_observable.load(Ordering::Relaxed);
+        let cache_write_observable = self.cache_write_observable.load(Ordering::Relaxed);
+        MeteredLlmUsage {
+            input_tokens: self.input_tokens.load(Ordering::Relaxed),
+            output_tokens: self.output_tokens.load(Ordering::Relaxed),
+            inference_rounds: rounds,
+            active_context_tokens: (rounds > 0)
+                .then(|| self.active_context_tokens.load(Ordering::Relaxed)),
+            cache_read_tokens: cache_read_observable
+                .then(|| self.cache_read_tokens.load(Ordering::Relaxed)),
+            cache_write_tokens: cache_write_observable
+                .then(|| self.cache_write_tokens.load(Ordering::Relaxed)),
+        }
     }
 }
 
@@ -621,11 +815,28 @@ impl LlmProvider for MeteredLlm {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<fabric::LlmResponse> {
+        self.inference_rounds.fetch_add(1, Ordering::Relaxed);
         let response = self.inner.complete(messages, tools).await?;
-        self.input_tokens
-            .fetch_add(response.usage.input_tokens.into(), Ordering::Relaxed);
+        self.input_tokens.fetch_add(
+            response.usage.total_input_tokens.unwrap_or(0),
+            Ordering::Relaxed,
+        );
         self.output_tokens
-            .fetch_add(response.usage.output_tokens.into(), Ordering::Relaxed);
+            .fetch_add(response.usage.output_tokens.unwrap_or(0), Ordering::Relaxed);
+        self.active_context_tokens.store(
+            response.usage.total_input_tokens.unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        if let Some(read) = response.usage.cache_read_tokens {
+            self.cache_read_tokens.fetch_add(read, Ordering::Relaxed);
+        } else {
+            self.cache_read_observable.store(false, Ordering::Relaxed);
+        }
+        if let Some(write) = response.usage.cache_write_tokens {
+            self.cache_write_tokens.fetch_add(write, Ordering::Relaxed);
+        } else {
+            self.cache_write_observable.store(false, Ordering::Relaxed);
+        }
         Ok(response)
     }
 
@@ -634,7 +845,34 @@ impl LlmProvider for MeteredLlm {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<fabric::LlmStream> {
-        self.inner.complete_stream(messages, tools).await
+        self.inference_rounds.fetch_add(1, Ordering::Relaxed);
+        let stream = self.inner.complete_stream(messages, tools).await?;
+        let input_tokens = self.input_tokens.clone();
+        let output_tokens = self.output_tokens.clone();
+        let active_context_tokens = self.active_context_tokens.clone();
+        let cache_read_tokens = self.cache_read_tokens.clone();
+        let cache_write_tokens = self.cache_write_tokens.clone();
+        let cache_read_observable = self.cache_read_observable.clone();
+        let cache_write_observable = self.cache_write_observable.clone();
+        Ok(Box::pin(stream.map(move |chunk| {
+            if let Ok(fabric::StreamChunk::Usage { usage }) = &chunk {
+                input_tokens.fetch_add(usage.total_input_tokens.unwrap_or(0), Ordering::Relaxed);
+                output_tokens.fetch_add(usage.output_tokens.unwrap_or(0), Ordering::Relaxed);
+                active_context_tokens
+                    .store(usage.total_input_tokens.unwrap_or(0), Ordering::Relaxed);
+                if let Some(read) = usage.cache_read_tokens {
+                    cache_read_tokens.fetch_add(read, Ordering::Relaxed);
+                } else {
+                    cache_read_observable.store(false, Ordering::Relaxed);
+                }
+                if let Some(write) = usage.cache_write_tokens {
+                    cache_write_tokens.fetch_add(write, Ordering::Relaxed);
+                } else {
+                    cache_write_observable.store(false, Ordering::Relaxed);
+                }
+            }
+            chunk
+        })))
     }
 
     fn name(&self) -> &str {
@@ -690,10 +928,23 @@ fn harness_config(profile: &AgentProfile, budget: &fabric::AgentBudget) -> Harne
 
 fn agent_principal_context(
     agent_id: String,
-    working_dir: PathBuf,
+    admitted_workspace: Option<WorkspacePolicy>,
+    cognitive_binding: Option<&CognitiveTaskRuntimeBinding>,
 ) -> Result<PrincipalContext, AgentControlError> {
-    let workspace =
-        WorkspacePolicy::from_resolved_roots(working_dir, Vec::new()).map_err(runtime_failure)?;
+    let workspace = match (admitted_workspace, cognitive_binding) {
+        (Some(workspace), _) => workspace,
+        (None, Some(_)) => {
+            return Err(control_error(
+                AgentControlErrorKind::Forbidden,
+                "cognitive runtime has no admitted workspace authority",
+            ));
+        }
+        (None, None) => WorkspacePolicy::from_resolved_roots(
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+            Vec::new(),
+        )
+        .map_err(runtime_failure)?,
+    };
     let uid = nix::unistd::Uid::effective().as_raw();
     Ok(PrincipalContext::new(
         PrincipalId::local_uid(uid),

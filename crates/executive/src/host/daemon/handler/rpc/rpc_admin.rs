@@ -7,6 +7,42 @@ use serde_json::json;
 use tracing::info;
 
 impl RequestHandler {
+    pub(super) async fn handle_diff_artifact_get(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let params = match serde_json::from_value::<fabric::protocol::client::DiffArtifactGetParams>(
+            request.get("params").cloned().unwrap_or_default(),
+        ) {
+            Ok(params) if params.limit > 0 && params.limit <= 64 * 1024 => params,
+            Ok(_) => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"diff page limit must be 1..=65536"}})
+            }
+            Err(error) => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":error.to_string()}})
+            }
+        };
+        let store = corpus::tools::artifact::ArtifactStore::new(
+            corpus::tools::tools::output::OutputConfig::default()
+                .overflow_dir
+                .join("artifacts"),
+        );
+        match store.read_page(&params.sha256, params.offset, params.limit as u64) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(content) => json!({"jsonrpc":"2.0","id":id,"result":{
+                    "sha256":params.sha256,"offset":params.offset,
+                    "next_offset":params.offset.saturating_add(content.len() as u64),
+                    "eof":content.len() < params.limit as usize,"content":content}}),
+                Err(_) => {
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32041,"message":"diff artifact is not UTF-8"}})
+                }
+            },
+            Err(error) => {
+                json!({"jsonrpc":"2.0","id":id,"error":{"code":-32040,"message":error.to_string()}})
+            }
+        }
+    }
     pub(super) async fn handle_deployment_rollback(
         &self,
         connection: &super::super::super::server::ConnectionContext,
@@ -117,22 +153,23 @@ impl RequestHandler {
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let approval_id = request["params"]["approval_id"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        let decision = request["params"]["decision"]
-            .as_str()
-            .unwrap_or("reject")
-            .to_string();
+        let params = match serde_json::from_value::<fabric::protocol::client::ApprovalResponseParams>(
+            request.get("params").cloned().unwrap_or_default(),
+        ) {
+            Ok(params) => params,
+            Err(error) => {
+                return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":error.to_string()}})
+            }
+        };
         match self
             .ports
             .admin
             .resolve_transient_approval(TransientApprovalRequest {
                 principal_id: connection.principal_id.clone(),
                 connection_id: connection.connection_id.clone(),
-                approval_id,
-                decision,
+                approval_id: params.approval_id,
+                decision: params.decision,
+                scope_hint: params.scope_hint,
             })
             .await
         {
@@ -247,17 +284,6 @@ impl RequestHandler {
     ) -> serde_json::Value {
         match self.ports.admin.tools().await {
             Ok(tools) => json!({"jsonrpc":"2.0", "id":id, "result":{"tools":tools}}),
-            Err(error) => admin_error(id, error),
-        }
-    }
-
-    pub(super) async fn handle_hooks_list(
-        &self,
-        id: &serde_json::Value,
-        _request: &serde_json::Value,
-    ) -> serde_json::Value {
-        match self.ports.admin.hooks().await {
-            Ok(hooks) => json!({"jsonrpc":"2.0", "id":id, "result":{"hooks":hooks}}),
             Err(error) => admin_error(id, error),
         }
     }

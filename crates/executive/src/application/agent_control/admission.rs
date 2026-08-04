@@ -14,6 +14,22 @@ use fabric::{
 };
 use kernel::admission::InMemoryBudgetController;
 use parking_lot::Mutex;
+use sha2::{Digest, Sha256};
+
+pub(crate) fn agent_spawn_request_hash(
+    request: &AgentSpawnRequest,
+) -> Result<String, AgentControlError> {
+    request.validate()?;
+    let encoded = serde_json::to_vec(&serde_json::json!({
+        "request": request,
+        "cognitive_binding": &request.cognitive_binding,
+    }))
+    .map_err(|error| AgentControlError {
+        kind: AgentControlErrorKind::Persistence,
+        message: error.to_string(),
+    })?;
+    Ok(format!("{:x}", Sha256::digest(encoded)))
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AgentStorageRequest {
@@ -60,6 +76,41 @@ impl<'a> AgentAdmissionRequest<'a> {
             storage,
         }
     }
+}
+
+pub(super) fn constrain_cognitive_workspace(
+    request: &mut AgentSpawnRequest,
+) -> Result<(), AgentControlError> {
+    let Some(binding) = request.cognitive_binding.as_ref() else {
+        return Ok(());
+    };
+    let role = binding.role;
+    let scope = binding.workspace_scope.clone();
+    if role.can_write_workspace() && scope.is_empty() {
+        return Err(forbidden(
+            "writable cognitive role has an empty workspace scope",
+        ));
+    }
+    if !role.can_write_workspace() && !scope.is_empty() {
+        return Err(forbidden(
+            "read-only cognitive role received a writable workspace scope",
+        ));
+    }
+    let workspace = request
+        .trusted_workspace
+        .clone()
+        .ok_or_else(|| forbidden("cognitive Agent spawn has no trusted workspace authority"))?;
+    let effective_scope = if role.can_write_workspace() {
+        scope.as_slice()
+    } else {
+        &[]
+    };
+    request.trusted_workspace = Some(
+        workspace
+            .narrow_to_declared_paths(effective_scope)
+            .map_err(AgentControlError::invalid)?,
+    );
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -663,6 +714,13 @@ fn is_non_delegating_role(profile: &str) -> bool {
 fn capacity(message: impl Into<String>) -> AgentControlError {
     AgentControlError {
         kind: AgentControlErrorKind::Capacity,
+        message: message.into(),
+    }
+}
+
+fn forbidden(message: impl Into<String>) -> AgentControlError {
+    AgentControlError {
+        kind: AgentControlErrorKind::Forbidden,
         message: message.into(),
     }
 }

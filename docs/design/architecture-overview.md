@@ -9,9 +9,8 @@
 Aletheon 是 native-first、长期运行、受治理的 Agent 系统。它维护身份、认知、
 目标、经验与外部行动，但不修改 Linux 内核，也不把所有领域拆成服务。
 
-Canonical 宪法见
-`../arch/Aletheon_MacroKernel_Architecture_Final(2).md`；当前依赖审计见
-`../arch/CURRENT_ARCHITECTURE_AND_COUPLING_ANALYSIS.md`。
+当前架构边界由本文件、`config/architecture/` 门禁、
+`docs/arch/CORE_REFACTOR_COMPLETION_REPORT.md` 和实际 workspace 共同约束。
 
 ## 2. 运行结构
 
@@ -45,10 +44,10 @@ Executive -> Hardware (experimental; not production-wired)
 | `aletheon` | CLI、daemon、exec、TUI/ACP 顶层装配 |
 | `executive` | Turn/Session/Goal/Agent 编排、approval、最终验证与 settlement |
 | `kernel` | Operation、Process、Admission、Chronos、Space、Supervision |
-| `runtime` | 外部执行器 lifecycle、manifest、WorkOrder、event、receipt、selection |
+| `runtime` | 外部执行器 lifecycle、manifest、event、receipt、selection |
 | `cognit` | cognition、reasoning、planning、review、harness |
 | `corpus` | 工具、MCP、provider adapter 与受治理 capability execution |
-| `platform` | Host OS contract、selector 与 Linux/Windows/macOS backend |
+| `platform` | Host OS contract、selector 与 Linux backend（Android/macOS/Windows 未实现） |
 | `execd` | 独立进程中的受约束文件/进程副作用 |
 | `hardware` | 设备身份、租约、命令、遥测与 simulator；当前 experimental |
 | `fabric` | 跨领域协议、ID、envelope 与兼容基础设施 |
@@ -98,7 +97,7 @@ machine provider registry
 可以提供事实，模型输出不能反向覆盖 authority。
 
 `TurnEngine` 的权威接口位于
-`crates/executive/src/service/turn_engine.rs:14-22`。入口不得自行运行另一套 LLM
+`crates/executive/src/application/turn_engine.rs:14-22`。入口不得自行运行另一套 LLM
 loop。
 
 ## 5. Runtime、Platform 与 execd
@@ -123,16 +122,56 @@ verification 与 settlement 权威。
 
 ## 7. 当前未完成项
 
+### 7.1 通用 Governed Review 服务
+
+外部控制器通过现有的 authenticated user socket 提交有界证据审查，不获得工具、
+文件系统或领域适配器权限：
+
+```text
+review.submit
+  -> Fabric N/N-1 bounded job contract
+  -> Executive principal-scoped durable queue
+  -> shared InferencePort (tools = [])
+  -> allowlist/output/budget validation
+  -> fsync-backed terminal receipt
+  -> review.wait / status / cancel
+```
+
+Fabric 只拥有 wire-safe DTO；Executive 拥有幂等、执行、取消和终态结算；daemon RPC
+仅投影该 authority。`queued` 和 `running` 不是成功，调用方必须观察 terminal receipt。
+实现位于 `crates/fabric/src/types/governed_review.rs`、
+`crates/executive/src/application/governed_review/` 与
+`crates/executive/src/host/daemon/handler/rpc/rpc_review.rs`。生产验收使用官方 user
+socket 发起真实推理，并同时要求候选/安装/运行进程摘要一致且 systemd restart counter
+稳定。
+
 - MCP 执行归 Corpus，但配置仍从 Cognit 重导出：
   `crates/corpus/src/tools/mcp/config.rs:54-56`；
 - Platform selector 已接通 target 对应的原生 probe：`crates/platform/src/selector.rs:26-59`，完整 Host contract 仍在收敛；
-- Runtime selector 尚未统一所有真实外部执行路由；
-- machine-wide provider concurrency/cooldown 尚未统一；当前重试已遵循指数退避和
-  `Retry-After`，但跨 session、主 Agent 与 subagent 的请求协调仍需收敛到 machine core；
-- Pi RPC 已回收 `agent_end` 中的 terminal assistant text 与 usage；完整 diff/artifact
-  receipt 仍需继续完善：`crates/executive/src/adapters/runtime/pi_rpc.rs`；
-- Hardware 没有生产调用者；
-- Coding benchmark 尚未以真实 fixture/harness/receipt 落地。
+- Platform 的 `LinuxSandboxHost::apply` 仍是未接线的 host-contract stub，**不是**
+  governed command 的生产沙箱。安装态工具执行由 Corpus `SandboxExecutor` 选择
+  Bubblewrap/Process/Noop backend（`crates/corpus/src/security/sandbox/executor.rs:11-54`）；
+  coding runtime 则在 bootstrap 中只接受实际 probe 成功的 Bubblewrap namespace backend，
+  否则不注册（`crates/executive/src/host/daemon/bootstrap/request.rs:1056-1074`）。
+- Runtime selector 已选择 manifested `native-cognit` / `pi-rpc`，但兼容
+  `pi-coder`、Goal provider worker 与 package executable runtime 尚未全部进入同一
+  manifest/selection 路径：`crates/executive/src/host/daemon/bootstrap/request.rs:953-1103`；
+- machine-wide provider permit/cooldown 的 authority 位于 machine core：LLM 由
+  canonical factory 直接消费，user daemon 的 remote embedding 经 authenticated core
+  RPC 持有 socket-backed permit lease；health 也从 core RPC 读取权威 snapshot。当前工作树
+  已完成这条跨进程接线，剩余安装态并发/故障验收：
+  `crates/cognit/src/composition/inference_factory.rs:76-187`、
+  `crates/executive/src/host/core_rpc/server.rs:200-280`、
+  `crates/executive/src/host/daemon/bootstrap/request.rs:693-708`；
+- Pi RPC 已回收 `agent_end` 中的 terminal assistant text 与 usage，但其
+  `AgentResult.artifacts` 仍为空；legacy `pi-coder` 的 bounded diff artifact 不能替代
+  resident RPC receipt：`crates/executive/src/adapters/runtime/pi_rpc.rs:420-434`、
+  `crates/executive/src/adapters/runtime/pi.rs:657-703`；
+- Hardware 已由 production embodiment composition 调用：
+  `crates/executive/src/host/daemon/bootstrap/request.rs:823-850`；
+- Coding fixture/harness/receipt 与 deterministic/release gate 已落地；真实模型 workflow
+  仍需取得无 provider error 的连续安装态证据：`tests/coding/README.md`、
+  `scripts/libexec/aletheon/release-acceptance.sh`。
 
 ## 8. 架构纪律
 

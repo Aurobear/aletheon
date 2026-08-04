@@ -1,6 +1,6 @@
 //! Request-safe administrative use cases.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -75,7 +75,8 @@ pub struct TransientApprovalRequest {
     pub principal_id: fabric::PrincipalId,
     pub connection_id: fabric::ConnectionId,
     pub approval_id: String,
-    pub decision: String,
+    pub decision: fabric::protocol::client::TransientApprovalDecision,
+    pub scope_hint: Option<fabric::protocol::client::TransientApprovalScopeHint>,
 }
 
 pub use fabric::{ApprovalOwner, PendingApprovalKey, ThreadGrantKey};
@@ -84,6 +85,7 @@ struct PendingApprovalRecord {
     connection_id: fabric::ConnectionId,
     tool: String,
     respond: oneshot::Sender<ApprovalDecision>,
+    scope_subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
 }
 
 #[derive(Debug, Error)]
@@ -99,6 +101,7 @@ pub struct ResolvedPendingApproval {
     pub owner: ApprovalOwner,
     pub tool: String,
     pub delivery: ApprovalDecisionDelivery,
+    pub scope_subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +116,23 @@ pub struct PendingApprovals {
 }
 
 impl PendingApprovals {
+    pub async fn scope_subject_authenticated(
+        &self,
+        principal_id: &fabric::PrincipalId,
+        connection_id: &fabric::ConnectionId,
+        approval_id: &str,
+    ) -> Result<Option<fabric::protocol::client::TransientApprovalScopeSubject>, PendingApprovalError>
+    {
+        let pending = self.inner.lock().await;
+        let (key, record) = pending
+            .iter()
+            .find(|(key, _)| key.approval_id == approval_id)
+            .ok_or(PendingApprovalError::NotFound)?;
+        if &key.owner.principal_id != principal_id || &record.connection_id != connection_id {
+            return Err(PendingApprovalError::WrongOwner);
+        }
+        Ok(record.scope_subject.clone())
+    }
     pub async fn insert(
         &self,
         owner: ApprovalOwner,
@@ -120,6 +140,20 @@ impl PendingApprovals {
         call_id: String,
         tool: String,
         connection_id: fabric::ConnectionId,
+        respond: oneshot::Sender<ApprovalDecision>,
+    ) -> String {
+        self.insert_scoped(owner, turn_id, call_id, tool, connection_id, None, respond)
+            .await
+    }
+
+    pub async fn insert_scoped(
+        &self,
+        owner: ApprovalOwner,
+        turn_id: fabric::TurnId,
+        call_id: String,
+        tool: String,
+        connection_id: fabric::ConnectionId,
+        scope_subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
         respond: oneshot::Sender<ApprovalDecision>,
     ) -> String {
         let approval_id = uuid::Uuid::new_v4().to_string();
@@ -134,6 +168,7 @@ impl PendingApprovals {
                 connection_id,
                 tool,
                 respond,
+                scope_subject,
             },
         );
         approval_id
@@ -173,6 +208,7 @@ impl PendingApprovals {
             owner: key.owner,
             tool: record.tool,
             delivery,
+            scope_subject: record.scope_subject,
         })
     }
 
@@ -231,14 +267,33 @@ impl PendingApprovals {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ScopedApprovalCache {
-    inner: Arc<Mutex<HashSet<ThreadGrantKey>>>,
+    inner: Arc<Mutex<rusqlite::Connection>>,
 }
 
 impl ScopedApprovalCache {
+    pub fn open(path: &std::path::Path) -> anyhow::Result<Self> {
+        let connection = rusqlite::Connection::open(path)?;
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS transient_session_grants (
+               principal_id TEXT NOT NULL, thread_id TEXT NOT NULL, tool TEXT NOT NULL,
+               path_root TEXT NOT NULL DEFAULT '', subject_version INTEGER NOT NULL DEFAULT 0,
+               subject_sha256 TEXT NOT NULL DEFAULT '', expires_at_ms INTEGER NOT NULL,
+               PRIMARY KEY(principal_id,thread_id,tool,path_root,subject_version,subject_sha256)
+             );",
+        )?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(connection)),
+        })
+    }
+
     pub async fn clear(&self) {
-        self.inner.lock().await.clear();
+        let _ = self
+            .inner
+            .lock()
+            .await
+            .execute("DELETE FROM transient_session_grants", []);
     }
 
     pub async fn allow_for_thread(
@@ -247,10 +302,16 @@ impl ScopedApprovalCache {
         thread_id: fabric::ThreadId,
         tool: impl Into<String>,
     ) {
-        self.inner.lock().await.insert(ThreadGrantKey {
-            owner: ApprovalOwner::new(principal_id, thread_id),
-            tool: tool.into(),
-        });
+        let tool = tool.into();
+        let expires_at_ms = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_add(24 * 60 * 60 * 1_000);
+        let _ = self.inner.lock().await.execute(
+            "INSERT OR REPLACE INTO transient_session_grants
+             (principal_id,thread_id,tool,path_root,subject_version,subject_sha256,expires_at_ms)
+             VALUES (?1,?2,?3,'',0,'',?4)",
+            rusqlite::params![principal_id.0, thread_id.0, tool, expires_at_ms],
+        );
     }
 
     pub async fn is_allowed(
@@ -259,10 +320,86 @@ impl ScopedApprovalCache {
         thread_id: &fabric::ThreadId,
         tool: &str,
     ) -> bool {
-        self.inner.lock().await.contains(&ThreadGrantKey {
-            owner: ApprovalOwner::new(principal_id.clone(), thread_id.clone()),
-            tool: tool.to_owned(),
+        let now = chrono::Utc::now().timestamp_millis();
+        self.inner
+            .lock()
+            .await
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM transient_session_grants
+             WHERE principal_id=?1 AND thread_id=?2 AND tool=?3 AND path_root=''
+               AND expires_at_ms>?4",
+                rusqlite::params![principal_id.0, thread_id.0, tool, now],
+                |row| row.get(0),
+            )
+            .unwrap_or(false)
+    }
+
+    pub async fn allow_path_for_thread(
+        &self,
+        principal_id: fabric::PrincipalId,
+        thread_id: fabric::ThreadId,
+        tool: &str,
+        hint: &fabric::protocol::client::TransientApprovalScopeHint,
+    ) -> anyhow::Result<()> {
+        let expires_at_ms = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_add(24 * 60 * 60 * 1_000);
+        self.inner.lock().await.execute(
+            "INSERT OR REPLACE INTO transient_session_grants
+             (principal_id,thread_id,tool,path_root,subject_version,subject_sha256,expires_at_ms)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params![
+                principal_id.0,
+                thread_id.0,
+                tool,
+                hint.path_root.to_string_lossy(),
+                hint.subject_version,
+                hint.subject_sha256,
+                expires_at_ms
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub async fn is_path_allowed(
+        &self,
+        principal_id: &fabric::PrincipalId,
+        thread_id: &fabric::ThreadId,
+        tool: &str,
+        subject: &fabric::protocol::client::TransientApprovalScopeSubject,
+    ) -> bool {
+        let now = chrono::Utc::now().timestamp_millis();
+        let connection = self.inner.lock().await;
+        let mut statement = match connection.prepare(
+            "SELECT path_root FROM transient_session_grants WHERE principal_id=?1 AND thread_id=?2
+             AND tool=?3 AND path_root<>'' AND subject_version=?4 AND subject_sha256=?5 AND expires_at_ms>?6",
+        ) { Ok(value) => value, Err(_) => return false };
+        let roots = match statement.query_map(
+            rusqlite::params![
+                principal_id.0,
+                thread_id.0,
+                tool,
+                subject.subject_version,
+                subject.subject_sha256,
+                now
+            ],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(rows) => rows.filter_map(Result::ok).collect::<Vec<_>>(),
+            Err(_) => return false,
+        };
+        roots.iter().any(|root| {
+            subject
+                .path_candidates
+                .iter()
+                .any(|candidate| candidate == std::path::Path::new(root))
         })
+    }
+}
+
+impl Default for ScopedApprovalCache {
+    fn default() -> Self {
+        Self::open(std::path::Path::new(":memory:")).expect("in-memory transient approval database")
     }
 }
 
@@ -457,11 +594,23 @@ pub type RuntimeShutdownFuture =
 
 pub struct AdminService {
     resources: AdminResources,
+    extension_runtime: Option<super::extension_snapshot::ExtensionRuntimeView>,
 }
 
 impl AdminService {
     pub fn new(resources: AdminResources) -> Self {
-        Self { resources }
+        Self {
+            resources,
+            extension_runtime: None,
+        }
+    }
+
+    pub fn with_extension_runtime(
+        mut self,
+        runtime: super::extension_snapshot::ExtensionRuntimeView,
+    ) -> Self {
+        self.extension_runtime = Some(runtime);
+        self
     }
 }
 
@@ -469,7 +618,11 @@ fn authorize_agent_profile_switch(
     current: &fabric::AgentProfile,
     requested: &fabric::AgentProfile,
 ) -> Result<(), AdminServiceError> {
-    if current.id == requested.id || current.allows_child(requested) {
+    // A foreground profile switch is not child delegation: the operator is
+    // replacing the active authority, rather than granting a child a subset of
+    // the current profile's tools.  Reusing `allows_child` here rejects a
+    // strictly safer profile whenever it exposes a different read-only tool.
+    if current.id == requested.id || requested.risk_tier <= current.risk_tier {
         return Ok(());
     }
     Err(AdminServiceError::Operation(format!(
@@ -532,10 +685,41 @@ impl AdminUseCases for AdminService {
         &self,
         request: TransientApprovalRequest,
     ) -> Result<bool, AdminServiceError> {
-        let decision = match request.decision.as_str() {
-            "once" => ApprovalDecision::Approve,
-            "always" => ApprovalDecision::ApproveForSession,
-            _ => ApprovalDecision::Deny,
+        let scope_subject = self
+            .resources
+            .pending_approvals
+            .scope_subject_authenticated(
+                &request.principal_id,
+                &request.connection_id,
+                &request.approval_id,
+            )
+            .await
+            .map_err(|error| AdminServiceError::Operation(error.to_string()))?;
+        let decision = match request.decision {
+            fabric::protocol::client::TransientApprovalDecision::Approve => {
+                ApprovalDecision::Approve
+            }
+            fabric::protocol::client::TransientApprovalDecision::ApproveForSession => {
+                ApprovalDecision::ApproveForSession
+            }
+            fabric::protocol::client::TransientApprovalDecision::Deny => ApprovalDecision::Deny,
+            fabric::protocol::client::TransientApprovalDecision::ApprovePathForSession => {
+                let subject = scope_subject.as_ref().ok_or_else(|| {
+                    AdminServiceError::Operation("scoped approval is not advertised".into())
+                })?;
+                let hint = request.scope_hint.as_ref().ok_or_else(|| {
+                    AdminServiceError::Operation("scoped approval hint is required".into())
+                })?;
+                if hint.subject_version != subject.subject_version
+                    || hint.subject_sha256 != subject.subject_sha256
+                    || !subject.path_candidates.contains(&hint.path_root)
+                {
+                    return Err(AdminServiceError::Operation(
+                        "scoped approval hint does not match pending subject".into(),
+                    ));
+                }
+                ApprovalDecision::ApprovePathForSession
+            }
         };
         let resolved = self
             .resources
@@ -560,6 +744,17 @@ impl AdminUseCases for AdminService {
                     resolved.tool,
                 )
                 .await;
+        } else if decision == ApprovalDecision::ApprovePathForSession {
+            self.resources
+                .session_approvals
+                .allow_path_for_thread(
+                    resolved.owner.principal_id,
+                    resolved.owner.thread_id,
+                    &resolved.tool,
+                    request.scope_hint.as_ref().expect("validated scope hint"),
+                )
+                .await
+                .map_err(|error| AdminServiceError::Operation(error.to_string()))?;
         }
         Ok(true)
     }
@@ -608,7 +803,24 @@ impl AdminUseCases for AdminService {
     }
 
     async fn list_skills(&self) -> Vec<SkillDescriptor> {
-        self.resources.skills.list().await
+        let mut skills = self.resources.skills.list().await;
+        if let Some(runtime) = &self.extension_runtime {
+            let snapshot = runtime.load().await;
+            skills.extend(snapshot.skills.iter().filter_map(|skill| {
+                let package_asset = skill.source.strip_prefix("package:")?;
+                let (package_id, _) = package_asset.rsplit_once(':')?;
+                Some(SkillDescriptor {
+                    id: format!("{package_id}:{}", skill.name),
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                    enabled: true,
+                    extension_id: package_id.to_owned(),
+                })
+            }));
+        }
+        skills.sort_by(|left, right| left.id.cmp(&right.id));
+        skills.truncate(MAX_ADMIN_ITEMS);
+        skills
     }
 
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError> {
@@ -792,6 +1004,17 @@ mod profile_switch_tests {
         let safe = profile("safe", RiskTier::ReadOnly, &["file_read"]);
         let admin = profile("admin", RiskTier::Unrestricted, &["file_read", "bash_exec"]);
         assert!(authorize_agent_profile_switch(&admin, &safe).is_ok());
+    }
+
+    #[test]
+    fn sandboxed_to_distinct_read_only_profile_is_allowed() {
+        let general = profile("general", RiskTier::Sandboxed, &["file_read", "bash_exec"]);
+        let reviewer = profile(
+            "reviewer",
+            RiskTier::ReadOnly,
+            &["file_read", "connector_search"],
+        );
+        assert!(authorize_agent_profile_switch(&general, &reviewer).is_ok());
     }
 
     #[test]

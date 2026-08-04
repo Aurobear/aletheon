@@ -146,9 +146,17 @@ pub struct ExecEntry {
     pub is_error: bool,
     pub finished: bool,
     pub expanded: bool,
+    /// Whether keyboard activity navigation currently targets this entry.
+    pub selected: bool,
+    /// Structured filesystem delta from apply_patch (None for other tools).
+    pub patch_delta: Option<fabric::PatchDelta>,
 }
 
 impl ExecEntry {
+    fn is_policy_guidance(&self) -> bool {
+        self.is_error && self.output.starts_with("Policy guidance:")
+    }
+
     pub fn new(call_id: String, tool: String, args: String) -> Self {
         Self {
             call_id,
@@ -158,6 +166,8 @@ impl ExecEntry {
             is_error: false,
             finished: false,
             expanded: false,
+            selected: false,
+            patch_delta: None,
         }
     }
 
@@ -165,6 +175,22 @@ impl ExecEntry {
         self.output = output.to_string();
         self.is_error = is_error;
         self.finished = true;
+    }
+
+    pub fn finish_with_delta(
+        &mut self,
+        output: &str,
+        is_error: bool,
+        patch_delta: Option<fabric::PatchDelta>,
+    ) {
+        self.output = output.to_string();
+        self.is_error = is_error;
+        self.finished = true;
+        self.patch_delta = patch_delta;
+    }
+
+    pub fn set_delta(&mut self, delta: fabric::PatchDelta) {
+        self.patch_delta = Some(delta);
     }
 
     pub fn push_progress(&mut self, progress: &str) {
@@ -186,7 +212,10 @@ impl ExecEntry {
     pub fn render_lines(&self, frame_counter: u64, _width: u16) -> Vec<Line<'static>> {
         const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-        let dot_color = if self.is_error {
+        let policy_guidance = self.is_policy_guidance();
+        let dot_color = if policy_guidance {
+            Color::Yellow
+        } else if self.is_error {
             Color::Red
         } else if !self.finished {
             Color::Yellow
@@ -196,16 +225,38 @@ impl ExecEntry {
 
         let status = if !self.finished {
             format!(" {}", SPINNER[frame_counter as usize % SPINNER.len()])
+        } else if policy_guidance {
+            " ⚠".to_string()
         } else if self.is_error {
             " ✗".to_string()
         } else {
             String::new()
         };
 
-        let header = format!("{}{}", tool_action(&self.tool, &self.args), status);
+        let terminal = if self.finished && !self.is_error {
+            " ✓"
+        } else {
+            ""
+        };
+        let header = format!(
+            "{}{}{}",
+            tool_action(&self.tool, &self.args),
+            status,
+            terminal
+        );
+        let marker = if self.selected { "› " } else { "• " };
         let mut lines = vec![Line::from(vec![
-            Span::styled("• ", Style::default().fg(dot_color)),
-            Span::raw(header),
+            Span::styled(marker, Style::default().fg(dot_color)),
+            Span::styled(
+                header,
+                if self.selected {
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ),
         ])];
 
         if self.expanded && !self.output.is_empty() {
@@ -229,6 +280,52 @@ impl ExecEntry {
                         Style::default().fg(Color::DarkGray),
                     ),
                 ]));
+            }
+            // Render structured patch delta file list when present.
+            if let Some(ref delta) = self.patch_delta {
+                let changed = &delta.files_changed;
+                if !changed.is_empty() {
+                    lines.push(Line::from(vec![Span::styled(
+                        "  ├─ Files changed:",
+                        Style::default().fg(Color::DarkGray),
+                    )]));
+                    for fc in changed.iter().take(20) {
+                        let icon = match fc.change_type.as_str() {
+                            "created" => "+",
+                            "deleted" => "-",
+                            _ => "~",
+                        };
+                        let summary = format!(
+                            "    {icon} {} ({} hunks, {} → {} bytes)",
+                            fc.path, fc.hunks_applied, fc.bytes_before, fc.bytes_after,
+                        );
+                        lines.push(Line::from(vec![
+                            Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(summary, Style::default().fg(Color::Green)),
+                        ]));
+                    }
+                    if changed.len() > 20 {
+                        lines.push(Line::from(vec![
+                            Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                format!("    ... and {} more files", changed.len() - 20),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                        ]));
+                    }
+                }
+                let failed = &delta.failed;
+                if !failed.is_empty() {
+                    for f in failed {
+                        lines.push(Line::from(vec![
+                            Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                format!("    ✗ {}: {}", f.path, f.error),
+                                Style::default().fg(Color::Red),
+                            ),
+                        ]));
+                    }
+                }
             }
         } else if self.finished && self.is_error && !self.output.is_empty() {
             for line in self.output.lines().take(3) {
@@ -305,6 +402,7 @@ fn truncate_args(args: &str, max: usize) -> String {
 use ratatui::style::Color;
 
 /// A single entry in the chat history — either a text message or a tool execution.
+#[allow(clippy::large_enum_variant)]
 pub enum ChatEntry {
     Text(ChatMessage),
     Exec(ExecEntry),
@@ -329,6 +427,7 @@ pub struct ChatWidget {
     pub scroll_offset: u16,
     /// Whether the user has manually scrolled away from the bottom.
     pub user_scrolled: bool,
+    selected_exec_id: Option<String>,
     render_width: u16,
     caps: TermCaps,
     revision: Cell<u64>,
@@ -349,6 +448,7 @@ impl ChatWidget {
             entries: Vec::new(),
             scroll_offset: 0,
             user_scrolled: false,
+            selected_exec_id: None,
             render_width: 80,
             caps,
             revision: Cell::new(0),
@@ -437,6 +537,29 @@ impl ChatWidget {
         }
     }
 
+    /// Update execution result with optional structured patch delta.
+    pub fn update_exec_with_delta(
+        &mut self,
+        call_id: &str,
+        output: &str,
+        is_error: bool,
+        patch_delta: Option<fabric::PatchDelta>,
+    ) {
+        let mut changed = false;
+        for entry in self.entries.iter_mut() {
+            if let ChatEntry::Exec(ref mut ee) = entry {
+                if ee.call_id == call_id {
+                    ee.finish_with_delta(output, is_error, patch_delta);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if changed {
+            self.invalidate_layout();
+        }
+    }
+
     /// Append observable progress while keeping the execution entry active.
     pub fn update_exec_progress(&mut self, call_id: &str, progress: &str) {
         let mut changed = false;
@@ -487,6 +610,66 @@ impl ChatWidget {
             self.invalidate_layout();
         }
         changed
+    }
+
+    pub fn selected_exec_id(&self) -> Option<&str> {
+        self.selected_exec_id.as_deref()
+    }
+
+    pub fn selected_exec(&self) -> Option<&ExecEntry> {
+        let selected = self.selected_exec_id.as_deref()?;
+        self.entries.iter().find_map(|entry| match entry {
+            ChatEntry::Exec(exec) if exec.call_id == selected => Some(exec),
+            _ => None,
+        })
+    }
+
+    pub fn toggle_selected_exec(&mut self) -> bool {
+        let Some(call_id) = self.selected_exec_id.clone() else {
+            return false;
+        };
+        self.toggle_exec(&call_id)
+    }
+
+    pub fn select_next_exec(&mut self) -> bool {
+        self.move_exec_selection(1)
+    }
+
+    pub fn select_previous_exec(&mut self) -> bool {
+        self.move_exec_selection(-1)
+    }
+
+    fn move_exec_selection(&mut self, direction: isize) -> bool {
+        let ids = self
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ChatEntry::Exec(exec) => Some(exec.call_id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return false;
+        }
+        let current = self
+            .selected_exec_id
+            .as_ref()
+            .and_then(|id| ids.iter().position(|candidate| candidate == id));
+        let next = match (current, direction.is_positive()) {
+            (Some(index), true) => (index + 1).min(ids.len() - 1),
+            (Some(index), false) => index.saturating_sub(1),
+            (None, true) => 0,
+            (None, false) => ids.len() - 1,
+        };
+        let selected = ids[next].clone();
+        for entry in &mut self.entries {
+            if let ChatEntry::Exec(exec) = entry {
+                exec.selected = exec.call_id == selected;
+            }
+        }
+        self.selected_exec_id = Some(selected);
+        self.invalidate_layout();
+        true
     }
 
     /// Count unfinished exec entries (still running).
@@ -1110,7 +1293,7 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect::<Vec<_>>()
             .join("");
-        assert_eq!(header2, "• Ran ls");
+        assert_eq!(header2, "• Ran ls ✓");
     }
 
     #[test]
@@ -1144,7 +1327,7 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
 
-        assert_eq!(text, "• Searched google_gmail_search");
+        assert_eq!(text, "• Searched google_gmail_search ✓");
         assert!(!text.contains(&"x".repeat(100)));
     }
 
@@ -1164,6 +1347,28 @@ mod tests {
             .collect::<String>();
         assert!(text.contains("• Ran git status ✗"));
         assert!(text.contains("fatal: repository unavailable"));
+    }
+
+    #[test]
+    fn test_exec_entry_renders_policy_rejection_as_guidance() {
+        let mut entry = ExecEntry::new(
+            "call_glob".to_string(),
+            "glob".to_string(),
+            r#"{"pattern":"**/*"}"#.to_string(),
+        );
+        entry.finish(
+            "Policy guidance: unqualified recursive inventory was not executed.",
+            true,
+        );
+        let text = entry
+            .render_lines(0, 80)
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(text.contains("⚠"));
+        assert!(!text.contains('✗'));
+        assert!(entry.is_error, "policy rejection remains a tool failure");
     }
 
     #[test]
@@ -1233,6 +1438,27 @@ mod tests {
         widget.add_exec("c1".into(), "file_read".into(), "{}".into());
         assert_eq!(widget.entries.len(), 1);
         assert!(matches!(widget.entries[0], ChatEntry::Exec(_)));
+    }
+
+    #[test]
+    fn tool_activity_navigation_selects_and_expands_any_entry() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.add_exec("c1".into(), "glob".into(), r#"{"patterns":["a"]}"#.into());
+        widget.add_exec(
+            "c2".into(),
+            "exec_command".into(),
+            r#"{"command":"pwd"}"#.into(),
+        );
+
+        assert!(widget.select_next_exec());
+        assert_eq!(widget.selected_exec_id(), Some("c1"));
+        assert!(widget.select_next_exec());
+        assert_eq!(widget.selected_exec_id(), Some("c2"));
+        assert!(widget.toggle_selected_exec());
+        assert!(widget.selected_exec().unwrap().expanded);
+        assert!(widget.select_previous_exec());
+        assert_eq!(widget.selected_exec_id(), Some("c1"));
     }
 
     #[test]

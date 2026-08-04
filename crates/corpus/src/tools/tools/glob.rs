@@ -20,7 +20,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Discover an unknown path with bounded, specific globs after known files have been read. Do not use glob to begin a repository overview, and do not inventory language or file extensions. Use `patterns` only to batch a small set of specific missing paths. Avoid unqualified recursive inventory such as '**/*'. Returns deduplicated relative paths from the root directory."
+        "Discover a small set of specific unknown paths after known files have been read. NEVER submit recursive patterns or wildcard directory scopes for a repository overview: those requests are redirected without execution. Do not use glob to begin an overview or inventory languages, extensions, crates, source trees, tests, documentation, or scripts. After repo_inspect, use file_read with exact_follow_up_paths or exact paths identified in returned content. Use `patterns` only for a small set of exact candidate paths whose existence is unknown. Returns deduplicated relative paths from the root directory."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -29,13 +29,13 @@ impl Tool for GlobTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Glob pattern to match (e.g. '**/*.rs', '*.txt', 'src/**/*.py')"
+                    "description": "One specific unknown-path probe. During repository overview use an exact candidate path such as 'docs/architecture.md'; recursive patterns and wildcard directory scopes are forbidden."
                 },
                 "patterns": {
                     "type": "array",
                     "items": {"type": "string"},
                     "maxItems": 20,
-                    "description": "Up to 20 specific missing-path patterns to evaluate together; not for extension inventories."
+                    "description": "Up to 20 exact candidate paths to probe together; never use this for crate, source, test, documentation, script, language, or extension inventories."
                 },
                 "root": {
                     "type": "string",
@@ -83,8 +83,29 @@ impl Tool for GlobTool {
             .find(|pattern| matches!(pattern.trim(), "**" | "**/*"))
         {
             return ToolResult {
-                content: format!("Error: unqualified recursive inventory '{pattern}' is too broad. Read known entry files first, then use scoped patterns such as 'crates/*/Cargo.toml' or 'crates/executive/src/**/*.rs'."),
+                content: format!("Policy guidance: unqualified recursive inventory '{pattern}' was not executed. Read known entry files first, then use exact paths returned by repo_inspect or identified in returned content."),
                 is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                    patch_delta: None,
+                },
+            };
+        }
+        let redirected = patterns
+            .iter()
+            .filter(|pattern| super::overview_guard::broad_pattern(pattern))
+            .cloned()
+            .collect::<Vec<_>>();
+        if super::overview_guard::active(ctx) && !redirected.is_empty() {
+            return ToolResult {
+                content: json!({
+                    "overview_policy_redirect": true,
+                    "not_executed": redirected,
+                    "guidance": "Read exact paths returned by repo_inspect or identified in returned content. Label evidence not inspected in this turn as unverified."
+                })
+                .to_string(),
+                is_error: false,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
@@ -452,7 +473,8 @@ mod tests {
             .await;
 
         assert!(result.is_error);
-        assert!(result.content.contains("too broad"));
+        assert!(result.content.starts_with("Policy guidance:"));
+        assert!(result.content.contains("was not executed"));
     }
 
     #[tokio::test]

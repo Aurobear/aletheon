@@ -27,6 +27,9 @@ fn request() -> TurnRequest {
         input: "test facade".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 
@@ -38,6 +41,7 @@ fn dependencies(cancel: CancellationToken) -> CognitiveSessionDependencies {
         batch_planner: None,
         evicted_callback: None,
         verifier: None,
+        grounded_outcome_sink: None,
     }
 }
 

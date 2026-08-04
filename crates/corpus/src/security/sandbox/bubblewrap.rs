@@ -254,7 +254,10 @@ impl SandboxBackend for BubblewrapBackend {
             filesystem_isolation: true,
             network_isolation: true,
             resource_limits: true,
-            seccomp_filter: true,
+            // bwrap requires an already-open BPF program FD for --seccomp.
+            // Until this backend installs and passes that FD, advertising
+            // seccomp would be a false security claim.
+            seccomp_filter: false,
             limitations: vec![
                 "Requires user namespace support".into(),
                 "Some paths may not be accessible in sandbox".into(),
@@ -390,6 +393,15 @@ mod tests {
             ["/opt/pi/bin/pi", "--task", "literal;not-shell"]
         );
         assert!(!wrapped.args.iter().any(|arg| arg == "-c"));
+    }
+
+    #[test]
+    fn capabilities_do_not_claim_uninstalled_seccomp_filter() {
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        assert!(!backend.capabilities().seccomp_filter);
     }
 
     #[test]

@@ -1,13 +1,12 @@
 use anyhow::Result;
 use fabric::Clock;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::debug;
+
+use crate::tools::artifact::{ArtifactRef, ArtifactStore};
 
 use super::config::OutputConfig;
 use super::truncation::truncate_head_tail;
-
-static OVERFLOW_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub enum ProcessedOutput {
@@ -18,6 +17,7 @@ pub enum ProcessedOutput {
     Overflow {
         summary: String,
         overflow_path: PathBuf,
+        artifact: ArtifactRef,
         original_bytes: usize,
         total_chars: usize,
     },
@@ -65,28 +65,15 @@ pub async fn process_result(
         });
     }
 
-    // Overflow to file
+    // Overflow to a content-addressed artifact. The stable digest reference is
+    // reconstructable after process restart and can be paged by artifact_read.
     tokio::fs::create_dir_all(&config.overflow_dir).await?;
     if let Err(error) = cleanup_overflow_dir(config, clock).await {
         tracing::warn!(%error, "tool output overflow cleanup failed");
     }
-    let filename = format!(
-        "tool_output_{}_{}_{}_{}.txt",
-        tool_name,
-        std::process::id(),
-        clock.wall_now().0,
-        OVERFLOW_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    );
-    let path = config.overflow_dir.join(&filename);
-    let mut options = tokio::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-    let mut file = options.open(&path).await?;
-    use tokio::io::AsyncWriteExt;
-    file.write_all(content.as_bytes()).await?;
+    let store = ArtifactStore::new(config.overflow_dir.join("artifacts"));
+    let artifact = store.store(content.as_bytes(), "text/plain; charset=utf-8")?;
+    let path = store.root().join(&artifact.id);
 
     debug!(
         tool = tool_name,
@@ -97,15 +84,16 @@ pub async fn process_result(
 
     let truncated = truncate_head_tail(content, &config.truncation);
     let summary = format!(
-        "{}\n[Full output: {} chars, saved to {}]",
+        "{}\n[Full output: {} chars; artifact_ref: {}; retrieve with artifact_read]",
         truncated.content,
         content.len(),
-        path.display()
+        artifact.uri()
     );
 
     Ok(ProcessedOutput::Overflow {
         summary,
         overflow_path: path,
+        artifact,
         original_bytes: content.len(),
         total_chars: content.chars().count(),
     })
@@ -123,6 +111,9 @@ pub async fn cleanup_overflow_dir(config: &OutputConfig, clock: &dyn Clock) -> R
     };
     while let Some(entry) = entries.next_entry().await? {
         if let Ok(metadata) = entry.metadata().await {
+            if metadata.is_dir() {
+                continue;
+            }
             if let Ok(modified) = metadata.modified() {
                 let modified_dt: chrono::DateTime<chrono::Utc> = modified.into();
                 if modified_dt < cutoff {

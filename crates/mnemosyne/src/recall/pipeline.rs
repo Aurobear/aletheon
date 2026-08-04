@@ -32,6 +32,10 @@ impl RecallPreFilter {
                 .as_ref()
                 .map(|id| MemoryScope::Principal(id.clone())),
             self.ancestry
+                .workspace_id
+                .as_ref()
+                .map(|id| MemoryScope::Workspace(id.clone())),
+            self.ancestry
                 .session_id
                 .as_ref()
                 .map(|id| MemoryScope::Session(id.clone())),
@@ -238,6 +242,8 @@ pub enum DegradedSource {
     NoEmbeddingConfig,
     EmbeddingEndpointUntrusted,
     EmbeddingTimeout,
+    EmbeddingProviderUnavailable,
+    VectorStoreError,
     VectorIndexStale,
     FtsDbError,
 }
@@ -248,6 +254,8 @@ impl DegradedSource {
             Self::NoEmbeddingConfig => "no_embedding_config",
             Self::EmbeddingEndpointUntrusted => "embedding_endpoint_untrusted",
             Self::EmbeddingTimeout => "embedding_timeout",
+            Self::EmbeddingProviderUnavailable => "embedding_provider_unavailable",
+            Self::VectorStoreError => "vector_store_error",
             Self::VectorIndexStale => "vector_index_stale",
             Self::FtsDbError => "fts_db_error",
         }
@@ -352,13 +360,14 @@ pub(crate) async fn hybrid_recall_with_metrics(
     let bundle = params.resolve();
     let predicate = pre.to_scope_predicate();
     let top_k = bundle.top_k.min(request.max_items).max(1);
-    let mut ranked = Vec::new();
+    let mut lexical_ranked = Vec::new();
+    let mut vector_ranked = Vec::new();
     let mut degraded = Vec::new();
 
     if bundle.fts_enabled {
         match backends.fts {
             Some(fts) => match fts.search(request, &predicate, top_k).await {
-                Ok(outcome) => ranked.extend(outcome.items),
+                Ok(outcome) => lexical_ranked.extend(outcome.items),
                 Err(_) => degraded.push(DegradedSource::FtsDbError),
             },
             None => degraded.push(DegradedSource::FtsDbError),
@@ -376,22 +385,41 @@ pub(crate) async fn hybrid_recall_with_metrics(
                     if outcome.index_stale {
                         degraded.push(DegradedSource::VectorIndexStale);
                     }
-                    ranked.extend(outcome.items);
+                    vector_ranked.extend(outcome.items);
                 }
-                Err(_) => degraded.push(DegradedSource::EmbeddingTimeout),
+                Err(error) => {
+                    let adapter = error
+                        .chain()
+                        .find_map(|source| source.downcast_ref::<crate::EmbeddingAdapterError>());
+                    degraded.push(match adapter {
+                        Some(crate::EmbeddingAdapterError::EndpointUntrusted) => {
+                            DegradedSource::EmbeddingEndpointUntrusted
+                        }
+                        Some(crate::EmbeddingAdapterError::Timeout) => {
+                            DegradedSource::EmbeddingTimeout
+                        }
+                        Some(crate::EmbeddingAdapterError::ProviderUnavailable) => {
+                            DegradedSource::EmbeddingProviderUnavailable
+                        }
+                        None => DegradedSource::VectorStoreError,
+                    });
+                }
             }
         }
     }
 
     // Stable total ordering makes identical input/index snapshots repeatable.
-    let candidates_before_governance = ranked.len();
-    ranked.retain(|candidate| predicate.allows(&candidate.item));
-    let excluded = candidates_before_governance.saturating_sub(ranked.len());
+    let candidates_before_governance = lexical_ranked.len() + vector_ranked.len();
+    lexical_ranked.retain(|candidate| predicate.allows(&candidate.item));
+    vector_ranked.retain(|candidate| predicate.allows(&candidate.item));
+    let candidates_after_governance = lexical_ranked.len() + vector_ranked.len();
+    let excluded = candidates_before_governance.saturating_sub(candidates_after_governance);
     if excluded != 0 {
         if let Some(metrics) = metrics {
             metrics.recall_prefilter_excluded(excluded);
         }
     }
+    let mut ranked = reciprocal_rank_fusion([lexical_ranked, vector_ranked]);
     ranked.sort_by(|left, right| {
         right
             .score
@@ -404,7 +432,6 @@ pub(crate) async fn hybrid_recall_with_metrics(
                     .cmp(&right.item.metadata.record_id)
             })
     });
-    ranked.dedup_by(|left, right| left.item.metadata.record_id == right.item.metadata.record_id);
 
     if bundle.use_mmr {
         ranked = deterministic_mmr(ranked, top_k);
@@ -452,6 +479,40 @@ pub(crate) async fn hybrid_recall_with_metrics(
     degraded.sort_by_key(|source| source.as_str());
     degraded.dedup();
     (items, degraded)
+}
+
+const RRF_K: f32 = 60.0;
+
+fn reciprocal_rank_fusion(
+    arms: impl IntoIterator<Item = Vec<RankedRecallItem>>,
+) -> Vec<RankedRecallItem> {
+    let mut fused: std::collections::BTreeMap<String, RankedRecallItem> =
+        std::collections::BTreeMap::new();
+    for mut arm in arms {
+        arm.sort_by(|left, right| {
+            right
+                .score
+                .partial_cmp(&left.score)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| {
+                    left.item
+                        .metadata
+                        .record_id
+                        .cmp(&right.item.metadata.record_id)
+                })
+        });
+        for (offset, mut candidate) in arm.into_iter().enumerate() {
+            let vote = 1.0 / (RRF_K + offset as f32 + 1.0);
+            let key = candidate.item.metadata.record_id.clone();
+            if let Some(existing) = fused.get_mut(&key) {
+                existing.score += vote;
+            } else {
+                candidate.score = vote;
+                fused.insert(key, candidate);
+            }
+        }
+    }
+    fused.into_values().collect()
 }
 
 /// Deterministic MMR with a fixed lambda of 0.7. Ties use record_id, matching
@@ -507,6 +568,7 @@ fn scope_key(scope: &MemoryScope) -> String {
     match scope {
         MemoryScope::Global => "global".to_string(),
         MemoryScope::Principal(id) => format!("principal:{id}"),
+        MemoryScope::Workspace(id) => format!("workspace:{id}"),
         MemoryScope::Session(id) => format!("session:{id}"),
         MemoryScope::Goal(id) => format!("goal:{id}"),
         MemoryScope::Agent(id) => format!("agent:{id}"),
@@ -568,6 +630,7 @@ mod tests {
 
     fn item(id: &str, scope: MemoryScope) -> RecallItem {
         RecallItem {
+            kind: crate::MemoryKind::SemanticFact,
             content: id.into(),
             metadata: crate::MemoryMetadata::local(id, id, Utc::now()),
             temporal_state: crate::TemporalState::Current,
@@ -586,6 +649,21 @@ mod tests {
             "outside",
             MemoryScope::Task("attacker-text-guessed-parent".into())
         )));
+    }
+
+    #[test]
+    fn rrf_is_scale_free_and_rewards_cross_arm_evidence() {
+        let ranked = |id: &str, score: f32| RankedRecallItem {
+            item: item(id, MemoryScope::Task("trusted-task".into())),
+            score,
+        };
+        let mut fused = reciprocal_rank_fusion([
+            vec![ranked("shared", 1_000.0), ranked("lexical", 999.0)],
+            vec![ranked("vector", 0.999), ranked("shared", -1.0)],
+        ]);
+        fused.sort_by(|left, right| right.score.partial_cmp(&left.score).unwrap());
+        assert_eq!(fused[0].item.content, "shared");
+        assert!(fused[0].score > fused[1].score);
     }
 
     #[tokio::test]
@@ -899,7 +977,10 @@ mod tests {
             &RecallRequest::bounded("session", "q"),
         )
         .await;
-        assert_eq!(items[0].content, "snapshot");
+        // Each arm contributes rank 1, so raw scores no longer decide the
+        // cross-arm order; the stable record-id tie break is authoritative.
+        assert_eq!(items[0].content, "lexical");
+        assert!(items.iter().any(|item| item.content == "snapshot"));
         assert!(items.iter().any(|item| item.content == "lexical"));
         assert_eq!(degraded, vec![DegradedSource::VectorIndexStale]);
     }

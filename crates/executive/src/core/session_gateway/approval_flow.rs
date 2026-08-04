@@ -48,7 +48,19 @@ impl SessionGateway {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize);
 
-        let session_id = fabric::SessionId(self.session_manager.lock().await.session_id.clone());
+        // An explicit identity is required for post-restart inspection because
+        // the diagnostic RPC connection is not the TUI connection that issued
+        // `/resume`. Keep the active gateway session as the compatibility
+        // default for existing callers.
+        let requested_session = params
+            .get("session_id")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned);
+        let session_id = fabric::SessionId(match requested_session {
+            Some(session_id) => session_id,
+            None => self.session_manager.lock().await.session_id.clone(),
+        });
         match self.canonical_sessions.items(&session_id).await {
             Ok(entries) => {
                 let mut rendered: Vec<Value> = entries
@@ -61,6 +73,14 @@ impl SessionGateway {
                             fabric::ItemPayload::ToolResult { .. } => "tool_result",
                             fabric::ItemPayload::ContextProjection { .. } => "context_projection",
                             fabric::ItemPayload::SystemNotice { .. } => "system_notice",
+                            fabric::ItemPayload::CapabilityReceipt { .. } => "capability_receipt",
+                            fabric::ItemPayload::EvaluationReceiptRef { .. } => {
+                                "evaluation_receipt_ref"
+                            }
+                            fabric::ItemPayload::ModelContextProjection { .. } => {
+                                "model_context_projection"
+                            }
+                            fabric::ItemPayload::InferenceReceipt { .. } => "inference_receipt",
                         };
                         if event_type.is_some_and(|expected| expected != event_type_str) {
                             return None;

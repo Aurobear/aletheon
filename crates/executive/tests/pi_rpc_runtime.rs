@@ -119,6 +119,8 @@ fn input_with_inbox(
         profile_id: AgentProfileId("pi".into()),
         runtime_id: RuntimeId("pi-rpc".into()),
         trusted_workspace: Some(policy.clone()),
+        delegator_authority: None,
+        cognitive_binding: None,
         task: format!("start-{label}"),
         context: AgentContextFork::None,
         broadcast_refs: vec![],

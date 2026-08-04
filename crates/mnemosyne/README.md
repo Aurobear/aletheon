@@ -1,31 +1,24 @@
-# memory
+# mnemosyne
 
-Memory subsystem for the Aletheon agent.
+Persistent memory services, recall, consolidation, retention, projections, and
+knowledge-graph operations for Aletheon.
 
-## Overview
+## Current ownership
 
-Provides persistent memory storage with multiple backends and memory operations.
+- `service/` and `fact_service` expose request-facing memory use cases.
+- `recall/`, `projection/`, and `retention/` implement governed retrieval and
+  lifecycle policies.
+- `runtime` exposes composition-only local SQLite-backed handles.
+- `supplemental` owns product-neutral remote-memory contracts and the durable
+  local outbox; the host supplies remote transport.
+- `cognitive-memory`, vector backends, and LLM synthesis are off-by-default or
+  experimental features, not installed-runtime defaults.
 
-## Architecture
+Concrete storage handles remain behind stable `MemoryService` and fact-use-case
+contracts so application code does not depend on adapters.
 
+## Validation
+
+```bash
+bash scripts/cargo-agent.sh test -p mnemosyne
 ```
-backends/
-├── episodic/    — Temporal events and reflections
-├── semantic/    — Knowledge with FTS5 + vector search
-├── procedural/  — Learned procedures and skills
-└── self_memory/ — Self-awareness records
-
-ops/
-├── router.rs        — Memory routing by type
-├── consolidation.rs — Memory consolidation
-├── decay.rs         — Memory decay/forgetting
-├── activation.rs    — Memory activation
-└── schema.rs        — Memory schema definitions
-```
-
-## Key Types
-
-- `EpisodicMemory` — Temporal event storage
-- `SemanticMemory` — Knowledge with vector search
-- `ProceduralMemory` — Skill storage
-- `MemoryRouter` — Routes memories to appropriate backends

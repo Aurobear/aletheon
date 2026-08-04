@@ -110,6 +110,25 @@ pub struct ExecHostOutcome {
     pub rendered: String,
 }
 
+fn render_exec_json(operation_id: OperationId, result: &fabric::TurnResult) -> serde_json::Value {
+    serde_json::json!({
+        "success": result.metrics.completed_normally,
+        "operation_id": operation_id.0,
+        "response": result.output,
+        "stop": match &result.stop {
+            fabric::TurnStop::Completed => "completed",
+            fabric::TurnStop::Blocked => "blocked",
+            fabric::TurnStop::Cancelled => "cancelled",
+            fabric::TurnStop::Failed => "failed",
+        },
+        "iterations": result.metrics.iterations,
+        "tool_calls_made": result.metrics.tool_calls_made,
+        "tool_errors": result.metrics.tool_errors,
+        "provider_retries": result.metrics.provider_retries,
+        "elapsed_ms": result.metrics.elapsed_ms,
+    })
+}
+
 pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
     let process_cwd = std::env::current_dir()
         .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
@@ -160,6 +179,9 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
                 input: request.prompt,
                 model_policy: (!request.model.is_empty()).then_some(request.model),
                 deadline: None,
+                requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -169,15 +191,12 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
         iterations = result.metrics.iterations,
         tool_calls = result.metrics.tool_calls_made,
         tool_errors = result.metrics.tool_errors,
+        provider_retries = result.metrics.provider_retries,
         success,
         "Execution complete"
     );
     let rendered = if request.json {
-        serde_json::to_string_pretty(&serde_json::json!({
-            "success": success, "operation_id": operation_id.0, "response": result.output, "iterations": result.metrics.iterations,
-            "tool_calls_made": result.metrics.tool_calls_made, "tool_errors": result.metrics.tool_errors,
-            "elapsed_ms": result.metrics.elapsed_ms,
-        }))?
+        serde_json::to_string_pretty(&render_exec_json(operation_id, &result))?
     } else {
         result.output
     };
@@ -186,7 +205,30 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
 
 #[cfg(test)]
 mod tests {
-    use super::select_daemon_socket;
+    use super::{render_exec_json, select_daemon_socket};
+
+    #[test]
+    fn exec_json_preserves_authoritative_stop_and_separate_metrics() {
+        let result = fabric::TurnResult {
+            output: "waiting for approval".into(),
+            stop: fabric::TurnStop::Blocked,
+            metrics: fabric::TurnMetrics {
+                iterations: 2,
+                tool_calls_made: 1,
+                tool_errors: 0,
+                provider_retries: 3,
+                elapsed_ms: 40,
+                completed_normally: false,
+            },
+        };
+
+        let value = render_exec_json(fabric::OperationId::new(), &result);
+
+        assert_eq!(value["stop"], "blocked");
+        assert_eq!(value["provider_retries"], 3);
+        assert_eq!(value["tool_calls_made"], 1);
+        assert!(value.get("inference_rounds").is_none());
+    }
 
     #[test]
     fn daemon_endpoint_precedence_is_command_parent_environment_default() {

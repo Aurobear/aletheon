@@ -553,6 +553,7 @@ impl CapabilityService for ProductionCapabilityService {
             session_id: "external-capability".into(),
             working_dir: std::env::current_dir().unwrap_or_default(),
             sandbox: fabric::SandboxRequirement::NotRequired,
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
             cancel,
             turn_count: 0,
             repo_hooks_trusted: false,

@@ -1,6 +1,6 @@
 # Corpus Crate — Tools, Sandbox, and Perception
 
-> The corpus crate provides the physical interface layer — tools, sandbox, MCP, platform adaptation, security policy, drivers, UI, and ACIX.
+> The corpus crate owns governed tools, sandboxing, MCP, extensions, skills, hooks, security policy, and optional Linux desktop drivers. Host platform contracts live in `platform`; UI/ACIX live in `interact`.
 
 **Crate:** `corpus`
 **Source:** `crates/corpus/`
@@ -32,8 +32,8 @@ crates/corpus/
 | [../dasein/perception.md](../dasein/perception.md) | Perception layer — event sources, aggregation, backpressure (source: perception-layer.md) |
 | [fuse.md](fuse.md) | FUSE virtual filesystem — mount structure, state provider, controls |
 | [driver.md](driver.md) | Hardware drivers — display (X11/DRM), input (uinput), OCR, accessibility, process, I/O |
-| [ui.md](ui.md) | Terminal UI — chat, commands, computer view, markdown rendering, skills |
-| [acix.md](acix.md) | Agent-Computer Interface — ACI protocol, grounding, experience memory, task management |
+| [../interact/ui.md](../interact/ui.md) | Terminal UI — chat, commands, computer view, markdown rendering, skills |
+| [../interact/acix.md](../interact/acix.md) | Agent-Computer Interface — ACI protocol, grounding, experience memory, task management |
 
 ## Internal Pattern
 

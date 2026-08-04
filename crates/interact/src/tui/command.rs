@@ -10,13 +10,6 @@ pub enum BuiltinCommand {
     Quit,
     Input,
     Copy,
-    Reflect,
-    ReflectNow,
-    Evolution,
-    Genome,
-    Computer {
-        args: String,
-    },
     Sessions,
     Resume {
         id: String,
@@ -28,13 +21,10 @@ pub enum BuiltinCommand {
     Mode {
         name: String,
     },
-    Plan,
-    Approve,
     Agents,
     AgentDetail {
         id: String,
     },
-    Hooks,
     Skills,
     SkillRun {
         name: String,
@@ -128,6 +118,35 @@ mod tests {
     }
 
     #[test]
+    fn retired_governance_commands_parse_as_unknown() {
+        for input in [
+            "/reflect",
+            "/r",
+            "/reflect_now",
+            "/rn",
+            "/evolution",
+            "/evo",
+            "/genome",
+            "/gene",
+            "/hooks",
+            "/hk",
+            "/task coding",
+            "/evaluation",
+            "/eval",
+            "/approve",
+            "/a",
+            "/plan",
+            "/p",
+            "/computer",
+        ] {
+            assert!(
+                matches!(parse_command(input), Some(CommandType::Unknown { .. })),
+                "{input} still resolves as a built-in"
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_skill_no_args() {
         let result = parse_command("/code-review").unwrap();
         match result {
@@ -182,78 +201,6 @@ mod tests {
     fn test_parse_quit_alias() {
         let result = parse_command("/exit").unwrap();
         assert!(matches!(result, CommandType::Builtin(BuiltinCommand::Quit)));
-    }
-
-    #[test]
-    fn test_parse_reflect() {
-        let result = parse_command("/reflect").unwrap();
-        assert!(matches!(
-            result,
-            CommandType::Builtin(BuiltinCommand::Reflect)
-        ));
-    }
-
-    #[test]
-    fn test_parse_reflect_alias() {
-        let result = parse_command("/r").unwrap();
-        assert!(matches!(
-            result,
-            CommandType::Builtin(BuiltinCommand::Reflect)
-        ));
-    }
-
-    #[test]
-    fn test_parse_reflect_now() {
-        let result = parse_command("/reflect_now").unwrap();
-        assert!(matches!(
-            result,
-            CommandType::Builtin(BuiltinCommand::ReflectNow)
-        ));
-    }
-
-    #[test]
-    fn test_parse_reflect_now_alias() {
-        let result = parse_command("/rn").unwrap();
-        assert!(matches!(
-            result,
-            CommandType::Builtin(BuiltinCommand::ReflectNow)
-        ));
-    }
-
-    #[test]
-    fn test_parse_evolution() {
-        let result = parse_command("/evolution").unwrap();
-        assert!(matches!(
-            result,
-            CommandType::Builtin(BuiltinCommand::Evolution)
-        ));
-    }
-
-    #[test]
-    fn test_parse_evolution_alias() {
-        let result = parse_command("/evo").unwrap();
-        assert!(matches!(
-            result,
-            CommandType::Builtin(BuiltinCommand::Evolution)
-        ));
-    }
-
-    #[test]
-    fn test_parse_genome() {
-        let result = parse_command("/genome").unwrap();
-        assert!(matches!(
-            result,
-            CommandType::Builtin(BuiltinCommand::Genome)
-        ));
-    }
-
-    #[test]
-    fn test_parse_genome_alias() {
-        let result = parse_command("/gene").unwrap();
-        assert!(matches!(
-            result,
-            CommandType::Builtin(BuiltinCommand::Genome)
-        ));
     }
 
     #[test]

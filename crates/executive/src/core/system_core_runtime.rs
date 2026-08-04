@@ -57,6 +57,7 @@ impl RegistryInferencePort {
             models: vec![model.to_string()],
             max_context_length: None,
             pricing: None,
+            backpressure: Default::default(),
         });
         config
             .model_aliases

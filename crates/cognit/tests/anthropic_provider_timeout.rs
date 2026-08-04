@@ -28,8 +28,9 @@ fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
         api_key: "secret-api-key".into(),
         transport: cognit::config::Transport::Anthropic,
         models: vec!["test-model".into()],
-        max_context_length: None,
+        max_context_length: Some(128_000),
         pricing: None,
+        backpressure: Default::default(),
     };
     cognit::composition::inference_factory::create_provider(
         &config,

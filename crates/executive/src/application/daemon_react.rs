@@ -27,6 +27,8 @@ pub struct DaemonStreamingTurnContext<F> {
     pub batch_planner: Option<Arc<dyn cognit::harness::BatchPlanner>>,
     pub session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
     pub prompt_queue_enabled: bool,
+    pub capability_receipts: Arc<tokio::sync::Mutex<Vec<fabric::CapabilityTerminalReceipt>>>,
+    pub inference_items: Arc<tokio::sync::Mutex<Vec<fabric::ItemPayload>>>,
 }
 
 /// Submit one daemon turn through Cognit's authoritative session facade.
@@ -51,6 +53,8 @@ where
         batch_planner,
         session_input,
         prompt_queue_enabled,
+        capability_receipts,
+        inference_items,
     } = context;
     let services = DaemonTurnServices {
         llm,
@@ -63,6 +67,8 @@ where
         principal_id: request.context.principal_id.clone(),
         thread_id: request.context.thread_id.clone(),
         receipt_prefix: request.operation_id.0.to_string(),
+        capability_receipts,
+        inference_items,
     };
     let session_record = SessionRecord {
         schema_version: SESSION_SCHEMA_VERSION,
@@ -98,6 +104,8 @@ struct DaemonTurnServices<F> {
     principal_id: fabric::PrincipalId,
     thread_id: fabric::ThreadId,
     receipt_prefix: String,
+    capability_receipts: Arc<tokio::sync::Mutex<Vec<fabric::CapabilityTerminalReceipt>>>,
+    inference_items: Arc<tokio::sync::Mutex<Vec<fabric::ItemPayload>>>,
 }
 
 #[async_trait]
@@ -130,6 +138,31 @@ where
             audit_id: None,
             patch_delta: None,
         }
+    }
+
+    async fn record_capability_receipt(&self, receipt: fabric::CapabilityTerminalReceipt) {
+        self.capability_receipts.lock().await.push(receipt);
+    }
+
+    async fn record_model_context_projection(
+        &self,
+        mut receipt: fabric::model_projection::ModelContextProjectionReceipt,
+    ) {
+        crate::composition::turn_service::materialize_projection_artifacts(&mut receipt);
+        self.inference_items
+            .lock()
+            .await
+            .push(fabric::ItemPayload::ModelContextProjection { receipt });
+    }
+
+    async fn record_inference_receipt(
+        &self,
+        receipt: fabric::types::inference_receipt::InferenceTerminalReceipt,
+    ) {
+        self.inference_items
+            .lock()
+            .await
+            .push(fabric::ItemPayload::InferenceReceipt { receipt });
     }
 
     async fn drain_interjections(&self) -> anyhow::Result<Vec<String>> {
@@ -166,8 +199,8 @@ mod tests {
     use async_trait::async_trait;
     use corpus::tools::tools::structured_patch::{FileChangeSummary, StructuredPatchResult};
     use fabric::{
-        ConnectionId, ContentBlock, LlmResponse, LlmStream, PrincipalId, PromptKind, Role,
-        StopReason, ThreadId, Usage,
+        ConnectionId, ContentBlock, InferenceUsage, LlmResponse, LlmStream, PrincipalId,
+        PromptKind, Role, StopReason, ThreadId,
     };
     use std::sync::Mutex;
 
@@ -186,9 +219,7 @@ mod tests {
                     text: "done".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
 
@@ -253,6 +284,8 @@ mod tests {
             principal_id: principal,
             thread_id: thread,
             receipt_prefix: "p3-turn".into(),
+            capability_receipts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            inference_items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         let mut next_call_messages = services.request_messages.clone();
@@ -279,5 +312,49 @@ mod tests {
                     matches!(block, ContentBlock::Text { text } if text.contains("## Files changed this turn"))
                 })
         }));
+    }
+
+    #[tokio::test]
+    async fn daemon_services_publish_terminal_receipts_to_turn_artifacts() {
+        let receipts = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let services = DaemonTurnServices {
+            llm: Arc::new(RecordingLlm(Mutex::new(Vec::new()))),
+            tool_defs: vec![],
+            execute_tool: |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                (String::new(), false)
+            },
+            request_messages: vec![],
+            dasein_context: Arc::new(|| None),
+            session_input: Arc::new(
+                crate::application::session_input::SessionInputCoordinator::in_memory(),
+            ),
+            prompt_queue_enabled: false,
+            principal_id: PrincipalId("test".into()),
+            thread_id: ThreadId("test".into()),
+            receipt_prefix: "test".into(),
+            capability_receipts: receipts.clone(),
+            inference_items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        };
+        let receipt = fabric::CapabilityTerminalReceipt {
+            invocation_id: "validation-1".into(),
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            capability: "validation_run".into(),
+            status: fabric::CapabilityTerminalStatus::Succeeded,
+            started_at: fabric::MonoTime(1),
+            finished_at: fabric::MonoTime(2),
+            exit_code: Some(0),
+            error_class: None,
+            artifact_ids: vec![],
+            evidence_ids: vec![],
+            output_ref: None,
+            truncated: false,
+            retry_disposition: fabric::CapabilityRetryDisposition::Never,
+            audit_id: None,
+        };
+        services.record_capability_receipt(receipt).await;
+        let retained = receipts.lock().await;
+        assert_eq!(retained.len(), 1);
+        assert!(retained[0].proves_success());
     }
 }

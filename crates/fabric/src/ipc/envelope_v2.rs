@@ -297,6 +297,8 @@ impl SchemaId {
     pub const EVENT_HEALTH_CHECK_V1: &'static str = "aletheon.event.health_check/v1";
     // Runtime
     pub const EVENT_AGENT_STARTED_V1: &'static str = "aletheon.event.agent_started/v1";
+    pub const EVENT_AGENT_CAPABILITY_ATTENUATED_V1: &'static str =
+        "aletheon.event.agent_capability_attenuated/v1";
     pub const EVENT_AGENT_PROGRESS_V1: &'static str = "aletheon.event.agent_progress/v1";
     pub const EVENT_AGENT_STOPPED_V1: &'static str = "aletheon.event.agent_stopped/v1";
     pub const EVENT_AGENT_FAILED_V1: &'static str = "aletheon.event.agent_failed/v1";
@@ -328,6 +330,7 @@ impl SchemaId {
     pub const EVENT_PROMPT_CANCELLED_V1: &'static str = "aletheon.event.prompt_cancelled/v1";
     pub const EVENT_INTERJECTION_CONSUMED_V1: &'static str =
         "aletheon.event.interjection_consumed/v1";
+    pub const EVENT_EVALUATION_OBSERVED_V1: &'static str = "aletheon.event.evaluation_observed/v1";
     pub const EVENT_WORKSPACE_CHECKPOINT_BEGAN_V1: &'static str =
         "aletheon.event.workspace_checkpoint_began/v1";
     pub const EVENT_WORKSPACE_CHECKPOINT_FINALIZED_V1: &'static str =

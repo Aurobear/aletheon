@@ -265,7 +265,8 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
             principal_id: principal_id.clone(),
             connection_id,
             approval_id,
-            decision: "always".into(),
+            decision: fabric::protocol::client::TransientApprovalDecision::ApproveForSession,
+            scope_hint: None,
         })
         .await
         .unwrap());
@@ -388,4 +389,43 @@ fn admin_rpc_has_no_concrete_runtime_registry_or_lock_access() {
             "admin RPC must not contain {forbidden}"
         );
     }
+}
+
+#[tokio::test]
+async fn scoped_session_grant_survives_reopen_and_never_widens_to_tool_grant() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("grants.db");
+    let principal = fabric::PrincipalId("owner".into());
+    let thread = fabric::ThreadId("thread".into());
+    let hint = fabric::protocol::client::TransientApprovalScopeHint {
+        path_root: directory.path().to_path_buf(),
+        subject_version: 1,
+        subject_sha256: "a".repeat(64),
+    };
+    executive::application::admin_service::ScopedApprovalCache::open(&path)
+        .unwrap()
+        .allow_path_for_thread(principal.clone(), thread.clone(), "apply_patch", &hint)
+        .await
+        .unwrap();
+    let reopened = executive::application::admin_service::ScopedApprovalCache::open(&path).unwrap();
+    assert!(
+        !reopened
+            .is_allowed(&principal, &thread, "apply_patch")
+            .await
+    );
+    assert!(
+        reopened
+            .is_path_allowed(
+                &principal,
+                &thread,
+                "apply_patch",
+                &fabric::protocol::client::TransientApprovalScopeSubject {
+                    tool: "apply_patch".into(),
+                    path_candidates: vec![directory.path().to_path_buf()],
+                    subject_version: 1,
+                    subject_sha256: "a".repeat(64),
+                },
+            )
+            .await
+    );
 }

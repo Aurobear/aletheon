@@ -2,18 +2,40 @@
 # root:aletheon). Secret fields are file references only; never put values here.
 
 [agent]
-default_provider = "leju"
-default_model = "deepseek/deepseek-v4-pro"
+default_provider = "lejurobot_deepseek"
+default_model = "deepseek/deepseek-v4-flash[1m]"
 
-# The service loads LEJU_API_KEY from deployment.secrets.provider through its
+# The service loads LEJUROBOT_DEEPSEEK_API_KEY from provider.env through its
 # EnvironmentFile. Keep the credential out of this checked-in configuration.
 [[providers]]
-name = "leju"
+name = "lejurobot_deepseek"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek/deepseek-v4-pro"]
-max_context_length = 1000000
+models = ["deepseek/deepseek-v4-flash[1m]"]
+
+[providers.backpressure]
+min_request_interval_ms = 15000
+
+# Optional official endpoint. The service resolves DEEPSEEK_API_KEY from the
+# provider EnvironmentFile when this route is selected.
+[[providers]]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key = ""
+transport = "openai"
+models = ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
+
+# Production rollout starts in observation-only mode. Enforce remains an
+# explicit trusted-host decision after shadow calibration.
+[evaluation]
+enabled = true
+default_mode = "shadow"
+coding_rubric = "coding-v2"
+min_score_millis = 70000
+min_evidence_coverage_millis = 600
+min_confidence_millis = 700
+max_evaluation_ms = 5000
 
 [memory]
 backend = "sqlite"
@@ -24,6 +46,17 @@ enabled = false
 projection_enabled = false
 spool_path = "/var/lib/aletheon/mnemosyne/gbrain-spool.db"
 legacy_outbox_dir = "/var/lib/aletheon/mnemosyne/gbrain-outbox"
+
+[governed_review]
+enabled = true
+model = "default"
+max_input_bytes = 262144
+max_output_bytes = 65536
+max_tokens = 16384
+max_tool_calls = 0
+max_wall_time_seconds = 120
+max_pending_jobs = 64
+max_concurrent_jobs = 2
 
 [daemon]
 socket_path = "/run/aletheon/aletheon.sock"

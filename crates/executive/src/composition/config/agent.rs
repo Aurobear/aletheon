@@ -27,6 +27,11 @@ pub struct ExecutiveConfig {
     /// fed from `grok_hardening.compaction_v2` at handler construction.
     #[serde(default)]
     pub compaction_v2: bool,
+    /// Percent of the context window at which automatic compaction triggers
+    /// (e.g. `80` = 80%). Wired into the compressor threshold; `80` preserves
+    /// the legacy hardcoded `0.8` behavior.
+    #[serde(default = "default_compaction_threshold_percent")]
+    pub compaction_threshold_percent: usize,
     /// G2: expose governed tool progress on the canonical turn stream.
     #[serde(default)]
     pub streaming_tools: bool,
@@ -37,6 +42,8 @@ pub struct ExecutiveConfig {
     pub conscious_arbitration_mode: fabric::ConsciousArbitrationMode,
     #[serde(default)]
     pub agent_loop: AgentLoopConfig,
+    #[serde(default)]
+    pub multi_agent: MultiAgentConfig,
     #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
     /// Which cognitive harness implementation to construct (see
@@ -54,16 +61,34 @@ impl Default for ExecutiveConfig {
             learning_enabled: true,
             compaction_enabled: true,
             compaction_v2: true,
+            compaction_threshold_percent: default_compaction_threshold_percent(),
             streaming_tools: false,
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,
             context_window_tokens: 128_000,
             conscious_arbitration_mode: fabric::ConsciousArbitrationMode::Observe,
             agent_loop: AgentLoopConfig::default(),
+            multi_agent: MultiAgentConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             harness_kind: HarnessKind::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct MultiAgentConfig {
+    /// Master production activation gate. Default-off until installed-runtime
+    /// acceptance proves provider coordination and child terminal behavior.
+    pub enabled: bool,
+    /// Automatically activate only for an explicit typed coding task.
+    pub automatic_for_coding: bool,
+}
+
+/// Default automatic-compaction trigger, as a whole percent of the context
+/// window. `80` matches the historical hardcoded `0.8` behavior.
+fn default_compaction_threshold_percent() -> usize {
+    80
 }
 
 // ---------------------------------------------------------------------------

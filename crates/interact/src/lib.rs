@@ -21,6 +21,7 @@
 pub mod acix;
 pub mod acp;
 pub mod host;
+pub mod memory_client;
 pub mod tui;
 
 /// Backward compatibility: cli module is now tui::cli

@@ -31,6 +31,8 @@ pub struct TurnEngineRequest {
     pub input: String,
     pub model_policy: Option<String>,
     pub deadline: Option<MonoDeadlineMillis>,
+    pub requirements: Vec<fabric::TurnRequirement>,
+    pub requested_task_kind: Option<fabric::TaskKind>,
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,8 @@ pub struct TurnEngineContext {
     pub workspace: Arc<fabric::WorkspacePolicy>,
     pub profile: ResolvedTurnProfile,
     pub cancel_token: CancellationToken,
+    /// Notification stream owned by the connection that admitted this Turn.
+    pub notification_sender: Option<tokio::sync::mpsc::Sender<String>>,
     /// Exact host-authenticated context when the caller already resolved one.
     /// CLI callers may omit it and use the compatibility construction below.
     pub principal_context: Option<fabric::PrincipalContext>,
@@ -159,6 +163,9 @@ impl TurnEngine for SessionTurnEngine {
             input: request.input.clone(),
             model_policy,
             deadline: request.deadline,
+            requirements: request.requirements,
+            requested_task_kind: request.requested_task_kind,
+            evaluation_contract: None,
         };
 
         let sink = FabricEventSink;

@@ -245,10 +245,11 @@ impl LlmProvider for OllamaProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmResponse> {
+        let tools = canonicalize_tool_definitions(tools)?;
         let request = ChatRequest {
             model: self.model.clone(),
             messages: messages_to_ollama(messages),
-            tools: tools_to_ollama(tools),
+            tools: tools_to_ollama(&tools),
             stream: false,
             options: ChatOptions {
                 num_predict: self.max_tokens,
@@ -292,10 +293,10 @@ impl LlmProvider for OllamaProvider {
             }
         }
 
-        let usage = Usage {
-            input_tokens: api_resp.prompt_eval_count.unwrap_or(0),
-            output_tokens: api_resp.eval_count.unwrap_or(0),
-        };
+        let usage = InferenceUsage::unsupported(
+            api_resp.prompt_eval_count.map(u64::from),
+            api_resp.eval_count.map(u64::from),
+        );
 
         let has_tool_use = content
             .iter()
@@ -309,8 +310,6 @@ impl LlmProvider for OllamaProvider {
                 StopReason::EndTurn
             },
             usage,
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
         })
     }
 
@@ -319,10 +318,11 @@ impl LlmProvider for OllamaProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmStream> {
+        let tools = canonicalize_tool_definitions(tools)?;
         let request = ChatRequest {
             model: self.model.clone(),
             messages: messages_to_ollama(messages),
-            tools: tools_to_ollama(tools),
+            tools: tools_to_ollama(&tools),
             stream: true,
             options: ChatOptions {
                 num_predict: self.max_tokens,
@@ -349,16 +349,26 @@ impl LlmProvider for OllamaProvider {
         let stream = futures::stream::unfold(
             OllamaStreamState {
                 byte_stream: Box::pin(byte_stream),
-                buffer: String::new(),
+                buffer: super::utf8_stream::Utf8StreamBuffer::default(),
                 tool_state: OllamaToolState::default(),
-                usage: Usage::default(),
+                usage: InferenceUsage::unsupported(None, None),
             },
             |mut state| async move {
                 loop {
                     // Try to extract a complete NDJSON line from the buffer
-                    if let Some(line_end) = state.buffer.find('\n') {
-                        let line = state.buffer[..line_end].trim().to_string();
-                        state.buffer = state.buffer[line_end + 1..].to_string();
+                    let line = match state.buffer.take_line() {
+                        Ok(line) => line,
+                        Err(error) => {
+                            return Some((
+                                Err(anyhow::anyhow!(
+                                    "provider stream contained invalid UTF-8: {error}"
+                                )),
+                                state,
+                            ));
+                        }
+                    };
+                    if let Some(line) = line {
+                        let line = line.trim().to_string();
 
                         if line.is_empty() {
                             continue;
@@ -368,10 +378,12 @@ impl LlmProvider for OllamaProvider {
                             Ok(chunk) => {
                                 // Final chunk with usage stats
                                 if chunk.done {
-                                    state.usage.input_tokens =
-                                        chunk.prompt_eval_count.unwrap_or(state.usage.input_tokens);
-                                    state.usage.output_tokens =
-                                        chunk.eval_count.unwrap_or(state.usage.output_tokens);
+                                    if let Some(input) = chunk.prompt_eval_count {
+                                        state.usage.total_input_tokens = Some(u64::from(input));
+                                    }
+                                    if let Some(output) = chunk.eval_count {
+                                        state.usage.output_tokens = Some(u64::from(output));
+                                    }
 
                                     // Emit any pending tool completions first
                                     if let Some(completed) = state.tool_state.take_completed() {
@@ -383,8 +395,7 @@ impl LlmProvider for OllamaProvider {
 
                                     return Some((
                                         Ok(super::provider::StreamChunk::Usage {
-                                            input_tokens: state.usage.input_tokens,
-                                            output_tokens: state.usage.output_tokens,
+                                            usage: state.usage.clone(),
                                         }),
                                         state,
                                     ));
@@ -440,8 +451,7 @@ impl LlmProvider for OllamaProvider {
                         // Need more data from the stream
                         match state.byte_stream.next().await {
                             Some(Ok(bytes)) => {
-                                let text = String::from_utf8_lossy(&bytes);
-                                state.buffer.push_str(&text);
+                                state.buffer.push(&bytes);
                             }
                             Some(Err(e)) => {
                                 return Some((
@@ -451,9 +461,9 @@ impl LlmProvider for OllamaProvider {
                             }
                             None => {
                                 // Stream ended
-                                if !state.buffer.trim().is_empty() {
+                                if !state.buffer.is_empty() {
                                     tracing::warn!(
-                                        remaining = %state.buffer,
+                                        remaining_bytes = state.buffer.len(),
                                         "Ollama stream ended with unprocessed data"
                                     );
                                 }
@@ -489,9 +499,9 @@ impl LlmProvider for OllamaProvider {
 struct OllamaStreamState {
     byte_stream:
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<u8>, reqwest::Error>> + Send>>,
-    buffer: String,
+    buffer: super::utf8_stream::Utf8StreamBuffer,
     tool_state: OllamaToolState,
-    usage: Usage,
+    usage: InferenceUsage,
 }
 
 #[derive(Default)]

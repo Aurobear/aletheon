@@ -130,7 +130,8 @@
           "type": "integer"
         },
         "compaction_threshold": {
-          "default": 30,
+          "default": 80,
+          "description": "Percent of the context window (e.g. `80` = 80%) at which automatic\ncompaction triggers. Carried through to the compressor threshold via\n`ExecutiveConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -173,7 +174,7 @@
           }
         },
         "system_prompt": {
-          "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar workspace overview, make `file_read.paths` the first inspection call and include conventional entry candidates such as README, the root manifest, repository instructions, and architecture status; batch reads tolerate candidates that do not exist. Use glob only afterward when a specific required path remains unknown, and never inventory every language or extension. Base conclusions on file contents rather than filenames. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation.",
+          "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar repository or workspace overview, the first and only initial inspection call MUST be `repo_inspect`; wait for its result before choosing further tools. It batch-reads conventional entry files and returns content-backed evidence. Treat every `missing_candidates` item as one exact unavailable candidate path only: never generalize it to absence of an alternative file, a file category, a capability, or its parent directory, and never contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only when exact evidence is still missing. Use glob only when a specific required path remains unknown. During a repository overview, never use recursive `**` patterns or wildcard crate/directory scopes; read only exact paths returned by `repo_inspect` or identified in returned content. Never inventory languages, file extensions, tests, or conventional filenames merely to infer maturity. A missing conventional file is not proof that a capability, deployment path, or integration is absent; verify absence against scoped content. Repository instructions describe operating and acceptance policy, not proof that a named runtime failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do not infer maintainer count or staffing risk from an author line or commit history. Before claiming that routing, failover, tests, or deployment support is absent, read its scoped implementation or authoritative architecture/status evidence. Never infer the effective production provider or route from examples or checked-in sample configuration; inspect typed host state and effective configuration, or label the production route unverified. Base conclusions on returned file contents rather than filenames. For repository analysis, cite the returned path or typed runtime source for every architecture, maturity, and risk conclusion; label unsupported conclusions unverified. Never claim to have reviewed a file, module, crate, test, or runtime path when only its name or discovery result was returned. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation. Distinguish documented design, observed runtime fact, and unverified inference in runtime conclusions, and disclose every failed or denied probe that limits the answer.",
           "type": "string"
         }
       },
@@ -210,18 +211,39 @@
         "diagnostics",
         "browser",
         "device_observe",
-        "device_command"
+        "device_command",
+        "memory_proposal"
       ],
       "type": "string"
     },
     "BackpressureConfig": {
       "additionalProperties": false,
-      "description": "Backpressure limits for turn admission.\n\nDefault (`max_concurrent_turns = None`): unlimited, backward compatible.\nSet `max_concurrent_turns = Some(N)` to reject new turns with a 503-like\nerror when N turns are already in-flight.",
+      "description": "Backpressure limits for turn admission.",
       "properties": {
         "max_concurrent_turns": {
-          "default": null,
-          "description": "Maximum number of concurrent turns allowed across all connections.\n`None` means unlimited (default).",
+          "default": 8,
+          "description": "Maximum number of concurrent turns allowed across all connections.\n`None` explicitly disables the limit.",
           "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_connections": {
+          "default": 64,
+          "description": "Maximum authenticated Unix socket connections per daemon.\n`None` explicitly disables the limit.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_event_spine_bytes": {
+          "default": 1073741824,
+          "description": "Maximum logical SQLite bytes for the canonical event spine.\n`None` explicitly disables the size limit.",
+          "format": "uint64",
           "minimum": 0,
           "type": [
             "integer",
@@ -781,6 +803,57 @@
         }
       ]
     },
+    "EvaluationMode": {
+      "enum": [
+        "shadow",
+        "enforce"
+      ],
+      "type": "string"
+    },
+    "EvaluationSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "coding_rubric": {
+          "default": "coding-v2",
+          "type": "string"
+        },
+        "default_mode": {
+          "$ref": "#/$defs/EvaluationMode",
+          "default": "shadow"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max_evaluation_ms": {
+          "default": 5000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_confidence_millis": {
+          "default": 700,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_evidence_coverage_millis": {
+          "default": 600,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_score_millis": {
+          "default": 70000,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "EvolutionSettings": {
       "additionalProperties": false,
       "description": "Self-evolution loop settings. Default OFF (HIGH-risk autonomy).",
@@ -788,6 +861,11 @@
         "enabled": {
           "default": false,
           "description": "Master switch for the self-evolution loop.\nWhen false (default), the loop is inert regardless of other settings.",
+          "type": "boolean"
+        },
+        "evolution_permitted": {
+          "default": false,
+          "description": "Operator gate for creating governed mutation proposals. This never\nbypasses human approval and defaults to false independently of enabled.",
           "type": "boolean"
         },
         "trigger_every_n_turns": {
@@ -883,6 +961,62 @@
             "string",
             "null"
           ]
+        }
+      },
+      "type": "object"
+    },
+    "GovernedReviewSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_concurrent_jobs": {
+          "default": 2,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_input_bytes": {
+          "default": 262144,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "default": 65536,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_pending_jobs": {
+          "default": 64,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_tokens": {
+          "default": 16384,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_wall_time_seconds": {
+          "default": 120,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model": {
+          "default": "default",
+          "type": "string"
         }
       },
       "type": "object"
@@ -1141,6 +1275,11 @@
           "default": false,
           "type": "boolean"
         },
+        "grant_type": {
+          "$ref": "#/$defs/McpOAuthGrantType",
+          "default": "authorization_code",
+          "description": "OAuth grant used by this non-interactive or interactive MCP client."
+        },
         "issuer": {
           "default": null,
           "description": "RFC 8414 issuer/base URL. Discovery is authoritative when supplied.",
@@ -1150,6 +1289,7 @@
           ]
         },
         "redirect_uri": {
+          "default": "",
           "type": "string"
         },
         "scopes": {
@@ -1172,10 +1312,16 @@
         }
       },
       "required": [
-        "client_id_env",
-        "redirect_uri"
+        "client_id_env"
       ],
       "type": "object"
+    },
+    "McpOAuthGrantType": {
+      "enum": [
+        "authorization_code",
+        "client_credentials"
+      ],
+      "type": "string"
     },
     "McpPermissionLevel": {
       "enum": [
@@ -1250,6 +1396,13 @@
             "integer",
             "null"
           ]
+        },
+        "resource_allowlist": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "tool_allowlist": {
           "default": [],
@@ -1385,12 +1538,59 @@
           "default": "~/.aletheon/memory",
           "type": "string"
         },
+        "embedding": {
+          "$ref": "#/$defs/MemoryEmbeddingConfig",
+          "default": {
+            "base_url": "",
+            "credential_env": "",
+            "dimensions": 0,
+            "enabled": false,
+            "model": "",
+            "provider": "",
+            "rotation_generation": 0,
+            "timeout_ms": 0
+          }
+        },
         "extraction": {
           "$ref": "#/$defs/MemoryExtractionConfig",
           "default": {
             "enabled": true,
             "max_facts_per_turn": 5,
             "mode": "local"
+          }
+        },
+        "policy": {
+          "$ref": "#/$defs/MemoryPolicyConfig",
+          "default": {
+            "candidate_threshold": 55,
+            "contradiction_risk_max_penalty": 20,
+            "evidence_provenance_weight": 25,
+            "future_utility_weight": 20,
+            "lease_duration_ms": 30000,
+            "max_input_bytes": 65536,
+            "max_items_per_run": 20,
+            "max_output_bytes": 16384,
+            "max_projected_writes": 10,
+            "max_provider_retries": 1,
+            "max_provider_rounds": 1,
+            "max_tool_calls": 0,
+            "novelty_dedup_weight": 15,
+            "privacy_risk_max_penalty": 25,
+            "promote_local_threshold": 75,
+            "remote_allowed_kinds": [
+              "goal_outcome",
+              "semantic_fact",
+              "procedure",
+              "architecture_decision"
+            ],
+            "remote_projection_threshold": 80,
+            "run_deadline_ms": 120000,
+            "scope_fit_weight": 10,
+            "semantic_profile": "safe-agent",
+            "semantic_retry_delay_ms": 900000,
+            "stability_weight": 15,
+            "verification_weight": 15,
+            "version": "memory-policy-v1"
           }
         },
         "promotion": {
@@ -1415,6 +1615,7 @@
           "$ref": "#/$defs/SupplementalMemoryConfig",
           "default": {
             "delivery_batch_size": 20,
+            "destination_attestations": [],
             "enabled": false,
             "legacy_outbox_dir": "~/.aletheon/memory-outbox",
             "max_content_bytes": 6000,
@@ -1441,6 +1642,51 @@
       },
       "type": "object"
     },
+    "MemoryEmbeddingConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "base_url": {
+          "default": "",
+          "type": "string"
+        },
+        "credential_env": {
+          "default": "",
+          "type": "string"
+        },
+        "dimensions": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "description": "`open_ai` or `ollama`.",
+          "type": "string"
+        },
+        "rotation_generation": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "default": 400,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "MemoryExtractionConfig": {
       "additionalProperties": false,
       "properties": {
@@ -1456,6 +1702,169 @@
         },
         "mode": {
           "default": "local",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "MemoryPolicyConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_threshold": {
+          "default": 55,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "contradiction_risk_max_penalty": {
+          "default": 20,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "evidence_provenance_weight": {
+          "default": 25,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "future_utility_weight": {
+          "default": 20,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "lease_duration_ms": {
+          "default": 30000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_input_bytes": {
+          "default": 65536,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_items_per_run": {
+          "default": 20,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "default": 16384,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_projected_writes": {
+          "default": 10,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_provider_retries": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_provider_rounds": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "novelty_dedup_weight": {
+          "default": 15,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "privacy_risk_max_penalty": {
+          "default": 25,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "promote_local_threshold": {
+          "default": 75,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "remote_allowed_kinds": {
+          "default": [
+            "goal_outcome",
+            "semantic_fact",
+            "procedure",
+            "architecture_decision"
+          ],
+          "items": {
+            "$ref": "#/$defs/MemoryRecordKindV1"
+          },
+          "type": "array"
+        },
+        "remote_projection_threshold": {
+          "default": 80,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "run_deadline_ms": {
+          "default": 120000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scope_fit_weight": {
+          "default": 10,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "semantic_profile": {
+          "default": "safe-agent",
+          "type": "string"
+        },
+        "semantic_retry_delay_ms": {
+          "default": 900000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stability_weight": {
+          "default": 15,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "verification_weight": {
+          "default": 15,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "version": {
+          "default": "memory-policy-v1",
           "type": "string"
         }
       },
@@ -1514,6 +1923,21 @@
       },
       "type": "object"
     },
+    "MemoryRecordKindV1": {
+      "enum": [
+        "message",
+        "tool_outcome",
+        "goal_outcome",
+        "reflection",
+        "episodic",
+        "semantic_fact",
+        "procedure",
+        "core_state",
+        "architecture_decision",
+        "external_reference"
+      ],
+      "type": "string"
+    },
     "ModelRoutingConfig": {
       "additionalProperties": false,
       "description": "Dynamic model routing — maps task types to model specs.",
@@ -1552,6 +1976,22 @@
             "string",
             "null"
           ]
+        }
+      },
+      "type": "object"
+    },
+    "MultiAgentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "automatic_for_coding": {
+          "default": false,
+          "description": "Automatically activate only for an explicit typed coding task.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Master production activation gate. Default-off until installed-runtime\nacceptance proves provider coordination and child terminal behavior.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -1733,6 +2173,41 @@
       },
       "type": "object"
     },
+    "ProviderBackpressureConfig": {
+      "additionalProperties": false,
+      "description": "Provider-level backpressure. Unlike turn admission this coordinates all\nsessions and role children through the machine-core process that use the\nsame canonical provider endpoint and model.",
+      "properties": {
+        "max_concurrent_requests": {
+          "default": 2,
+          "description": "Maximum simultaneous requests for one provider identity.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_cooldown_ms": {
+          "default": 60000,
+          "description": "Upper bound applied to provider-advised shared cooldown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_request_interval_ms": {
+          "default": 0,
+          "description": "Minimum spacing between request starts for one provider identity.\n\nThis is a machine-wide pacing boundary, not a per-session retry delay.\nZero preserves providers that do not require proactive rate pacing.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queue_timeout_ms": {
+          "default": 120000,
+          "description": "Maximum time a caller may wait for cooldown, pacing, and a fair permit.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "ProviderConfig": {
       "additionalProperties": false,
       "description": "Per-provider configuration.",
@@ -1741,12 +2216,22 @@
           "default": "",
           "type": "string"
         },
+        "backpressure": {
+          "$ref": "#/$defs/ProviderBackpressureConfig",
+          "default": {
+            "max_concurrent_requests": 2,
+            "max_cooldown_ms": 60000,
+            "min_request_interval_ms": 0,
+            "queue_timeout_ms": 120000
+          },
+          "description": "Machine/provider-scoped admission and cooldown policy. Every provider\ninstance built by the canonical factory shares this policy by canonical\nendpoint and model."
+        },
         "base_url": {
           "type": "string"
         },
         "max_context_length": {
           "default": null,
-          "description": "Override the default max context length for this provider's models.\nIf not set, the provider uses its built-in default (128K for OpenAI, 200K for Anthropic).",
+          "description": "Context length for a private model absent from the embedded catalog.\nKnown models derive this value from their canonical capability record;\na conflicting override is rejected rather than silently changing reality.",
           "format": "uint",
           "minimum": 0,
           "type": [
@@ -2029,6 +2514,36 @@
       ],
       "type": "object"
     },
+    "SupplementalDestinationAttestationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "destination_handle": {
+          "type": "string"
+        },
+        "marker_sha256": {
+          "type": "string"
+        },
+        "marker_slug": {
+          "type": "string"
+        },
+        "revalidate_after_secs": {
+          "default": 300,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "destination_handle",
+        "source_id",
+        "marker_slug",
+        "marker_sha256"
+      ],
+      "type": "object"
+    },
     "SupplementalMemoryConfig": {
       "additionalProperties": false,
       "properties": {
@@ -2037,6 +2552,14 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "destination_attestations": {
+          "default": [],
+          "description": "Non-secret proofs binding opaque MCP destinations to external sources.\nOAuth client credentials remain exclusively in the MCP secret config.",
+          "items": {
+            "$ref": "#/$defs/SupplementalDestinationAttestationConfig"
+          },
+          "type": "array"
         },
         "enabled": {
           "default": false,
@@ -2199,7 +2722,7 @@
         },
         "compaction_enabled": true,
         "compaction_keep_recent": 10,
-        "compaction_threshold": 30,
+        "compaction_threshold": 80,
         "default_model": null,
         "default_provider": null,
         "harness_kind": "linear",
@@ -2210,7 +2733,7 @@
           "request_timeout_ms": 90000,
           "stream_idle_timeout_ms": 90000
         },
-        "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar workspace overview, make `file_read.paths` the first inspection call and include conventional entry candidates such as README, the root manifest, repository instructions, and architecture status; batch reads tolerate candidates that do not exist. Use glob only afterward when a specific required path remains unknown, and never inventory every language or extension. Base conclusions on file contents rather than filenames. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation."
+        "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar repository or workspace overview, the first and only initial inspection call MUST be `repo_inspect`; wait for its result before choosing further tools. It batch-reads conventional entry files and returns content-backed evidence. Treat every `missing_candidates` item as one exact unavailable candidate path only: never generalize it to absence of an alternative file, a file category, a capability, or its parent directory, and never contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only when exact evidence is still missing. Use glob only when a specific required path remains unknown. During a repository overview, never use recursive `**` patterns or wildcard crate/directory scopes; read only exact paths returned by `repo_inspect` or identified in returned content. Never inventory languages, file extensions, tests, or conventional filenames merely to infer maturity. A missing conventional file is not proof that a capability, deployment path, or integration is absent; verify absence against scoped content. Repository instructions describe operating and acceptance policy, not proof that a named runtime failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do not infer maintainer count or staffing risk from an author line or commit history. Before claiming that routing, failover, tests, or deployment support is absent, read its scoped implementation or authoritative architecture/status evidence. Never infer the effective production provider or route from examples or checked-in sample configuration; inspect typed host state and effective configuration, or label the production route unverified. Base conclusions on returned file contents rather than filenames. For repository analysis, cite the returned path or typed runtime source for every architecture, maturity, and risk conclusion; label unsupported conclusions unverified. Never claim to have reviewed a file, module, crate, test, or runtime path when only its name or discovery result was returned. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation. Distinguish documented design, observed runtime fact, and unverified inference in runtime conclusions, and disclose every failed or denied probe that limits the answer."
       }
     },
     "agent_profiles": {
@@ -2223,9 +2746,11 @@
     "backpressure": {
       "$ref": "#/$defs/BackpressureConfig",
       "default": {
-        "max_concurrent_turns": null
+        "max_concurrent_turns": 8,
+        "max_connections": 64,
+        "max_event_spine_bytes": 1073741824
       },
-      "description": "D2-M5-T2: overload/backpressure limits (default unlimited)."
+      "description": "Host-owned overload/backpressure limits with bounded daemon defaults."
     },
     "bootstrap": {
       "$ref": "#/$defs/RuntimeBootstrapConfig",
@@ -2309,10 +2834,23 @@
         }
       }
     },
+    "evaluation": {
+      "$ref": "#/$defs/EvaluationSettings",
+      "default": {
+        "coding_rubric": "coding-v2",
+        "default_mode": "shadow",
+        "enabled": false,
+        "max_evaluation_ms": 5000,
+        "min_confidence_millis": 700,
+        "min_evidence_coverage_millis": 600,
+        "min_score_millis": 70000
+      }
+    },
     "evolution": {
       "$ref": "#/$defs/EvolutionSettings",
       "default": {
         "enabled": false,
+        "evolution_permitted": false,
         "trigger_every_n_turns": 10
       }
     },
@@ -2326,6 +2864,20 @@
         }
       ],
       "default": null
+    },
+    "governed_review": {
+      "$ref": "#/$defs/GovernedReviewSettings",
+      "default": {
+        "enabled": true,
+        "max_concurrent_jobs": 2,
+        "max_input_bytes": 262144,
+        "max_output_bytes": 65536,
+        "max_pending_jobs": 64,
+        "max_tokens": 16384,
+        "max_tool_calls": 0,
+        "max_wall_time_seconds": 120,
+        "model": "default"
+      }
     },
     "grok_hardening": {
       "$ref": "#/$defs/GrokHardeningConfig",
@@ -2394,10 +2946,51 @@
       "default": {
         "backend": "sqlite",
         "data_dir": "~/.aletheon/memory",
+        "embedding": {
+          "base_url": "",
+          "credential_env": "",
+          "dimensions": 0,
+          "enabled": false,
+          "model": "",
+          "provider": "",
+          "rotation_generation": 0,
+          "timeout_ms": 0
+        },
         "extraction": {
           "enabled": true,
           "max_facts_per_turn": 5,
           "mode": "local"
+        },
+        "policy": {
+          "candidate_threshold": 55,
+          "contradiction_risk_max_penalty": 20,
+          "evidence_provenance_weight": 25,
+          "future_utility_weight": 20,
+          "lease_duration_ms": 30000,
+          "max_input_bytes": 65536,
+          "max_items_per_run": 20,
+          "max_output_bytes": 16384,
+          "max_projected_writes": 10,
+          "max_provider_retries": 1,
+          "max_provider_rounds": 1,
+          "max_tool_calls": 0,
+          "novelty_dedup_weight": 15,
+          "privacy_risk_max_penalty": 25,
+          "promote_local_threshold": 75,
+          "remote_allowed_kinds": [
+            "goal_outcome",
+            "semantic_fact",
+            "procedure",
+            "architecture_decision"
+          ],
+          "remote_projection_threshold": 80,
+          "run_deadline_ms": 120000,
+          "scope_fit_weight": 10,
+          "semantic_profile": "safe-agent",
+          "semantic_retry_delay_ms": 900000,
+          "stability_weight": 15,
+          "verification_weight": 15,
+          "version": "memory-policy-v1"
         },
         "promotion": {
           "enabled": true,
@@ -2413,6 +3006,7 @@
         },
         "supplemental": {
           "delivery_batch_size": 20,
+          "destination_attestations": [],
           "enabled": false,
           "legacy_outbox_dir": "~/.aletheon/memory-outbox",
           "max_content_bytes": 6000,
@@ -2452,6 +3046,13 @@
         "default": null,
         "multimodal": null,
         "reasoning": null
+      }
+    },
+    "multi_agent": {
+      "$ref": "#/$defs/MultiAgentConfig",
+      "default": {
+        "automatic_for_coding": false,
+        "enabled": false
       }
     },
     "network_policy": {

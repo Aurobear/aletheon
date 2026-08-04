@@ -5,7 +5,7 @@
 
 use fabric::protocol::client::EventCursor;
 use fabric::ui_event::{AwarenessLevel, CollaborationMode};
-use fabric::{AgentSnapshot, ApprovalSnapshot, MonoTime, TurnTerminalStatus};
+use fabric::{AgentSnapshot, ApprovalSnapshot, EvaluationReceiptRef, MonoTime, TurnTerminalStatus};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -92,6 +92,16 @@ pub struct UiItem {
     pub collapsed: bool,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TurnActivity {
+    pub inference_rounds: usize,
+    pub provider_retries: usize,
+    pub tool_calls: usize,
+    pub succeeded: usize,
+    pub denied: usize,
+    pub failed: usize,
+}
+
 impl UiItem {
     pub fn streaming(id: String) -> Self {
         Self {
@@ -120,6 +130,8 @@ pub struct AppState {
     pub total_tokens: u32,
     /// Tools used in current turn.
     pub turn_tool_count: usize,
+    /// Authoritative per-turn activity counters; never inferred from prose.
+    pub turn_activity: TurnActivity,
     /// Whether currently streaming a response.
     pub streaming: bool,
     /// Whether a turn is active (between turn_start and turn_done).
@@ -138,6 +150,9 @@ pub struct AppState {
     /// ACP and TUI derive this from the same `ClientEvent`, rather than from
     /// transport-specific success heuristics.
     pub last_terminal_status: Option<TurnTerminalStatus>,
+    /// Latest bounded evaluation summary observed in the canonical Session
+    /// stream. Full evidence remains in the evaluation store.
+    pub latest_evaluation: Option<EvaluationReceiptRef>,
 }
 
 impl Default for AppState {
@@ -149,6 +164,7 @@ impl Default for AppState {
             model_name: "unknown".to_string(),
             total_tokens: 0,
             turn_tool_count: 0,
+            turn_activity: TurnActivity::default(),
             streaming: false,
             turn_active: false,
             current_iteration: 0,
@@ -160,6 +176,7 @@ impl Default for AppState {
             agents: BTreeMap::new(),
             last_error: None,
             last_terminal_status: None,
+            latest_evaluation: None,
         }
     }
 }

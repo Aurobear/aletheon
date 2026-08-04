@@ -10,7 +10,7 @@ jobs:
   evaluate:
     name: Leju DeepSeek coding fixtures
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     env:
       ALETHEON_PROVIDER: leju
       ALETHEON_MODEL: deepseek/deepseek-v4-pro
@@ -101,44 +101,44 @@ jobs:
             exit 2
           fi
 
-          infrastructure_failed=0
-          verification_failed=0
-          for task in rust_bugfix rust_multifile rust_diagnosis; do
-            receipt="$artifacts/$task.json"
-            python3 tests/coding/harness/run.py "tests/coding/tasks/$task.toml" \
-              --receipt "$receipt" || true
-            if [[ ! -s "$receipt" ]]; then
-              echo "infrastructure failure: $task produced no receipt" >&2
-              infrastructure_failed=1
-              continue
-            fi
-            classification=$(python3 - "$receipt" <<'PY'
+          python3 tests/coding/harness/suite.py \
+            --catalog tests/coding/tasks \
+            --receipts "$artifacts/receipts" \
+            --report "$artifacts/suite.json"
+          suite_exit=$?
+
+          if [[ ! -s "$artifacts/suite.json" ]]; then
+            echo "infrastructure failure: suite produced no report" >&2
+            exit 2
+          fi
+          python3 - "$artifacts/suite.json" "$GITHUB_STEP_SUMMARY" <<'PY'
           import json
           import sys
 
-          receipt = json.load(open(sys.argv[1], encoding="utf-8"))
-          if not receipt.get("operation_id"):
-              print("infrastructure")
-          elif not receipt.get("verification", {}).get("passed"):
-              print("verification")
-          else:
-              print("passed")
+          report = json.load(open(sys.argv[1], encoding="utf-8"))
+          with open(sys.argv[2], "a", encoding="utf-8") as summary:
+              summary.write("## Real coding benchmark\n\n")
+              summary.write("| task | expected | observed | failure | passed |\n")
+              summary.write("|---|---|---|---|---|\n")
+              for task in report["tasks"]:
+                  summary.write(
+                      f"| {task['task_id']} | {task['expected_terminal']} | "
+                      f"{task['observed_terminal']} | {task['failure_class']} | "
+                      f"{task['outcome_passed']} |\n"
+                  )
           PY
-            )
-            case "$classification" in
-              infrastructure) infrastructure_failed=1 ;;
-              verification) verification_failed=1 ;;
-            esac
-            printf '%s: %s\n' "$task" "$classification" | tee -a "$GITHUB_STEP_SUMMARY"
-          done
 
-          if (( infrastructure_failed )); then
+          if (( suite_exit == 2 )); then
             echo "One or more fixtures had an infrastructure failure" >&2
             exit 2
           fi
-          if (( verification_failed )); then
-            echo "One or more fixtures failed agent verification" >&2
+          if (( suite_exit == 1 )); then
+            echo "One or more fixtures missed its authoritative benchmark outcome" >&2
             exit 1
+          fi
+          if (( suite_exit != 0 )); then
+            echo "infrastructure failure: unexpected suite exit $suite_exit" >&2
+            exit 2
           fi
       - name: Upload coding receipts and core log
         if: always()

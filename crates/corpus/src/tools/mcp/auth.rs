@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use fabric::Clock;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex as AsyncMutex;
 
 use super::lifecycle::{McpOAuthEvent, McpOAuthLifecycle};
 pub use super::token_store::{TokenEntry, TokenStore};
@@ -297,6 +299,7 @@ impl fmt::Display for BearerTokenAuth {
 pub enum McpHttpAuth {
     Bearer(BearerTokenAuth),
     OAuth(Arc<parking_lot::Mutex<McpOAuthProvider>>),
+    ClientCredentials(McpClientCredentialsAuth),
 }
 
 impl From<BearerTokenAuth> for McpHttpAuth {
@@ -310,15 +313,259 @@ impl McpHttpAuth {
         match self {
             Self::Bearer(auth) => auth.header_value_for(target_url),
             Self::OAuth(auth) => auth.lock().get_headers(target_url).remove("Authorization"),
+            Self::ClientCredentials(auth) => auth.header_value_for(target_url),
+        }
+    }
+
+    pub async fn prepare_for_request(&self, target_url: Option<&str>) -> Result<()> {
+        match self {
+            Self::ClientCredentials(auth) => auth.prepare_for_request(target_url).await,
+            Self::Bearer(_) | Self::OAuth(_) => Ok(()),
         }
     }
 
     pub fn oauth_provider(&self) -> Option<Arc<parking_lot::Mutex<McpOAuthProvider>>> {
         match self {
             Self::OAuth(provider) => Some(provider.clone()),
-            Self::Bearer(_) => None,
+            Self::Bearer(_) | Self::ClientCredentials(_) => None,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct McpClientCredentialsAuth {
+    inner: Arc<AsyncMutex<ClientCredentialsState>>,
+    current: Arc<parking_lot::RwLock<Option<TokenEntry>>>,
+    endpoint_grants: Arc<Vec<McpEndpointCredentialGrant>>,
+    clock: Arc<dyn Clock>,
+}
+
+struct ClientCredentialsState {
+    client: reqwest::Client,
+    client_id: String,
+    client_secret: String,
+    token_url: String,
+    scopes: Vec<String>,
+    resource: String,
+    method: OAuthClientAuthMethod,
+    server_id: String,
+    token_store: TokenStore,
+}
+
+impl fmt::Debug for McpClientCredentialsAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("McpClientCredentialsAuth")
+            .field(
+                "endpoints",
+                &self
+                    .endpoint_grants
+                    .iter()
+                    .map(|grant| grant.approved_base_url.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .field("credential", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl McpClientCredentialsAuth {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        client_id: String,
+        client_secret: String,
+        token_url: String,
+        scopes: Vec<String>,
+        server_id: String,
+        resource_url: &str,
+        method: OAuthClientAuthMethod,
+        policy: crate::tools::outbound::EndpointPolicy,
+        token_store: TokenStore,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            method != OAuthClientAuthMethod::None && !client_secret.is_empty(),
+            "client_credentials requires a confidential OAuth client"
+        );
+        policy
+            .validate_identity(&token_url)
+            .context("OAuth token endpoint identity denied")?;
+        let current = token_store
+            .get(&server_id)
+            .cloned()
+            .filter(|entry| exact_scope_set(&entry.scopes, &scopes));
+        let sse_url = format!("{}/sse", resource_url.trim_end_matches('/'));
+        Ok(Self {
+            inner: Arc::new(AsyncMutex::new(ClientCredentialsState {
+                client: policy
+                    .client(std::time::Duration::from_secs(30))
+                    .context("building OAuth client-credentials HTTP client")?,
+                client_id,
+                client_secret,
+                token_url,
+                scopes,
+                resource: resource_url.to_owned(),
+                method,
+                server_id: server_id.clone(),
+                token_store,
+            })),
+            current: Arc::new(parking_lot::RwLock::new(current)),
+            endpoint_grants: Arc::new(vec![
+                McpEndpointCredentialGrant::new(
+                    format!("mcp:{server_id}"),
+                    resource_url,
+                    server_id.clone(),
+                    u64::MAX,
+                    0,
+                ),
+                McpEndpointCredentialGrant::new(
+                    format!("mcp:{server_id}"),
+                    &sse_url,
+                    server_id,
+                    u64::MAX,
+                    0,
+                ),
+            ]),
+            clock,
+        })
+    }
+
+    pub fn header_value_for(&self, target_url: Option<&str>) -> Option<String> {
+        let target = target_url?;
+        let now = now_epoch_secs(&*self.clock);
+        if !self
+            .endpoint_grants
+            .iter()
+            .any(|grant| grant.approved_for(target, now))
+        {
+            return None;
+        }
+        self.current
+            .read()
+            .as_ref()
+            .filter(|entry| entry.expires_at > now)
+            .map(|entry| format!("{} {}", entry.token_type, entry.access_token))
+    }
+
+    pub async fn prepare_for_request(&self, target_url: Option<&str>) -> Result<()> {
+        let target = target_url.context("OAuth request target is unavailable")?;
+        let now = now_epoch_secs(&*self.clock);
+        anyhow::ensure!(
+            self.endpoint_grants
+                .iter()
+                .any(|grant| grant.approved_for(target, now)),
+            "OAuth credential endpoint grant denied"
+        );
+        if self
+            .current
+            .read()
+            .as_ref()
+            .is_some_and(|entry| entry.expires_at > now.saturating_add(30))
+        {
+            return Ok(());
+        }
+
+        let mut state = self.inner.lock().await;
+        let now = now_epoch_secs(&*self.clock);
+        if self
+            .current
+            .read()
+            .as_ref()
+            .is_some_and(|entry| entry.expires_at > now.saturating_add(30))
+        {
+            return Ok(());
+        }
+        let entry = state.exchange(now).await?;
+        let server_id = state.server_id.clone();
+        state.token_store.set(server_id, entry.clone());
+        state.token_store.save()?;
+        *self.current.write() = Some(entry);
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct ClientCredentialsTokenResponse {
+    access_token: String,
+    #[serde(default = "default_token_type")]
+    token_type: String,
+    #[serde(default = "default_token_lifetime")]
+    expires_in: u64,
+    scope: Option<String>,
+}
+
+fn default_token_type() -> String {
+    "Bearer".into()
+}
+
+fn default_token_lifetime() -> u64 {
+    3_600
+}
+
+impl ClientCredentialsState {
+    async fn exchange(&self, now: u64) -> Result<TokenEntry> {
+        let scope = self.scopes.join(" ");
+        let mut form = vec![
+            ("grant_type", "client_credentials"),
+            ("client_id", self.client_id.as_str()),
+            ("scope", scope.as_str()),
+            ("resource", self.resource.as_str()),
+        ];
+        if self.method == OAuthClientAuthMethod::ClientSecretPost {
+            form.push(("client_secret", self.client_secret.as_str()));
+        }
+        let mut request = self.client.post(&self.token_url).form(&form);
+        if self.method == OAuthClientAuthMethod::ClientSecretBasic {
+            request = request.basic_auth(&self.client_id, Some(&self.client_secret));
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| anyhow::anyhow!("OAuth client-credentials transport failed"))?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "OAuth client-credentials request was rejected"
+        );
+        if response
+            .content_length()
+            .is_some_and(|length| length > 64 * 1024)
+        {
+            anyhow::bail!("OAuth token response exceeds byte limit");
+        }
+        let mut stream = response.bytes_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("reading OAuth token response failed")?;
+            if bytes.len().saturating_add(chunk.len()) > 64 * 1024 {
+                anyhow::bail!("OAuth token response exceeds byte limit");
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let raw: ClientCredentialsTokenResponse = serde_json::from_slice(&bytes)
+            .context("OAuth token endpoint returned malformed JSON")?;
+        anyhow::ensure!(
+            !raw.access_token.is_empty() && raw.token_type.eq_ignore_ascii_case("bearer"),
+            "OAuth token response is incompatible"
+        );
+        let scopes = raw
+            .scope
+            .map(|value| value.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_else(|| self.scopes.clone());
+        anyhow::ensure!(
+            exact_scope_set(&scopes, &self.scopes),
+            "OAuth provider did not grant the exact configured scopes"
+        );
+        Ok(TokenEntry {
+            access_token: raw.access_token,
+            refresh_token: None,
+            expires_at: now.saturating_add(raw.expires_in),
+            token_type: "Bearer".into(),
+            scopes,
+        })
+    }
+}
+
+fn exact_scope_set(actual: &[String], required: &[String]) -> bool {
+    actual.iter().collect::<BTreeSet<_>>() == required.iter().collect::<BTreeSet<_>>()
 }
 
 // ---------------------------------------------------------------------------
@@ -834,6 +1081,20 @@ mod tests {
         assert!(!format!("{grant:?}").contains("token"));
     }
 
+    #[test]
+    fn client_credentials_scope_set_must_match_exactly() {
+        let required = vec!["read".to_owned(), "write".to_owned()];
+        assert!(exact_scope_set(
+            &["write".to_owned(), "read".to_owned()],
+            &required
+        ));
+        assert!(!exact_scope_set(&["read".to_owned()], &required));
+        assert!(!exact_scope_set(
+            &["read".to_owned(), "write".to_owned(), "admin".to_owned()],
+            &required
+        ));
+    }
+
     // -- BearerTokenAuth tests (existing + trait) --------------------------
 
     #[test]
@@ -973,6 +1234,103 @@ mod tests {
             scopes: vec![],
         };
         assert!(now < valid.expires_at);
+    }
+
+    #[tokio::test]
+    async fn client_credentials_exchanges_once_persists_and_scopes_header() {
+        use http_body_util::{BodyExt, Full};
+        use hyper::body::Bytes;
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let token_url = format!("{base}/token");
+        let resource = format!("{base}/mcp");
+        let exchanges = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::new(std::sync::Mutex::new(String::new()));
+        let task_exchanges = exchanges.clone();
+        let task_observed = observed.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let exchanges = task_exchanges.clone();
+                let observed = task_observed.clone();
+                let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+                    let exchanges = exchanges.clone();
+                    let observed = observed.clone();
+                    async move {
+                        exchanges.fetch_add(1, Ordering::SeqCst);
+                        let bytes = request.into_body().collect().await.unwrap().to_bytes();
+                        *observed.lock().unwrap() = String::from_utf8(bytes.to_vec()).unwrap();
+                        let body = serde_json::json!({
+                            "access_token": "short-lived-secret",
+                            "token_type": "Bearer",
+                            "expires_in": 3600,
+                            "scope": "read write"
+                        })
+                        .to_string();
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .status(200)
+                                .header("content-type", "application/json")
+                                .body(Full::new(Bytes::from(body)))
+                                .unwrap(),
+                        )
+                    }
+                });
+                tokio::spawn(async move {
+                    let _ = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("client-credentials.json");
+        let auth = McpClientCredentialsAuth::new(
+            "client-id".into(),
+            "client-secret".into(),
+            token_url,
+            vec!["read".into(), "write".into()],
+            "source-a".into(),
+            &resource,
+            OAuthClientAuthMethod::ClientSecretPost,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+            TokenStore::new(store_path.clone()).unwrap(),
+            test_clock(),
+        )
+        .unwrap();
+
+        auth.prepare_for_request(Some(&resource)).await.unwrap();
+        auth.prepare_for_request(Some(&resource)).await.unwrap();
+        assert_eq!(exchanges.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            auth.header_value_for(Some(&resource)).as_deref(),
+            Some("Bearer short-lived-secret")
+        );
+        assert_eq!(
+            auth.header_value_for(Some(&format!("{resource}/sse")))
+                .as_deref(),
+            Some("Bearer short-lived-secret")
+        );
+        assert!(auth
+            .header_value_for(Some("http://127.0.0.1:1/mcp"))
+            .is_none());
+        let body = observed.lock().unwrap().clone();
+        assert!(body.contains("grant_type=client_credentials"));
+        assert!(body.contains("client_id=client-id"));
+        assert!(body.contains("client_secret=client-secret"));
+        assert!(body.contains("scope=read+write"));
+        assert!(!format!("{auth:?}").contains("client-secret"));
+        let persisted = TokenStore::new(store_path).unwrap();
+        assert_eq!(persisted.get("source-a").unwrap().scopes, ["read", "write"]);
+        task.abort();
     }
 
     // -- OAuth provider: authorize_url -------------------------------------

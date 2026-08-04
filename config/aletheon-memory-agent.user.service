@@ -1,0 +1,30 @@
+[Unit]
+Description=Aletheon managed memory maintenance agent
+Requires=aletheon.socket
+After=aletheon.socket
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/aletheon memory-agent serve --official-user-socket
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+# The scheduler has no workspace, database, or credential authority. It can
+# only connect to the owning user's private Unix socket.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+# PrivateDevices= requires capability manipulation that is unavailable in
+# unprivileged user managers on some production hosts. The agent already runs
+# as the owning user, receives no device capabilities, and has no state or
+# workspace paths; keep the portable user-service boundary fail-closed instead.
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+LimitCORE=0
+
+[Install]
+WantedBy=default.target

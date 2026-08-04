@@ -21,6 +21,7 @@ install -d -o root -g aletheon -m 0750 /etc/aletheon /etc/aletheon/policy /etc/a
 install -d -o aletheon -g aletheon -m 0750 \
   /var/lib/aletheon/{state,goals,sessions,mnemosyne,artifacts,worktrees,audit} \
   /var/cache/aletheon /run/aletheon
+install -d -o aletheon -g aletheon -m 0700 /var/cache/aletheon/backup
 for secret in provider.env telegram.env gbrain.env; do
   if [[ ! -e /etc/aletheon/credentials/$secret ]]; then
     install -o aletheon -g aletheon -m 0600 /dev/null "/etc/aletheon/credentials/$secret"
@@ -28,6 +29,7 @@ for secret in provider.env telegram.env gbrain.env; do
 done
 
 install -o root -g root -m 0755 "$binary" /usr/bin/aletheon
+bash "$repo_root/scripts/libexec/aletheon/install-completions.sh" --system /
 install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/verify/systemd.sh" \
   /usr/libexec/aletheon/verify-systemd.sh
 install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/secret-audit.sh" \
@@ -56,6 +58,10 @@ install -o root -g root -m 0644 "$repo_root/config/aletheon.user.service" \
   /usr/lib/systemd/user/aletheon.service
 sed -i 's|ExecStart=%h/.local/bin/aletheon daemon|ExecStart=/usr/bin/aletheon daemon|' \
   /usr/lib/systemd/user/aletheon.service
+install -o root -g root -m 0644 "$repo_root/config/aletheon-memory-agent.user.service" \
+  /usr/lib/systemd/user/aletheon-memory-agent.service
+sed -i 's|ExecStart=%h/.local/bin/aletheon memory-agent serve --official-user-socket|ExecStart=/usr/bin/aletheon memory-agent serve --official-user-socket|' \
+  /usr/lib/systemd/user/aletheon-memory-agent.service
 install -o root -g root -m 0644 "$repo_root/config/aletheon.user.socket" \
   /usr/lib/systemd/user/aletheon.socket
 for unit in aletheon-backup.service aletheon-backup.timer \
@@ -80,6 +86,7 @@ systemd-analyze verify /etc/systemd/system/aletheon-backup.service
 systemd-analyze verify /etc/systemd/system/aletheon-cleanup.service
 /usr/libexec/aletheon/verify-systemd.sh --user-units \
   /usr/lib/systemd/user/aletheon.service /usr/lib/systemd/user/aletheon.socket \
+  /usr/lib/systemd/user/aletheon-memory-agent.service \
   --binary /usr/bin/aletheon
 systemctl daemon-reload
 if ((enable)); then
@@ -87,6 +94,15 @@ if ((enable)); then
   systemctl enable aletheon-core.service
   systemctl reset-failed aletheon-core.service
   systemctl restart aletheon-core.service
-  systemctl --global enable aletheon.socket
-  systemctl enable --now aletheon-backup.timer aletheon-cleanup.timer
+  systemctl --global enable aletheon.socket aletheon-memory-agent.service
+  systemctl enable --now aletheon-cleanup.timer
+  if command -v restic >/dev/null \
+    && [[ -s /etc/aletheon/credentials/restic-password ]] \
+    && [[ -s /etc/aletheon/credentials/restic-repository ]]; then
+    systemctl enable --now aletheon-backup.timer
+  else
+    systemctl disable --now aletheon-backup.timer
+    systemctl reset-failed aletheon-backup.service || true
+    echo "backup timer disabled: configure restic and non-empty protected credentials to enable it" >&2
+  fi
 fi

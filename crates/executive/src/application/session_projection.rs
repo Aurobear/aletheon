@@ -66,7 +66,11 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
                 bounded_tool_result(content),
                 *is_error,
             )),
-            ItemPayload::ContextProjection { .. } => None,
+            ItemPayload::ContextProjection { .. }
+            | ItemPayload::CapabilityReceipt { .. }
+            | ItemPayload::EvaluationReceiptRef { .. }
+            | ItemPayload::ModelContextProjection { .. }
+            | ItemPayload::InferenceReceipt { .. } => None,
         };
         if let Some(message) = message {
             messages.push(message);

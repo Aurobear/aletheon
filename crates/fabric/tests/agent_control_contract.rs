@@ -29,6 +29,8 @@ fn spawn_request() -> AgentSpawnRequest {
         profile_id: AgentProfileId("reviewer".into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        delegator_authority: None,
+        cognitive_binding: None,
         task: "review the implementation".into(),
         context: AgentContextFork::SelectedProjection {
             items: vec!["goal: preserve behavior".into()],
@@ -49,6 +51,7 @@ fn generic_intent(runtime_override: Option<&str>) -> AgentSpawnIntent {
         runtime_override: runtime_override.map(str::to_owned),
         required_capabilities: vec![AgentRuntimeCapability::CodeRead],
         trusted_workspace: None,
+        delegator_authority: None,
         task: "analyze".into(),
         context: AgentContextFork::None,
         allowed_tools: vec!["file_read".into()],
@@ -113,6 +116,10 @@ fn request_validation_enforces_all_bounds() {
 
     let mut invalid = spawn_request();
     invalid.budget.max_tool_calls = 0;
+    invalid.validate().unwrap();
+
+    let mut invalid = spawn_request();
+    invalid.budget.max_depth = 0;
     assert!(invalid.validate().is_err());
 
     let receipt = AgentBroadcastRef {

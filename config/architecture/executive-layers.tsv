@@ -1,5 +1,12 @@
 # frozen_commit=ca4b185
 # path	layer	owner	reason
+crates/executive/src/adapters/episode/mod.rs	adapter	executive	concrete durable episode integration
+crates/executive/src/adapters/episode/sqlite_episode_sink.rs	adapter	executive	concrete durable episode integration
+crates/executive/src/application/deterministic_outcome_verifier.rs	application	executive	deterministic embodied outcome policy
+crates/executive/src/application/embodied_execution_adapter.rs	application	executive	application port adaptation for embodiment execution
+crates/executive/src/application/robot_episode_promotion.rs	application	executive	governed settled episode promotion
+crates/executive/src/application/robot_harness_composition.rs	composition	executive	robot harness composition boundary
+crates/executive/src/host/daemon/bootstrap/robot.rs	host	executive	robot daemon bootstrap integration
 crates/executive/src/adapters/agent_control/mod.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/agent_control/sqlite_repository.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/artifact/mod.rs	adapter	executive	concrete infrastructure integration
@@ -67,7 +74,9 @@ crates/executive/src/application/agent_control/candidate_projection.rs	applicati
 crates/executive/src/application/agent_control/cleanup.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/context_fork.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/execution.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/agent_control/identity.rs	application	executive	identity and runtime capability projection
 crates/executive/src/application/agent_control/lifecycle.rs	application	executive	pure Agent lifecycle reducer
+crates/executive/src/application/agent_control/lifecycle_hooks.rs	application	executive	Agent lifecycle hook boundary and adapters
 crates/executive/src/application/agent_control/live_runs.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/mailbox.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/memory.rs	application	executive	use-case orchestration and ports
@@ -79,7 +88,10 @@ crates/executive/src/application/approval/apply_coordinator.rs	application	execu
 crates/executive/src/application/approval/mod.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/approval/repository.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/approval_service.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/capability_benchmark.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/coding_runtime.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/cognitive_role_workflow.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/cognitive_workspace.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/compaction_normalize.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious/agent_processor.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious/corpus_processor.rs	application	executive	use-case orchestration and ports
@@ -133,6 +145,9 @@ crates/executive/src/application/hook_lifecycle/session_distiller.rs	application
 crates/executive/src/application/inference_port.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/lifecycle_contributors.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/memory_consolidation_worker.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/memory_policy.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/memory_maintenance.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/memory_gateway.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/memory_projection.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/mod.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/orchestration/agent.rs	application	executive	use-case orchestration and ports
@@ -197,6 +212,7 @@ crates/executive/src/composition/config/genome.rs	composition	executive	configur
 crates/executive/src/composition/config/grok_hardening.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/infra.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/integrations.rs	composition	executive	configuration and dependency construction
+crates/executive/src/composition/config/memory_policy.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/mod.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/provenance.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/provider.rs	composition	executive	configuration and dependency construction
@@ -242,7 +258,9 @@ crates/executive/src/host/core_rpc/protocol.rs	host	executive	daemon, transport,
 crates/executive/src/host/core_rpc/server.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/agents.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/approval_gate.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/daemon/bootstrap/bundled_profiles.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/channels.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/daemon/bootstrap/cognition.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/embodiment.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/extensions.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/google.rs	host	executive	daemon, transport, or process lifecycle
@@ -255,6 +273,7 @@ crates/executive/src/host/daemon/bootstrap/production_embodiment.rs	host	executi
 crates/executive/src/host/daemon/bootstrap/request.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/request_ports.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/request_tests.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/daemon/bootstrap/role_profiles.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/runtime.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/services.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/sessions.rs	host	executive	daemon, transport, or process lifecycle
@@ -275,7 +294,6 @@ crates/executive/src/host/daemon/handler/rpc/rpc_goal.rs	host	executive	daemon, 
 crates/executive/src/host/daemon/handler/rpc/rpc_google.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_health.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_memory.rs	host	executive	daemon, transport, or process lifecycle
-crates/executive/src/host/daemon/handler/rpc/rpc_reflection.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_session.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_turn.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_workflow.rs	host	executive	daemon, transport, or process lifecycle
@@ -306,3 +324,29 @@ crates/executive/src/extensions/runtime/mod.rs	adapter	executive	extension runti
 crates/executive/src/extensions/runtime/subprocess.rs	adapter	executive	extension subprocess adapter
 crates/executive/src/host/daemon/bootstrap/runtime/runtime_tests.rs	host	executive	daemon runtime tests
 crates/executive/src/host/daemon/handler/rpc/rpc_skill.rs	host	executive	daemon Skill RPC transport
+crates/executive/src/adapters/evaluation/mod.rs	adapter	executive	evaluation persistence adapter
+crates/executive/src/adapters/evaluation/sqlite_store.rs	adapter	executive	durable evaluation receipt store
+crates/executive/src/application/evaluation/coding_scorer.rs	application	executive	coding evaluation scoring policy
+crates/executive/src/application/evaluation/contract_issuer.rs	application	executive	evaluation contract issuance
+crates/executive/src/application/evaluation/evidence_collector.rs	application	executive	evaluation evidence collection
+crates/executive/src/application/evaluation/mod.rs	application	executive	evaluation application facade
+crates/executive/src/application/evaluation/policy.rs	application	executive	evaluation settlement policy
+crates/executive/src/application/evaluation/projection.rs	application	executive	evaluation receipt projection
+crates/executive/src/application/evaluation/service.rs	application	executive	evaluation use case
+crates/executive/src/application/evolution_proposer.rs	application	executive	governed evolution proposal use case
+crates/executive/src/application/metacog_approval.rs	application	executive	governed metacog apply coordinator
+crates/executive/src/composition/config/evaluation.rs	composition	executive	evaluation configuration composition
+crates/executive/src/host/daemon/handler/rpc/rpc_evaluation.rs	host	executive	evaluation RPC transport
+crates/executive/src/host/daemon/bootstrap/security.rs	composition	executive	tool security composition
+crates/executive/src/application/governed_review/mod.rs	application	executive	governed review application facade
+crates/executive/src/application/governed_review/prompt.rs	application	executive	evidence-only review prompt compilation
+crates/executive/src/application/governed_review/service.rs	application	executive	bounded governed review lifecycle
+crates/executive/src/application/governed_review/store.rs	application	executive	durable governed review authority
+crates/executive/src/composition/config/governed_review.rs	composition	executive	governed review configuration composition
+crates/executive/src/host/daemon/handler/rpc/rpc_review.rs	host	executive	governed review RPC transport
+crates/executive/src/application/extension_coordinator.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/extension_snapshot.rs	application	executive	use-case orchestration and ports
+crates/executive/src/host/daemon/bootstrap/extension_bootstrap.rs	composition	executive	daemon composition boundary
+crates/executive/src/host/daemon/bootstrap/extension_connectors.rs	composition	executive	daemon composition boundary
+crates/executive/src/host/daemon/bootstrap/extension_publisher.rs	composition	executive	daemon composition boundary
+crates/executive/src/host/daemon/handler/rpc/rpc_extension.rs	host	executive	transport and request handling

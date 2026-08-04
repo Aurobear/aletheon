@@ -7,6 +7,7 @@ use mnemosyne::{
 fn ancestry() -> ScopeAncestry {
     ScopeAncestry {
         principal_id: Some("principal-a".into()),
+        workspace_id: Some("workspace-a".into()),
         session_id: Some("session-a".into()),
         goal_id: Some("goal-a".into()),
         agent_id: Some("agent-a".into()),
@@ -35,6 +36,7 @@ fn scope_visibility_requires_exact_ancestry_member() {
     for scope in [
         MemoryScope::Global,
         MemoryScope::Principal("principal-a".into()),
+        MemoryScope::Workspace("workspace-a".into()),
         MemoryScope::Session("session-a".into()),
         MemoryScope::Goal("goal-a".into()),
         MemoryScope::Agent("agent-a".into()),
@@ -43,6 +45,7 @@ fn scope_visibility_requires_exact_ancestry_member() {
         assert!(scope.allows(&chain), "expected {scope:?} to be visible");
     }
     assert!(!MemoryScope::Session("session-b".into()).allows(&chain));
+    assert!(!MemoryScope::Workspace("workspace-b".into()).allows(&chain));
     assert!(!MemoryScope::Agent("agent-b".into()).allows(&chain));
     assert!(!MemoryScope::Task("task-b".into()).allows(&chain));
 }

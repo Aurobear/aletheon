@@ -16,7 +16,11 @@ pub struct CanonicalSessionStore {
     connection: Mutex<Connection>,
 }
 
-const DATABASE_SCHEMA_VERSION: i64 = 1;
+// Keep the database migration marker aligned with the newest record protocol
+// migration. Version 4 adds EvaluationReceiptRef Session items; older JSON
+// payloads are structurally compatible but must have their explicit record
+// version advanced before event-spine reconciliation compares them.
+const DATABASE_SCHEMA_VERSION: i64 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MigrationStep {
@@ -116,6 +120,24 @@ fn migrate_with_step_hook(
                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
              );",
         )?;
+        if current >= 1 {
+            // Session protocols v2/v3 add new typed item variants. Existing
+            // payloads remain wire-compatible, so migrate their explicit
+            // record versions atomically with the database version marker.
+            tx.execute(
+                "UPDATE sessions
+                 SET schema_version=?1,
+                     record_json=json_set(record_json, '$.schema_version', ?1)",
+                params![SESSION_SCHEMA_VERSION],
+            )
+            .context("session database v1 sessions schema is incomplete")?;
+            tx.execute(
+                "UPDATE session_items
+                 SET item_json=json_set(item_json, '$.schema_version', ?1)",
+                params![SESSION_SCHEMA_VERSION],
+            )
+            .context("session database v1 session_items schema is incomplete")?;
+        }
         after_step(MigrationStep::Schema)?;
         tx.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
         after_step(MigrationStep::Version)?;
@@ -139,7 +161,7 @@ fn migrate_with_step_hook(
 #[async_trait]
 impl TurnRecoveryStore for CanonicalSessionStore {
     async fn list_session_ids(&self) -> Result<Vec<SessionId>> {
-        let connection = self.connection.lock().unwrap();
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement =
             connection.prepare("SELECT session_id FROM sessions ORDER BY session_id")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
@@ -153,7 +175,7 @@ impl TurnRecoveryStore for CanonicalSessionStore {
         turn_id: fabric::TurnId,
         classification: RecoveryClassification,
     ) -> Result<()> {
-        let mut connection = self.connection.lock().unwrap();
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let json: String = tx
             .query_row(
@@ -195,7 +217,7 @@ impl SessionAppendStore for CanonicalSessionStore {
     async fn create(&self, session: SessionRecord) -> Result<()> {
         Self::validate_session(&session)?;
         let json = serde_json::to_string(&session)?;
-        let connection = self.connection.lock().unwrap();
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let existing = connection
             .query_row(
                 "SELECT record_json FROM sessions WHERE session_id=?1",
@@ -226,7 +248,7 @@ impl SessionAppendStore for CanonicalSessionStore {
     ) -> Result<AppendOutcome> {
         Self::validate_item(session, expected_sequence, &item)?;
         let item_json = serde_json::to_string(&item)?;
-        let mut connection = self.connection.lock().unwrap();
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(existing) = tx
             .query_row(
@@ -280,7 +302,7 @@ impl SessionAppendStore for CanonicalSessionStore {
         {
             bail!("fork metadata does not match request");
         }
-        let mut connection = self.connection.lock().unwrap();
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let parent_next: u64 = tx.query_row(
             "SELECT next_sequence FROM sessions WHERE session_id=?1",
@@ -316,7 +338,7 @@ impl SessionAppendStore for CanonicalSessionStore {
         let json = self
             .connection
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .query_row(
                 "SELECT record_json FROM sessions WHERE session_id=?1",
                 params![session.0],
@@ -328,7 +350,7 @@ impl SessionAppendStore for CanonicalSessionStore {
     }
 
     async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>> {
-        let connection = self.connection.lock().unwrap();
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = connection.prepare(
             "SELECT item_json FROM session_items WHERE session_id=?1 AND sequence>?2 ORDER BY sequence"
         )?;
@@ -451,6 +473,54 @@ mod tests {
             store.load_session(&session.id).await.unwrap(),
             Some(session)
         );
+    }
+
+    #[tokio::test]
+    async fn prior_session_records_are_atomically_upgraded_to_current_protocol() {
+        for legacy_version in [1, 2, 3] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("sessions.db");
+            let connection = Connection::open(&path).unwrap();
+            legacy_schema(&connection);
+            connection
+                .pragma_update(None, "user_version", legacy_version)
+                .unwrap();
+            let session_id = SessionId(format!("v{legacy_version}-session"));
+            let session_json = serde_json::json!({
+                "schema_version": legacy_version,
+                "id": session_id.0,
+                "parent": null,
+                "created_at_ms": 17,
+                "status": "active"
+            });
+            let item_id = fabric::ItemId::new();
+            let turn_id = fabric::TurnId::new();
+            let item_json = serde_json::json!({
+                "schema_version": legacy_version,
+                "id": item_id,
+                "session_id": session_id.0,
+                "turn_id": turn_id,
+                "sequence": 1,
+                "created_at_ms": 18,
+                "payload": {"type": "user_message", "data": {"content": "legacy"}}
+            });
+            connection.execute(
+                "INSERT INTO sessions(session_id,schema_version,record_json,next_sequence) VALUES(?1,?2,?3,2)",
+                params![session_id.0, legacy_version, session_json.to_string()],
+            ).unwrap();
+            connection.execute(
+                "INSERT INTO session_items(session_id,sequence,item_id,turn_id,item_json) VALUES(?1,1,?2,?3,?4)",
+                params![session_id.0, item_id.0.to_string(), turn_id.0.to_string(), item_json.to_string()],
+            ).unwrap();
+            drop(connection);
+
+            let store = CanonicalSessionStore::open(&path).unwrap();
+            let session = store.load_session(&session_id).await.unwrap().unwrap();
+            let items = store.load_items(&session_id, None).await.unwrap();
+            assert_eq!(session.schema_version, SESSION_SCHEMA_VERSION);
+            assert_eq!(items[0].schema_version, SESSION_SCHEMA_VERSION);
+            assert!(matches!(items[0].payload, ItemPayload::UserMessage { .. }));
+        }
     }
 
     #[tokio::test]

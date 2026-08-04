@@ -101,6 +101,7 @@ pub struct ApprovalNotice {
     pub action_summary: String,
     pub risk_level: String,
     pub detail: Option<String>,
+    pub scope_subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
 }
 
 #[async_trait]

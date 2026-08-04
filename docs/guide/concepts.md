@@ -18,7 +18,7 @@ Aletheon's architecture is built on three pillars: **SelfField** (the self-aware
 |  Reason / Plan / Reflect / Learn / Criticize                 |
 +-------------------------------------------------------------+
 |  corpus (Execution)                                           |
-|  Tools / Shell / Filesystem / Kernel / MCP / ROS             |
+|  Tools / Shell / Filesystem / Kernel / MCP / Hardware          |
 +-------------------------------------------------------------+
 |  Memory (Persistence)                                        |
 |  Episodic / Semantic / Procedural / Self Memory              |
@@ -59,7 +59,7 @@ cognit drives reasoning and decision-making through a ReAct (Think-Act-Observe) 
 
 - **Reasoning:** Analyze current state, decompose problems, select strategies
 - **Planning:** Break tasks into steps, schedule execution order
-- **Reflection:** Evaluate outcomes, extract lessons (see [Self-Evolution](../architecture/self-evolution.md))
+- **Reflection:** Evaluate outcomes and extract lessons
 - **Learning:** Summarize experience, adjust inference routing
 - **Criticism:** Self-evaluate plans before execution
 
@@ -79,15 +79,19 @@ User request / Perception event
 
 ## corpus
 
-corpus is the agent's embodied execution layer. It interacts with the operating system, runs tools, manages sandboxes, and bridges to external systems (MCP servers, ROS nodes, browser automation).
+corpus is the agent's embodied execution layer. It interacts with the operating system, runs tools, manages sandboxes, and bridges to external systems (MCP servers, hardware devices via the `hardware` crate, browser automation).
 
 **What it does:**
 
 - Executes tools (bash, file operations, HTTP, etc.)
 - Manages sandboxed execution (bubblewrap, process, noop backends)
 - Connects to MCP servers via stdio/HTTP/SSE
-- Collects perception data from /proc, journald, inotify, eBPF
-- Provides platform abstraction (Linux systemd/D-Bus, Android)
+- Collects perception data from `/proc`, journald, and inotify-compatible sources
+- Exposes governed tools and optional Linux desktop drivers
+
+The current `EbpfSource` is a `/proc`/`/sys` fallback rather than a real eBPF
+ring-buffer integration. Android and embedded platform targets remain design
+work; host OS contracts currently live in the separate `platform` crate.
 
 corpus can **refuse** actions flagged by SelfField's boundary layer and can **observe** system state that feeds into cognit's reasoning.
 
@@ -103,11 +107,13 @@ Aletheon's memory is modeled after OS virtual memory (cache -> RAM -> disk):
 |-------|------|---------|---------|
 | L1 | CoreMemory | In-context window | Agent self-managed blocks, editable via tools |
 | L2 | RecallMemory | SQLite | Complete conversation history and tool call records |
-| L3 | ArchivalMemory | Vector DB (Qdrant/LanceDB) | Long-term knowledge, semantic search |
+| L3 | Supplemental/archival memory | Optional remote or feature-gated vector backends | Long-term knowledge and semantic search |
 
 The agent manages its own memory through explicit tools (`core_memory_append`, `core_memory_replace`, `recall_search`). This is not a passive store -- the agent actively decides what to remember and what to forget.
 
-**Implementation:** `crates/mnemosyne/` + `crates/executive/src/impl/memory/` -- see [Memory System](../design/mnemosyne/memory-system.md).
+**Implementation:** `crates/mnemosyne/` with host composition under
+`crates/executive/src/host/daemon/bootstrap/memory.rs` -- see
+[Memory System](../design/mnemosyne/memory-system.md).
 
 ---
 
@@ -136,21 +142,23 @@ Self-Evolution is the closed loop that ties all three bodies together:
 3. **Behavior adjustment** (SelfField) updates care weights, boundary rules, attention focus
 4. **Genome update** (MetaRuntime) persists successful patterns
 
-See [Self-Evolution](../architecture/self-evolution.md) for the full mechanism.
+See [MetaRuntime design](../design/metacog/meta-runtime.md) for the governed
+candidate-evaluation mechanism.
 
 ---
 
 ## Linux Integration
 
-Aletheon is a system-level agent, not an application-level one. It integrates with the Linux kernel and system services through eBPF, systemd, FUSE, and D-Bus.
-
-See [Linux Integration](../architecture/linux-integration.md) for details.
+Aletheon is deployed as system and user services on Linux. The installed path
+uses systemd, Unix sockets, `/proc`, journald, and governed host adapters. Real
+eBPF probes, a production FUSE mount, Android, and embedded targets are not
+installed-runtime capabilities.
 
 ---
 
 ## Further Reading
 
 - [Architecture Overview](../design/architecture-overview.md) -- full system architecture with crate graph
-- [Project Aletheon](../Aletheon.md) -- design philosophy and research foundations
+- [Agent Runtime Technical Guide](./agent-runtime-technical-guide.md) -- project intro + source-level tutorial: from model call to a full turn
 - [Hook System](../design/executive/hook-system.md) -- 21 event types for lifecycle hooks
 - [Security Model](../design/corpus/security.md) -- policy engine, sandboxing, rollback

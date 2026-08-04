@@ -1,4 +1,5 @@
 //! Transactional extension lifecycle management.
+#![allow(clippy::items_after_test_module)]
 
 use anyhow::{Context, Result};
 use corpus::extension::store::{ActivationRecord, ExtensionEvidenceEvent, PackageStore};
@@ -203,6 +204,19 @@ impl ExtensionManageService {
     }
 
     pub fn enable(&self, id: &str) -> Result<()> {
+        self.enable_with_approval_port(id, self.approvals.as_ref())
+    }
+
+    pub fn enable_with_operator_approval(&self, id: &str, actor: &str) -> Result<()> {
+        let approval = ExplicitOperatorApproval::new(actor);
+        self.enable_with_approval_port(id, &approval)
+    }
+
+    fn enable_with_approval_port(
+        &self,
+        id: &str,
+        approvals: &dyn ExtensionApprovalPort,
+    ) -> Result<()> {
         let _lock = self.store.acquire_lock(id)?;
         let versions = self.store.get_installed(id)?;
         let candidate = versions.last().context("extension is not installed")?;
@@ -212,7 +226,7 @@ impl ExtensionManageService {
             candidate.hash
         );
         let mut activation = self.store.read_activation(id)?;
-        let approval = self.approve_candidate(candidate, &activation)?;
+        let approval = self.approve_candidate(candidate, &activation, approvals)?;
         if activation.current.as_deref() != Some(&candidate.hash) {
             activation.previous_known_good = activation.current.take();
             activation.current = Some(candidate.hash.clone());
@@ -254,6 +268,25 @@ impl ExtensionManageService {
         package_path: &Path,
         workspace_actor: Option<&str>,
     ) -> Result<()> {
+        self.upgrade_with_approval_port(package_path, workspace_actor, self.approvals.as_ref())
+    }
+
+    pub fn upgrade_with_operator_approval(
+        &self,
+        package_path: &Path,
+        workspace_actor: Option<&str>,
+        approval_actor: &str,
+    ) -> Result<()> {
+        let approval = ExplicitOperatorApproval::new(approval_actor);
+        self.upgrade_with_approval_port(package_path, workspace_actor, &approval)
+    }
+
+    fn upgrade_with_approval_port(
+        &self,
+        package_path: &Path,
+        workspace_actor: Option<&str>,
+        approvals: &dyn ExtensionApprovalPort,
+    ) -> Result<()> {
         let inspection = self.installer.inspect(package_path)?;
         let id = inspection.manifest.package.id.0.clone();
         let old = self.store.read_activation(&id)?;
@@ -267,7 +300,7 @@ impl ExtensionManageService {
             .into_iter()
             .find(|record| record.hash == hash)
             .context("installed candidate projection is missing")?;
-        let approval = self.approve_candidate(&candidate, &old)?;
+        let approval = self.approve_candidate(&candidate, &old, approvals)?;
         let activation = ActivationRecord {
             schema_version: 1,
             package_id: id.clone(),
@@ -446,6 +479,7 @@ impl ExtensionManageService {
         &self,
         candidate: &corpus::extension::store::InstalledPackageRecord,
         activation: &ActivationRecord,
+        approvals: &dyn ExtensionApprovalPort,
     ) -> Result<Option<corpus::extension::store::PermissionApprovalRecord>> {
         let request = approval_request(candidate, activation);
         if permission_request_is_empty(&request.added_permissions)
@@ -453,7 +487,7 @@ impl ExtensionManageService {
         {
             return Ok(None);
         }
-        let decision = self.approvals.decide(&request)?;
+        let decision = approvals.decide(&request)?;
         self.receipt(
             &candidate.id,
             "permission_approval",

@@ -11,19 +11,37 @@
 
 use aletheon::workspace::WorkspaceArgs;
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use interact::cli::TaskKindArg;
 use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 #[cfg(feature = "acp")]
 mod acp;
+mod extension_cli;
+mod memory_agent;
+mod memory_cli;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Permission profile: safe, dev, or full.
+    #[arg(
+        short = 'P',
+        long = "permission-mode",
+        global = true,
+        value_enum,
+        default_value = "safe"
+    )]
+    permission_mode: PermissionModeArg,
+
+    /// Shortcut for `-P full`.
+    #[arg(long, global = true, conflicts_with = "permission_mode")]
+    full: bool,
 
     /// Run the feature-gated ACP stdio gateway.
     #[cfg(feature = "acp")]
@@ -37,6 +55,15 @@ struct Cli {
     /// Socket path (default: $XDG_RUNTIME_DIR/aletheon/aletheon.sock)
     #[arg(short, long)]
     socket: Option<PathBuf>,
+
+    /// Require this Agent runtime to be spawned and reach an authoritative
+    /// terminal receipt during every submitted chat turn (repeatable).
+    #[arg(long = "require-agent-runtime", value_name = "RUNTIME")]
+    required_agent_runtimes: Vec<String>,
+
+    /// Explicitly classify submitted chat turns for host-owned evaluation.
+    #[arg(long = "task-kind", value_enum)]
+    task_kind: Option<TaskKindArg>,
 
     #[command(flatten)]
     workspace: WorkspaceArgs,
@@ -60,6 +87,30 @@ struct Cli {
     /// TUI test timeout in seconds
     #[arg(long, default_value_t = 120, hide = true)]
     test_timeout: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+enum PermissionModeArg {
+    #[default]
+    #[value(alias = "restricted")]
+    Safe,
+    #[value(alias = "developer")]
+    Dev,
+    #[value(alias = "unrestricted")]
+    Full,
+}
+
+impl PermissionModeArg {
+    fn effective(self, full: bool) -> &'static str {
+        if full {
+            return "full";
+        }
+        match self {
+            Self::Safe => "safe",
+            Self::Dev => "dev",
+            Self::Full => "full",
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -142,57 +193,141 @@ enum Commands {
     /// Manage extension packages.
     Extension {
         #[command(subcommand)]
-        sub: ExtensionCmd,
+        sub: extension_cli::ExtensionCmd,
+    },
+    /// Run the Aletheon-managed memory maintenance client.
+    MemoryAgent {
+        #[command(subcommand)]
+        sub: MemoryAgentCommand,
+    },
+    /// Use the governed Memory Gateway through the official user socket.
+    Memory {
+        #[command(subcommand)]
+        sub: MemoryCommand,
     },
 }
 
 #[derive(Subcommand)]
-enum ExtensionCmd {
-    /// Inspect an extension package archive.
-    Inspect { path: PathBuf },
-    /// Validate an extension package without installing.
-    Validate { path: PathBuf },
-    /// Install an extension package.
-    Install {
-        path: PathBuf,
-        /// Explicitly trust an archive located under `.aletheon/extensions`.
-        #[arg(long)]
-        trust_workspace: bool,
+enum MemoryAgentCommand {
+    /// Continuously maintain memory through the official user socket.
+    Serve {
+        /// Required marker for the supervised, authenticated service form.
+        #[arg(long, required = true)]
+        official_user_socket: bool,
     },
-    /// List installed extensions.
-    List,
-    /// Show details for an installed extension.
-    Show { id: String },
-    /// Enable an installed extension.
-    Enable {
-        id: String,
-        /// Explicitly approve newly requested assets and permissions.
+    /// Run one bounded maintenance cycle through an authenticated child.
+    Run {
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=64))]
+        max_items: u16,
         #[arg(long)]
-        approve_permissions: bool,
+        dry_run: bool,
     },
-    /// Disable an active extension.
-    Disable { id: String },
-    /// Upgrade an extension to a newer package.
-    Upgrade {
-        /// Path to the new package archive.
-        path: PathBuf,
-        /// Explicitly approve permission or capability additions.
+}
+
+#[derive(Subcommand)]
+enum MemoryCommand {
+    /// Submit a bounded observation to the governed intake journal.
+    Observe {
+        /// Stable client idempotency key; generated when omitted.
         #[arg(long)]
-        approve_permissions: bool,
-        /// Explicitly trust an archive located under `.aletheon/extensions`.
+        observation_id: Option<String>,
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
+        #[arg(long, default_value = "explicit-note")]
+        kind: MemoryObservationKindArg,
+        /// Content value; when omitted, UTF-8 content is read from stdin.
         #[arg(long)]
-        trust_workspace: bool,
+        content: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        turn_id: Option<String>,
+        #[arg(long)]
+        explicit_user_action: bool,
+        #[arg(long, default_value = "internal")]
+        sensitivity: MemorySensitivityArg,
+        #[arg(long = "source-ref")]
+        source_refs: Vec<String>,
     },
-    /// Rollback to the previous known-good version.
-    Rollback { id: String },
-    /// Remove an extension (deactivate but keep package).
-    Remove { id: String },
-    /// Purge an extension (remove package and all state).
-    Purge { id: String },
-    /// Run diagnostics on an extension.
-    Doctor { id: String },
-    /// Import legacy filesystem extensions into the package store.
-    ImportLegacy,
+    /// Recall governed local and bound supplemental memory.
+    Recall {
+        query: String,
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        max_items: usize,
+        #[arg(long, default_value_t = 65536)]
+        max_content_bytes: usize,
+        #[arg(long)]
+        include_historical: bool,
+    },
+    /// Read the authoritative lifecycle receipt for an observation.
+    Receipt { durable_intake_id: String },
+    /// Administer the current workspace's supplemental-memory binding.
+    Workspace {
+        #[command(subcommand)]
+        sub: MemoryWorkspaceCommand,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum MemoryObservationKindArg {
+    UserMessage,
+    AssistantMessage,
+    ToolOutcome,
+    TaskOutcome,
+    ExplicitNote,
+    Correction,
+    Feedback,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum MemorySensitivityArg {
+    Public,
+    Internal,
+    Confidential,
+    Restricted,
+}
+
+#[derive(clap::Args)]
+struct MemoryBindingArgs {
+    #[arg(long, default_value = ".")]
+    working_dir: PathBuf,
+    #[arg(long, default_value = "supplemental/gbrain")]
+    backend: String,
+    #[arg(long, default_value = "gbrain")]
+    write_handle: String,
+    #[arg(long = "read-handle")]
+    read_handles: Vec<String>,
+    #[arg(long)]
+    write_source: String,
+    #[arg(long = "read-source", required = true)]
+    read_sources: Vec<String>,
+    #[arg(long)]
+    credential_ref: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum MemoryWorkspaceCommand {
+    /// Negotiate backend grants without changing durable authority.
+    PreviewBind {
+        #[command(flatten)]
+        binding: MemoryBindingArgs,
+    },
+    /// Repeat negotiation and activate a previewed binding.
+    Bind {
+        #[command(flatten)]
+        binding: MemoryBindingArgs,
+        #[arg(long)]
+        expected_capability_digest: String,
+    },
+    /// Revoke remote authority for this workspace.
+    Unbind {
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -217,126 +352,11 @@ enum ConfigSub {
     },
 }
 
-// ── Extension handler ────────────────────────────────────────────────────
-
-async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
-    use executive::application::extension_install::ExtensionInstallService;
-    use executive::application::extension_manage::ExtensionManageService;
-    let store_root = ExtensionInstallService::configured_user_root();
-    let install_svc = ExtensionInstallService::new(&store_root)?;
-    let explicit_approval = matches!(
-        cmd,
-        ExtensionCmd::Enable {
-            approve_permissions: true,
-            ..
-        } | ExtensionCmd::Upgrade {
-            approve_permissions: true,
-            ..
-        }
-    );
-    let manage_svc = if explicit_approval {
-        let actor = std::env::var("USER").unwrap_or_else(|_| "local-operator".into());
-        ExtensionManageService::new(&store_root)?.with_approval_port(std::sync::Arc::new(
-            executive::application::extension_manage::ExplicitOperatorApproval::new(actor),
-        ))
-    } else {
-        ExtensionManageService::new(&store_root)?
-    };
-
-    match cmd {
-        ExtensionCmd::Inspect { path } => {
-            let result = install_svc.inspect(path)?;
-            println!("Package: {}", result.manifest.package.id.0);
-            println!("Version: {}", result.manifest.package.version.0);
-            println!("Hash: {}", result.package_hash);
-            println!("Files: {}", result.file_count);
-            println!("Total size: {} bytes", result.total_size);
-            println!("Assets:");
-            for asset in &result.manifest.assets {
-                println!("  - {} ({})", asset.id, serde_json::to_string(&asset.kind)?);
-            }
-        }
-        ExtensionCmd::Validate { path } => {
-            install_svc.inspect(path)?;
-            println!("Package is valid.");
-        }
-        ExtensionCmd::Install {
-            path,
-            trust_workspace,
-        } => {
-            let actor = trust_workspace
-                .then(|| std::env::var("USER").unwrap_or_else(|_| "local-operator".into()));
-            let hash = install_svc.install_with_workspace_trust(path, actor.as_deref())?;
-            println!("Installed package with hash: {hash}");
-        }
-        ExtensionCmd::List => {
-            let packages = install_svc.list()?;
-            if packages.is_empty() {
-                println!("No extensions installed.");
-            } else {
-                for pkg in packages {
-                    println!("{}\t{}\t{}", pkg.id, pkg.version, pkg.hash);
-                }
-            }
-        }
-        ExtensionCmd::Show { id } => {
-            println!("{}", serde_json::to_string_pretty(&install_svc.show(id)?)?);
-        }
-        ExtensionCmd::Enable { id, .. } => {
-            manage_svc.enable(id)?;
-            println!("Extension '{id}' enabled.");
-        }
-        ExtensionCmd::Disable { id } => {
-            manage_svc.disable(id)?;
-            println!("Extension '{id}' disabled.");
-        }
-        ExtensionCmd::Upgrade {
-            path,
-            trust_workspace,
-            ..
-        } => {
-            let actor = trust_workspace
-                .then(|| std::env::var("USER").unwrap_or_else(|_| "local-operator".into()));
-            manage_svc.upgrade_with_workspace_trust(path, actor.as_deref())?;
-            println!("Extension upgraded from '{}'.", path.display());
-        }
-        ExtensionCmd::Rollback { id } => {
-            manage_svc.rollback(id)?;
-            println!("Extension '{id}' rolled back.");
-        }
-        ExtensionCmd::Remove { id } => {
-            manage_svc.remove(id)?;
-            println!("Extension '{id}' removed.");
-        }
-        ExtensionCmd::Purge { id } => {
-            manage_svc.purge(id)?;
-            println!("Extension '{id}' purged.");
-        }
-        ExtensionCmd::Doctor { id } => {
-            let result = manage_svc.doctor(id)?;
-            println!(
-                "Extension '{}': healthy={}, issues={:?}, legacy_reads={:?}, remaining_legacy={}",
-                result.id,
-                result.healthy,
-                result.issues,
-                result.migration_report.compatibility_reads,
-                result.migration_report.remaining_candidates,
-            );
-        }
-        ExtensionCmd::ImportLegacy => {
-            let imported = manage_svc.import_legacy(&store_root.join("legacy"))?;
-            println!(
-                "Imported {} legacy extensions: {imported:?}",
-                imported.len()
-            );
-        }
-    }
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let permission_mode = cli.permission_mode.effective(cli.full);
+    std::env::set_var("ALETHEON_PERMISSION_MODE", permission_mode);
     #[cfg(feature = "acp")]
     if cli.acp {
         anyhow::ensure!(
@@ -435,7 +455,28 @@ async fn main() -> Result<()> {
             init_tracing("aletheon::doctor");
             handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
         }
-        (Some(Commands::Extension { sub }), _) => handle_extension(sub).await,
+        (Some(Commands::Extension { sub }), _) => {
+            init_tracing("aletheon::extension");
+            extension_cli::run(sub, cli.socket.clone()).await
+        }
+        (Some(Commands::MemoryAgent { sub }), _) => {
+            init_tracing("aletheon::memory_agent");
+            match sub {
+                MemoryAgentCommand::Serve {
+                    official_user_socket,
+                } => {
+                    anyhow::ensure!(*official_user_socket, "--official-user-socket is required");
+                    memory_agent::serve_official_user_socket().await
+                }
+                MemoryAgentCommand::Run { max_items, dry_run } => {
+                    memory_agent::run_once(*max_items, *dry_run).await
+                }
+            }
+        }
+        (Some(Commands::Memory { sub }), _) => {
+            init_tracing("aletheon::memory");
+            memory_cli::run(sub, cli.socket.clone()).await
+        }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();
             println!("Terminal restored to normal state.");
@@ -447,6 +488,8 @@ async fn main() -> Result<()> {
                 socket: cli.socket.clone(),
                 workspace: cli.workspace.interact_launch(),
                 message: msg.clone(),
+                required_agent_runtimes: cli.required_agent_runtimes.clone(),
+                task_kind: cli.task_kind.map(Into::into),
             })
             .await
         }
@@ -464,6 +507,8 @@ async fn main() -> Result<()> {
                 interact::host::TuiLaunch {
                     socket: cli.socket.clone(),
                     workspace: cli.workspace.interact_launch(),
+                    required_agent_runtimes: cli.required_agent_runtimes.clone(),
+                    task_kind: cli.task_kind.map(Into::into),
                 },
                 config,
             )
@@ -636,6 +681,87 @@ mod daemon_cli_tests {
         assert!(matches!(
             enabled_cli.command,
             Some(Commands::Daemon { execd: true, .. })
+        ));
+    }
+
+    #[test]
+    fn required_agent_runtime_is_repeatable_on_the_installed_entrypoint() {
+        let cli = Cli::try_parse_from([
+            "aletheon",
+            "--require-agent-runtime",
+            "pi-rpc",
+            "--require-agent-runtime",
+            "native-cognit",
+        ])
+        .unwrap();
+        assert_eq!(cli.required_agent_runtimes, vec!["pi-rpc", "native-cognit"]);
+    }
+
+    #[test]
+    fn parses_coding_task_kind_for_message_and_tui() {
+        let message =
+            Cli::try_parse_from(["aletheon", "--task-kind", "coding", "--message", "hello"])
+                .unwrap();
+        assert_eq!(message.task_kind, Some(TaskKindArg::Coding));
+
+        let tui = Cli::try_parse_from(["aletheon", "--task-kind", "coding"]).unwrap();
+        assert_eq!(tui.task_kind, Some(TaskKindArg::Coding));
+    }
+
+    #[test]
+    fn parses_short_and_compatible_permission_modes() {
+        let short = Cli::try_parse_from(["aletheon", "-P", "full"]).unwrap();
+        assert_eq!(short.permission_mode.effective(short.full), "full");
+
+        let compatible =
+            Cli::try_parse_from(["aletheon", "--permission-mode", "unrestricted"]).unwrap();
+        assert_eq!(
+            compatible.permission_mode.effective(compatible.full),
+            "full"
+        );
+    }
+
+    #[test]
+    fn full_flag_is_a_shortcut_for_unrestricted_permissions() {
+        let cli = Cli::try_parse_from(["aletheon", "--full"]).unwrap();
+        assert_eq!(cli.permission_mode.effective(cli.full), "full");
+    }
+
+    #[test]
+    fn governed_memory_client_commands_parse_on_installed_entrypoint() {
+        let observe = Cli::try_parse_from([
+            "aletheon",
+            "memory",
+            "observe",
+            "--kind",
+            "task-outcome",
+            "--content",
+            "bounded result",
+            "--session-id",
+            "session-a",
+        ])
+        .unwrap();
+        assert!(matches!(
+            observe.command,
+            Some(Commands::Memory {
+                sub: MemoryCommand::Observe { .. }
+            })
+        ));
+
+        let recall = Cli::try_parse_from([
+            "aletheon",
+            "memory",
+            "recall",
+            "workspace architecture",
+            "--max-items",
+            "8",
+        ])
+        .unwrap();
+        assert!(matches!(
+            recall.command,
+            Some(Commands::Memory {
+                sub: MemoryCommand::Recall { max_items: 8, .. }
+            })
         ));
     }
 }

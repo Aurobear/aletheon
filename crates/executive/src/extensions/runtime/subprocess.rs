@@ -884,6 +884,8 @@ mod tests {
             profile_id: fabric::AgentProfileId("test".into()),
             runtime_id: fabric::RuntimeId("runtime.generic".into()),
             trusted_workspace: None,
+            delegator_authority: None,
+            cognitive_binding: None,
             task: "test".into(),
             context: fabric::AgentContextFork::default(),
             broadcast_refs: Vec::new(),
@@ -938,8 +940,10 @@ mod tests {
 
     #[tokio::test]
     async fn unisolated_runtime_fails_closed_before_spawn() {
-        let mut config = SubprocessConfig::default();
-        config.command = "/bin/true".into();
+        let config = SubprocessConfig {
+            command: "/bin/true".into(),
+            ..Default::default()
+        };
         let mut runtime = SubprocessRuntime::new(config);
         let error = runtime.start().await.unwrap_err().to_string();
         assert!(error.contains("no verified isolation backend"));

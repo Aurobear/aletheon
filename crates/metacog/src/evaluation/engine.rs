@@ -5,13 +5,16 @@
 //! checked integer arithmetic.
 
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use fabric::types::metacognition_evaluation::{
     DimensionScore, DimensionValue, EvaluationReport, GateResult, RubricId,
 };
-use fabric::types::metacognition_evidence::EvidenceItem;
+use fabric::types::metacognition_evidence::{EvidenceId, EvidenceItem, EvidenceTrust};
 use fabric::types::metacognition_experience::ExperienceEnvelope;
+use fabric::EvaluationThresholds;
 
 use super::rubric::Rubric;
 
@@ -27,11 +30,44 @@ pub enum EvaluationError {
     #[error("dimension '{0}' declared in rubric but not scored")]
     MissingDimension(String),
 
+    #[error("dimension '{0}' was scored more than once")]
+    DuplicateDimension(String),
+
+    #[error("dimension '{0}' reports a weight different from its rubric")]
+    DimensionWeightMismatch(String),
+
+    #[error("dimension '{0}' score exceeds 100")]
+    InvalidScore(String),
+
     #[error("gate '{0}' not declared in rubric")]
     UnknownGate(String),
 
     #[error("gate '{0}' declared in rubric but not checked")]
     MissingGate(String),
+
+    #[error("gate '{0}' was checked more than once")]
+    DuplicateGate(String),
+
+    #[error("scored dimension '{0}' has no evidence")]
+    MissingEvidence(String),
+
+    #[error("gate '{0}' has no evidence")]
+    MissingGateEvidence(String),
+
+    #[error("evidence reference '{0}' is not present in the supplied snapshot")]
+    UnknownEvidenceReference(String),
+
+    #[error("evidence '{0}' has unsupported unverified trust")]
+    UnsupportedEvidenceTrust(String),
+
+    #[error("evidence '{0}' payload digest does not match")]
+    EvidenceDigestMismatch(String),
+
+    #[error("evidence '{0}' appears more than once")]
+    DuplicateEvidence(String),
+
+    #[error("invalid evaluation thresholds: {0}")]
+    InvalidThreshold(String),
 
     #[error("evaluator internal error: {0}")]
     Internal(String),
@@ -87,10 +123,37 @@ impl DeterministicEvaluator {
         dimension_scores: Vec<DimensionScore>,
         gate_results: Vec<GateResult>,
     ) -> Result<EvaluationReport, EvaluationError> {
-        // Validate that all scored dimensions are in the rubric
+        let mut rubric_dimensions = HashSet::with_capacity(rubric.dimensions.len());
+        for dimension in &rubric.dimensions {
+            if !rubric_dimensions.insert(dimension.name.clone()) {
+                return Err(EvaluationError::DuplicateDimension(dimension.name.clone()));
+            }
+        }
+        let mut rubric_gates = HashSet::with_capacity(rubric.gates.len());
+        for gate in &rubric.gates {
+            if !rubric_gates.insert(gate.name.clone()) {
+                return Err(EvaluationError::DuplicateGate(gate.name.clone()));
+            }
+        }
+        let mut seen_dimensions = HashSet::with_capacity(dimension_scores.len());
+        // Validate that all scored dimensions are unique and in the rubric.
         for ds in &dimension_scores {
+            if !seen_dimensions.insert(ds.name.clone()) {
+                return Err(EvaluationError::DuplicateDimension(ds.name.clone()));
+            }
             if !rubric.dimensions.iter().any(|rd| rd.name == ds.name) {
                 return Err(EvaluationError::UnknownDimension(ds.name.clone()));
+            }
+            let declared = rubric
+                .dimensions
+                .iter()
+                .find(|dimension| dimension.name == ds.name)
+                .expect("dimension presence was just checked");
+            if ds.weight_millis != declared.weight_millis {
+                return Err(EvaluationError::DimensionWeightMismatch(ds.name.clone()));
+            }
+            if matches!(ds.value, DimensionValue::Scored(score) if score > 100) {
+                return Err(EvaluationError::InvalidScore(ds.name.clone()));
             }
         }
 
@@ -101,8 +164,12 @@ impl DeterministicEvaluator {
             }
         }
 
-        // Validate that all gate results match rubric gates
+        let mut seen_gates = HashSet::with_capacity(gate_results.len());
+        // Validate that all gate results are unique and match rubric gates.
         for gr in &gate_results {
+            if !seen_gates.insert(gr.name.clone()) {
+                return Err(EvaluationError::DuplicateGate(gr.name.clone()));
+            }
             if !rubric.gates.iter().any(|rg| rg.name == gr.name) {
                 return Err(EvaluationError::UnknownGate(gr.name.clone()));
             }
@@ -204,6 +271,129 @@ impl DeterministicEvaluator {
             eligible,
         })
     }
+
+    /// Validate evidence integrity and references before applying contract
+    /// eligibility thresholds to a structurally valid evaluation report.
+    pub fn evaluate_evidence_backed(
+        &self,
+        rubric: &Rubric,
+        dimension_scores: Vec<DimensionScore>,
+        gate_results: Vec<GateResult>,
+        evidence: &[EvidenceItem],
+        thresholds: EvaluationThresholds,
+    ) -> Result<EvaluationReport, EvaluationError> {
+        thresholds
+            .validate()
+            .map_err(|error| EvaluationError::InvalidThreshold(error.to_string()))?;
+        let mut report = self.evaluate(rubric, dimension_scores, gate_results)?;
+        let evidence_by_id = validate_evidence_set(evidence)?;
+
+        let total_weight = rubric
+            .dimensions
+            .iter()
+            .try_fold(0u32, |total, dimension| {
+                total
+                    .checked_add(dimension.weight_millis)
+                    .ok_or(EvaluationError::WeightOverflow)
+            })?;
+        let mut covered_weight = 0u32;
+        let mut confidence_weighted_sum = 0u64;
+
+        for dimension in report
+            .dimensions
+            .iter()
+            .filter(|dimension| matches!(dimension.value, DimensionValue::Scored(_)))
+        {
+            if dimension.evidence.is_empty() {
+                return Err(EvaluationError::MissingEvidence(dimension.name.clone()));
+            }
+            let trust = resolve_reference_trust(&dimension.evidence, &evidence_by_id)?;
+            let rubric_dimension = rubric
+                .dimensions
+                .iter()
+                .find(|candidate| candidate.name == dimension.name)
+                .expect("structural evaluation verified the dimension");
+            covered_weight = covered_weight
+                .checked_add(rubric_dimension.weight_millis)
+                .ok_or(EvaluationError::WeightOverflow)?;
+            confidence_weighted_sum = confidence_weighted_sum
+                .checked_add(u64::from(rubric_dimension.weight_millis) * u64::from(trust))
+                .ok_or(EvaluationError::WeightOverflow)?;
+        }
+
+        for gate in &report.gates {
+            if gate.evidence.is_empty() {
+                return Err(EvaluationError::MissingGateEvidence(gate.name.clone()));
+            }
+            resolve_reference_trust(&gate.evidence, &evidence_by_id)?;
+        }
+
+        report.evidence_coverage_millis = if total_weight == 0 {
+            0
+        } else {
+            ((u64::from(covered_weight) * 1_000) / u64::from(total_weight)) as u16
+        };
+        report.confidence_millis = if covered_weight == 0 {
+            0
+        } else {
+            (confidence_weighted_sum / u64::from(covered_weight)) as u16
+        };
+
+        let score_eligible = report
+            .weighted_total_millis
+            .is_some_and(|score| score >= thresholds.min_score_millis);
+        let coverage_eligible =
+            report.evidence_coverage_millis >= thresholds.min_evidence_coverage_millis;
+        let confidence_eligible = report.confidence_millis >= thresholds.min_confidence_millis;
+        report.eligible &= score_eligible && coverage_eligible && confidence_eligible;
+        Ok(report)
+    }
+}
+
+fn validate_evidence_set(
+    evidence: &[EvidenceItem],
+) -> Result<HashMap<EvidenceId, &EvidenceItem>, EvaluationError> {
+    let mut by_id = HashMap::with_capacity(evidence.len());
+    for item in evidence {
+        if by_id.insert(item.evidence_id.clone(), item).is_some() {
+            return Err(EvaluationError::DuplicateEvidence(
+                item.evidence_id.0.clone(),
+            ));
+        }
+        let bytes = serde_json::to_vec(&item.payload)
+            .map_err(|error| EvaluationError::Internal(error.to_string()))?;
+        if format!("{:x}", Sha256::digest(bytes)) != item.sha256 {
+            return Err(EvaluationError::EvidenceDigestMismatch(
+                item.evidence_id.0.clone(),
+            ));
+        }
+    }
+    Ok(by_id)
+}
+
+fn resolve_reference_trust(
+    references: &[EvidenceId],
+    evidence_by_id: &HashMap<EvidenceId, &EvidenceItem>,
+) -> Result<u16, EvaluationError> {
+    let mut trust_sum = 0u32;
+    for reference in references {
+        let item = evidence_by_id
+            .get(reference)
+            .ok_or_else(|| EvaluationError::UnknownEvidenceReference(reference.0.clone()))?;
+        let trust = match item.trust {
+            EvidenceTrust::Authoritative => 1_000,
+            EvidenceTrust::Corroborated => 700,
+            EvidenceTrust::Unverified => {
+                return Err(EvaluationError::UnsupportedEvidenceTrust(
+                    reference.0.clone(),
+                ));
+            }
+        };
+        trust_sum = trust_sum
+            .checked_add(trust)
+            .ok_or(EvaluationError::WeightOverflow)?;
+    }
+    Ok((trust_sum / references.len() as u32) as u16)
 }
 
 impl Default for DeterministicEvaluator {
@@ -574,5 +764,139 @@ mod tests {
             }],
         );
         assert!(matches!(result, Err(EvaluationError::MissingDimension(_))));
+    }
+
+    fn evidence(id: &str, trust: EvidenceTrust) -> EvidenceItem {
+        let payload = serde_json::json!({"id": id});
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        EvidenceItem {
+            schema_version: 1,
+            evidence_id: EvidenceId(id.into()),
+            experience_id: fabric::types::metacognition_experience::ExperienceId(
+                "evaluation-test".into(),
+            ),
+            kind: fabric::types::metacognition_evidence::EvidenceKind::VerificationResult,
+            source: "test".into(),
+            producer: "test".into(),
+            captured_at_ms: 1,
+            payload,
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+            trust,
+            freshness_ms: Some(0),
+            redacted: false,
+        }
+    }
+
+    fn evidence_backed_input(reference: EvidenceId) -> (Vec<DimensionScore>, Vec<GateResult>) {
+        (
+            vec![
+                DimensionScore {
+                    name: "goal".into(),
+                    value: DimensionValue::Unknown,
+                    weight_millis: 500_000,
+                    evidence: vec![],
+                    reasons: vec![],
+                },
+                DimensionScore {
+                    name: "safety".into(),
+                    value: DimensionValue::Unknown,
+                    weight_millis: 300_000,
+                    evidence: vec![],
+                    reasons: vec![],
+                },
+                DimensionScore {
+                    name: "efficiency".into(),
+                    value: DimensionValue::Scored(90),
+                    weight_millis: 200_000,
+                    evidence: vec![reference.clone()],
+                    reasons: vec![],
+                },
+            ],
+            vec![GateResult {
+                name: "invariant".into(),
+                passed: true,
+                evidence: vec![reference],
+            }],
+        )
+    }
+
+    fn permissive_thresholds() -> EvaluationThresholds {
+        EvaluationThresholds {
+            min_score_millis: 0,
+            min_evidence_coverage_millis: 0,
+            min_confidence_millis: 0,
+        }
+    }
+
+    #[test]
+    fn evidence_backed_evaluation_rejects_unknown_reference() {
+        let reference = EvidenceId("missing".into());
+        let (scores, gates) = evidence_backed_input(reference);
+        let result = DeterministicEvaluator::new().evaluate_evidence_backed(
+            &make_rubric(),
+            scores,
+            gates,
+            &[],
+            permissive_thresholds(),
+        );
+        assert!(matches!(
+            result,
+            Err(EvaluationError::UnknownEvidenceReference(_))
+        ));
+    }
+
+    #[test]
+    fn coverage_is_weight_based_and_confidence_uses_evidence_trust() {
+        let item = evidence("verified", EvidenceTrust::Authoritative);
+        let (scores, gates) = evidence_backed_input(item.evidence_id.clone());
+        let report = DeterministicEvaluator::new()
+            .evaluate_evidence_backed(
+                &make_rubric(),
+                scores,
+                gates,
+                &[item],
+                permissive_thresholds(),
+            )
+            .unwrap();
+        assert_eq!(report.evidence_coverage_millis, 200);
+        assert_eq!(report.confidence_millis, 1_000);
+    }
+
+    #[test]
+    fn unverified_evidence_cannot_back_a_score() {
+        let item = evidence("claim", EvidenceTrust::Unverified);
+        let (scores, gates) = evidence_backed_input(item.evidence_id.clone());
+        let result = DeterministicEvaluator::new().evaluate_evidence_backed(
+            &make_rubric(),
+            scores,
+            gates,
+            &[item],
+            permissive_thresholds(),
+        );
+        assert!(matches!(
+            result,
+            Err(EvaluationError::UnsupportedEvidenceTrust(_))
+        ));
+    }
+
+    #[test]
+    fn evidence_thresholds_are_part_of_eligibility() {
+        let item = evidence("verified", EvidenceTrust::Corroborated);
+        let (scores, gates) = evidence_backed_input(item.evidence_id.clone());
+        let report = DeterministicEvaluator::new()
+            .evaluate_evidence_backed(
+                &make_rubric(),
+                scores,
+                gates,
+                &[item],
+                EvaluationThresholds {
+                    min_score_millis: 70_000,
+                    min_evidence_coverage_millis: 600,
+                    min_confidence_millis: 700,
+                },
+            )
+            .unwrap();
+        assert_eq!(report.confidence_millis, 700);
+        assert!(!report.eligible);
     }
 }

@@ -8,7 +8,9 @@ use super::orchestrator::DaemonTurnOrchestrator;
 use std::sync::Arc;
 
 use crate::application::turn_policy::TurnPolicy;
-use fabric::{PrincipalContext, PromptEnvelope, PromptKind, TurnRequest};
+use fabric::{
+    events::ui_event::ClientEvent, PrincipalContext, PromptEnvelope, PromptKind, TurnRequest,
+};
 use serde_json::json;
 use tracing::warn;
 
@@ -36,8 +38,12 @@ impl DaemonTurnOrchestrator {
         id: serde_json::Value,
         message: &str,
         context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
+        notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
-        self.execute_turn_with_context(id, message, context).await
+        self.execute_turn_with_context(id, message, context, requirements, task_kind, notify)
+            .await
     }
 
     /// Execute a channel turn under an identity established by the channel
@@ -48,7 +54,8 @@ impl DaemonTurnOrchestrator {
         message: &str,
         context: PrincipalContext,
     ) -> serde_json::Value {
-        self.execute_turn_with_context(id, message, context).await
+        self.execute_turn_with_context(id, message, context, Vec::new(), None, None)
+            .await
     }
 
     async fn execute_turn_with_context(
@@ -56,9 +63,14 @@ impl DaemonTurnOrchestrator {
         id: serde_json::Value,
         message: &str,
         context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
+        notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
         if prompt_admission_mode(self.grok_hardening.prompt_queue) == PromptAdmissionMode::Direct {
-            return self.execute_one_turn(id, message, context).await;
+            return self
+                .execute_one_turn(id, message, context, requirements, task_kind, notify)
+                .await;
         }
 
         let principal = context.principal_id.clone();
@@ -71,13 +83,15 @@ impl DaemonTurnOrchestrator {
             serde_json::to_string(&id).unwrap_or_default()
         );
         let queued = match session_input
-            .enqueue(
+            .enqueue_with_requirements(
                 principal.clone(),
                 context.connection_id.clone(),
                 thread.clone(),
                 PromptKind::Prompt,
                 message.to_owned(),
                 idempotency_key,
+                requirements,
+                task_kind,
             )
             .await
         {
@@ -117,8 +131,11 @@ impl DaemonTurnOrchestrator {
             } else {
                 serde_json::Value::Null
             };
+            let prompt_notify = (prompt_id == queued.prompt_id)
+                .then(|| notify.clone())
+                .flatten();
             let turn_result = self
-                .execute_queued_prompt(rpc_id, next, context.clone())
+                .execute_queued_prompt(rpc_id, next, context.clone(), prompt_notify)
                 .await;
             let succeeded = turn_result.get("error").is_none();
             if succeeded {
@@ -146,10 +163,19 @@ impl DaemonTurnOrchestrator {
         id: serde_json::Value,
         prompt: PromptEnvelope,
         mut context: PrincipalContext,
+        notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
         context.connection_id = prompt.connection_id;
         context.thread_id = prompt.thread_id;
-        self.execute_one_turn(id, &prompt.content, context).await
+        self.execute_one_turn(
+            id,
+            &prompt.content,
+            context,
+            prompt.requirements,
+            prompt.requested_task_kind,
+            notify,
+        )
+        .await
     }
 
     async fn execute_one_turn(
@@ -157,9 +183,15 @@ impl DaemonTurnOrchestrator {
         id: serde_json::Value,
         message: &str,
         context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
+        notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
         // -- Kernel: register main agent --
-        let main_pid = match self.ensure_main_agent().await {
+        let main_pid = match self
+            .ensure_main_agent(&context.principal_id, &context.thread_id)
+            .await
+        {
             Ok(pid) => pid,
             Err(e) => {
                 warn!(error = %e, "Failed to register main agent in process table");
@@ -186,10 +218,14 @@ impl DaemonTurnOrchestrator {
             input: message.to_string(),
             model_policy,
             deadline: None,
+            requirements,
+            requested_task_kind: task_kind,
+            evaluation_contract: None,
         };
 
         let _turn_token = self.begin_turn_token().await;
         let turn_engine = self.turn_engine.clone();
+        let terminal_notify = notify.clone();
         #[cfg(test)]
         let test_runner = self.test_runner.clone();
         let policy = TurnPolicy::daemon();
@@ -208,6 +244,8 @@ impl DaemonTurnOrchestrator {
                             input: request.input.clone(),
                             model_policy: request.model_policy.clone(),
                             deadline: request.deadline,
+                            requirements: request.requirements.clone(),
+                            requested_task_kind: request.requested_task_kind,
                         },
                         crate::application::turn_engine::TurnEngineContext {
                             principal_id: request.context.principal_id.clone(),
@@ -217,6 +255,7 @@ impl DaemonTurnOrchestrator {
                             profile: profile.clone(),
                             cancel_token: cancel,
                             principal_context: Some(request.context.clone()),
+                            notification_sender: notify.clone(),
                         },
                         Arc::new(crate::application::daemon_turn_engine::NoopTurnEngineEventSink),
                     )
@@ -227,12 +266,59 @@ impl DaemonTurnOrchestrator {
                 })
             })
             .await;
+        self.emit_authoritative_terminal_events(
+            terminal_notify,
+            coordinated
+                .as_ref()
+                .ok()
+                .map(|result| result.output.as_str()),
+            coordinated.as_ref().err(),
+        )
+        .await;
         match coordinated {
             Ok(result) => {
                 json!({"jsonrpc": "2.0", "id": id, "result": {"response": result.output}})
             }
             Err(error) => {
                 json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}})
+            }
+        }
+    }
+
+    /// Notify the client only after `TurnCoordinator::submit_with` has removed
+    /// the active entry and settled the kernel operation. A Cognit TurnDone is
+    /// a pipeline-local result, not authoritative permission to start another
+    /// turn on the same thread.
+    async fn emit_authoritative_terminal_events(
+        &self,
+        sender: Option<tokio::sync::mpsc::Sender<String>>,
+        output: Option<&str>,
+        error: Option<&anyhow::Error>,
+    ) {
+        let Some(sender) = sender.or_else(|| self.notify_tx.try_lock().ok()?.clone()) else {
+            return;
+        };
+        let mut events =
+            Vec::with_capacity(1 + usize::from(output.is_some()) + usize::from(error.is_some()));
+        if let Some(text) = output {
+            events.push(ClientEvent::TextSnapshot {
+                text: text.to_owned(),
+            });
+        }
+        if let Some(error) = error {
+            events.push(ClientEvent::Error {
+                message: error.to_string(),
+            });
+        }
+        events.push(ClientEvent::TurnDone);
+        for event in events {
+            let Ok(payload) = crate::host::daemon::handler::format::event_to_json(&event) else {
+                warn!("unable to serialize authoritative terminal turn event");
+                continue;
+            };
+            if sender.send(payload).await.is_err() {
+                warn!("event sink closed before authoritative terminal turn event");
+                break;
             }
         }
     }
@@ -271,17 +357,24 @@ mod tests {
             .await;
         let response = harness
             .orchestrator
-            .execute_turn(json!(7), "hello", context("daemon-success"))
+            .execute_turn(
+                json!(7),
+                "hello",
+                context("daemon-success"),
+                Vec::new(),
+                None,
+                None,
+            )
             .await;
 
         assert_eq!(response["result"]["response"], "mock answer");
         assert_eq!(harness.coordinator.active_turn_count().await, 0);
         assert!(harness
             .orchestrator
-            .main_agent_process_id
+            .main_agent_process_ids
             .lock()
             .await
-            .is_some());
+            .contains_key("test:daemon-success\0daemon-success"));
         let items = harness
             .store
             .load_items(&fabric::SessionId("daemon-success".into()), None)
@@ -295,13 +388,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_client_event_is_emitted_after_active_turn_release() {
+        let harness = DaemonTurnTestBuilder::succeeding("mock answer")
+            .build()
+            .await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let (unrelated_tx, mut unrelated_rx) = tokio::sync::mpsc::channel(4);
+        harness.orchestrator.set_notify_sender(unrelated_tx).await;
+        let response = harness
+            .orchestrator
+            .execute_turn(
+                json!(71),
+                "hello",
+                context("daemon-terminal-order"),
+                Vec::new(),
+                None,
+                Some(tx),
+            )
+            .await;
+
+        assert_eq!(response["result"]["response"], "mock answer");
+        let snapshot = rx.recv().await.expect("authoritative text snapshot");
+        assert!(snapshot.contains("text_snapshot"));
+        assert!(snapshot.contains("mock answer"));
+        let terminal = rx.recv().await.expect("authoritative terminal event");
+        assert!(terminal.contains("turn_done"));
+        assert!(
+            unrelated_rx.try_recv().is_err(),
+            "another connection stole Turn events"
+        );
+        assert_eq!(harness.coordinator.active_turn_count().await, 0);
+    }
+
+    #[tokio::test]
     async fn execute_turn_error_settles_operation_and_returns_json_rpc_error() {
         let harness = DaemonTurnTestBuilder::failing("mock provider failed")
             .build()
             .await;
         let response = harness
             .orchestrator
-            .execute_turn(json!(8), "hello", context("daemon-error"))
+            .execute_turn(
+                json!(8),
+                "hello",
+                context("daemon-error"),
+                Vec::new(),
+                None,
+                None,
+            )
             .await;
 
         assert_eq!(response["error"]["code"], -32603);
@@ -312,9 +445,62 @@ mod tests {
         assert_eq!(harness.coordinator.active_turn_count().await, 0);
         assert!(harness
             .orchestrator
-            .main_agent_process_id
+            .main_agent_process_ids
             .lock()
             .await
-            .is_some());
+            .contains_key("test:daemon-error\0daemon-error"));
+    }
+
+    #[tokio::test]
+    async fn task_kind_survives_direct_and_queued_admission() {
+        for (queued, thread) in [(false, "task-kind-direct"), (true, "task-kind-queued")] {
+            let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let observed_by_runner = observed.clone();
+            let runner = Arc::new(move |request: TurnRequest, _cancel| {
+                observed_by_runner
+                    .lock()
+                    .unwrap()
+                    .push(request.requested_task_kind);
+                Box::pin(async move {
+                    Ok(crate::application::turn_coordinator::TurnExecution {
+                        result: fabric::TurnResult {
+                            output: "typed turn".into(),
+                            stop: fabric::TurnStop::Completed,
+                            metrics: fabric::TurnMetrics {
+                                completed_normally: true,
+                                ..Default::default()
+                            },
+                        },
+                        items: Vec::new(),
+                        projection: None,
+                        context_projection: None,
+                        evaluation_artifacts: Default::default(),
+                    })
+                }) as futures::future::BoxFuture<'static, _>
+            });
+            let harness = DaemonTurnTestBuilder::new(runner)
+                .with_prompt_queue(queued)
+                .build()
+                .await;
+
+            let response = harness
+                .orchestrator
+                .execute_turn(
+                    json!(thread),
+                    "explicit coding turn",
+                    context(thread),
+                    Vec::new(),
+                    Some(fabric::TaskKind::Coding),
+                    None,
+                )
+                .await;
+
+            assert_eq!(response["result"]["response"], "typed turn");
+            assert_eq!(
+                observed.lock().unwrap().as_slice(),
+                &[Some(fabric::TaskKind::Coding)],
+                "queued={queued}"
+            );
+        }
     }
 }
