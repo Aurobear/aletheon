@@ -74,24 +74,24 @@ MERGE_SHA: cb2388e8c9af690a9ce3063472c7f2f3cd6bda99
 ## X2
 
 ```text
-STATUS: code_complete
+STATUS: accepted
 NODE: X2
 BASE / BRANCH / PR / GOAL_ID: cb2388e8c9af690a9ce3063472c7f2f3cd6bda99 / auro/refactor/20260805-x2-task-kind-contract / #165 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TaskKindArg and TaskKind conversion moved to fabric::contract::command without a Clap dependency; production interact::cli caller count is 0; focused Fabric/Aletheon/Interact tests and architecture gates passed
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TaskKindArg and TaskKind conversion moved to fabric::contract::command without a Clap dependency; production interact::cli caller count is 0; focused Fabric/Aletheon/Interact tests and architecture gates passed; GitHub CI 5 passed and 4 skipped
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: b126e07d902d55a95d7387290d787c4d4c539757
 ```
 
 ## X3a
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X3a
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: b126e07d902d55a95d7387290d787c4d4c539757 / auro/feat/20260805-x3a-command-dispatch / pending / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: versioned ClientIntent preserves principal, workspace, permission, requirements, task kind and session authority; canonical CommandSpec added without presentation dependencies; Executive CommandDispatcher is the unique typed command-to-use-case handler; A-ENTRY-001 application test proves CLI/TUI/gateway surfaces select the same use case; focused Fabric/Executive tests, package checks, architecture acceptance and doc-path checks passed
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending

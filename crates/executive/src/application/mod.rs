@@ -10,6 +10,7 @@ pub mod coding_metacog_rubric;
 pub mod coding_runtime;
 pub mod cognitive_role_workflow;
 pub mod cognitive_workspace;
+pub mod command_dispatcher;
 pub mod compaction_normalize;
 pub mod conscious;
 pub mod conscious_action;
@@ -83,6 +84,7 @@ pub mod world_state;
 
 pub use admin_service::{AdminService, AdminUseCases};
 pub use approval_service::{ApprovalService, ApprovalUseCases};
+pub use command_dispatcher::{CommandDispatcher, CommandOutput, CommandUseCases};
 pub use daemon_turn::DaemonTurnOrchestrator;
 pub use extension_service::{ExtensionService, SessionExtensionPolicy};
 pub use goal_service::{GoalService, GoalUseCases};
