@@ -586,6 +586,48 @@ OPEN ITEMS:
 - prompt snapshot 测试覆盖普通对话、tool result、memory update、compaction。
 - profiling 能回答本地 context projection 是否值得缓存；没有数据时不得宣称 L1 已完成结果复用。
 
+### 实施结果（§7.2 模板块，2026-08-04）
+
+```text
+STATUS: code_complete（typed partition + profiling + wire-order 锁定；cognit message_compose
+        typed 重构 + 跨分区 snapshot 未做，见 OPEN ITEMS）
+BASE: origin/dev 278f357638bf575cda34008a176a71c036326929（feature 分支）
+PHASE: C4
+SCOPE:
+  - crates/executive/src/application/prompt_partition.rs（新：PromptRegion{StablePrefix,
+    StableTools,Conversation,DynamicContext,CurrentInput} + PromptPartition + 
+    PromptConstructionProfile{region_bytes,total_bytes,summary} + build_partitions）
+  - crates/executive/src/application/context_assembler.rs（assemble 拆分 dynamic_context 与
+    current_input，build_partitions 产 profile；AssembledContext.profile 字段；wire 消息顺序不变）
+  - crates/executive/src/application/mod.rs（注册 prompt_partition）
+CONTRACT:
+  - PromptRegion::as_str() 稳定 snake_case；summary() 按权威顺序返回 region:bytes
+  - StablePrefix 分区只含 system 前缀（不含 memory/goal/Dasein/当前输入/随机字段）；
+    StableTools 为 marker（工具 canonicalize 由 fabric 负责）
+  - AssembledContext 增 profile: PromptConstructionProfile（诊断投影，不影响 wire）
+VALIDATION:
+  bash scripts/cargo-agent.sh test -p executive --lib prompt_partition   # 4 passed
+  bash scripts/cargo-agent.sh test -p executive --lib                   # 681 passed
+  bash scripts/cargo-agent.sh test -p executive --test context_assembler # 6 passed（wire order 锁定）
+  bash scripts/cargo-agent.sh clippy -p executive --all-targets -- -D warnings  # 0
+  bash scripts/cargo-agent.sh fmt --all -- --check                     # 0
+RUNTIME EVIDENCE:
+  - 无真实请求；测试断言 StablePrefix 跨 turn 字节一致（无随机字段）、分区字节可测、summary 确定性
+METRICS:
+  - 每轮 PromptConstructionProfile 记录各分区 serialized_bytes + construction_ns（数值/digest，无原文）
+ROLLBACK:
+  - revert C4 commit；AssembledContext.profile 是新增字段，wire 不变
+OPEN ITEMS:
+  - cognit::harness::linear::message_compose 的 plan/memory/goal/dasein marker 仍是平铺 String，
+    未 typed 分区（可后续包成 DynamicContext 分区）
+  - prompt snapshot 测试覆盖 tool result / memory update / compaction 的 wire 快照（当前只有
+    context_assembler 顺序锁定 + 字节测试）
+  - 超预算裁剪优先级（从动态区最旧内容开始）未在 context_assembler 显式实现（现有 MAX_INJECTED_CHARS
+    从前往后截断，语义一致但无分区感知）
+  - 本阶段未引入跨 turn projected-message 结果缓存（符合计划"profiling 证明前不缓存"）
+  - C5 benchmark；C6 recall cache；C7 tool cache
+```
+
 ## Phase C5：DeepSeek 真实缓存基准（P1）
 
 ### 修改范围

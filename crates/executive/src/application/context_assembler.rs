@@ -1,6 +1,7 @@
 //! Deterministic, bounded turn context assembly.
 
 use crate::application::daemon_turn::helpers::{build_request_messages, select_text_history};
+use crate::application::prompt_partition::{build_partitions, PromptConstructionProfile};
 use async_trait::async_trait;
 use fabric::{
     AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, LatestConsciousContextPort,
@@ -33,6 +34,9 @@ pub struct AssembledContext {
     pub messages: Vec<Message>,
     pub effective_user_message: String,
     pub projection_receipt: Option<ContextProjectionReceipt>,
+    /// Per-region construction profile (diagnostic; never affects the wire
+    /// messages). See `prompt_partition`.
+    pub profile: PromptConstructionProfile,
 }
 
 #[derive(Debug, Error)]
@@ -186,7 +190,7 @@ impl ContextAssembler {
             .as_ref()
             .map(render_conscious_projection)
             .transpose()?;
-        let mut effective = String::new();
+        let mut dynamic_context = String::new();
         let mut remaining = MAX_INJECTED_CHARS;
         for (label, value) in [
             ("memory-context", fragments.memory_context.as_str()),
@@ -196,22 +200,28 @@ impl ContextAssembler {
             ),
             ("skills", fragments.skills.as_str()),
         ] {
-            append_fragment(&mut effective, label, value, &mut remaining);
+            append_fragment(&mut dynamic_context, label, value, &mut remaining);
         }
-        if !effective.is_empty() {
-            effective.push('\n');
-        }
-        effective.push_str(&request.input);
+        let effective = if dynamic_context.is_empty() {
+            request.input.clone()
+        } else {
+            format!("{dynamic_context}\n{}", request.input)
+        };
         let history = select_text_history(canonical_history, history_budget_tokens);
-        let messages = build_request_messages(
-            truncate(&fragments.system_prefix, MAX_SYSTEM_PREFIX_CHARS),
+        let system_prefix = truncate(&fragments.system_prefix, MAX_SYSTEM_PREFIX_CHARS);
+        let messages = build_request_messages(system_prefix.clone(), &history, effective.clone());
+        let profile = build_partitions(
+            &system_prefix,
             &history,
-            effective.clone(),
+            &dynamic_context,
+            &request.input,
+            0,
         );
         Ok(AssembledContext {
             messages,
             effective_user_message: effective,
             projection_receipt,
+            profile,
         })
     }
 }

@@ -58,6 +58,7 @@ pub mod metacog_approval;
 pub mod orchestration;
 pub mod post_turn;
 pub mod pre_turn;
+pub mod prompt_partition;
 pub mod robot_harness_composition;
 pub mod session_input;
 pub mod session_projection;
