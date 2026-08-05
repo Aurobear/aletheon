@@ -763,6 +763,18 @@ impl AgentRunStatus {
             Self::Succeeded | Self::Failed | Self::Cancelled | Self::Interrupted
         )
     }
+
+    /// Project an external Agent runtime terminal into the canonical Turn
+    /// terminal semantics without reusing the Turn event schema for runtime
+    /// progress. Non-terminal runtime states intentionally have no projection.
+    pub fn turn_terminal_status(self) -> Option<crate::TurnTerminalStatus> {
+        match self {
+            Self::Succeeded => Some(crate::TurnTerminalStatus::Completed),
+            Self::Failed => Some(crate::TurnTerminalStatus::Failed),
+            Self::Cancelled | Self::Interrupted => Some(crate::TurnTerminalStatus::Interrupted),
+            Self::Queued | Self::Running | Self::Waiting => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

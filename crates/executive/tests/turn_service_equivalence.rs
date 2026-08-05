@@ -24,6 +24,27 @@ async fn spawn_test_process(kernel: &KernelRuntime) -> ProcessId {
 
 #[tokio::test]
 async fn a_turn_001_turn_service_submits_one_turn() {
+    fn assert_turn_session<T: cognit::harness::CognitiveSession>() {}
+    assert_turn_session::<cognit::harness::LinearCognitiveSession>();
+    assert_turn_session::<cognit::harness::robot::session::RobotCognitiveSession>();
+
+    // External runtimes retain their distinct progress/event schema, but
+    // terminal states project to the same canonical Turn terminal contract.
+    use fabric::{AgentRunStatus, TurnTerminalStatus};
+    assert_eq!(
+        AgentRunStatus::Succeeded.turn_terminal_status(),
+        Some(TurnTerminalStatus::Completed)
+    );
+    assert_eq!(
+        AgentRunStatus::Failed.turn_terminal_status(),
+        Some(TurnTerminalStatus::Failed)
+    );
+    assert_eq!(
+        AgentRunStatus::Cancelled.turn_terminal_status(),
+        Some(TurnTerminalStatus::Interrupted)
+    );
+    assert_eq!(AgentRunStatus::Running.turn_terminal_status(), None);
+
     let kernel = test_kernel();
     let process_id = spawn_test_process(&kernel).await;
     let service = TurnService::new(
