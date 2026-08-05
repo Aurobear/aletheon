@@ -62,7 +62,7 @@ impl TransactionSettlementStore for InMemoryTransactionSettlementStore {
 pub struct HostSettlementService;
 
 impl HostSettlementService {
-    pub fn settle(
+    pub fn evaluate(
         &self,
         transaction: &ChangeTransactionSnapshot,
         findings: &[ReviewFinding],
@@ -234,7 +234,7 @@ impl TransactionReviewService {
         );
         let (transaction, settlement) = match action {
             TransactionReviewAction::Accept => {
-                let settlement = HostSettlementService.settle(&current, findings);
+                let settlement = HostSettlementService.evaluate(&current, findings);
                 anyhow::ensure!(
                     settlement.decision == HostSettlementDecision::Accepted,
                     "{}",
@@ -251,7 +251,7 @@ impl TransactionReviewService {
                     .transactions
                     .request_repair(transaction_id, session_id, None, root)
                     .await?;
-                let settlement = HostSettlementService.settle(&transaction, findings);
+                let settlement = HostSettlementService.evaluate(&transaction, findings);
                 (transaction, settlement)
             }
             TransactionReviewAction::Rollback => {
@@ -270,7 +270,7 @@ impl TransactionReviewService {
                     .transactions
                     .rollback(transaction_id, session_id, None, root)
                     .await?;
-                let mut settlement = HostSettlementService.settle(&transaction, findings);
+                let mut settlement = HostSettlementService.evaluate(&transaction, findings);
                 settlement.decision = HostSettlementDecision::RolledBack;
                 settlement.reason = "host restored the transaction baseline".into();
                 (transaction, settlement)
@@ -431,7 +431,7 @@ mod tests {
     fn u_verify_001_model_completion_cannot_accept_failed_phase() {
         assert_eq!(
             HostSettlementService
-                .settle(
+                .evaluate(
                     &transaction(ChangeTransactionPhase::Repair),
                     &[finding(true)]
                 )
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn unresolved_finding_returns_repair() {
-        let receipt = HostSettlementService.settle(
+        let receipt = HostSettlementService.evaluate(
             &transaction(ChangeTransactionPhase::Validated),
             &[finding(false)],
         );
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn u_verify_003_acceptance_receipt_carries_validation_artifact_and_version() {
-        let receipt = HostSettlementService.settle(
+        let receipt = HostSettlementService.evaluate(
             &transaction(ChangeTransactionPhase::Validated),
             &[finding(true)],
         );
@@ -468,7 +468,7 @@ mod tests {
             validation_kind: "integration".into(),
             reason: "external service unavailable".into(),
         });
-        let receipt = HostSettlementService.settle(&tx, &[finding(true)]);
+        let receipt = HostSettlementService.evaluate(&tx, &[finding(true)]);
         assert_eq!(receipt.decision, HostSettlementDecision::RepairRequired);
         assert_eq!(receipt.validation_omissions.len(), 1);
     }
@@ -478,7 +478,7 @@ mod tests {
         let mut tx = transaction(ChangeTransactionPhase::DiffReviewed);
         tx.validation_receipts[0].terminal_status = "failed".into();
         assert_eq!(
-            HostSettlementService.settle(&tx, &[finding(true)]).decision,
+            HostSettlementService.evaluate(&tx, &[finding(true)]).decision,
             HostSettlementDecision::RepairRequired
         );
     }
