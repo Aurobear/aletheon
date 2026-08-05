@@ -269,12 +269,12 @@ MERGE_SHA: pending
 ## X8b
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X8b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: abc6a5c8 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TUI DiffView now projects canonical PatchDelta file changes, diff preview, mutation coverage, rollback availability and partial/conflicted evidence; j/k file picker and Ctrl+D or /diff open the review surface. CheckpointReviewSnapshot carries the deterministic TurnCheckpointProjection fields without becoming a persistence authority. U-CHK-001/U-CHK-002, U-CHK-005/U-CHK-006 and architecture acceptance pass.
+FAILURES: Accept/Repair/Rollback application actions, /rewind checkpoint picker, fork-only versus fork-and-rewind choice, and installed PTY/deployment evidence remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
