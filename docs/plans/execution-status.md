@@ -235,7 +235,7 @@ NODE: X6b
 BASE / BRANCH / PR / GOAL_ID: pending / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pasted input now passes through a bounded ANSI/OSC/C0/C1 sanitizer before editor insertion; multi-line CJK paste remains inert until explicit Enter/IME handling; Action Palette search ranks name, alias, category and description; bounded @ file discovery passes the 10,000-file/300ms focused test; @path attachment validation rejects traversal, symlinks, protected paths, out-of-authority paths and oversized files; input history and draft storage are scoped by OS uid plus workspace digest with bounded atomic JSON writes. Focused sanitizer, attachment, paste, file-picker and interact clippy tests pass.
-FAILURES: none; typed attachment submission, governed ! receipt, durable persistence restart evidence/redaction-retention policy and U-INPUT-002..006 remain open, as do installed deployment, PR/CI/merge and aggregate verification
+FAILURES: none; governed ! receipt, retention/delete policy and U-INPUT-004/005 remain open; installed deployment, PR/CI/merge and aggregate verification also remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
