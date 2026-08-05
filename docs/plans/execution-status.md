@@ -232,9 +232,9 @@ MERGE_SHA: pending
 ```text
 STATUS: in_progress
 NODE: X6b
-BASE / BRANCH / PR / GOAL_ID: pending / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: c977aa04 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pasted input now passes through a bounded ANSI/OSC/C0/C1 sanitizer before editor insertion; multi-line CJK paste remains inert until explicit Enter/IME handling; Action Palette search ranks name, alias, category and description; bounded @ file discovery passes the 10,000-file/300ms focused test; @path attachment validation rejects traversal, symlinks, protected paths, out-of-authority paths and oversized files; input history and draft storage are scoped by OS uid plus workspace digest with bounded atomic JSON writes. Focused sanitizer, attachment, paste, file-picker and interact clippy tests pass.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pasted input now passes through a bounded ANSI/OSC/C0/C1 sanitizer before editor insertion; multi-line CJK paste remains inert until explicit Enter/IME handling; Action Palette search ranks name, alias, category and description; bounded @ file discovery passes the 10,000-file/300ms focused test; @path attachment validation rejects traversal, symlinks, protected paths, out-of-authority paths and oversized files; input history and draft storage are scoped by OS uid plus workspace digest with bounded atomic JSON writes; persistence is debounced and history search is reachable through Ctrl+R. Focused sanitizer, attachment, paste, file-picker, history-search and interact clippy tests pass.
 FAILURES: none; governed ! receipt, retention/delete policy and U-INPUT-004 remain open; U-INPUT-005 paste-prefix literal test passes. Installed deployment, PR/CI/merge and aggregate verification also remain open
 BLOCKER: none
 MERGE_SHA: pending
@@ -245,9 +245,9 @@ MERGE_SHA: pending
 ```text
 STATUS: in_progress
 NODE: X7
-BASE / BRANCH / PR / GOAL_ID: c06d7558 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: 4aa18c0c / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: CapabilityTerminalReceipt now binds result.call_id to the host-minted invocation; mismatches become terminal Failed + InvalidRequest evidence instead of successful receipts. Three focused terminal-receipt tests and Fabric clippy pass.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: CapabilityTerminalReceipt now binds result.call_id to the host-minted invocation; mismatches become terminal Failed + InvalidRequest evidence instead of successful receipts. Guarded streaming terminals are deferred until policy/output/audit settlement; cancellation and rejected permits emit typed terminal failures; mutation results retain call/permit/audit linkage and are never served from cache. Fabric terminal-stream tests (10), Corpus capability tests (10), and Corpus clippy pass.
 FAILURES: none; mutation transaction coverage, cancellation propagation, budget exhaustion, hardware permit and full A-CAP-001..005/A-TURN-001 integration remain open; installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
