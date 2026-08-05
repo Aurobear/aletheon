@@ -698,6 +698,9 @@ crates/fabric/src/types/expected_outcome.rs	enum	OutcomeContractError	baseline	-
 crates/fabric/src/types/expected_outcome.rs	enum	OutcomeMatch	baseline	-	-	-
 crates/fabric/src/types/expected_outcome.rs	enum	OutcomePredicate	baseline	-	-	-
 crates/fabric/src/types/expected_outcome.rs	struct	ExpectedOutcome	baseline	-	-	-
+crates/fabric/src/types/exec.rs	enum	ExecEvent	governed	fabric	executive,aletheon	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#4.3
+crates/fabric/src/types/exec.rs	enum	ExecTerminalKind	governed	fabric	executive,aletheon	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#4.3
+crates/fabric/src/types/exec.rs	struct	ExecEventEnvelope	governed	fabric	executive,aletheon	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#4.3
 crates/fabric/src/types/extension.rs	enum	ExtensionContractError	baseline	-	-	-
 crates/fabric/src/types/extension.rs	enum	ExtensionKind	baseline	-	-	-
 crates/fabric/src/types/extension.rs	enum	ExtensionOrigin	baseline	-	-	-

@@ -26,6 +26,8 @@ struct CoreRpcProviderPermit {
 fn core_error(message: String) -> anyhow::Error {
     if message.ends_with("provider_unavailable") {
         cognit::inference::InferenceFailure::transient("provider_unavailable")
+    } else if message.ends_with("provider_rejected_request") {
+        cognit::inference::InferenceFailure::terminal("provider_rejected_request")
     } else {
         anyhow::anyhow!(message)
     }
@@ -230,7 +232,7 @@ impl InferencePort for CoreRpcClient {
         }
         match frame {
             CoreFrame::Response { response, .. } => Ok(response),
-            CoreFrame::Error { message, .. } => Err(anyhow::anyhow!(message).into()),
+            CoreFrame::Error { message, .. } => Err(core_error(message).into()),
             other => Err(anyhow::anyhow!(
                 "unexpected core RPC frame for complete request: {other:?}"
             )

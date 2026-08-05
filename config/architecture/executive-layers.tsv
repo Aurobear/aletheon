@@ -118,6 +118,7 @@ crates/executive/src/application/daemon_turn/lifecycle.rs	application	executive	
 crates/executive/src/application/daemon_turn/mod.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/orchestrator.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/test_support.rs	compatibility	executive	test-only concrete fixture
+crates/executive/src/application/exec.rs	application	executive	one-shot execution idempotency authority
 crates/executive/src/application/daemon_turn_engine.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/dasein_workspace_adapter.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/durable_write.rs	application	executive	use-case orchestration and ports

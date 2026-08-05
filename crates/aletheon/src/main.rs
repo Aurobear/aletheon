@@ -16,6 +16,7 @@ use fabric::contract::command::{
     command_specs, CommandSpec, CommandSurface, CommandVisibility, TaskKindArg,
 };
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
@@ -102,6 +103,14 @@ enum PermissionModeArg {
     Full,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+enum ExecOutputArg {
+    #[default]
+    Text,
+    Json,
+    Jsonl,
+}
+
 impl PermissionModeArg {
     fn effective(self, full: bool) -> &'static str {
         if full {
@@ -152,9 +161,9 @@ enum Commands {
     },
     /// Non-interactive execution
     Exec {
-        /// The prompt/task to execute
+        /// The prompt/task to execute; reads UTF-8 stdin when omitted
         #[arg(short, long)]
-        prompt: String,
+        prompt: Option<String>,
         /// Model spec
         #[arg(short, long, default_value = "")]
         model: String,
@@ -167,9 +176,15 @@ enum Commands {
         /// Path to config file
         #[arg(short, long)]
         config: Option<PathBuf>,
-        /// Output format: text or json
-        #[arg(long, default_value = "text")]
-        output: String,
+        /// Output protocol
+        #[arg(long, value_enum, default_value = "text")]
+        output: ExecOutputArg,
+        /// Stable caller key. Replays return the durable terminal receipt.
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        /// Cancel the execution after this many seconds.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        timeout_seconds: Option<u64>,
     },
     /// Print version
     Version,
@@ -416,27 +431,58 @@ async fn main() -> Result<()> {
                 sandbox,
                 config,
                 output,
+                idempotency_key,
+                timeout_seconds,
             }),
             _,
         ) => {
             init_tracing("aletheon::exec");
-            let outcome =
-                executive::host::launcher::run_exec(executive::host::launcher::ExecLaunch {
-                    prompt: prompt.clone(),
-                    model: model.clone(),
-                    max_turns: *max_turns,
-                    sandbox: sandbox.clone(),
-                    workspace: cli.workspace.executive_launch(),
-                    config: config.clone(),
-                    json: output == "json",
-                })
-                .await?;
-            println!("{}", outcome.rendered);
-            if outcome.success {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("exec host failed"))
+            let prompt = match prompt {
+                Some(prompt) if !prompt.trim().is_empty() => prompt.clone(),
+                Some(_) => emit_exec_validation_failure(*output, "exec prompt cannot be empty"),
+                None => match read_exec_stdin() {
+                    Ok(prompt) => prompt,
+                    Err(error) => emit_exec_validation_failure(*output, &error.to_string()),
+                },
+            };
+            let request = executive::host::launcher::ExecLaunch {
+                prompt,
+                model: model.clone(),
+                max_turns: *max_turns,
+                sandbox: sandbox.clone(),
+                workspace: cli.workspace.executive_launch(),
+                config: config.clone(),
+                idempotency_key: idempotency_key.clone(),
+                timeout: timeout_seconds.map(Duration::from_secs),
+            };
+            let outcome = match output {
+                ExecOutputArg::Jsonl => {
+                    executive::host::launcher::run_exec_streaming(
+                        request,
+                        std::sync::Arc::new(
+                            executive::host::launcher::JsonlExecEventWriter::default(),
+                        ),
+                    )
+                    .await?
+                }
+                ExecOutputArg::Json | ExecOutputArg::Text => {
+                    executive::host::launcher::run_exec(request).await?
+                }
+            };
+            match output {
+                ExecOutputArg::Jsonl => {}
+                ExecOutputArg::Json => {
+                    println!("{}", serde_json::to_string_pretty(&outcome.terminal)?);
+                }
+                ExecOutputArg::Text => match &outcome.terminal.event {
+                    fabric::types::exec::ExecEvent::Terminal { output, .. } => println!("{output}"),
+                    _ => unreachable!("exec host outcome is terminal"),
+                },
             }
+            if outcome.exit_code != 0 {
+                std::process::exit(i32::from(outcome.exit_code));
+            }
+            Ok(())
         }
         (Some(Commands::Version), _) => {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
@@ -522,6 +568,54 @@ async fn main() -> Result<()> {
 fn parse_cli() -> Cli {
     let matches = canonical_cli_command().get_matches();
     Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
+
+fn read_exec_stdin() -> Result<String> {
+    use std::io::Read;
+
+    const MAX_STDIN_BYTES: u64 = 1024 * 1024;
+    let mut input = String::new();
+    std::io::stdin()
+        .take(MAX_STDIN_BYTES + 1)
+        .read_to_string(&mut input)?;
+    anyhow::ensure!(
+        input.len() as u64 <= MAX_STDIN_BYTES,
+        "exec stdin exceeds the 1 MiB limit"
+    );
+    anyhow::ensure!(!input.trim().is_empty(), "exec prompt cannot be empty");
+    Ok(input)
+}
+
+fn emit_exec_validation_failure(output: ExecOutputArg, message: &str) -> ! {
+    let terminal = fabric::types::exec::ExecEventEnvelope::v1(
+        1,
+        uuid::Uuid::new_v4().to_string(),
+        uuid::Uuid::new_v4().to_string(),
+        fabric::TurnId::new().0.to_string(),
+        None,
+        fabric::OperationId::new(),
+        fabric::types::exec::ExecEvent::Terminal {
+            status: fabric::types::exec::ExecTerminalKind::ValidationFailed,
+            output: message.to_owned(),
+            metrics: fabric::TurnMetrics::default(),
+            error_code: Some("validation_failed".into()),
+        },
+    );
+    match output {
+        ExecOutputArg::Text => println!("{message}"),
+        ExecOutputArg::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&terminal)
+                .expect("exec validation terminal must serialize")
+        ),
+        ExecOutputArg::Jsonl => println!(
+            "{}",
+            serde_json::to_string(&terminal).expect("exec validation terminal must serialize")
+        ),
+    }
+    std::process::exit(i32::from(
+        fabric::types::exec::ExecTerminalKind::ValidationFailed.exit_code(),
+    ));
 }
 
 fn canonical_cli_command() -> clap::Command {

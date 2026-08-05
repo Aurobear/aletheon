@@ -12,3 +12,4 @@ U-CLI-004	X3c	test	crates/aletheon/tests/cli_contract.rs
 U-BOOT-003	X4a	test	crates/executive/tests/daemon_lifecycle.rs
 U-BOOT-001	X4b	test	crates/interact/src/host.rs
 U-BOOT-002	X4b	test	crates/interact/src/host.rs
+U-CLI-003	X4c	test	crates/aletheon/tests/exec_cli.rs
