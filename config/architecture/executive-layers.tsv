@@ -356,3 +356,4 @@ crates/executive/src/host/daemon/bootstrap/extension_connectors.rs	composition	e
 crates/executive/src/host/daemon/bootstrap/extension_publisher.rs	composition	executive	daemon composition boundary
 crates/executive/src/host/daemon/handler/rpc/rpc_extension.rs	host	executive	transport and request handling
 crates/executive/src/application/command_dispatcher.rs	application	executive	canonical typed command dispatch use case
+crates/executive/src/application/checkpoint_projection.rs	application	executive	checkpoint and transaction validation read projection

@@ -16,10 +16,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::change_transaction::{
-    ChangeTransactionSnapshot, MutationCoverage, ValidationPlanOmission, VersionedValidationReceipt,
-};
-
 pub use crate::types::workspace_identity::WorkspaceIdentity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -75,43 +71,6 @@ pub struct TurnCheckpoint {
     /// checkpoint is loaded or restored.
     pub integrity_digest: String,
     pub finalize_state: CheckpointFinalizeState,
-}
-
-/// Validation evidence projected alongside a checkpoint without creating a
-/// second checkpoint authority. The transaction remains the source of truth;
-/// this value is a deterministic read projection for review and recovery UI.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CheckpointValidationProjection {
-    pub checkpoint_id: CheckpointId,
-    pub owner_turn_id: Option<String>,
-    pub mutation_coverage: MutationCoverage,
-    pub validation_receipts: Vec<VersionedValidationReceipt>,
-    pub validation_omissions: Vec<ValidationPlanOmission>,
-}
-
-impl CheckpointValidationProjection {
-    pub fn from_transaction(
-        checkpoint_id: CheckpointId,
-        transaction: &ChangeTransactionSnapshot,
-    ) -> Self {
-        Self {
-            checkpoint_id,
-            owner_turn_id: transaction.owner_turn_id.clone(),
-            mutation_coverage: transaction.mutation_coverage,
-            validation_receipts: transaction.validation_receipts.clone(),
-            validation_omissions: transaction.validation_omissions.clone(),
-        }
-    }
-
-    /// An accepted checkpoint must retain at least one receipt or an explicit
-    /// omission explaining why validation was not run.
-    pub fn validate_for_acceptance(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !self.validation_receipts.is_empty() || !self.validation_omissions.is_empty(),
-            "accepted checkpoint requires a validation receipt or explicit omission"
-        );
-        Ok(())
-    }
 }
 
 impl TurnCheckpoint {
@@ -302,25 +261,6 @@ mod tests {
             !checkpoint.verify_integrity(&files),
             "a checkpoint projection must not claim more files than its durable snapshot contains"
         );
-    }
-
-    #[test]
-    fn u_chk_004_acceptance_requires_validation_receipt_or_explicit_omission() {
-        let mut projection = CheckpointValidationProjection {
-            checkpoint_id: CheckpointId(Uuid::nil()),
-            owner_turn_id: Some("turn-1".into()),
-            mutation_coverage: MutationCoverage::BestEffort,
-            validation_receipts: Vec::new(),
-            validation_omissions: Vec::new(),
-        };
-        assert!(projection.validate_for_acceptance().is_err());
-        projection
-            .validation_omissions
-            .push(ValidationPlanOmission {
-                validation_kind: "integration".into(),
-                reason: "not applicable to documentation-only mutation".into(),
-            });
-        assert!(projection.validate_for_acceptance().is_ok());
     }
 
     #[test]

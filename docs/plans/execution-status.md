@@ -256,12 +256,12 @@ MERGE_SHA: pending
 ## X8a
 
 ```text
-STATUS: in_progress
+STATUS: accepted
 NODE: X8a
-BASE / BRANCH / PR / GOAL_ID: 7f8f2e5a / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: e3c32965 + checkpoint projection follow-up / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Existing TurnCheckpoint integrity verification now rejects a declared file count that disagrees with durable snapshot material; U-CHK-003 focused regression and the full workspace-checkpoint unit set (8 tests) pass. Full validation-receipt/omission projection for U-CHK-004 remains open.
-FAILURES: none
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TurnCheckpoint integrity verification rejects file-count mismatch; Executive read projection binds checkpoint and transaction to session/turn authority, carries mutation coverage and validation evidence, and requires one receipt or explicit omission for acceptance. U-CHK-003/U-CHK-004, the workspace-checkpoint unit set, Executive projection tests, and Corpus transaction projection tests pass; architecture acceptance passes.
+FAILURES: none; installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```

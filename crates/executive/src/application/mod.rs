@@ -5,6 +5,7 @@ pub mod approval;
 pub mod approval_service;
 pub mod cache_shape;
 pub mod capability_benchmark;
+pub mod checkpoint_projection;
 pub mod coding_metacog_adapter;
 pub mod coding_metacog_rubric;
 pub mod coding_runtime;
