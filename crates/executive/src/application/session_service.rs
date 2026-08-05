@@ -4,9 +4,9 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 
 use anyhow::{bail, Result};
 use fabric::{
-    AppendOutcome, ContentBlock, ItemId, ItemPayload, ItemRecord, Message, Role,
+    AppendOutcome, ContentBlock, ItemId, ItemPayload, ItemRecord, Message, PrincipalId, Role,
     SessionAppendStore, SessionFork, SessionId, SessionRecord, SessionStatus, TurnId,
-    SESSION_SCHEMA_VERSION,
+    LOCAL_OWNER_PRINCIPAL, SESSION_SCHEMA_VERSION,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use tokio::sync::Mutex;
@@ -19,6 +19,14 @@ use crate::{
 use super::turn_coordinator::{ActiveTurn, ActiveTurnKey};
 
 const SESSION_EVENT_PAGE_LIMIT: usize = 256;
+
+/// Session IDs emitted by the authenticated turn path are namespaced as
+/// `<principal>:<thread>`. Legacy local-only IDs remain visible only to the
+/// local owner; no authenticated principal may claim another namespace.
+pub fn session_visible_to(session_id: &SessionId, principal: &PrincipalId) -> bool {
+    session_id.0.starts_with(&format!("{}:", principal.0))
+        || (principal.0 == LOCAL_OWNER_PRINCIPAL && !session_id.0.contains(':'))
+}
 
 pub struct ResumeResult {
     pub session: SessionRecord,
@@ -40,6 +48,31 @@ pub struct SessionService {
 }
 
 impl SessionService {
+    async fn ensure_session_visible(
+        &self,
+        session_id: &SessionId,
+        principal: &PrincipalId,
+        claim_unowned: bool,
+    ) -> Result<()> {
+        if let Some(owner) = self.store.principal_for(session_id).await? {
+            if owner != *principal {
+                bail!("session is not visible to authenticated principal");
+            }
+            return Ok(());
+        }
+        if !session_visible_to(session_id, principal) {
+            if claim_unowned && self.store.load_session(session_id).await?.is_some() {
+                self.store.bind_principal(session_id, principal).await?;
+                return Ok(());
+            }
+            bail!("session is not visible to authenticated principal");
+        }
+        if claim_unowned {
+            self.store.bind_principal(session_id, principal).await?;
+        }
+        Ok(())
+    }
+
     pub async fn append_protocol_item_event(
         &self,
         session_id: &SessionId,
@@ -242,7 +275,18 @@ impl SessionService {
         &self,
         session_id: &SessionId,
     ) -> Result<fabric::protocol::client::UiSnapshot> {
-        let snapshot = self.protocol_read_snapshot(session_id).await?;
+        self.protocol_snapshot_for(&PrincipalId(LOCAL_OWNER_PRINCIPAL.into()), session_id)
+            .await
+    }
+
+    pub async fn protocol_snapshot_for(
+        &self,
+        principal: &PrincipalId,
+        session_id: &SessionId,
+    ) -> Result<fabric::protocol::client::UiSnapshot> {
+        let snapshot = self
+            .protocol_read_snapshot_for(principal, session_id)
+            .await?;
         Ok(fabric::protocol::client::UiSnapshot {
             session_id: session_id.clone(),
             cursor: snapshot.through,
@@ -258,6 +302,17 @@ impl SessionService {
         &self,
         session_id: &SessionId,
     ) -> Result<fabric::protocol::client::SessionReadSnapshot> {
+        self.protocol_read_snapshot_for(&PrincipalId(LOCAL_OWNER_PRINCIPAL.into()), session_id)
+            .await
+    }
+
+    pub async fn protocol_read_snapshot_for(
+        &self,
+        principal: &PrincipalId,
+        session_id: &SessionId,
+    ) -> Result<fabric::protocol::client::SessionReadSnapshot> {
+        self.ensure_session_visible(session_id, principal, true)
+            .await?;
         let session = self
             .store
             .load_session(session_id)
@@ -280,9 +335,27 @@ impl SessionService {
     pub async fn protocol_session_list(
         &self,
     ) -> Result<fabric::protocol::client::SessionListSnapshot> {
+        self.protocol_session_list_for(&PrincipalId(LOCAL_OWNER_PRINCIPAL.into()))
+            .await
+    }
+
+    pub async fn protocol_session_list_for(
+        &self,
+        principal: &PrincipalId,
+    ) -> Result<fabric::protocol::client::SessionListSnapshot> {
+        let mut sessions = Vec::new();
+        for session in self.store.list_sessions(256).await? {
+            let visible = match self.store.principal_for(&session.id).await? {
+                Some(owner) => owner == *principal,
+                None => session_visible_to(&session.id, principal),
+            };
+            if visible {
+                sessions.push(session);
+            }
+        }
         Ok(fabric::protocol::client::SessionListSnapshot {
             schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
-            sessions: self.store.list_sessions(256).await?,
+            sessions,
         })
     }
 
@@ -294,7 +367,24 @@ impl SessionService {
         session_id: &SessionId,
         after: &fabric::protocol::client::EventCursor,
     ) -> Result<Vec<fabric::protocol::client::ClientEvent>> {
-        Ok(self.protocol_event_page(session_id, after).await?.events)
+        self.protocol_events_after_for(
+            &PrincipalId(LOCAL_OWNER_PRINCIPAL.into()),
+            session_id,
+            after,
+        )
+        .await
+    }
+
+    pub async fn protocol_events_after_for(
+        &self,
+        principal: &PrincipalId,
+        session_id: &SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> Result<Vec<fabric::protocol::client::ClientEvent>> {
+        Ok(self
+            .protocol_event_page_for(principal, session_id, after)
+            .await?
+            .events)
     }
 
     pub async fn protocol_event_page(
@@ -302,6 +392,22 @@ impl SessionService {
         session_id: &SessionId,
         after: &fabric::protocol::client::EventCursor,
     ) -> Result<fabric::protocol::client::SessionEventPage> {
+        self.protocol_event_page_for(
+            &PrincipalId(LOCAL_OWNER_PRINCIPAL.into()),
+            session_id,
+            after,
+        )
+        .await
+    }
+
+    pub async fn protocol_event_page_for(
+        &self,
+        principal: &PrincipalId,
+        session_id: &SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> Result<fabric::protocol::client::SessionEventPage> {
+        self.ensure_session_visible(session_id, principal, true)
+            .await?;
         self.sync_canonical_protocol_events(session_id).await?;
         if after.sequence == 0 {
             if after.event_id.is_some() {
@@ -564,6 +670,28 @@ fn legacy_message_payloads(message: &Message) -> Vec<ItemPayload> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn session_visibility_is_principal_scoped_and_legacy_local_only() {
+        let owner = PrincipalId("local-uid:1000".into());
+        let other = PrincipalId("local-uid:2000".into());
+        assert!(session_visible_to(
+            &SessionId("local-uid:1000:thread-a".into()),
+            &owner
+        ));
+        assert!(!session_visible_to(
+            &SessionId("local-uid:1000:thread-a".into()),
+            &other
+        ));
+        assert!(session_visible_to(
+            &SessionId("legacy-session".into()),
+            &PrincipalId(LOCAL_OWNER_PRINCIPAL.into())
+        ));
+        assert!(!session_visible_to(
+            &SessionId("legacy-session".into()),
+            &other
+        ));
+    }
+
     #[tokio::test]
     async fn lifecycle_context_fragment_is_bounded_and_durable() {
         let store: Arc<dyn SessionAppendStore> = Arc::new(
@@ -598,6 +726,44 @@ mod tests {
             ItemPayload::SystemNotice { content }
                 if content.contains("source=workspace") && content.contains("branch=feature")
         ));
+    }
+
+    #[tokio::test]
+    async fn protocol_picker_and_snapshot_enforce_durable_principal_ownership() {
+        let store: Arc<dyn SessionAppendStore> = Arc::new(
+            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
+                .unwrap(),
+        );
+        let first = SessionId("shared-thread".into());
+        let second = SessionId("other-thread".into());
+        for id in [&first, &second] {
+            store
+                .create(SessionRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: id.clone(),
+                    parent: None,
+                    created_at_ms: 1,
+                    status: SessionStatus::Active,
+                })
+                .await
+                .unwrap();
+        }
+        let owner = PrincipalId("local-uid:1000".into());
+        let other = PrincipalId("local-uid:2000".into());
+        store.bind_principal(&first, &owner).await.unwrap();
+        store.bind_principal(&second, &other).await.unwrap();
+        let service = SessionService::new(store, Arc::new(Mutex::new(Default::default())));
+
+        let list = service.protocol_session_list_for(&owner).await.unwrap();
+        assert_eq!(
+            list.sessions.iter().map(|s| &s.id).collect::<Vec<_>>(),
+            vec![&first]
+        );
+        let denied = service
+            .protocol_read_snapshot_for(&other, &first)
+            .await
+            .unwrap_err();
+        assert!(denied.to_string().contains("not visible"));
     }
 
     #[tokio::test]

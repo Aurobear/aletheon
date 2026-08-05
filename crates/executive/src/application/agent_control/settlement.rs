@@ -20,10 +20,9 @@ use fabric::{
 use rusqlite::OptionalExtension;
 use tokio::sync::Mutex;
 
+use super::generation_fence::GenerationFence;
 use super::{AgentAdmissionLease, AgentRunRepository, LiveAgentRun};
 
-/// AgentControl's durable runtime/profile correlation for an authoritative
-/// evaluation receipt. It is an observation, not a second settlement receipt.
 pub struct AgentEvaluationProjectionSink {
     inner: crate::application::post_turn_projection::DurableDomainEvaluationSink,
 }
@@ -65,6 +64,7 @@ pub enum SettlementEvidence {
     IdempotentReplay {
         idempotency_key: String,
     },
+    GenerationRejected(String, String),
 }
 
 #[async_trait]
@@ -129,6 +129,10 @@ impl SettlementEvidenceSink for SpineSettlementEvidenceSink {
                 "agent.settlement.replay",
                 serde_json::json!({"idempotency_key": idempotency_key}),
             ),
+            SettlementEvidence::GenerationRejected(expected, received) => (
+                "agent.settlement.generation_rejected",
+                serde_json::json!({"expected": expected, "received": received}),
+            ),
         };
         let payload = serde_json::json!({
             "kind": kind,
@@ -163,7 +167,6 @@ impl SettlementEvidenceSink for SpineSettlementEvidenceSink {
     }
 }
 
-/// Durable implementations must use `receipt.idempotency_key` as a unique key.
 #[async_trait]
 pub trait SettlementReceiptStore: Send + Sync {
     async fn get(
@@ -171,8 +174,6 @@ pub trait SettlementReceiptStore: Send + Sync {
         idempotency_key: &str,
     ) -> Result<Option<SettlementReceipt>, AgentControlError>;
 
-    /// Store the receipt if absent and return the authoritative receipt. This
-    /// makes competing attempts converge on one immutable result.
     async fn put_if_absent(
         &self,
         receipt: SettlementReceipt,
@@ -272,16 +273,10 @@ impl SettlementLeasePort for RepositorySettlementLeasePort {
     }
 }
 
-/// Safe production default until a managed background-command backend is
-/// installed. It never grants reparent and cancels the child scope before
-/// acknowledging disposal, so declarations cannot create orphans.
 pub struct FailClosedSettlementResourcePort {
     cancellation: tokio_util::sync::CancellationToken,
 }
 
-/// Production resource backend backed by the resource controls fixed in the
-/// live run at spawn time. Operations are independently cancellable and owner
-/// transitions are action-key idempotent.
 pub struct ManagedSettlementResourcePort {
     live: LiveAgentRun,
     parent_authority_covers: bool,
@@ -324,8 +319,6 @@ impl ManagedSettlementResourcePort {
         }
     }
 
-    /// Publish the authoritative transfer outcome only after quiescing has
-    /// closed admission and fixed the resource set.
     pub fn set_parent_budget_accepts(&self, accepted: bool) {
         self.parent_budget_accepts.publish(accepted);
     }
@@ -495,8 +488,6 @@ impl SettlementReceiptStore for InMemorySettlementReceiptStore {
     }
 }
 
-/// Resource operations must themselves honor `action_key`; this closes the
-/// crash window between a successful ownership change and receipt persistence.
 #[async_trait]
 pub trait SettlementResourcePort: Send + Sync {
     fn reparent_context(
@@ -529,8 +520,6 @@ pub trait SettlementResourcePort: Send + Sync {
 
 #[async_trait]
 pub trait SettlementLeasePort: Send + Sync {
-    /// Owner-checked deletion. `false` means it was already absent and is a
-    /// successful idempotent replay, not an ownership bypass.
     async fn release(
         &self,
         lease_key: &str,
@@ -578,10 +567,9 @@ pub struct SettlementEngine {
     resources: Arc<dyn SettlementResourcePort>,
     leases: Arc<dyn SettlementLeasePort>,
     evidence: Arc<dyn SettlementEvidenceSink>,
-    /// Serializes a logical settlement in this daemon generation. External
-    /// ports still receive stable action keys for crash-safe replay.
     key_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     metrics: Arc<SettlementMetrics>,
+    generation_fence: GenerationFence,
 }
 
 #[derive(Debug, Default)]
@@ -603,8 +591,6 @@ pub struct SettlementMetricSnapshot {
 }
 
 impl SettlementMetricSnapshot {
-    /// Fixed-cardinality export: agent IDs and free-form denial reasons never
-    /// become labels.
     pub fn named(self) -> [(String, String); 5] {
         [
             (
@@ -679,11 +665,15 @@ impl SettlementEngine {
             evidence,
             key_locks: Mutex::new(HashMap::new()),
             metrics,
+            generation_fence: GenerationFence::default(),
         }
     }
 
-    /// Enter Quiescing and return the resource set fixed at spawn/live-run
-    /// registration. No new calls are admitted after this point.
+    pub fn with_generation(mut self, generation: impl Into<String>) -> Self {
+        self.generation_fence = GenerationFence::bind(generation);
+        self
+    }
+
     pub async fn quiesce(
         &self,
         live: &LiveAgentRun,
@@ -701,6 +691,17 @@ impl SettlementEngine {
     ) -> Result<SettlementReceipt, AgentControlError> {
         let started = Instant::now();
         request.validate()?;
+        if let Some((expected, received)) = self.generation_fence.rejection(&request.generation) {
+            self.evidence
+                .record(SettlementEvidence::GenerationRejected(
+                    expected.into(),
+                    received.into(),
+                ))
+                .await?;
+            return Err(invalid(format!(
+                "stale daemon generation: expected {expected}, received {received}"
+            )));
+        }
         let key =
             settlement_idempotency_key(&request.agent_id, &request.attempt_id, &request.generation);
         let key_lock = {
@@ -921,7 +922,6 @@ fn reparent_denial_reason(
         .unwrap_or_else(|| "reparent operation failed".into())
 }
 
-/// Recovery policy for resources whose settlement was interrupted by a crash.
 pub fn recovery_disposition(decision: AgentRecoveryDecision) -> RecoveryResourceDisposition {
     match decision {
         AgentRecoveryDecision::Resume => RecoveryResourceDisposition::RetainForResume,

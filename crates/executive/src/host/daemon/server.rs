@@ -407,7 +407,10 @@ async fn dispatch_versioned_request(
     notify_tx: Option<mpsc::Sender<String>>,
 ) -> serde_json::Value {
     if let ClientRequest::ReadSnapshot(request) = &request {
-        return match handler.protocol_read_snapshot(&request.session_id).await {
+        return match handler
+            .protocol_read_snapshot_for(&connection.principal_id, &request.session_id)
+            .await
+        {
             Ok(snapshot) => serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -417,7 +420,10 @@ async fn dispatch_versioned_request(
         };
     }
     if matches!(request, ClientRequest::ReadSessions) {
-        return match handler.protocol_session_list().await {
+        return match handler
+            .protocol_session_list_for(&connection.principal_id)
+            .await
+        {
             Ok(snapshot) => serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -428,7 +434,11 @@ async fn dispatch_versioned_request(
     }
     if let ClientRequest::ReadEvents(request) = &request {
         return match handler
-            .protocol_event_page(&request.session_id, &request.after)
+            .protocol_event_page_for(
+                &connection.principal_id,
+                &request.session_id,
+                &request.after,
+            )
             .await
         {
             Ok(page) => serde_json::json!({
@@ -441,7 +451,7 @@ async fn dispatch_versioned_request(
     }
     let result: anyhow::Result<ProtocolClientEvent> = match request {
         ClientRequest::Snapshot(request) => handler
-            .protocol_snapshot(&request.session_id)
+            .protocol_snapshot_for(&connection.principal_id, &request.session_id)
             .await
             .map(ProtocolClientEvent::Snapshot),
         ClientRequest::ReadSnapshot(_) => unreachable!("handled before event dispatch"),
@@ -449,7 +459,11 @@ async fn dispatch_versioned_request(
         ClientRequest::ReadEvents(_) => unreachable!("handled before event dispatch"),
         ClientRequest::Subscribe(subscription) => {
             match handler
-                .protocol_events_after(&subscription.session_id, &subscription.after)
+                .protocol_events_after_for(
+                    &connection.principal_id,
+                    &subscription.session_id,
+                    &subscription.after,
+                )
                 .await
             {
                 Ok(events) => {
@@ -628,6 +642,7 @@ async fn dispatch_versioned_request(
 
 async fn run_versioned_subscription(
     handler: RequestHandler,
+    principal: fabric::PrincipalId,
     subscription: fabric::protocol::client::EventSubscription,
     request_id: serde_json::Value,
     notify_tx: mpsc::Sender<String>,
@@ -635,7 +650,7 @@ async fn run_versioned_subscription(
 ) {
     let mut cursor = subscription.after;
     let events = match handler
-        .protocol_events_after(&subscription.session_id, &cursor)
+        .protocol_events_after_for(&principal, &subscription.session_id, &cursor)
         .await
     {
         Ok(events) => events,
@@ -671,7 +686,7 @@ async fn run_versioned_subscription(
     loop {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let events = match handler
-            .protocol_events_after(&subscription.session_id, &cursor)
+            .protocol_events_after_for(&principal, &subscription.session_id, &cursor)
             .await
         {
             Ok(events) => events,
@@ -1044,11 +1059,13 @@ impl UnixServer {
                                     };
                                     versioned_subscription_started = true;
                                     let handler = handler.clone();
+                                    let principal = connection.principal_id.clone();
                                     let subscription = subscription.clone();
                                     let resp_tx = resp_tx.clone();
                                     request_tasks.spawn(async move {
                                         run_versioned_subscription(
                                             handler,
+                                            principal,
                                             subscription,
                                             request_id,
                                             notify_tx,

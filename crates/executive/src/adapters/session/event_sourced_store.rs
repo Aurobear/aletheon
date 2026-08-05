@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use fabric::{
     AppendOutcome, EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity,
     EventPayload, EventSpine, EventTreeId, EventVisibility, ItemId, ItemPayload, ItemRecord,
-    MessageId, NamespaceId, SchemaId, SessionAppendStore, SessionForkedEvent, SessionId,
-    SessionRecord, SpineEvent, UnsequencedEvent, SESSION_SCHEMA_VERSION,
+    MessageId, NamespaceId, PrincipalId, SchemaId, SessionAppendStore, SessionForkedEvent,
+    SessionId, SessionRecord, SpineEvent, UnsequencedEvent, SESSION_SCHEMA_VERSION,
 };
 use uuid::Uuid;
 
@@ -325,5 +325,13 @@ impl SessionAppendStore for EventSourcedSessionStore {
 
     async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
         self.read_model.list_sessions(limit).await
+    }
+
+    async fn bind_principal(&self, session: &SessionId, principal: &PrincipalId) -> Result<()> {
+        self.read_model.bind_principal(session, principal).await
+    }
+
+    async fn principal_for(&self, session: &SessionId) -> Result<Option<PrincipalId>> {
+        self.read_model.principal_for(session).await
     }
 }
