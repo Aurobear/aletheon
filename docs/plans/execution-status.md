@@ -334,39 +334,39 @@ MERGE_SHA: 20e9bcad980cc40640065e69bce1f8af1da6f8b2
 ## X9c
 
 ```text
-STATUS: not_started
+STATUS: accepted
 NODE: X9c
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: d48bac9b8cd6006507864b3c7a44a202773e0ceb / auro/feat/20260805-x9c-provider-authority / #179 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: InferencePort defaults now fail closed for missing provider machine authority; only the system-core RegistryInferencePort and explicitly selected LocalInferencePort implement provider admission/cooldown/metrics. ProviderRegistry resolves typed ProviderBackpressureConfig from the canonical endpoint key. Core RPC refuses to replace a live socket, reclaims only a failed stale probe, and regression coverage proves the original authority remains reachable. System and legacy core units use KillMode=control-group with bounded stop timeout. Local provider backpressure concurrency/cooldown/pacing tests, core RPC authority tests, inference-port fail-closed tests, Executive check/clippy, deployment boundary and architecture gates pass; SILENT_FALLBACKS=0. sudo bash scripts/aletheon.sh deploy passed from the X9c worktree: release binary, /usr/bin/aletheon, machine core, user daemon, and Memory Agent SHA-256 all 31a02c5ae3c3d7db08d1f0558970cffbe816f26e899f7e33359b22bb6a88ebee; restart counters remained stable; official user-socket real-request and Memory Agent smoke passed. PR #179 CI passed architecture fitness, Feature contracts, PR validation and Fuzz quick-check.
+FAILURES: First PR #179 CI run 31000464516 failed because the new metric key was required by the minimal Phase 0 fixture; commit 05efe952 scopes SILENT_FALLBACKS to production checkouts, and rerun 31000597490 passed.
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 6ffa9f85f2d9b4776b26b2781eb62c214a62e67d
 ```
 
 ## X10
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X10
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: 6ffa9f85f2d9b4776b26b2781eb62c214a62e67d / auro/docs/20260805-x9c-acceptance / pending / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Removed the zero-caller Metacog hil_evidence_verifier and outcome_verifier facade modules; tests now import canonical evaluation modules. Corrected the HIL persistence inventory path. Added A-DELETE-001/002 mechanical coverage for the bounded compatibility ledger and README Stable capability evidence. Metacog verifier tests, architecture contract, architecture-check, formatting and clippy -D warnings pass.
 FAILURES: none
-BLOCKER: none
+BLOCKER: dev merge pending; protected branch requires the required checks.
 MERGE_SHA: pending
 ```
 
 ## X11
 
 ```text
-STATUS: not_started
+STATUS: code_complete
 NODE: X11
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
-BLOCKER: none
+BASE / BRANCH / PR / GOAL_ID: 6ffa9f85f2d9b4776b26b2781eb62c214a62e67d / auro/docs/20260805-x9c-acceptance / pending / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Expanded tests/coding from 8 hidden acceptance overlays to 20 versioned fixture/task pairs and 20 hidden overlays. Static harness contracts, runner/replay/suite/workflow tests, catalog validation and git diff checks pass; each fixture has an isolated Cargo workspace manifest and lockfile. The intentionally failing baseline behavior remains part of the benchmark and is fixed by the real model during task execution; it is not counted as fixture acceptance.
+FAILURES: full 20-task real-model run is deferred to X12 installed acceptance.
+BLOCKER: dev merge pending; protected branch requires the required checks.
 MERGE_SHA: pending
 ```
 

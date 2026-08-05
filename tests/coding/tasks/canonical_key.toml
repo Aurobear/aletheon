@@ -1,0 +1,13 @@
+schema_version = 1
+id = "canonical_key"
+category = "config_schema"
+fixture = "canonical_key"
+prompt = "Build a deterministic key independent of input order while retaining every component."
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

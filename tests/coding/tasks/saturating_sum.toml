@@ -1,0 +1,13 @@
+schema_version = 1
+id = "saturating_sum"
+category = "behavioral_bugfix"
+fixture = "saturating_sum"
+prompt = "Compute a saturating sum instead of wrapping on unsigned overflow."
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]
