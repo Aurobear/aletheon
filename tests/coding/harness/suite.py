@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import math
 import os
@@ -15,6 +17,28 @@ from receipt import FAILURE_CLASSES, METRIC_KEYS, digest, seal, verify_receipt
 from run import ROOT, run_task
 
 REPORT_SCHEMA_VERSION = 1
+
+
+@contextlib.contextmanager
+def installed_runtime_lease(environ: Mapping[str, str]):
+    """Hold a shared generation lease only for the system-installed client."""
+    binary = pathlib.Path(environ.get("ALETHEON_BIN", "")).resolve()
+    if binary != pathlib.Path("/usr/bin/aletheon"):
+        yield
+        return
+    runtime_root = pathlib.Path(
+        environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    ) / "aletheon"
+    lock_path = pathlib.Path(
+        environ.get(
+            "ALETHEON_RUNTIME_LOCK_FILE",
+            str(runtime_root / "runtime-mutation.lock"),
+        )
+    )
+    lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
+        yield
 
 
 def _invalid_entry(task_id: str, reason: str = "receipt_invalid") -> dict[str, object]:
@@ -236,6 +260,25 @@ def _write_report(report: Mapping[str, object], path: pathlib.Path) -> None:
 
 
 def execute_suite(
+    catalog: pathlib.Path,
+    receipts_directory: pathlib.Path,
+    report_path: pathlib.Path,
+    *,
+    root: pathlib.Path = ROOT,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[dict[str, object], int]:
+    environment = dict(os.environ if environ is None else environ)
+    with installed_runtime_lease(environment):
+        return _execute_suite_locked(
+            catalog,
+            receipts_directory,
+            report_path,
+            root=root,
+            environ=environment,
+        )
+
+
+def _execute_suite_locked(
     catalog: pathlib.Path,
     receipts_directory: pathlib.Path,
     report_path: pathlib.Path,

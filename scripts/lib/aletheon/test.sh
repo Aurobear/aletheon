@@ -25,6 +25,7 @@ cmd_test() {
       ;;
     deployment)
       _run_test_script suites/deployment/systemd_runtime_boundary.sh
+      _run_test_script suites/deployment/runtime_generation_lock_static_test.sh
       _run_test_script suites/deployment/upgrade_multi_user_test.sh
       _run_test_script production/installed_host_static_test.sh
       _run_test_script production/sudo_deploy_user_context_static_test.sh

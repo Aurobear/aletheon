@@ -461,6 +461,19 @@ BLOCKER: publication/PR/merge intentionally deferred by owner; installed X12 rer
 MERGE_SHA: pending_by_owner
 ```
 
+## XF-007
+
+```text
+STATUS: code_complete
+NODE: XF-007
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: X12 attempts 1 and 3 each recorded different `/usr/bin/aletheon` digests and core-RPC closure after another checkout deployed mid-suite. The deploy command now holds an exclusive runtime-mutation flock for its complete build/install/restart/verify transaction. A suite using exactly `/usr/bin/aletheon` holds the matching shared flock for its complete catalog; debug/custom binaries do not participate. ALETHEON_RUNTIME_LOCK_FILE provides an isolated test override. Suite tests 6/6 prove the installed shared lease blocks a nonblocking exclusive contender and a custom binary creates no lock. Full static harness, runtime-generation static contract, sudo user-context contract, shell syntax, docs paths, and diff checks pass.
+FAILURES: none
+BLOCKER: publication/PR/merge intentionally deferred by owner; installed deployment and X12 rerun remain pending.
+MERGE_SHA: pending_by_owner
+```
+
 ## X13
 
 ```text

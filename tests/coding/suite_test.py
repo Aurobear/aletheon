@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import fcntl
 import importlib.util
 import json
 import pathlib
@@ -130,6 +131,31 @@ class SuiteTest(unittest.TestCase):
         path = self.root / f"{value['task_id']}.json"
         path.write_text(json.dumps(value))
         return path
+
+    def test_installed_suite_holds_shared_runtime_generation_lease(self):
+        lock_path = self.root / "runtime-mutation.lock"
+        environment = {
+            "ALETHEON_BIN": "/usr/bin/aletheon",
+            "ALETHEON_RUNTIME_LOCK_FILE": str(lock_path),
+        }
+        with suite.installed_runtime_lease(environment):
+            with lock_path.open("a+b") as contender:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(
+                        contender.fileno(),
+                        fcntl.LOCK_EX | fcntl.LOCK_NB,
+                    )
+
+    def test_non_installed_suite_does_not_create_runtime_lease(self):
+        lock_path = self.root / "runtime-mutation.lock"
+        with suite.installed_runtime_lease(
+            {
+                "ALETHEON_BIN": str(self.root / "debug-aletheon"),
+                "ALETHEON_RUNTIME_LOCK_FILE": str(lock_path),
+            }
+        ):
+            pass
+        self.assertFalse(lock_path.exists())
 
     def test_report_is_deterministic_and_preserves_receipt_integrity(self):
         alpha = self.write(make_receipt("alpha", metric=10))

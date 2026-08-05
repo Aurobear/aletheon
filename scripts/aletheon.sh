@@ -94,6 +94,14 @@ cmd_deploy() {
     esac
     shift
   done
+  # A deployment changes the installed binary and daemon generation. Hold an
+  # exclusive machine-user lease for the complete build/install/restart/verify
+  # transaction so installed acceptance suites can hold the matching shared
+  # lease and cannot be silently invalidated midway through a run.
+  local runtime_lock=${ALETHEON_RUNTIME_LOCK_FILE:-${XDG_RUNTIME_DIR:-$HOME/.local/state}/aletheon/runtime-mutation.lock}
+  install -d -m 0700 "$(dirname -- "$runtime_lock")"
+  exec {runtime_lock_fd}>"$runtime_lock"
+  flock -x "$runtime_lock_fd"
   local install_args=()
   ((enable)) || install_args+=(--no-enable)
   ((build)) && cmd_build
