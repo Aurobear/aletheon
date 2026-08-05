@@ -308,14 +308,14 @@ MERGE_SHA: 370c294c492bcf6918c3b26bee40c962f754ae96
 ## X9a
 
 ```text
-STATUS: in_progress
+STATUS: accepted
 NODE: X9a
 BASE / BRANCH / PR / GOAL_ID: fa62aa5a46f33d133876f0ebca23e8fa5e3605fe / auro/feat/20260805-x9a-session-recovery / #173 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: session principal ownership is persisted through schema-v5 migration and enforced by principal-aware snapshots, lists, event pages and subscriptions; new turns bind the authenticated principal; late settlement receipts are fenced by daemon generation and emit typed rejection evidence; generation-fence, session-service, canonical-store, Executive check, formatting, diff and architecture gates pass locally. Installed deployment and aggregate runtime evidence remain owned by X12; PR #173 CI/merge pending.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: session principal ownership is persisted through schema-v5 migration and enforced by principal-aware snapshots, lists, event pages and subscriptions; new turns bind the authenticated principal; late settlement receipts are fenced by daemon generation and emit typed rejection evidence; generation-fence, session-service, canonical-store, Executive check, formatting, diff and architecture gates pass locally; PR #173 required CI run 30984945793 passed all five enabled checks (architecture, validation, feature contracts, fuzz, source) and merged into dev.
 FAILURES: none
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 2ad35cd89aa879cdf73867912f7122eddd99037b
 ```
 
 ## X9b
