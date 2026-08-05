@@ -191,12 +191,12 @@ MERGE_SHA: pending
 ## X5b
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X5b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: 72677148 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Fabric now defines schema-v1 SessionReadSnapshot, TaskSnapshot, ActivitySnapshot and bounded SessionEventPage contracts; EventSpine exposes transport-neutral bounded committed-prefix reads and startup reconciliation consumes the port rather than the SQLite concrete adapter; Executive deterministically projects Task/Activity state from authoritative Session items; installed daemon persistence initialization fails closed instead of creating process-local event/projection/session stores; A-SESSION-001 replays the same TaskSnapshot after every item-boundary interruption and A-SESSION-002 proves duplicate item/event keys retain one Task/Activity projection; crash-between-authority-append/materialization recovery, protocol schema, Fabric architecture gates and focused Session protocol tests pass
+FAILURES: none; owner deferred installed deployment, PR/CI/merge and aggregate verification
 BLOCKER: none
 MERGE_SHA: pending
 ```

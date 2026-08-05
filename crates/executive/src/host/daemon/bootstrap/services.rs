@@ -68,20 +68,13 @@ pub(super) async fn build_agent_services(
             data_dir.join("events.db"),
             config.backpressure.max_event_spine_bytes,
         )
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "canonical event spine unavailable; using process-local fallback");
-                crate::adapters::events::SqliteEventSpine::open(":memory:")
-                    .expect("in-memory event spine")
-            }),
+        .context("open durable canonical event spine")?,
     );
     let event_projections = Arc::new(
         crate::adapters::events::DefaultEventProjectionSet::open(
             data_dir.join("event-projections.db"),
         )
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "event projections unavailable; using process-local fallback");
-            crate::adapters::events::DefaultEventProjectionSet::in_memory()
-        }),
+        .context("open durable event projections")?,
     );
     let agent_daemon_generation = format!("daemon:{}", uuid::Uuid::new_v4());
     let settlement_receipts = Arc::new(
@@ -295,11 +288,7 @@ pub(super) async fn build_turn_services(
     }
     let canonical_store =
         crate::adapters::session::canonical_store::CanonicalSessionStore::open(&session_db)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, path = %session_db.display(), "canonical session store unavailable; using process-local fallback");
-                crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
-                    .expect("in-memory canonical session store")
-            });
+            .with_context(|| format!("open durable Session read model {}", session_db.display()))?;
     let session_recovery =
         crate::adapters::session::event_sourced_store::reconcile_committed_session_events(
             canonical_event_spine.as_ref(),

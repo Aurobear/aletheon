@@ -11,7 +11,10 @@ use fabric::{
 use rusqlite::{params, Connection, OptionalExtension};
 use tokio::sync::Mutex;
 
-use crate::application::session_projection::project_messages;
+use crate::{
+    adapters::events::session_projection::SessionProjection,
+    application::session_projection::project_messages,
+};
 
 use super::turn_coordinator::{ActiveTurn, ActiveTurnKey};
 
@@ -237,17 +240,38 @@ impl SessionService {
         &self,
         session_id: &SessionId,
     ) -> Result<fabric::protocol::client::UiSnapshot> {
+        let snapshot = self.protocol_read_snapshot(session_id).await?;
+        Ok(fabric::protocol::client::UiSnapshot {
+            session_id: session_id.clone(),
+            cursor: snapshot.through,
+            provider: None,
+            model: None,
+            items: snapshot.items,
+            approvals: Vec::new(),
+            agents: Vec::new(),
+        })
+    }
+
+    pub async fn protocol_read_snapshot(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<fabric::protocol::client::SessionReadSnapshot> {
+        let session = self
+            .store
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session not found"))?;
         let items = self.items(session_id).await?;
         self.sync_canonical_protocol_events(session_id).await?;
         let cursor = self.protocol_tail_cursor(session_id)?;
-        Ok(fabric::protocol::client::UiSnapshot {
-            session_id: session_id.clone(),
-            cursor,
-            provider: None,
-            model: None,
+        let (tasks, activities) = SessionProjection::read_model(&session, &items);
+        Ok(fabric::protocol::client::SessionReadSnapshot {
+            schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
+            session,
+            through: cursor,
             items,
-            approvals: Vec::new(),
-            agents: Vec::new(),
+            tasks,
+            activities,
         })
     }
 
@@ -259,6 +283,14 @@ impl SessionService {
         session_id: &SessionId,
         after: &fabric::protocol::client::EventCursor,
     ) -> Result<Vec<fabric::protocol::client::ClientEvent>> {
+        Ok(self.protocol_event_page(session_id, after).await?.events)
+    }
+
+    pub async fn protocol_event_page(
+        &self,
+        session_id: &SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> Result<fabric::protocol::client::SessionEventPage> {
         self.sync_canonical_protocol_events(session_id).await?;
         if after.sequence == 0 {
             if after.event_id.is_some() {
@@ -283,13 +315,29 @@ impl SessionService {
         let mut statement = connection.prepare(
             "SELECT event_json FROM protocol_events WHERE session_id=?1 AND sequence>?2 ORDER BY sequence",
         )?;
-        let events = statement
+        let rows = statement
             .query_map(params![session_id.0, after.sequence], |row| {
                 row.get::<_, String>(0)
             })?
-            .map(|row| Ok(serde_json::from_str(&row?)?))
-            .collect();
-        events
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let events = rows
+            .into_iter()
+            .map(|json| serde_json::from_str(&json))
+            .collect::<serde_json::Result<Vec<fabric::protocol::client::ClientEvent>>>()?;
+        let next = events.last().map_or_else(
+            || after.clone(),
+            |event| match event {
+                fabric::protocol::client::ClientEvent::Item(item) => item.cursor.clone(),
+                _ => after.clone(),
+            },
+        );
+        Ok(fabric::protocol::client::SessionEventPage {
+            schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
+            session_id: session_id.clone(),
+            after: after.clone(),
+            next,
+            events,
+        })
     }
 
     fn protocol_tail_cursor(

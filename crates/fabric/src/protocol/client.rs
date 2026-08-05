@@ -894,6 +894,19 @@ pub struct EventSubscription {
     pub after: EventCursor,
 }
 
+/// One bounded, replayable page from the daemon-owned Session read protocol.
+/// `next` is the cursor after all returned events; an empty page preserves
+/// `after`. The event wrapper remains separately versioned for transport.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionEventPage {
+    pub schema_version: u16,
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub after: EventCursor,
+    pub next: EventCursor,
+    pub events: Vec<ClientEvent>,
+}
+
 /// Start a turn on an explicitly named thread. Workspace authority is supplied
 /// independently and must be bound/verified by the host; it is never used to
 /// infer the thread identifier.
@@ -1042,6 +1055,147 @@ pub struct UiSnapshot {
     pub approvals: Vec<ApprovalSnapshot>,
     #[schemars(with = "Vec<serde_json::Value>")]
     pub agents: Vec<AgentSnapshot>,
+}
+
+pub const SESSION_READ_MODEL_SCHEMA_VERSION: u16 = 1;
+
+/// Versioned daemon-owned Session/Task/Activity snapshot. X5c migrates the
+/// presentation adapter from the compatibility `UiSnapshot` to this contract;
+/// keeping the types distinct prevents a partially upgraded client from
+/// silently interpreting a legacy snapshot as schema v1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionReadSnapshot {
+    pub schema_version: u16,
+    pub session: crate::SessionRecord,
+    pub through: EventCursor,
+    pub items: Vec<ItemRecord>,
+    pub tasks: Vec<TaskSnapshot>,
+    pub activities: Vec<ActivitySnapshot>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPhase {
+    Active,
+    Interrupted,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSettlement {
+    Accepted,
+    RepairRequired,
+    Blocked,
+    Cancelled,
+    RolledBack,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskStepSnapshot {
+    pub step_id: String,
+    pub turn_id: TurnId,
+    pub phase: TaskPhase,
+    pub first_sequence: u64,
+    pub last_sequence: u64,
+}
+
+/// Daemon-owned projection assembled from authoritative Session items. Empty
+/// optional collections mean that the corresponding domain has not emitted a
+/// durable fact; they never mean that the model claimed there was no work.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskSnapshot {
+    pub task_id: String,
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub phase: TaskPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_revision: Option<u64>,
+    pub steps: Vec<TaskStepSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_turn_id: Option<TurnId>,
+    pub active_runtime_children: Vec<String>,
+    pub active_commands: Vec<String>,
+    pub pending_approvals: Vec<String>,
+    #[schemars(with = "Option<serde_json::Value>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement: Option<TaskSettlement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_facts: Option<TaskRuntimeFacts>,
+}
+
+/// Host-derived Task metrics. Active occupancy remains independently optional
+/// and is never inferred from cumulative billed tokens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskRuntimeFacts {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_capacity_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_context_occupancy_tokens: Option<u64>,
+    pub cumulative_usage: crate::InferenceUsage,
+    pub inference_rounds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_retries: Option<u64>,
+    pub tool_calls: u64,
+    pub terminal_tool_results: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    Tool,
+    Command,
+    Runtime,
+    Validation,
+    Approval,
+    Memory,
+    Robot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityState {
+    Queued,
+    Running,
+    Waiting,
+    Completed,
+    Failed,
+    Cancelled,
+    Lost,
+}
+
+/// Long-lived activity projection. It refers to domain receipts rather than
+/// replacing provider streams, tool results, or runtime progress schemas.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ActivitySnapshot {
+    pub activity_id: String,
+    pub task_id: String,
+    pub turn_id: TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_activity_id: Option<String>,
+    pub kind: ActivityKind,
+    pub label: String,
+    pub state: ActivityState,
+    pub started_at: u64,
+    pub updated_at: u64,
+    #[schemars(with = "Option<serde_json::Value>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<serde_json::Value>,
+    pub artifact_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

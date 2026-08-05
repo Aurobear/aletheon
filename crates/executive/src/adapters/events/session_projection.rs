@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
 use fabric::{
-    EventPayload, EventVisibility, ItemRecord, SessionAppendStore, SessionForkedEvent, SessionId,
-    SessionRecord, SpineEvent, SESSION_SCHEMA_VERSION,
+    ActivityKind, ActivitySnapshot, ActivityState, EventPayload, EventVisibility, ItemPayload,
+    ItemRecord, SessionAppendStore, SessionForkedEvent, SessionId, SessionRecord, SessionStatus,
+    SpineEvent, TaskPhase, TaskRuntimeFacts, TaskSettlement, TaskSnapshot, TaskStepSnapshot,
+    SESSION_SCHEMA_VERSION,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -26,6 +28,77 @@ pub struct PublicSessionView {
 pub struct SessionProjection;
 
 impl SessionProjection {
+    /// Fold the public Session history into the daemon-owned Task/Activity
+    /// read model. The function is deliberately pure: replaying an identical
+    /// ordered item prefix produces byte-equivalent JSON without consulting
+    /// process-local state.
+    pub fn read_model(
+        session: &SessionRecord,
+        items: &[ItemRecord],
+    ) -> (Vec<TaskSnapshot>, Vec<ActivitySnapshot>) {
+        let task_id = format!("session:{}:task", session.id.0);
+        let goal = items.iter().find_map(|item| match &item.payload {
+            ItemPayload::UserMessage { content } => Some(content.clone()),
+            _ => None,
+        });
+        let mut turns = BTreeMap::<String, Vec<&ItemRecord>>::new();
+        for item in items {
+            turns
+                .entry(item.turn_id.0.to_string())
+                .or_default()
+                .push(item);
+        }
+
+        let mut steps = turns
+            .values()
+            .filter_map(|turn_items| {
+                let first = turn_items.first()?;
+                let last = turn_items.last()?;
+                Some(TaskStepSnapshot {
+                    step_id: format!("turn:{}", first.turn_id.0),
+                    turn_id: first.turn_id,
+                    phase: turn_phase(turn_items),
+                    first_sequence: first.sequence,
+                    last_sequence: last.sequence,
+                })
+            })
+            .collect::<Vec<_>>();
+        steps.sort_by_key(|step| step.first_sequence);
+        let active_turn_id = steps
+            .iter()
+            .rev()
+            .find(|step| step.phase == TaskPhase::Active)
+            .map(|step| step.turn_id);
+        let phase = session_task_phase(session.status);
+        let settlement = match session.status {
+            SessionStatus::Failed => Some(TaskSettlement::Failed),
+            SessionStatus::Interrupted => Some(TaskSettlement::Cancelled),
+            // Completion is not acceptance. Only a future authoritative Host
+            // settlement receipt may project `accepted`.
+            SessionStatus::Active | SessionStatus::Completed => None,
+        };
+
+        let activities = project_activities(&task_id, items);
+        let runtime_facts = project_runtime_facts(items);
+        let task = TaskSnapshot {
+            task_id,
+            session_id: session.id.clone(),
+            goal,
+            phase,
+            plan_revision: None,
+            steps,
+            active_turn_id,
+            active_runtime_children: Vec::new(),
+            active_commands: Vec::new(),
+            pending_approvals: Vec::new(),
+            budget: None,
+            checkpoint_head: None,
+            settlement,
+            runtime_facts,
+        };
+        (vec![task], activities)
+    }
+
     /// Materialize one already-persisted spine event into the compatibility
     /// SessionAppendStore read model. Production handlers never pass an
     /// independently assembled Session/Item value to that store.
@@ -196,6 +269,186 @@ impl SessionProjection {
         session.items.push(item);
         Ok(())
     }
+}
+
+fn turn_phase(items: &[&ItemRecord]) -> TaskPhase {
+    if items.iter().any(|item| {
+        matches!(
+            item.payload,
+            ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. }
+        )
+    }) {
+        return TaskPhase::Completed;
+    }
+    if items.iter().any(|item| match &item.payload {
+        ItemPayload::InferenceReceipt { receipt } => {
+            receipt.status == fabric::types::inference_receipt::InferenceTerminalStatus::Failed
+        }
+        ItemPayload::CapabilityReceipt { receipt } => matches!(
+            receipt.status,
+            fabric::CapabilityTerminalStatus::Failed | fabric::CapabilityTerminalStatus::TimedOut
+        ),
+        _ => false,
+    }) {
+        return TaskPhase::Failed;
+    }
+    TaskPhase::Active
+}
+
+fn session_task_phase(status: SessionStatus) -> TaskPhase {
+    match status {
+        SessionStatus::Interrupted => TaskPhase::Interrupted,
+        SessionStatus::Failed => TaskPhase::Failed,
+        SessionStatus::Completed => TaskPhase::Completed,
+        SessionStatus::Active => TaskPhase::Active,
+    }
+}
+
+fn project_activities(task_id: &str, items: &[ItemRecord]) -> Vec<ActivitySnapshot> {
+    let mut activities = BTreeMap::<String, ActivitySnapshot>::new();
+    for item in items {
+        match &item.payload {
+            ItemPayload::ToolCall { call_id, name, .. } => {
+                let activity_id = format!("tool:{}:{call_id}", item.turn_id.0);
+                activities
+                    .entry(activity_id.clone())
+                    .or_insert(ActivitySnapshot {
+                        activity_id,
+                        task_id: task_id.to_owned(),
+                        turn_id: item.turn_id,
+                        parent_activity_id: None,
+                        kind: ActivityKind::Tool,
+                        label: name.clone(),
+                        state: ActivityState::Running,
+                        started_at: item.created_at_ms,
+                        updated_at: item.created_at_ms,
+                        progress: None,
+                        artifact_refs: Vec::new(),
+                        receipt_ref: None,
+                    });
+            }
+            ItemPayload::ToolResult {
+                call_id, is_error, ..
+            } => {
+                let activity_id = format!("tool:{}:{call_id}", item.turn_id.0);
+                let activity = activities
+                    .entry(activity_id.clone())
+                    .or_insert(ActivitySnapshot {
+                        activity_id,
+                        task_id: task_id.to_owned(),
+                        turn_id: item.turn_id,
+                        parent_activity_id: None,
+                        kind: ActivityKind::Tool,
+                        label: call_id.clone(),
+                        state: ActivityState::Lost,
+                        started_at: item.created_at_ms,
+                        updated_at: item.created_at_ms,
+                        progress: None,
+                        artifact_refs: Vec::new(),
+                        receipt_ref: None,
+                    });
+                activity.state = if *is_error {
+                    ActivityState::Failed
+                } else {
+                    ActivityState::Completed
+                };
+                activity.updated_at = item.created_at_ms;
+                activity.receipt_ref = Some(format!("item:{}", item.id.0));
+            }
+            ItemPayload::CapabilityReceipt { receipt } => {
+                let activity_id = format!("capability:{}", receipt.invocation_id);
+                activities.insert(
+                    activity_id.clone(),
+                    ActivitySnapshot {
+                        activity_id,
+                        task_id: task_id.to_owned(),
+                        turn_id: item.turn_id,
+                        parent_activity_id: None,
+                        kind: ActivityKind::Runtime,
+                        label: receipt.capability.clone(),
+                        state: match receipt.status {
+                            fabric::CapabilityTerminalStatus::Succeeded => ActivityState::Completed,
+                            fabric::CapabilityTerminalStatus::Failed
+                            | fabric::CapabilityTerminalStatus::TimedOut => ActivityState::Failed,
+                            fabric::CapabilityTerminalStatus::Cancelled => ActivityState::Cancelled,
+                        },
+                        started_at: receipt.started_at.0,
+                        updated_at: receipt.finished_at.0,
+                        progress: None,
+                        artifact_refs: receipt.artifact_ids.clone(),
+                        receipt_ref: Some(format!("item:{}", item.id.0)),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut projected = activities.into_values().collect::<Vec<_>>();
+    projected.sort_by(|left, right| {
+        left.started_at
+            .cmp(&right.started_at)
+            .then_with(|| left.activity_id.cmp(&right.activity_id))
+    });
+    projected
+}
+
+fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
+    let receipts = items
+        .iter()
+        .filter_map(|item| match &item.payload {
+            ItemPayload::InferenceReceipt { receipt } => Some(receipt),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let latest = receipts.last()?;
+    let sum = |select: fn(&fabric::InferenceUsage) -> Option<u64>| {
+        receipts.iter().try_fold(0_u64, |total, receipt| {
+            select(&receipt.usage).map(|value| total.saturating_add(value))
+        })
+    };
+    let total_input_tokens = sum(|usage| usage.total_input_tokens);
+    let output_tokens = sum(|usage| usage.output_tokens);
+    let cache_read_tokens = sum(|usage| usage.cache_read_tokens);
+    let cache_write_tokens = sum(|usage| usage.cache_write_tokens);
+    let uncached_input_tokens = sum(|usage| usage.uncached_input_tokens);
+    let cache_telemetry = if receipts
+        .iter()
+        .all(|receipt| receipt.usage.cache_telemetry == fabric::CacheTelemetry::Reported)
+    {
+        fabric::CacheTelemetry::Reported
+    } else if receipts
+        .iter()
+        .all(|receipt| receipt.usage.cache_telemetry == fabric::CacheTelemetry::Unsupported)
+    {
+        fabric::CacheTelemetry::Unsupported
+    } else {
+        fabric::CacheTelemetry::Unknown
+    };
+    let cache_known = cache_telemetry == fabric::CacheTelemetry::Reported;
+    Some(TaskRuntimeFacts {
+        effective_provider: Some(latest.provider_id.clone()),
+        effective_model: Some(latest.model_id.clone()),
+        context_capacity_tokens: None,
+        active_context_occupancy_tokens: None,
+        cumulative_usage: fabric::InferenceUsage {
+            total_input_tokens,
+            output_tokens,
+            uncached_input_tokens: cache_known.then_some(uncached_input_tokens).flatten(),
+            cache_read_tokens: cache_known.then_some(cache_read_tokens).flatten(),
+            cache_write_tokens: cache_known.then_some(cache_write_tokens).flatten(),
+            cache_telemetry,
+        },
+        inference_rounds: receipts.len() as u64,
+        provider_retries: None,
+        tool_calls: items
+            .iter()
+            .filter(|item| matches!(item.payload, ItemPayload::ToolCall { .. }))
+            .count() as u64,
+        terminal_tool_results: items
+            .iter()
+            .filter(|item| matches!(item.payload, ItemPayload::ToolResult { .. }))
+            .count() as u64,
+    })
 }
 
 async fn materialize_session_creation(

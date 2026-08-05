@@ -17,7 +17,6 @@ use fabric::{
 use uuid::Uuid;
 
 use crate::adapters::events::session_projection::SessionProjection;
-use crate::adapters::events::SqliteEventSpine;
 use crate::application::event_projection::EventProjectionSink;
 
 const SESSION_EVENT_NAMESPACE: Uuid = Uuid::from_u128(0x01b2f7f1_0d98_441a_a30e_4f637b27be55);
@@ -34,11 +33,11 @@ pub struct SessionEventReconcileReport {
 /// the compatibility Session read model. Every operation is idempotent, so a
 /// restart can safely replay events committed before any prior crash point.
 pub async fn reconcile_committed_session_events(
-    event_spine: &SqliteEventSpine,
+    event_spine: &dyn EventSpine,
     event_projections: &dyn EventProjectionSink,
     read_model: &dyn SessionAppendStore,
 ) -> Result<SessionEventReconcileReport> {
-    let through_row_id = event_spine.committed_row_watermark()?;
+    let through_row_id = event_spine.committed_watermark()?;
     let mut after_row_id = 0;
     let mut report = SessionEventReconcileReport::default();
 

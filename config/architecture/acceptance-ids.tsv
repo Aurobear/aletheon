@@ -13,3 +13,5 @@ U-BOOT-003	X4a	test	crates/executive/tests/daemon_lifecycle.rs
 U-BOOT-001	X4b	test	crates/interact/src/host.rs
 U-BOOT-002	X4b	test	crates/interact/src/host.rs
 U-CLI-003	X4c	test	crates/aletheon/tests/exec_cli.rs
+A-SESSION-001	X5b	test	crates/executive/tests/session_protocol_reconnect.rs
+A-SESSION-002	X5b	test	crates/executive/tests/session_protocol_reconnect.rs
