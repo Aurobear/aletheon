@@ -455,6 +455,7 @@ X12 发现产品缺陷时创建 `XF-001` 起的节点，并先登记到本文件
 |---|---|---|---|---|
 | XF-001 | X12 | coding harness 仍读取废弃的 flat `stop`/metrics，因而把 canonical `ExecEventEnvelope` v1 terminal 误判为缺失 | `tests/coding/harness/`、runner/receipt tests、status ledger | canonical v1 terminal fake-client coverage；provider terminal fail-closed；static harness suite |
 | XF-002 | X12 | 安装态 auto sandbox 同时丢失普通 host toolchain identity 与 configured-profile 下的 workspace writable bind：runner 在 `--clearenv` 后只恢复 Git 字段，policy mount path 又跳过但未安装 WorkspacePolicy roots | `crates/corpus/src/security/runner.rs`、`crates/corpus/src/security/sandbox/bubblewrap.rs`、`config/aletheon.user.service`、status ledger | 环境 allowlist/secret exclusion tests；configured-profile workspace bind/process tests；Corpus clippy；system unit/deployment verification；安装态 auto sandbox 内解析并执行 toolchain，同时 workspace 外保持只读 |
+| XF-003 | X12 | benchmark 在模型执行后、hidden acceptance 前采集 Git scope，但 Rust 的正常 `cargo` 验证会把未忽略的 `target/` 误算为模型越界修改 | `tests/coding/harness/run.py`、runner tests、status ledger | fixture private Git exclude 覆盖；source change 仍可见；`target/` 不进入 changed paths/diff；static harness suite |
 
 ## 9. 节点状态台账（指针）
 

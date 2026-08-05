@@ -409,6 +409,19 @@ BLOCKER: publication/PR/merge intentionally deferred by owner; X12 full-suite re
 MERGE_SHA: pending_by_owner
 ```
 
+## XF-003
+
+```text
+STATUS: code_complete
+NODE: XF-003
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: The retained installed rust_bugfix receipt from the concurrent X12 diagnostic run shows `src/lib.rs` plus the complete `target/` tree in `workspace.changed_files`. The task requires only `src/`, so ordinary in-workspace Cargo validation becomes a false policy_scope_failure even when the source repair is correctly scoped. The harness now adds `/target/` to each temporary repository's private `.git/info/exclude` before the fixture baseline commit; no fixture source or production policy is specialized. A focused regression proves `src/lib.rs` remains visible while a synthetic `target/debug/artifact` is excluded. Runner tests 8/8 and the full static harness suite pass; docs paths and diff checks pass.
+FAILURES: none
+BLOCKER: publication/PR/merge intentionally deferred by owner; X12 rerun remains pending.
+MERGE_SHA: pending_by_owner
+```
+
 ## X13
 
 ```text

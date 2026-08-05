@@ -205,6 +205,18 @@ class RunnerTest(unittest.TestCase):
             pathlib.Path("/tmp/custom-target/debug/aletheon"),
         )
 
+    def test_workspace_evidence_excludes_rust_build_artifacts(self):
+        workspace = self.root / "target-exclusion"
+        (workspace / "src").mkdir(parents=True)
+        (workspace / "src/lib.rs").write_text("original\n")
+        runner._initialize_workspace(workspace)
+
+        (workspace / "src/lib.rs").write_text("fixed\n")
+        (workspace / "target/debug").mkdir(parents=True)
+        (workspace / "target/debug/artifact").write_text("binary\n")
+
+        self.assertEqual(runner.changed_paths(workspace), ["src/lib.rs"])
+
     def test_caller_interrupt_reaps_the_active_process_group(self):
         child_pid_file = self.root / "active-child.pid"
 

@@ -186,6 +186,14 @@ def _git(workspace: pathlib.Path, *arguments: str, check: bool = True) -> bytes:
 
 def _initialize_workspace(workspace: pathlib.Path) -> str:
     subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+    # Rust validation writes build artifacts into `target/`. They are execution
+    # evidence, not a model-authored source change, and must not make an
+    # otherwise scoped repair fail the changed-path gate. Keep the exclusion in
+    # Git's private control area so it neither changes the fixture baseline nor
+    # teaches the model an acceptance-specific source convention.
+    exclude = workspace / ".git/info/exclude"
+    with exclude.open("a", encoding="utf-8") as handle:
+        handle.write("\n/target/\n")
     subprocess.run(
         ["git", "config", "user.email", "fixture@aletheon.invalid"],
         cwd=workspace,
