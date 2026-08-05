@@ -74,6 +74,10 @@ impl CommandHistory {
         self.cursor = self.entries.len();
     }
 
+    pub fn entries(&self) -> &[String] {
+        &self.entries
+    }
+
     fn from_entries(entries: Vec<String>) -> Self {
         let mut history = Self::new();
         for entry in entries.into_iter().take(MAX_HISTORY_ENTRIES) {
@@ -106,7 +110,7 @@ impl InputStateStore {
         let Some(root) = root else {
             return Self { path: None };
         };
-        let principal = nix::unistd::Uid::current().as_raw();
+        let principal = nix::unistd::Uid::effective().as_raw();
         let mut hasher = Sha256::new();
         hasher.update(workspace.cwd().to_string_lossy().as_bytes());
         let digest = hasher.finalize();

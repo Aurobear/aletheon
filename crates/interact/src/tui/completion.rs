@@ -79,7 +79,7 @@ impl CompletionPopup {
                     value: format!("/{}", command.name),
                     label: command.usage.clone(),
                     description: command.description.clone(),
-                    metadata: source,
+                    metadata: format!("{} · {source}", command.category),
                     disabled_reason: (!command.available(turn_active)).then(|| {
                         match command.availability {
                             super::registry::CommandAvailability::IdleOnly => {

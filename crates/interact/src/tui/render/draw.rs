@@ -30,6 +30,7 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
 
     let pager_ref = &app.pager;
     let session_picker_ref = &app.session_picker;
+    let history_search_ref = &app.history_search;
 
     terminal.draw(|f| {
         let size = f.area();
@@ -101,6 +102,10 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
             2,
         );
         completion_ref.render(f, input_area);
+
+        if let Some(search) = history_search_ref {
+            search.render(size, f.buffer_mut());
+        }
 
         // Approval dialog rendered as modal overlay
         if let Some(ref dialog) = pending_approval_ref {

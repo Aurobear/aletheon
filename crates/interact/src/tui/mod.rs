@@ -362,6 +362,8 @@ struct App {
     /// Command history
     history: CommandHistory,
     input_store: InputStateStore,
+    input_dirty: bool,
+    input_persist_at: fabric::MonoTime,
     history_search: Option<history_search::HistorySearchOverlay>,
     /// Tab completion popup
     completion: CompletionPopup,
@@ -443,6 +445,8 @@ impl App {
             total_tokens: 0,
             history,
             input_store,
+            input_dirty: false,
+            input_persist_at: fabric::MonoTime(0),
             history_search: None,
             completion: CompletionPopup::new(),
             pager: None,
@@ -457,8 +461,14 @@ impl App {
         }
     }
 
-    pub(crate) fn persist_input_state(&self) {
+    pub(crate) fn persist_input_state(&mut self) {
         self.input_store.save(&self.history, &self.input_buf);
+        self.input_dirty = false;
+    }
+
+    pub(crate) fn mark_input_dirty(&mut self) {
+        self.input_dirty = true;
+        self.input_persist_at = fabric::MonoTime(self.clock.mono_now().0.saturating_add(500));
     }
 
     fn check_cjk(&mut self) {

@@ -131,6 +131,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     }
 
     while app.running {
+        if app.input_dirty && app.clock.mono_now().0 >= app.input_persist_at.0 {
+            app.persist_input_state();
+        }
         // Test timeout check
         if test_input.is_some()
             && (app.clock.mono_now().0 - test_start.0) >= test_timeout.as_millis() as u64
@@ -184,12 +187,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 match crossterm::event::read()? {
                     Event::Key(key) => {
                         handle_key(&mut app, key).await;
-                        app.persist_input_state();
+                        app.mark_input_dirty();
                         needs_redraw = true;
                     }
                     Event::Paste(text) => {
                         super::key_handler::insert_paste(&mut app, &text);
-                        app.persist_input_state();
+                        app.mark_input_dirty();
                         needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {
@@ -247,6 +250,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         }
     }
 
+    if app.input_dirty {
+        app.persist_input_state();
+    }
     Ok(())
 }
 
