@@ -242,8 +242,15 @@ fn write(v: &serde_json::Value, w: &WorkspaceRoots) -> Result<serde_json::Value,
     let p: WriteParams = params(v, "fs/write")?;
     let path = access(w.write_path(&p.path))?;
     enforce_write_policy(&path, &p.deny_exact, p.write_roots.as_deref())?;
-    internal(std::fs::write(path, p.content.as_bytes()), "write")?;
-    Ok(serde_json::json!({"bytes_written":p.content.len()}))
+    let before = std::fs::metadata(&path).ok();
+    let existed = before.as_ref().is_some_and(std::fs::Metadata::is_file);
+    let bytes_before = before.map_or(0, |metadata| metadata.len());
+    internal(std::fs::write(&path, p.content.as_bytes()), "write")?;
+    Ok(serde_json::json!({
+        "bytes_written": p.content.len(),
+        "bytes_before": bytes_before,
+        "existed": existed,
+    }))
 }
 
 fn apply_patch(
@@ -1120,6 +1127,31 @@ mod tests {
             ),
             Err((FS_ACCESS_DENIED, _))
         ));
+    }
+
+    #[test]
+    fn direct_write_reports_authoritative_change_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("proof.txt");
+        let roots = WorkspaceRoots::new(vec![temp.path().to_path_buf()]).unwrap();
+
+        let added = write(
+            &serde_json::json!({"path": path, "content": "first"}),
+            &roots,
+        )
+        .unwrap();
+        assert_eq!(added["existed"], false);
+        assert_eq!(added["bytes_before"], 0);
+        assert_eq!(added["bytes_written"], 5);
+
+        let modified = write(
+            &serde_json::json!({"path": path, "content": "replacement"}),
+            &roots,
+        )
+        .unwrap();
+        assert_eq!(modified["existed"], true);
+        assert_eq!(modified["bytes_before"], 5);
+        assert_eq!(modified["bytes_written"], 11);
     }
 
     #[test]
