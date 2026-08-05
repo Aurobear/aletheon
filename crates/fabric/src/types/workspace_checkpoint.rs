@@ -238,6 +238,7 @@ mod tests {
             path: PathBuf::from("src/lib.rs"),
             content: Some("safe".into()),
         }];
+        checkpoint.fs_domain.file_count = files.len();
         checkpoint.seal_integrity(&files);
         assert!(checkpoint.verify_integrity(&files));
 
