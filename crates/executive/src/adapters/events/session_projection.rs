@@ -70,12 +70,23 @@ impl SessionProjection {
             .find(|step| step.phase == TaskPhase::Active)
             .map(|step| step.turn_id);
         let phase = session_task_phase(session.status);
+        let latest_evaluation = items
+            .iter()
+            .filter_map(|item| match &item.payload {
+                ItemPayload::EvaluationReceiptRef { receipt } => Some((item.sequence, receipt)),
+                _ => None,
+            })
+            .max_by_key(|(sequence, _)| *sequence)
+            .map(|(_, receipt)| receipt);
+        let (evaluation_settlement, review_findings) = latest_evaluation
+            .map(project_evaluation_settlement)
+            .unwrap_or_default();
         let settlement = match session.status {
             SessionStatus::Failed => Some(TaskSettlement::Failed),
             SessionStatus::Interrupted => Some(TaskSettlement::Cancelled),
-            // Completion is not acceptance. Only a future authoritative Host
-            // settlement receipt may project `accepted`.
-            SessionStatus::Active | SessionStatus::Completed => None,
+            // Completion is not acceptance. Only the persisted Host evaluation
+            // receipt can project an accepted or repair settlement.
+            SessionStatus::Active | SessionStatus::Completed => evaluation_settlement,
         };
 
         let activities = project_activities(&task_id, items);
@@ -95,6 +106,7 @@ impl SessionProjection {
             checkpoint_head: None,
             checkpoint_review: None,
             settlement,
+            review_findings,
             runtime_facts,
         };
         (vec![task], activities)
@@ -270,6 +282,53 @@ impl SessionProjection {
         session.items.push(item);
         Ok(())
     }
+}
+
+fn project_evaluation_settlement(
+    receipt: &fabric::EvaluationReceiptRef,
+) -> (Option<TaskSettlement>, Vec<fabric::ReviewFinding>) {
+    use fabric::{EvaluationDecision, ReviewFindingSeverity, ReviewFindingStatus};
+
+    let repair_link =
+        (receipt.subject_kind == "turn").then(|| format!("root:{}", receipt.subject_id));
+    let evidence_ref = format!("evaluation-receipt:{}", receipt.receipt_id.0);
+    let mut findings = receipt
+        .failed_gates
+        .iter()
+        .enumerate()
+        .map(|(index, gate)| fabric::ReviewFinding {
+            finding_id: format!("evaluation:{}:{index}", receipt.receipt_id.0),
+            severity: ReviewFindingSeverity::Error,
+            summary: format!("required validation gate failed: {gate}"),
+            location: None,
+            evidence_refs: vec![evidence_ref.clone()],
+            status: ReviewFindingStatus::Open,
+            repair_link: repair_link.clone(),
+        })
+        .collect::<Vec<_>>();
+    let settlement = match receipt.decision {
+        EvaluationDecision::Accepted if findings.is_empty() => Some(TaskSettlement::Accepted),
+        EvaluationDecision::Accepted
+        | EvaluationDecision::Rejected
+        | EvaluationDecision::ObservedFail => {
+            if findings.is_empty() {
+                findings.push(fabric::ReviewFinding {
+                    finding_id: format!("evaluation:{}:decision", receipt.receipt_id.0),
+                    severity: ReviewFindingSeverity::Error,
+                    summary: "host evaluation rejected the engineering result".into(),
+                    location: None,
+                    evidence_refs: vec![evidence_ref],
+                    status: ReviewFindingStatus::Open,
+                    repair_link,
+                });
+            }
+            Some(TaskSettlement::RepairRequired)
+        }
+        EvaluationDecision::Indeterminate => Some(TaskSettlement::Blocked),
+        // Shadow success is evidence, not Host acceptance.
+        EvaluationDecision::ObservedPass => None,
+    };
+    (settlement, findings)
 }
 
 fn turn_phase(items: &[&ItemRecord]) -> TaskPhase {
@@ -581,4 +640,57 @@ fn validate_items(session: &SessionId, items: &[ItemRecord]) -> Result<(), Proje
 
 fn invalid(message: &str) -> ProjectionError {
     ProjectionError::InvalidDescriptor(message.into())
+}
+
+#[cfg(test)]
+mod host_settlement_tests {
+    use super::*;
+
+    fn receipt(
+        decision: fabric::EvaluationDecision,
+        failed_gates: Vec<&str>,
+    ) -> fabric::EvaluationReceiptRef {
+        fabric::EvaluationReceiptRef {
+            schema_version: fabric::EVALUATION_SCHEMA_V1,
+            receipt_id: fabric::EvaluationReceiptId::new(),
+            contract_id: fabric::EvaluationContractId::new(),
+            subject_kind: "turn".into(),
+            subject_id: fabric::TurnId::new().0.to_string(),
+            decision,
+            weighted_total_millis: Some(50_000),
+            evidence_coverage_millis: 800,
+            confidence_millis: 900,
+            failed_gates: failed_gates.into_iter().map(str::to_owned).collect(),
+            created_at_ms: 1,
+        }
+    }
+
+    #[test]
+    fn failed_tests_override_model_completion_claims() {
+        let receipt = receipt(
+            fabric::EvaluationDecision::Rejected,
+            vec!["required_tests_passed"],
+        );
+        let (settlement, findings) = project_evaluation_settlement(&receipt);
+        assert_eq!(settlement, Some(TaskSettlement::RepairRequired));
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].status, fabric::ReviewFindingStatus::Open);
+        assert!(findings[0]
+            .repair_link
+            .as_deref()
+            .unwrap()
+            .starts_with("root:"));
+    }
+
+    #[test]
+    fn missing_integration_test_is_a_visible_risk() {
+        let receipt = receipt(
+            fabric::EvaluationDecision::Rejected,
+            vec!["integration_test_missing"],
+        );
+        let (settlement, findings) = project_evaluation_settlement(&receipt);
+        assert_ne!(settlement, Some(TaskSettlement::Accepted));
+        assert!(findings[0].summary.contains("integration_test_missing"));
+        assert!(!findings[0].evidence_refs.is_empty());
+    }
 }

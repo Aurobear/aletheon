@@ -89,6 +89,7 @@ pub struct TurnCoordinator {
     backpressure: BackpressureConfig,
     session_input: Arc<super::session_input::SessionInputCoordinator>,
     evaluation: Option<Arc<super::evaluation::EvaluationService>>,
+    host_acceptance: Option<Arc<super::host_acceptance::HostAcceptanceController>>,
 }
 
 impl TurnCoordinator {
@@ -107,6 +108,7 @@ impl TurnCoordinator {
             backpressure: BackpressureConfig::default(),
             session_input: Arc::new(super::session_input::SessionInputCoordinator::in_memory()),
             evaluation: None,
+            host_acceptance: None,
         }
     }
 
@@ -136,6 +138,14 @@ impl TurnCoordinator {
         evaluation: Arc<super::evaluation::EvaluationService>,
     ) -> Self {
         self.evaluation = Some(evaluation);
+        self
+    }
+
+    pub fn with_host_acceptance(
+        mut self,
+        controller: Arc<super::host_acceptance::HostAcceptanceController>,
+    ) -> Self {
+        self.host_acceptance = Some(controller);
         self
     }
 
@@ -587,6 +597,15 @@ impl TurnCoordinator {
                         .await
                     {
                         Ok(receipt) => {
+                            if let Some(controller) = &self.host_acceptance {
+                                controller
+                                    .settle_evaluation(
+                                        &evaluation_artifacts.session_id,
+                                        &receipt.reference(),
+                                        request.process_id,
+                                    )
+                                    .await?;
+                            }
                             result.stop =
                                 super::evaluation::EvaluationSettlementPolicy::settle_stop(
                                     receipt.decision,

@@ -357,3 +357,5 @@ crates/executive/src/host/daemon/bootstrap/extension_publisher.rs	composition	ex
 crates/executive/src/host/daemon/handler/rpc/rpc_extension.rs	host	executive	transport and request handling
 crates/executive/src/application/command_dispatcher.rs	application	executive	canonical typed command dispatch use case
 crates/executive/src/application/checkpoint_projection.rs	application	executive	checkpoint and transaction validation read projection
+crates/executive/src/application/settlement.rs	application	executive	host-owned review and settlement decision evaluator
+crates/executive/src/application/host_acceptance.rs	application	executive	host-owned engineering task acceptance and repair projection

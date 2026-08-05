@@ -1051,3 +1051,7 @@ crates/fabric/src/protocol/client.rs	struct	SessionReadSnapshot	governed	fabric	
 crates/fabric/src/protocol/client.rs	struct	TaskSnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.1
 crates/fabric/src/protocol/client.rs	struct	TaskRuntimeFacts	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.1
 crates/fabric/src/protocol/client.rs	struct	TaskStepSnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.1
+crates/fabric/src/protocol/client.rs	enum	ReviewFindingSeverity	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	enum	ReviewFindingStatus	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	struct	ReviewFindingLocation	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	struct	ReviewFinding	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4

@@ -1141,6 +1141,46 @@ pub enum TaskSettlement {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum ReviewFindingSeverity {
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewFindingStatus {
+    Open,
+    Repairing,
+    Resolved,
+    Waived,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReviewFindingLocation {
+    pub path: String,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+}
+
+/// Host-derived review finding. Model prose may be evidence, but cannot mint
+/// this projection or mark it resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReviewFinding {
+    pub finding_id: String,
+    pub severity: ReviewFindingSeverity,
+    pub summary: String,
+    pub location: Option<ReviewFindingLocation>,
+    pub evidence_refs: Vec<String>,
+    pub status: ReviewFindingStatus,
+    /// Typed Agora task identity to reopen for repair. This is not a prompt or
+    /// an executable client command.
+    pub repair_link: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum CheckpointMutationCoverage {
     Full,
     BestEffort,
@@ -1269,6 +1309,8 @@ pub struct TaskSnapshot {
     pub checkpoint_review: Option<CheckpointReviewSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settlement: Option<TaskSettlement>,
+    #[serde(default)]
+    pub review_findings: Vec<ReviewFinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_facts: Option<TaskRuntimeFacts>,
 }

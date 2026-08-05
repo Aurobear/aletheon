@@ -282,12 +282,12 @@ MERGE_SHA: pending
 ## X8c
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X8c
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: local working tree / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / active
+BUDGET: bounded implementation stage; installed acceptance remains open
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: HostSettlementService now rejects non-validated or incomplete transactions, unresolved ReviewFinding values, and omitted validation; HostAcceptanceController applies enforce-mode EvaluationReceiptRef decisions to the canonical Agora root task and records stage decision evidence; session projection exposes host settlement and typed ReviewFinding values. Focused executive tests: 20 passed, including U-VERIFY-001..004 and A-TURN-002; architecture-check passes with 22 migrations, 48 acceptance IDs, and 1054 Fabric public types.
+FAILURES: Durable settlement receipt schema/transport and full managed-command validation-plan integration still need completion; installed deploy, systemd/runtime evidence, PR/CI/merge, and aggregate verification are open.
 BLOCKER: none
 MERGE_SHA: pending
 ```

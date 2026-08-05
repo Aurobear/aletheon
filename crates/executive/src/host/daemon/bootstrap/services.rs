@@ -395,7 +395,10 @@ pub(super) async fn build_turn_services(
         )
         .with_backpressure(config.backpressure.clone())
         .with_session_input(session_input.clone())
-        .with_evaluation_service(evaluation_service.clone()),
+        .with_evaluation_service(evaluation_service.clone())
+        .with_host_acceptance(Arc::new(
+            crate::application::host_acceptance::HostAcceptanceController::new(domains.agora()),
+        )),
     );
     let workspace_checkpoint = Arc::new(
         crate::application::workspace_checkpoint::WorkspaceCheckpointService::new(

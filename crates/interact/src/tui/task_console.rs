@@ -504,6 +504,7 @@ mod tests {
             checkpoint_head: None,
             checkpoint_review: None,
             settlement: None,
+            review_findings: vec![],
             runtime_facts: Some(fabric::TaskRuntimeFacts {
                 effective_provider: Some("deepseek".into()),
                 effective_model: Some("deepseek-v4-flash".into()),
@@ -628,6 +629,7 @@ mod tests {
             checkpoint_head: None,
             checkpoint_review: None,
             settlement: None,
+            review_findings: vec![],
             runtime_facts: Some(fabric::TaskRuntimeFacts {
                 effective_provider: Some("provider".into()),
                 effective_model: Some("model".into()),
