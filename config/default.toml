@@ -104,7 +104,7 @@ directories = []
 # section preserve their historical behavior.
 [evaluation]
 enabled = true
-default_mode = "shadow"
+default_mode = "enforce"
 coding_rubric = "coding-v2"
 min_score_millis = 70000
 min_evidence_coverage_millis = 600
