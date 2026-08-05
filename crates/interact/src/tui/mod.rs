@@ -339,6 +339,9 @@ struct App {
     last_ctrl_c: Option<fabric::MonoTime>,
     /// Whether input has CJK characters (affects Enter behavior).
     has_cjk: bool,
+    /// A leading action sigil arrived through paste and remains inert until
+    /// the buffer is cleared or a palette choice is explicitly accepted.
+    input_literal: bool,
     /// Pending submit (delayed for IME composition).
     pending_submit: Option<fabric::MonoTime>,
     /// First render flag.
@@ -359,6 +362,7 @@ struct App {
     /// Command history
     history: CommandHistory,
     input_store: InputStateStore,
+    history_search: Option<history_search::HistorySearchOverlay>,
     /// Tab completion popup
     completion: CompletionPopup,
     /// Pager overlay (Ctrl+T to open, q/Esc to close)
@@ -427,6 +431,7 @@ impl App {
             status,
             last_ctrl_c: None,
             has_cjk: false,
+            input_literal: false,
             pending_submit: None,
             first_render: true,
             pending_approval: None,
@@ -438,6 +443,7 @@ impl App {
             total_tokens: 0,
             history,
             input_store,
+            history_search: None,
             completion: CompletionPopup::new(),
             pager: None,
             session_picker: None,

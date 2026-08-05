@@ -54,8 +54,9 @@ async fn send_request(app: &mut App, request: ClientRpcRequest) {
 }
 
 pub async fn submit_message(app: &mut App, text: String) {
+    let literal_input = std::mem::take(&mut app.input_literal);
     // Check for /commands (but NOT absolute paths like /home/... — those are chat)
-    if looks_like_command(&text) {
+    if !literal_input && looks_like_command(&text) {
         let parsed = app.registry.parse(&text);
         match parsed {
             Some(CommandType::Builtin(BuiltinCommand::Quit)) => {
@@ -487,11 +488,13 @@ pub async fn submit_message(app: &mut App, text: String) {
     }
 
     // Regular chat message
-    if let Err(error) = super::super::input_safety::resolve_attachments(&text, &app.workspace) {
-        app.input_buf = text;
-        app.cursor = app.input_buf.len();
-        app.app_state.last_error = Some(format!("attachment rejected: {error}"));
-        return;
+    if !literal_input {
+        if let Err(error) = super::super::input_safety::resolve_attachments(&text, &app.workspace) {
+            app.input_buf = text;
+            app.cursor = app.input_buf.len();
+            app.app_state.last_error = Some(format!("attachment rejected: {error}"));
+            return;
+        }
     }
     app.history.push(text.clone());
     app.persist_input_state();

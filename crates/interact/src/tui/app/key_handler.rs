@@ -12,7 +12,9 @@ use fabric::protocol::client::{
 use fabric::ui_event::CollaborationMode;
 
 pub(crate) fn refresh_command_completion(app: &mut App) {
-    if app.input_buf.starts_with('/') {
+    if app.input_literal {
+        app.completion.hide();
+    } else if app.input_buf.starts_with('/') {
         app.completion
             .show_commands(&app.input_buf, &app.registry, app.turn_active);
     } else if app.input_buf.starts_with('@') && !app.input_buf.contains(char::is_whitespace) {
@@ -29,8 +31,11 @@ pub(crate) fn insert_paste(app: &mut App, text: &str) {
     let text = super::super::input_safety::sanitize_paste(text);
     app.input_buf.insert_str(app.cursor, &text);
     app.cursor += text.len();
+    if app.input_buf.trim_start().starts_with(['/', '@', '!']) {
+        app.input_literal = true;
+    }
     app.check_cjk();
-    refresh_command_completion(app);
+    app.completion.hide();
 }
 
 fn accept_selected_completion(app: &mut App) -> bool {
@@ -39,6 +44,7 @@ fn accept_selected_completion(app: &mut App) -> bool {
     };
     app.input_buf = selected;
     app.cursor = app.input_buf.len();
+    app.input_literal = false;
     app.completion.hide();
     app.check_cjk();
     true
@@ -68,6 +74,20 @@ pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
 }
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) {
+    if let Some(mut search) = app.history_search.take() {
+        if search.handle_key(key) {
+            if let Some(entry) = search.selected_entry() {
+                app.input_buf = entry;
+                app.cursor = app.input_buf.len();
+                app.input_literal = false;
+                app.check_cjk();
+            }
+        } else {
+            app.history_search = Some(search);
+        }
+        return;
+    }
+
     if let Some(mut picker) = app.session_picker.take() {
         match picker.handle_key(key) {
             SessionPickerAction::Continue => app.session_picker = Some(picker),
@@ -92,6 +112,13 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     .add_text(ChatRole::System, format!("恢复会话 {session_id}..."));
             }
         }
+        return;
+    }
+
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+        app.history_search = Some(super::super::history_search::HistorySearchOverlay::new(
+            app.history.entries().to_vec(),
+        ));
         return;
     }
 
@@ -259,6 +286,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             app.input_buf.clear();
             app.cursor = 0;
             app.has_cjk = false;
+            app.input_literal = false;
             app.pending_submit = None;
             app.completion.hide();
             return;
@@ -582,6 +610,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             app.input_buf.clear();
             app.cursor = 0;
             app.has_cjk = false;
+            app.input_literal = false;
             app.pending_submit = None;
         }
 
@@ -675,5 +704,15 @@ mod tests {
         handle_key(&mut app, KeyEvent::from(KeyCode::Enter)).await;
         assert!(app.pending_submit.is_some());
         assert_eq!(app.input_buf, "第一行\n第二行");
+    }
+
+    #[tokio::test]
+    async fn u_input_005_pasted_action_prefixes_remain_literal() {
+        for value in ["/clear", "@secret", "!rm -rf workspace"] {
+            let mut app = idle_app().await;
+            insert_paste(&mut app, value);
+            assert!(app.input_literal);
+            assert!(!app.completion.visible);
+        }
     }
 }
