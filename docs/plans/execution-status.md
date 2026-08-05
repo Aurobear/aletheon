@@ -258,9 +258,9 @@ MERGE_SHA: pending
 ```text
 STATUS: in_progress
 NODE: X8a
-BASE / BRANCH / PR / GOAL_ID: a32f26e3 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: 7f8f2e5a / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Existing TurnCheckpoint integrity verification now rejects a declared file count that disagrees with durable snapshot material; U-CHK-003 focused regression passes. Full validation-receipt/omission projection for U-CHK-004 remains open.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Existing TurnCheckpoint integrity verification now rejects a declared file count that disagrees with durable snapshot material; U-CHK-003 focused regression and the full workspace-checkpoint unit set (8 tests) pass. Full validation-receipt/omission projection for U-CHK-004 remains open.
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
