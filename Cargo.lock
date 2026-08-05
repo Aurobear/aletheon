@@ -2077,6 +2077,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "sha2",
  "syntect",
  "tempfile",
  "tokio",
