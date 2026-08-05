@@ -207,6 +207,19 @@ impl ToolEventSink {
         self.terminal_delivered = true;
     }
 
+    /// Convert a governed executor result into the host terminal error shape
+    /// without duplicating the settlement mapping at each executor boundary.
+    pub async fn settle_deferred_execution<E>(&mut self, result: &Result<ToolResult, E>)
+    where
+        E: std::fmt::Display,
+    {
+        let terminal = result
+            .as_ref()
+            .map(Clone::clone)
+            .map_err(|error| ToolExecutionError::Failed(error.to_string()));
+        self.settle_deferred_terminal(terminal).await;
+    }
+
     /// Whether the terminal has been sent.
     pub fn terminal_sent(&self) -> bool {
         self.terminal_sent

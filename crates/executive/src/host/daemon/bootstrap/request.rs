@@ -301,9 +301,6 @@ impl RequestHandler {
             agora: agora_service.clone(),
         });
         let mut tools = tool_composition.registry;
-        let change_transactions = tools
-            .change_transactions()
-            .context("built-in tool registry lacks change transaction authority")?;
         let core_memory = tool_composition.stores.core;
         let recall_memory = tool_composition.stores.recall;
         let fact_store = tool_composition.stores.facts;
@@ -1210,7 +1207,6 @@ impl RequestHandler {
         let approved_apply = turn_svc.approved_apply;
         let lifecycle_registry = turn_svc.lifecycle_registry;
         let evaluation_service = turn_svc.evaluation_service;
-        let workspace_checkpoint = turn_svc.workspace_checkpoint;
 
         let _turn_orch_for_telegram = turn_orchestrator.clone();
         let _cancel_for_telegram = cancel_token.clone();
@@ -1512,18 +1508,6 @@ impl RequestHandler {
             memory_agent_control,
             &config.memory_policy,
         )?;
-        let transaction_review = Arc::new(
-            crate::application::settlement::TransactionReviewService::new(
-                Arc::new(super::services::CorpusChangeTransactionAuthority::new(
-                    change_transactions,
-                )),
-                Arc::new(
-                    crate::adapters::session::transaction_settlement_store_sqlite::SqliteTransactionSettlementStore::open(
-                        data_dir.join("transaction-settlements.sqlite"),
-                    )?,
-                ),
-            ),
-        );
         let handler_ports = Arc::new(crate::host::daemon::handler::ports::HandlerPorts::new(
             kernel.clone(),
             admin_pending_approvals.clone(),
@@ -1539,8 +1523,8 @@ impl RequestHandler {
             workflow_use_cases,
             turn_use_cases,
             evaluation_service,
-            workspace_checkpoint,
-            transaction_review,
+            turn_svc.workspace_checkpoint,
+            super::services::build_transaction_review_service(&tools, &data_dir)?,
             session_input,
             conscious_registry,
             debug_handler,
@@ -1570,7 +1554,6 @@ impl RequestHandler {
             mcp: retained_mcp,
         };
         let handler = composition.into_handler();
-
         super::params::register_initial_params(
             &param_registry,
             clock_2.clone(),
@@ -1580,7 +1563,6 @@ impl RequestHandler {
             config.sandbox_preference.clone(),
         )
         .await;
-
         // Fire OnSessionStart hook
         handler
             .ports

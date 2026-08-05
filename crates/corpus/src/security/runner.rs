@@ -324,18 +324,11 @@ impl ToolRunnerWithGuard {
         sink: &mut fabric::ToolEventSink,
     ) -> GuardedToolExecution {
         let audit_id = fabric::AuditEventId::new();
-        // A tool terminal is provisional until this guarded path has completed
-        // policy, output validation, and audit persistence. Do not let an
-        // async caller observe success before that authoritative settlement.
         sink.defer_terminal_delivery();
         let result = self
             .execute_tool_inner(tool, input, ctx, turn_id, audit_id, Some(sink))
             .await;
-        let terminal = match &result {
-            Ok(value) => Ok(value.clone()),
-            Err(error) => Err(fabric::ToolExecutionError::Failed(error.to_string())),
-        };
-        sink.settle_deferred_terminal(terminal).await;
+        sink.settle_deferred_execution(&result).await;
         GuardedToolExecution { result, audit_id }
     }
 

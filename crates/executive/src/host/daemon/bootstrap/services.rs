@@ -38,6 +38,23 @@ impl CorpusChangeTransactionAuthority {
     }
 }
 
+pub(super) fn build_transaction_review_service(
+    tools: &corpus::tools::tools::ToolRegistry,
+    data_dir: &std::path::Path,
+) -> anyhow::Result<Arc<crate::application::settlement::TransactionReviewService>> {
+    let registry = tools
+        .change_transactions()
+        .context("built-in tool registry lacks change transaction authority")?;
+    Ok(Arc::new(crate::application::settlement::TransactionReviewService::new(
+        Arc::new(CorpusChangeTransactionAuthority::new(registry)),
+        Arc::new(
+            crate::adapters::session::transaction_settlement_store_sqlite::SqliteTransactionSettlementStore::open(
+                data_dir.join("transaction-settlements.sqlite"),
+            )?,
+        ),
+    )))
+}
+
 #[async_trait::async_trait]
 impl crate::application::settlement::ChangeTransactionAuthority
     for CorpusChangeTransactionAuthority
