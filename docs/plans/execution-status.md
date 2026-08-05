@@ -282,14 +282,14 @@ MERGE_SHA: pending
 ## X8c
 
 ```text
-STATUS: in_progress
+STATUS: accepted
 NODE: X8c
-BASE / BRANCH / PR / GOAL_ID: ba99ae95 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / active
-BUDGET: bounded implementation stage; installed acceptance remains open
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Commit ba99ae95 (on top of f7b150d8/1e1a518a) provides a HostSettlementService that rejects non-validated or incomplete transactions, unresolved ReviewFinding values, and omitted validation; HostAcceptanceController applies enforce-mode EvaluationReceiptRef decisions to the canonical Agora root task and records stage decision evidence; the Host-only task.review/settle/v1 RPC applies Accept/Repair/Rollback, removes model-facing change_accept/change_rollback tools, and returns a typed TransactionReviewSnapshot; settlement receipts are persisted idempotently in SQLite and projected through Fabric. Focused Executive tests, Fabric protocol tests, Corpus transaction tests, Interact reducer tests, specialized-role capability tests, Executive check/clippy, fmt and architecture-check pass; architecture-check reports 22 migrations, 48 acceptance IDs and 1060 Fabric public types. A first sudo deployment built and installed the binary and services, but its 30-second readiness bound was exceeded by populated Dasein/Session replay; the runtime became ready afterward and the bound is now 60 seconds.
-FAILURES: The new commit has not yet been redeployed; official-socket runtime evidence, SHA/restart stability after the new deployment, PR/CI/merge and aggregate verification remain open.
+BASE / BRANCH / PR / GOAL_ID: ad7b7598 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / active
+BUDGET: bounded implementation stage; attempt=2
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Commits f7b150d8, 1e1a518a, ba99ae95 and ad7b7598 establish ReviewFinding plus HostSettlementService as the only Accept/Repair/Rollback writer, enforce failed evaluation as repair, remove model-facing settlement tools from the registry and every shipped profile, expose typed task.review/settle/v1 and task.review/latest/v1 contracts, and persist idempotent SQLite settlement receipts. U-VERIFY-001..004 and A-TURN-002 settlement tests pass; durable-store, Fabric RPC, Corpus transaction, specialized-role, shipped-profile regression, evaluation-turn, Executive check/clippy, Interact reducer, fmt and architecture gates pass. Final `sudo bash scripts/aletheon.sh deploy` installed SHA-256 591dfcacaa740262516499d6256fdcb5da1d5c3e5c2659dccc12338271822fa3 identically at target/release, /usr/bin, system core, user daemon and memory agent; machine and user restart counters stayed at zero across the stability window; the current daemon loaded all required cognitive profiles without quarantine; `/usr/bin/aletheon run` over the official user socket completed a real provider request with `X8C_RUNTIME_READY` and no rendered inference error.
+FAILURES: attempt 1 removed the registry tools but left them in bundled profile assets, causing required profiles to be quarantined and the installed daemon to restart; ad7b7598 removed the stale declarations and added a regression test before the successful second deployment. PR/CI/merge remain explicitly deferred by the owner in favor of local commits and later aggregate verification.
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: pending (owner-deferred)
 ```
 
 ## X8d
