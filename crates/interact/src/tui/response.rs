@@ -497,10 +497,19 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
         return false;
     };
 
+    if matches!(
+        pending,
+        super::PendingCommand::ProjectionSnapshot { .. }
+            | super::PendingCommand::ProjectionEvents { .. }
+    ) {
+        app.projection_request_in_flight = false;
+    }
+
     match (pending, message.get("result"), message.get("error")) {
         (super::PendingCommand::InitializeSession, Some(result), None) => {
             if let Some(session_id) = result.get("session_id").and_then(serde_json::Value::as_str) {
-                app.app_state.session_id = Some(session_id.to_owned());
+                app.projection_target_session_id = Some(session_id.to_owned());
+                app.projection_session_id = None;
             }
         }
         (super::PendingCommand::InitializeSkills, Some(result), None) => {
@@ -509,15 +518,102 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             }
         }
         (super::PendingCommand::OpenSessionPicker, Some(result), None) => {
-            let sessions = result.get("sessions").unwrap_or(&serde_json::Value::Null);
-            match super::session_picker::SessionPicker::from_json(
-                sessions,
-                app.app_state.session_id.clone(),
-            ) {
-                Ok(picker) => app.session_picker = Some(picker),
+            match serde_json::from_value::<
+                fabric::protocol::client::ClientMessage<
+                    fabric::protocol::client::SessionListSnapshot,
+                >,
+            >(result.clone())
+            .map_err(|error| error.to_string())
+            .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
+            {
+                Ok(list) if list.schema_version == fabric::SESSION_READ_MODEL_SCHEMA_VERSION => {
+                    match serde_json::to_value(list.sessions)
+                        .map_err(|error| error.to_string())
+                        .and_then(|sessions| {
+                            super::session_picker::SessionPicker::from_json(
+                                &sessions,
+                                app.app_state.session_id.clone(),
+                            )
+                            .map_err(|error| error.to_string())
+                        }) {
+                        Ok(picker) => app.session_picker = Some(picker),
+                        Err(error) => app
+                            .chat
+                            .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
+                    }
+                }
+                Ok(list) => app.chat.add_text(
+                    ChatRole::System,
+                    format!(
+                        "无法打开会话列表：unsupported schema {}",
+                        list.schema_version
+                    ),
+                ),
                 Err(error) => app
                     .chat
                     .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
+            }
+        }
+        (super::PendingCommand::ProjectionSnapshot { session_id }, Some(result), None) => {
+            match serde_json::from_value::<
+                fabric::protocol::client::ClientMessage<
+                    fabric::protocol::client::SessionReadSnapshot,
+                >,
+            >(result.clone())
+            .map_err(|error| error.to_string())
+            .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
+            {
+                Ok(snapshot) => {
+                    let effects = super::reducer::reduce(
+                        &mut app.app_state,
+                        super::reducer::UiAction::ReadSnapshot(snapshot),
+                    );
+                    apply_projection_effects(app, effects);
+                    if app.app_state.session_id.as_deref() == Some(session_id.as_str()) {
+                        app.projection_target_session_id = Some(session_id.clone());
+                        app.projection_session_id = Some(session_id);
+                        app.projection_polling = true;
+                    } else {
+                        app.projection_polling = false;
+                    }
+                    app.projection_next_poll_at = app.clock.mono_now();
+                }
+                Err(error) => {
+                    app.projection_polling = false;
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!("Session projection snapshot rejected: {error}"),
+                    );
+                }
+            }
+        }
+        (super::PendingCommand::ProjectionEvents { session_id }, Some(result), None) => {
+            if app.projection_target_session_id.as_deref() != Some(session_id.as_str()) {
+                return true;
+            }
+            match serde_json::from_value::<
+                fabric::protocol::client::ClientMessage<fabric::protocol::client::SessionEventPage>,
+            >(result.clone())
+            .map_err(|error| error.to_string())
+            .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
+            {
+                Ok(page) => {
+                    let effects = super::reducer::reduce(
+                        &mut app.app_state,
+                        super::reducer::UiAction::EventPage(page),
+                    );
+                    apply_projection_effects(app, effects);
+                    app.projection_next_poll_at =
+                        fabric::MonoTime(app.clock.mono_now().0.saturating_add(200));
+                }
+                Err(error) => {
+                    app.projection_session_id = None;
+                    app.projection_polling = false;
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!("Session projection event page rejected: {error}"),
+                    );
+                }
             }
         }
         (super::PendingCommand::NewSession { clear_screen }, Some(result), None)
@@ -533,29 +629,10 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("session_id")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("unknown");
-            app.app_state.session_id = Some(session_id.to_owned());
+            app.projection_target_session_id = Some(session_id.to_owned());
+            app.projection_session_id = None;
             app.chat
                 .add_text(ChatRole::System, format!("已创建新会话：{session_id}"));
-        }
-        (super::PendingCommand::Resume { .. }, Some(result), None)
-            if result
-                .get("session_id")
-                .and_then(serde_json::Value::as_str)
-                .is_some() =>
-        {
-            let session_id = result
-                .get("session_id")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown");
-            let recovered = result
-                .get("recovered_messages")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            app.app_state.session_id = Some(session_id.to_owned());
-            app.chat.add_text(
-                ChatRole::System,
-                format!("已恢复会话：{session_id}（{recovered} 条消息）"),
-            );
         }
         (super::PendingCommand::InitializeSession, _, Some(error)) => {
             let message = error
@@ -569,14 +646,12 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             // Startup catalog refresh is best-effort. Keep the TUI clean and
             // retain the built-in command registry when the daemon is unavailable.
         }
-        (
-            super::PendingCommand::Resume {
-                previous_session_id,
-            },
-            _,
-            Some(error),
-        ) => {
-            app.app_state.session_id = previous_session_id;
+        (super::PendingCommand::ProjectionSnapshot { session_id }, _, Some(error)) => {
+            if app.projection_target_session_id.as_deref() == Some(session_id.as_str()) {
+                app.projection_target_session_id = app.app_state.session_id.clone();
+                app.projection_session_id = app.app_state.session_id.clone();
+                app.projection_polling = app.app_state.session_id.is_some();
+            }
             let message = error
                 .get("message")
                 .and_then(serde_json::Value::as_str)
@@ -585,6 +660,16 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 ChatRole::System,
                 format!("Error: {message}。旧会话保持不变。"),
             );
+        }
+        (super::PendingCommand::ProjectionEvents { .. }, _, Some(error)) => {
+            app.projection_session_id = None;
+            app.projection_polling = false;
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("会话事件读取失败");
+            app.chat
+                .add_text(ChatRole::System, format!("Error: {message}"));
         }
         (_, _, Some(error)) => {
             let message = error
@@ -604,6 +689,23 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
         }
     }
     true
+}
+
+fn apply_projection_effects(app: &mut App, effects: Vec<super::reducer::UiEffect>) {
+    for effect in effects {
+        match effect {
+            super::reducer::UiEffect::Render | super::reducer::UiEffect::SubscribeAfter(_) => {}
+            super::reducer::UiEffect::ReloadSnapshot(session_id) => {
+                if app.app_state.session_id.as_deref() == Some(session_id.0.as_str()) {
+                    app.projection_session_id = None;
+                    app.projection_polling = false;
+                }
+            }
+            super::reducer::UiEffect::AnnounceError(message) => {
+                app.chat.add_text(ChatRole::System, message);
+            }
+        }
+    }
 }
 
 fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {

@@ -320,6 +320,16 @@ struct App {
     pending_commands: BTreeMap<u64, PendingCommand>,
     /// Non-turn RPCs whose result should stop the command spinner immediately.
     pending_non_turn: std::collections::BTreeSet<u64>,
+    /// Connection-local driver for the daemon-owned Session projection.
+    /// Authoritative content lives in `app_state`; these fields only schedule
+    /// bounded snapshot/page reads.
+    projection_session_id: Option<String>,
+    /// Requested canonical session. This is transport-local selection state;
+    /// it is not a Session projection and must not be rendered as one.
+    projection_target_session_id: Option<String>,
+    projection_request_in_flight: bool,
+    projection_polling: bool,
+    projection_next_poll_at: fabric::MonoTime,
     model_name: String,
     status: StatusBar,
     /// Last Ctrl+C press time (for double-press detection).
@@ -397,6 +407,11 @@ impl App {
             next_request_id: 1,
             pending_commands: BTreeMap::new(),
             pending_non_turn: std::collections::BTreeSet::new(),
+            projection_session_id: None,
+            projection_target_session_id: None,
+            projection_request_in_flight: false,
+            projection_polling: false,
+            projection_next_poll_at: fabric::MonoTime(0),
             model_name,
             status,
             last_ctrl_c: None,
@@ -443,8 +458,9 @@ enum PendingCommand {
     InitializeSession,
     InitializeSkills,
     NewSession { clear_screen: bool },
-    Resume { previous_session_id: Option<String> },
     OpenSessionPicker,
+    ProjectionSnapshot { session_id: String },
+    ProjectionEvents { session_id: String },
 }
 
 #[cfg(test)]

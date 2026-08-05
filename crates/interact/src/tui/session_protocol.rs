@@ -1,8 +1,8 @@
 //! JSON-RPC adapter for Fabric's generated typed client contracts.
 
 pub use fabric::protocol::client::{
-    ClientEvent, ClientMessage, ClientRequest, EventCursor, EventSubscription, SnapshotRequest,
-    UiSnapshot, CLIENT_PROTOCOL_VERSION,
+    ClientEvent, ClientMessage, ClientRequest, EventCursor, EventSubscription, SessionEventPage,
+    SessionReadSnapshot, SnapshotRequest, UiSnapshot, CLIENT_PROTOCOL_VERSION,
 };
 
 pub fn request_to_json(request: ClientRequest, id: u64) -> serde_json::Value {

@@ -4,9 +4,11 @@ use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
 use super::super::chat::{ChatWidget, Role as ChatRole};
 use super::super::session_picker::SessionPickerAction;
 use super::super::App;
-use super::submit::{submit_message, write_request};
+use super::submit::{submit_message, write_protocol_request, write_request};
 
-use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
+use fabric::protocol::client::{
+    ClientRequest, ClientRpcRequest, SnapshotRequest, TransientApprovalDecision,
+};
 use fabric::ui_event::CollaborationMode;
 
 pub(crate) fn refresh_command_completion(app: &mut App) {
@@ -58,14 +60,21 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             SessionPickerAction::Continue => app.session_picker = Some(picker),
             SessionPickerAction::Close => {}
             SessionPickerAction::Resume(session_id) => {
-                let request_id =
-                    write_request(app, ClientRpcRequest::resume(session_id.clone())).await;
+                let request_id = write_protocol_request(
+                    app,
+                    ClientRequest::ReadSnapshot(SnapshotRequest {
+                        session_id: fabric::SessionId(session_id.clone()),
+                    }),
+                )
+                .await;
                 app.pending_commands.insert(
                     request_id,
-                    super::super::PendingCommand::Resume {
-                        previous_session_id: app.app_state.session_id.clone(),
+                    super::super::PendingCommand::ProjectionSnapshot {
+                        session_id: session_id.clone(),
                     },
                 );
+                app.projection_target_session_id = Some(session_id.clone());
+                app.projection_request_in_flight = true;
                 app.chat
                     .add_text(ChatRole::System, format!("恢复会话 {session_id}..."));
             }

@@ -2,7 +2,7 @@ use std::io;
 use std::io::Write;
 
 use fabric::contract::command::ClientSurface;
-use fabric::protocol::client::ClientRpcRequest;
+use fabric::protocol::client::{ClientRequest, ClientRpcRequest, SnapshotRequest};
 use fabric::ui_event::CollaborationMode;
 use fabric::ui_event::InterruptReason;
 use tokio::io::AsyncWriteExt;
@@ -17,6 +17,22 @@ pub(super) async fn write_request(app: &mut App, request: ClientRpcRequest) -> u
     let request = request
         .to_json_rpc(Some(request_id))
         .expect("typed client request serializes");
+    let payload = serde_json::to_string(&request).unwrap_or_default();
+    let framed = format!("{payload}\n");
+    let _ = app.stream.write_all(framed.as_bytes()).await;
+    let _ = app.stream.flush().await;
+    request_id
+}
+
+pub(super) async fn write_protocol_request(
+    app: &mut App,
+    request: fabric::protocol::client::ClientRequest,
+) -> u64 {
+    let request_id = app.next_request_id;
+    app.next_request_id = app.next_request_id.saturating_add(1);
+    let request = request
+        .to_json_rpc(request_id)
+        .expect("typed Session projection request serializes");
     let payload = serde_json::to_string(&request).unwrap_or_default();
     let framed = format!("{payload}\n");
     let _ = app.stream.write_all(framed.as_bytes()).await;
@@ -139,7 +155,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-                let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                let request_id = write_protocol_request(app, ClientRequest::ReadSessions).await;
                 app.pending_commands
                     .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
                 app.pending_non_turn.insert(request_id);
@@ -151,7 +167,7 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Resume { id })) => {
                 if id.is_empty() {
-                    let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                    let request_id = write_protocol_request(app, ClientRequest::ReadSessions).await;
                     app.pending_commands
                         .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
                     app.pending_non_turn.insert(request_id);
@@ -161,14 +177,21 @@ pub async fn submit_message(app: &mut App, text: String) {
                         .add_text(ChatRole::System, "查询可恢复会话中...".to_string());
                     return;
                 }
-                let request = ClientRpcRequest::resume(id.clone());
-                let request_id = write_request(app, request).await;
+                let request_id = write_protocol_request(
+                    app,
+                    ClientRequest::ReadSnapshot(SnapshotRequest {
+                        session_id: fabric::SessionId(id.clone()),
+                    }),
+                )
+                .await;
                 app.pending_commands.insert(
                     request_id,
-                    super::super::PendingCommand::Resume {
-                        previous_session_id: app.app_state.session_id.clone(),
+                    super::super::PendingCommand::ProjectionSnapshot {
+                        session_id: id.clone(),
                     },
                 );
+                app.projection_target_session_id = Some(id.clone());
+                app.projection_request_in_flight = true;
                 app.chat
                     .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;
