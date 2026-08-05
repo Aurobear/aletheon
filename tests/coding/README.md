@@ -14,7 +14,7 @@ strict task catalog
 
 - `fixtures/` contains twenty independent miniature repositories; they are not
   workspace crates.
-- `tasks/` contains strict version-1 TOML contracts for ten distinct scenario
+- `tasks/` contains strict version-1 TOML contracts for twenty versioned scenario
   categories.
 - `acceptance/` contains overlays copied only after client execution.
 - `harness/run.py` executes one task and always attempts to emit a version-2
@@ -84,7 +84,7 @@ counted as completed engineering tasks in the normal success numerator.
 
 The GitHub Actions workflow **Real Coding Evaluation** is manual-only. It uses
 the owner-provided `LEJU_API_KEY`, pins the `leju` provider and
-`deepseek/deepseek-v4-pro`, starts one inference core, then runs the ten tasks
+`deepseek/deepseek-v4-pro`, starts one inference core, then runs the twenty tasks
 sequentially through `harness/suite.py`.
 
 GitHub-hosted runners use `ALETHEON_CODING_SANDBOX=forbid` because they may
