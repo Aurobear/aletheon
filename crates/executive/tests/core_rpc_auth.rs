@@ -28,6 +28,29 @@ struct FakeInference;
 
 #[async_trait::async_trait]
 impl InferencePort for FakeInference {
+    async fn acquire_provider_permit(
+        &self,
+        provider_key: &str,
+    ) -> Result<Box<dyn fabric::memory::ProviderRequestPermit>, InferenceError> {
+        use fabric::memory::ProviderBackpressurePort;
+        cognit::inference::MachineProviderBackpressure::new(Default::default())
+            .acquire(provider_key)
+            .await
+            .map_err(InferenceError::from)
+    }
+
+    async fn observe_provider_retry_after(
+        &self,
+        provider_key: &str,
+        retry_after_ms: Option<u64>,
+    ) -> Result<(), InferenceError> {
+        use fabric::memory::ProviderBackpressurePort;
+        cognit::inference::MachineProviderBackpressure::new(Default::default())
+            .observe_retry_after(provider_key, retry_after_ms)
+            .await;
+        Ok(())
+    }
+
     async fn provider_backpressure_metrics(
         &self,
     ) -> Result<
@@ -276,5 +299,28 @@ async fn oversized_and_duplicate_frames_are_rejected() {
         serde_json::from_str::<CoreFrame>(&duplicate).unwrap(),
         CoreFrame::Error { id: 7, message } if message.contains("duplicate request id 7")
     ));
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn core_bind_refuses_live_socket_without_unlinking_the_authority() {
+    let harness = Harness::start(8 * 1024 * 1024).await;
+    let uid = unsafe { libc::geteuid() };
+    let gid = unsafe { libc::getegid() };
+    let error = match CoreRpcServer::bind(
+        &harness.socket,
+        Arc::new(FakeInference),
+        CorePeerPolicy::new(uid, gid, [uid]),
+    )
+    .await
+    {
+        Ok(_) => panic!("a second machine core must not replace a live listener"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("already served"));
+
+    // The first authority remains reachable after the failed duplicate bind.
+    let response = harness.client().complete(request()).await.unwrap();
+    assert_eq!(response.stop_reason, StopReason::EndTurn);
     harness.shutdown().await;
 }

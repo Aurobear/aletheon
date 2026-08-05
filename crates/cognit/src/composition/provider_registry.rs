@@ -125,6 +125,27 @@ impl ProviderRegistry {
         anyhow::bail!("model alias '{spec}' not found")
     }
 
+    /// Resolve the typed machine admission policy for a canonical provider key.
+    ///
+    /// The key is produced by `fabric::memory::provider_backpressure_key`;
+    /// matching against configured endpoint prefixes keeps provider policy in
+    /// the machine registry rather than recreating it in the RPC adapter.
+    pub fn backpressure_config_for_key(
+        &self,
+        provider_key: &str,
+    ) -> crate::config::ProviderBackpressureConfig {
+        self.providers
+            .values()
+            .filter_map(|provider| {
+                let prefix = format!("{}::", provider.base_url.trim().trim_end_matches('/'));
+                provider_key
+                    .strip_prefix(&prefix)
+                    .map(|_| provider.backpressure)
+            })
+            .next()
+            .unwrap_or_default()
+    }
+
     /// Create an LLM provider through the canonical factory.
     pub fn create_provider(
         &self,
@@ -161,6 +182,7 @@ impl ProviderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ProviderBackpressureConfig;
 
     fn make_config() -> CognitConfig {
         let toml = r#"
@@ -244,6 +266,29 @@ local = "ollama/qwen3:8b"
         let registry = ProviderRegistry::from_config(&config).unwrap();
 
         assert!(registry.resolve("unknown/model").is_err());
+    }
+
+    #[test]
+    fn backpressure_policy_resolves_from_canonical_endpoint_key() {
+        let mut config = make_config();
+        config.providers[0].backpressure.max_concurrent_requests = 7;
+        let registry = ProviderRegistry::from_config(&config).unwrap();
+        let key = fabric::memory::provider_backpressure_key(
+            "https://token-plan-sgp.xiaomimimo.com/",
+            "mimo-v2.5-pro",
+        );
+        assert_eq!(
+            registry
+                .backpressure_config_for_key(&key)
+                .max_concurrent_requests,
+            7
+        );
+        assert_eq!(
+            registry
+                .backpressure_config_for_key("https://unknown.example::model")
+                .max_concurrent_requests,
+            ProviderBackpressureConfig::default().max_concurrent_requests
+        );
     }
 
     #[test]

@@ -71,6 +71,42 @@ impl RegistryInferencePort {
 
 #[async_trait::async_trait]
 impl InferencePort for RegistryInferencePort {
+    async fn acquire_provider_permit(
+        &self,
+        provider_key: &str,
+    ) -> Result<Box<dyn fabric::memory::ProviderRequestPermit>, InferenceError> {
+        use fabric::memory::ProviderBackpressurePort;
+        cognit::inference::MachineProviderBackpressure::new(
+            self.registry.backpressure_config_for_key(provider_key),
+        )
+        .acquire(provider_key)
+        .await
+        .map_err(InferenceError::from)
+    }
+
+    async fn observe_provider_retry_after(
+        &self,
+        provider_key: &str,
+        retry_after_ms: Option<u64>,
+    ) -> Result<(), InferenceError> {
+        use fabric::memory::ProviderBackpressurePort;
+        cognit::inference::MachineProviderBackpressure::new(
+            self.registry.backpressure_config_for_key(provider_key),
+        )
+        .observe_retry_after(provider_key, retry_after_ms)
+        .await;
+        Ok(())
+    }
+
+    async fn provider_backpressure_metrics(
+        &self,
+    ) -> Result<
+        std::collections::HashMap<String, cognit::inference::ProviderBackpressureSnapshot>,
+        InferenceError,
+    > {
+        Ok(cognit::inference::provider_backpressure_metrics())
+    }
+
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         let (config, model) = self
             .registry

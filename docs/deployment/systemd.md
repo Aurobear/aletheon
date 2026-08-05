@@ -73,7 +73,9 @@ restart can unlink the still-active listener.
 
 ## Security and credentials
 
-The core unit uses `ProtectSystem=strict`, an empty capability set, and
+The core unit uses `KillMode=control-group` and a bounded `TimeoutStopSec` so a
+restart or stop cannot leave provider/client descendants behind as system-scope
+orphans. It also uses `ProtectSystem=strict`, an empty capability set, and
 read/write access only to `/run/aletheon`, `/var/lib/aletheon`, and
 `/var/cache/aletheon`. Root manages provider credentials in
 `/etc/aletheon/credentials/provider.env`; never put a token in unit text,

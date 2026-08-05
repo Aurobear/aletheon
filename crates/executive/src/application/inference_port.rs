@@ -45,37 +45,26 @@ pub trait InferencePort: Send + Sync {
         &self,
         provider_key: &str,
     ) -> Result<Box<dyn fabric::memory::ProviderRequestPermit>, InferenceError> {
-        // `MachineProviderBackpressure` is a lightweight handle over Cognit's
-        // process-global provider-keyed registry. Creating a handle here does
-        // not create split admission state. The installed CoreRpcClient also
-        // overrides this method so user-daemon consumers hold the permit in
-        // the machine-core process over the socket lease.
-        use fabric::memory::ProviderBackpressurePort;
-        cognit::inference::MachineProviderBackpressure::new(Default::default())
-            .acquire(provider_key)
-            .await
-            .map_err(InferenceError::from)
+        // Machine admission is an authority boundary, not an optional
+        // optimization. A port that has not explicitly implemented the
+        // boundary must fail closed instead of creating a session-local
+        // semaphore that can bypass the system core.
+        Err(anyhow::anyhow!("provider machine authority unavailable for '{provider_key}'").into())
     }
 
     async fn observe_provider_retry_after(
         &self,
         provider_key: &str,
-        retry_after_ms: Option<u64>,
+        _retry_after_ms: Option<u64>,
     ) -> Result<(), InferenceError> {
-        // See `acquire_provider_permit`: this handle updates the same
-        // process-global provider-keyed cooldown registry.
-        use fabric::memory::ProviderBackpressurePort;
-        cognit::inference::MachineProviderBackpressure::new(Default::default())
-            .observe_retry_after(provider_key, retry_after_ms)
-            .await;
-        Ok(())
+        Err(anyhow::anyhow!("provider machine authority unavailable for '{provider_key}'").into())
     }
 
     async fn provider_backpressure_metrics(
         &self,
     ) -> Result<HashMap<String, cognit::inference::ProviderBackpressureSnapshot>, InferenceError>
     {
-        Ok(cognit::inference::provider_backpressure_metrics())
+        Err(anyhow::anyhow!("provider machine authority unavailable for metrics").into())
     }
 
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
@@ -236,6 +225,38 @@ impl LocalInferencePort {
 
 #[async_trait::async_trait]
 impl InferencePort for LocalInferencePort {
+    async fn acquire_provider_permit(
+        &self,
+        provider_key: &str,
+    ) -> Result<Box<dyn fabric::memory::ProviderRequestPermit>, InferenceError> {
+        // This adapter is deliberately explicit and is used only by tests and
+        // foreground compatibility composition; production uses CoreRpcClient.
+        use fabric::memory::ProviderBackpressurePort;
+        cognit::inference::MachineProviderBackpressure::new(Default::default())
+            .acquire(provider_key)
+            .await
+            .map_err(InferenceError::from)
+    }
+
+    async fn observe_provider_retry_after(
+        &self,
+        provider_key: &str,
+        retry_after_ms: Option<u64>,
+    ) -> Result<(), InferenceError> {
+        use fabric::memory::ProviderBackpressurePort;
+        cognit::inference::MachineProviderBackpressure::new(Default::default())
+            .observe_retry_after(provider_key, retry_after_ms)
+            .await;
+        Ok(())
+    }
+
+    async fn provider_backpressure_metrics(
+        &self,
+    ) -> Result<HashMap<String, cognit::inference::ProviderBackpressureSnapshot>, InferenceError>
+    {
+        Ok(cognit::inference::provider_backpressure_metrics())
+    }
+
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         let display_name = self.provider.name().to_string();
         Ok(ModelCapabilities {
