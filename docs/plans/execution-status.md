@@ -321,14 +321,14 @@ MERGE_SHA: 2ad35cd89aa879cdf73867912f7122eddd99037b
 ## X9b
 
 ```text
-STATUS: in_progress
+STATUS: accepted
 NODE: X9b
 BASE / BRANCH / PR / GOAL_ID: ae6e6dfa470e07ad3ad5f230560bb6c286883d1f / auro/feat/20260805-x9b-child-reconciliation / #177 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: host-owned PID plus Linux start-time identity is durably registered before Pi RPC execution; startup recovery reclaims only the matching process generation with bounded SIGTERM/SIGKILL and treats PID reuse as non-reclaimable. Agent terminal settlement is authoritative before terminal success, with receipt failure surfaced as a failed run. Runtime process, agent recovery, child settlement and PID-reuse tests pass; Executive Clippy -D warnings, all-target check, formatting and architecture gates pass locally. PR #177 is open.
-FAILURES: GitHub API queries intermittently timed out during PR creation monitoring; git push and PR creation succeeded.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: host-owned PID plus Linux start-time identity is durably registered before Pi RPC execution; startup recovery reclaims only the matching process generation with bounded SIGTERM/SIGKILL and treats PID reuse as non-reclaimable. Agent terminal settlement is authoritative before terminal success, with receipt failure surfaced as a failed run. Runtime process, agent recovery, child settlement and PID-reuse tests pass; Executive Clippy -D warnings, all-target check, formatting and architecture gates pass locally; CI run 30996734472 passed architecture fitness, Feature contracts, PR validation and Fuzz quick-check; PR #177 merged into dev.
+FAILURES: First CI run 30995696140 failed only because the checked-in AppConfig schema snapshot lagged the updated GrokHardeningConfig description; regenerated in f8b708ad and reran successfully in 30996734472.
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 20e9bcad980cc40640065e69bce1f8af1da6f8b2
 ```
 
 ## X9c
