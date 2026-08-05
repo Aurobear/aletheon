@@ -351,7 +351,32 @@ def _parse_executive(execution: Mapping[str, object]) -> tuple[dict[str, object]
         parsed = json.loads(decoded)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return {}, False
-    return (parsed, True) if isinstance(parsed, dict) else ({}, False)
+    if not isinstance(parsed, dict):
+        return {}, False
+    # Installed ``aletheon exec --output json`` emits the versioned terminal
+    # envelope (type/status/metrics), while older diagnostic clients exposed
+    # the flattened stop/success fields. Normalize both at this boundary so
+    # acceptance remains based on the authoritative terminal snapshot.
+    if parsed.get("type") == "terminal" and "stop" not in parsed:
+        status = parsed.get("status")
+        if status in {"completed", "blocked", "cancelled", "failed"}:
+            parsed["stop"] = status
+        metrics = parsed.get("metrics")
+        if isinstance(metrics, dict):
+            for source, target in (
+                ("iterations", "iterations"),
+                ("tool_calls_made", "tool_calls_made"),
+                ("tool_errors", "tool_errors"),
+                ("provider_retries", "provider_retries"),
+                ("elapsed_ms", "elapsed_ms"),
+            ):
+                if target not in parsed and source in metrics:
+                    parsed[target] = metrics[source]
+            if "inference_rounds" not in parsed and "iterations" in metrics:
+                parsed["inference_rounds"] = metrics["iterations"]
+            if "success" not in parsed and isinstance(metrics.get("completed_normally"), bool):
+                parsed["success"] = metrics["completed_normally"]
+    return parsed, True
 
 
 def _observed_stop(executive: Mapping[str, object]) -> str:

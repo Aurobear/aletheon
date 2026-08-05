@@ -167,6 +167,33 @@ class RunnerTest(unittest.TestCase):
         )
         return value
 
+    def test_installed_terminal_envelope_normalizes_to_runner_contract(self):
+        execution = {
+            "_stdout_bytes": json.dumps(
+                {
+                    "schema_version": 1,
+                    "type": "terminal",
+                    "status": "completed",
+                    "operation_id": "op-installed",
+                    "metrics": {
+                        "iterations": 2,
+                        "tool_calls_made": 3,
+                        "tool_errors": 0,
+                        "provider_retries": 1,
+                        "elapsed_ms": 42,
+                        "completed_normally": True,
+                    },
+                }
+            ).encode()
+        }
+        parsed, valid = runner._parse_executive(execution)
+        self.assertTrue(valid)
+        self.assertEqual(parsed["stop"], "completed")
+        self.assertTrue(parsed["success"])
+        self.assertEqual(parsed["iterations"], 2)
+        self.assertEqual(parsed["tool_calls_made"], 3)
+        self.assertEqual(parsed["provider_retries"], 1)
+
     def test_completed_receipt_bounds_output_and_preserves_full_digests(self):
         value = self.execute("completed", self.task(), FAKE_LARGE="1")
         execution = value["execution"]
