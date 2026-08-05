@@ -478,6 +478,7 @@ mod tests {
                 "profile",
                 "quit",
                 "resume",
+                "rewind",
                 "sessions",
                 "skills",
                 "status",
