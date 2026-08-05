@@ -72,6 +72,11 @@ pub enum MutationCoverage {
 pub struct ChangeTransactionSnapshot {
     pub transaction_id: ChangeTransactionId,
     pub owner_session_id: String,
+    /// Trusted Turn identity captured from capability approval authority.
+    /// Legacy/non-governed transactions remain unbound and cannot be paired
+    /// with a TurnCheckpoint projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_turn_id: Option<String>,
     pub owner_agent: Option<AgentToolContext>,
     pub root: String,
     pub baseline: WorkspaceVersion,

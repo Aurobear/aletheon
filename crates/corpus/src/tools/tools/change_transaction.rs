@@ -44,13 +44,15 @@ impl ChangeTransactionRegistry {
         owner_session_id: &str,
         root: &Path,
     ) -> anyhow::Result<ChangeTransactionSnapshot> {
-        self.begin_for_agent(owner_session_id, None, root).await
+        self.begin_for_agent(owner_session_id, None, None, root)
+            .await
     }
 
     async fn begin_for_agent(
         &self,
         owner_session_id: &str,
         owner_agent: Option<fabric::AgentToolContext>,
+        owner_turn_id: Option<String>,
         root: &Path,
     ) -> anyhow::Result<ChangeTransactionSnapshot> {
         let baseline = workspace_version::capture(root)?;
@@ -58,6 +60,7 @@ impl ChangeTransactionRegistry {
         let snapshot = ChangeTransactionSnapshot {
             transaction_id: ChangeTransactionId::new(),
             owner_session_id: owner_session_id.into(),
+            owner_turn_id,
             owner_agent,
             root: baseline.root.clone(),
             baseline: baseline.clone(),
@@ -94,10 +97,16 @@ impl ChangeTransactionRegistry {
         &self,
         owner_session_id: &str,
         owner_agent: Option<fabric::AgentToolContext>,
+        owner_turn_id: Option<String>,
         context: RepositoryContext,
     ) -> anyhow::Result<ChangeTransactionSnapshot> {
         let snapshot = self
-            .begin_for_agent(owner_session_id, owner_agent, Path::new(&context.root))
+            .begin_for_agent(
+                owner_session_id,
+                owner_agent,
+                owner_turn_id,
+                Path::new(&context.root),
+            )
             .await?;
         self.repository_contexts
             .lock()
@@ -903,7 +912,14 @@ impl Tool for TransactionalRepoInspectTool {
         };
         match self
             .registry
-            .begin_with_context(&ctx.session_id, ctx.agent.clone(), repository_context)
+            .begin_with_context(
+                &ctx.session_id,
+                ctx.agent.clone(),
+                ctx.approval_authority
+                    .as_ref()
+                    .map(|authority| authority.turn_id.0.to_string()),
+                repository_context,
+            )
             .await
         {
             Ok(snapshot) => {
@@ -1568,7 +1584,7 @@ mod tests {
             delegator_authority: None,
         };
         let transaction = registry
-            .begin_for_agent("shared-session", Some(owner), repo.path())
+            .begin_for_agent("shared-session", Some(owner), None, repo.path())
             .await
             .unwrap();
         let failure = registry

@@ -1019,6 +1019,7 @@ crates/fabric/src/types/workspace.rs	struct	WorkspaceProvenance	baseline	-	-	-
 crates/fabric/src/types/workspace.rs	struct	WorkspaceReflection	baseline	-	-	-
 crates/fabric/src/types/workspace_checkpoint.rs	enum	CheckpointFinalizeState	baseline	-	-	-
 crates/fabric/src/types/workspace_checkpoint.rs	enum	RestoreOutcome	baseline	-	-	-
+crates/fabric/src/types/workspace_checkpoint.rs	struct	CheckpointValidationProjection	governed	fabric	executive,interact	docs/plans/Aletheon_Unified_Execution_Plan_2026-08-04.md#3
 crates/fabric/src/types/workspace_checkpoint.rs	struct	CheckpointFileEntry	baseline	-	-	-
 crates/fabric/src/types/workspace_checkpoint.rs	struct	CheckpointId	baseline	-	-	-
 crates/fabric/src/types/workspace_checkpoint.rs	struct	FsDomainRef	baseline	-	-	-
