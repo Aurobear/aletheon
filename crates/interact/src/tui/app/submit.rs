@@ -488,6 +488,7 @@ pub async fn submit_message(app: &mut App, text: String) {
 
     // Regular chat message
     app.history.push(text.clone());
+    app.persist_input_state();
     app.chat.add_text(ChatRole::User, text.clone());
     // Assistant entry created lazily on first response delta so it renders
     // after any tool/reflection logs (ordering fix).

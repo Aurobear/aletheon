@@ -88,7 +88,7 @@ use self::app::lifecycle::run_app;
 use self::app::lifecycle::simple_line_mode;
 use self::chat::ChatWidget;
 use self::completion::CompletionPopup;
-use self::input::CommandHistory;
+use self::input::{CommandHistory, InputStateStore};
 use self::plan_view::PlanViewState;
 use self::state::AppState;
 use self::status::StatusBar;
@@ -357,6 +357,7 @@ struct App {
     total_tokens: u32,
     /// Command history
     history: CommandHistory,
+    input_store: InputStateStore,
     /// Tab completion popup
     completion: CompletionPopup,
     /// Pager overlay (Ctrl+T to open, q/Esc to close)
@@ -395,13 +396,17 @@ impl App {
             ..Default::default()
         };
 
+        let input_store = InputStateStore::for_workspace(&workspace);
+        let (history, draft) = input_store.load();
+        let cursor = draft.len();
+
         Self {
             workspace,
             turn_requirements,
             requested_task_kind: None,
             chat: ChatWidget::new(caps.clone()),
-            input_buf: String::new(),
-            cursor: 0,
+            input_buf: draft,
+            cursor,
             stream,
             read_buf: vec![0u8; 8192],
             running: true,
@@ -430,7 +435,8 @@ impl App {
             stream_ctrl: StreamController::new(Arc::clone(&clock)),
             turn_tokens: None,
             total_tokens: 0,
-            history: CommandHistory::new(),
+            history,
+            input_store,
             completion: CompletionPopup::new(),
             pager: None,
             session_picker: None,
@@ -442,6 +448,10 @@ impl App {
             registry: registry::CommandRegistry::new(),
             clock,
         }
+    }
+
+    pub(crate) fn persist_input_state(&self) {
+        self.input_store.save(&self.history, &self.input_buf);
     }
 
     fn check_cjk(&mut self) {

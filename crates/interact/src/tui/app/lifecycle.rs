@@ -166,6 +166,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                     app.cursor = 0;
                     app.has_cjk = false;
                     submit_message(&mut app, text).await;
+                    app.persist_input_state();
                 }
             }
         }
@@ -183,10 +184,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 match crossterm::event::read()? {
                     Event::Key(key) => {
                         handle_key(&mut app, key).await;
+                        app.persist_input_state();
                         needs_redraw = true;
                     }
                     Event::Paste(text) => {
                         super::key_handler::insert_paste(&mut app, &text);
+                        app.persist_input_state();
                         needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {
