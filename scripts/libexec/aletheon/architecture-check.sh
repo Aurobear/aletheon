@@ -194,7 +194,6 @@ metrics = {
     "FORBIDDEN_DEPENDENCY_EDGES": 0,
     "PRODUCTION_CLI_PARSERS": 0,
     "SESSION_APPEND_WRITERS": 0,
-    "SILENT_FALLBACKS": 0,
 }
 
 # X1 governance counters. A production parser is counted only when a binary
@@ -218,6 +217,7 @@ for rel, body in production_rs():
 # trait default body.
 inference_port = root / "crates/executive/src/application/inference_port.rs"
 if inference_port.is_file():
+    metrics["SILENT_FALLBACKS"] = 0
     source = inference_port.read_text(errors="replace")
     trait_body = source.split("pub trait InferencePort", 1)[1].split(
         "pub struct InferenceProviderBackpressure", 1
