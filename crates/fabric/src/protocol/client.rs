@@ -960,6 +960,7 @@ pub enum ClientRequest {
     /// Schema-v1 daemon-owned Session/Task/Activity projection. Kept
     /// separate from the compatibility UI snapshot during X5c migration.
     ReadSnapshot(SnapshotRequest),
+    ReadSessions,
     /// One bounded page after an authenticated cursor. Unlike `Subscribe`,
     /// this request does not create a connection-owned tail task.
     ReadEvents(EventSubscription),
@@ -1011,6 +1012,7 @@ impl ClientRequest {
             Self::Initialized => "initialized",
             Self::Snapshot(_) => "session.snapshot",
             Self::ReadSnapshot(_) => "session.read_snapshot/v1",
+            Self::ReadSessions => "session.read_sessions/v1",
             Self::ReadEvents(_) => "session.read_events/v1",
             Self::Subscribe(_) => "session.subscribe",
             Self::Chat(_) => "thread.chat",
@@ -1079,6 +1081,12 @@ pub struct SessionReadSnapshot {
     pub items: Vec<ItemRecord>,
     pub tasks: Vec<TaskSnapshot>,
     pub activities: Vec<ActivitySnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionListSnapshot {
+    pub schema_version: u16,
+    pub sessions: Vec<crate::SessionRecord>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

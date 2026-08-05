@@ -277,6 +277,15 @@ impl SessionService {
         })
     }
 
+    pub async fn protocol_session_list(
+        &self,
+    ) -> Result<fabric::protocol::client::SessionListSnapshot> {
+        Ok(fabric::protocol::client::SessionListSnapshot {
+            schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
+            sessions: self.store.list_sessions(256).await?,
+        })
+    }
+
     /// Replay durable item terminals strictly after an authenticated cursor.
     /// A non-origin cursor must name the item at its sequence; this prevents a
     /// stale or forged `(sequence,event_id)` pair from skipping history.

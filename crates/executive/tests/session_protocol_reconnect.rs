@@ -382,6 +382,13 @@ async fn a_session_001_interruption_at_each_item_boundary_replays_the_same_task_
             assert_eq!(facts.inference_rounds, 1);
         }
     }
+    let sessions = SessionService::new(store, Arc::new(Mutex::new(Default::default())))
+        .protocol_session_list()
+        .await
+        .unwrap();
+    assert_eq!(sessions.schema_version, SESSION_READ_MODEL_SCHEMA_VERSION);
+    assert_eq!(sessions.sessions.len(), 1);
+    assert_eq!(sessions.sessions[0].id, session_id);
 }
 
 /// A-SESSION-002: an idempotent item retry and an idempotent protocol event

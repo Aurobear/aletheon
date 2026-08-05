@@ -35,8 +35,8 @@ pub mod types;
 pub use protocol::client::{
     ActivityKind, ActivitySnapshot, ActivityState, ClientEvent as ProtocolClientEvent,
     ClientMessage, ClientRequest, EventCursor, EventSubscription, SessionEventPage,
-    SessionReadSnapshot, SnapshotRequest, TaskPhase, TaskRuntimeFacts, TaskSettlement,
-    TaskSnapshot, TaskStepSnapshot, UiSnapshot, CLIENT_PROTOCOL_VERSION,
+    SessionListSnapshot, SessionReadSnapshot, SnapshotRequest, TaskPhase, TaskRuntimeFacts,
+    TaskSettlement, TaskSnapshot, TaskStepSnapshot, UiSnapshot, CLIENT_PROTOCOL_VERSION,
     SESSION_READ_MODEL_SCHEMA_VERSION,
 };
 

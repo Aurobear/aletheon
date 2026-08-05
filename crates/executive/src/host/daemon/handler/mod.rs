@@ -272,6 +272,12 @@ impl RequestHandler {
             .await
     }
 
+    pub(crate) async fn protocol_session_list(
+        &self,
+    ) -> anyhow::Result<fabric::protocol::client::SessionListSnapshot> {
+        self.ports.session_gateway.protocol_session_list().await
+    }
+
     pub(crate) async fn protocol_events_after(
         &self,
         session_id: &fabric::SessionId,

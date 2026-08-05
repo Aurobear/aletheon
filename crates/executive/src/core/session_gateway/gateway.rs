@@ -101,6 +101,12 @@ impl SessionGateway {
             .await
     }
 
+    pub async fn protocol_session_list(
+        &self,
+    ) -> anyhow::Result<fabric::protocol::client::SessionListSnapshot> {
+        self.canonical_sessions.protocol_session_list().await
+    }
+
     pub async fn protocol_events_after(
         &self,
         session_id: &fabric::SessionId,

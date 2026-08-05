@@ -416,6 +416,16 @@ async fn dispatch_versioned_request(
             Err(error) => protocol_error(request_id, error),
         };
     }
+    if matches!(request, ClientRequest::ReadSessions) {
+        return match handler.protocol_session_list().await {
+            Ok(snapshot) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": ClientMessage::v1(snapshot),
+            }),
+            Err(error) => protocol_error(request_id, error),
+        };
+    }
     if let ClientRequest::ReadEvents(request) = &request {
         return match handler
             .protocol_event_page(&request.session_id, &request.after)
@@ -435,6 +445,7 @@ async fn dispatch_versioned_request(
             .await
             .map(ProtocolClientEvent::Snapshot),
         ClientRequest::ReadSnapshot(_) => unreachable!("handled before event dispatch"),
+        ClientRequest::ReadSessions => unreachable!("handled before event dispatch"),
         ClientRequest::ReadEvents(_) => unreachable!("handled before event dispatch"),
         ClientRequest::Subscribe(subscription) => {
             match handler

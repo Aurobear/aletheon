@@ -132,6 +132,7 @@ impl ConnectionProtocolState {
             && matches!(
                 request,
                 ClientRequest::ReadSnapshot(_)
+                    | ClientRequest::ReadSessions
                     | ClientRequest::ReadEvents(_)
                     | ClientRequest::Subscribe(_)
             )
@@ -255,6 +256,7 @@ mod tests {
                 },
             ))
             .is_ok());
+        assert!(state.accept(&ClientRequest::ReadSessions).is_ok());
         assert!(state
             .accept(&ClientRequest::ReadEvents(
                 fabric::protocol::client::EventSubscription {

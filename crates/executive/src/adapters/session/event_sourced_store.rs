@@ -322,4 +322,8 @@ impl SessionAppendStore for EventSourcedSessionStore {
     async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>> {
         self.read_model.load_items(session, after).await
     }
+
+    async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
+        self.read_model.list_sessions(limit).await
+    }
 }
