@@ -13,6 +13,36 @@ use super::{AgentRunRecord, AgentRunRepository};
 pub const MAX_STARTUP_RECOVERY_ROWS: usize = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeProcessReclaimOutcome {
+    Reclaimed,
+    AlreadyExited,
+    IdentityReused,
+}
+
+#[async_trait::async_trait]
+pub trait RuntimeProcessSupervisor: Send + Sync {
+    async fn reclaim(
+        &self,
+        identity: fabric::RuntimeProcessId,
+    ) -> Result<RuntimeProcessReclaimOutcome, AgentControlError>;
+}
+
+#[derive(Debug, Default)]
+pub struct FailClosedRuntimeProcessSupervisor;
+
+#[async_trait::async_trait]
+impl RuntimeProcessSupervisor for FailClosedRuntimeProcessSupervisor {
+    async fn reclaim(
+        &self,
+        _identity: fabric::RuntimeProcessId,
+    ) -> Result<RuntimeProcessReclaimOutcome, AgentControlError> {
+        Err(AgentControlError::invalid(
+            "durable runtime process exists without a configured supervisor",
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentRecoveryObservation {
     pub process_live: bool,
     pub operation_terminal: Option<AgentRunStatus>,
@@ -27,6 +57,9 @@ pub struct AgentRecoveryReport {
     pub finalized: usize,
     pub recovery_failed: usize,
     pub unreconciled: usize,
+    pub orphan_reclaimed: usize,
+    pub orphan_already_exited: usize,
+    pub orphan_identity_reused: usize,
 }
 
 impl AgentRecoveryReport {

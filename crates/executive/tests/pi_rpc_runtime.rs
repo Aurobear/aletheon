@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use executive::application::agent_control::{
     AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
-    AgentRuntimeInput, AgentRuntimeLauncher, AgentRuntimeRegistry,
+    AgentRuntimeInput, AgentRuntimeLauncher, AgentRuntimeRegistry, RuntimeProcessRegistrationPort,
 };
 use executive::testing::coding_runtime::PiRpcRuntime;
 use fabric::sandbox::{
@@ -15,8 +15,8 @@ use fabric::sandbox::{
 };
 use fabric::{
     AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentMessageKind, AgentMessagePayload,
-    AgentProfileId, AgentSpawnRequest, AgoraSpaceId, OperationId, ProcessId, RuntimeId,
-    WorkspacePolicy, AGENT_MESSAGE_SCHEMA_V1,
+    AgentProfileId, AgentSpawnRequest, AgoraSpaceId, OperationId, OsProcessId, ProcessId,
+    RuntimeId, RuntimeProcessId, WorkspacePolicy, AGENT_MESSAGE_SCHEMA_V1,
 };
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -81,6 +81,33 @@ struct Events(Mutex<Vec<AgentRuntimeEvent>>);
 impl AgentEventSink for Events {
     async fn emit(&self, event: AgentRuntimeEvent) {
         self.0.lock().unwrap().push(event);
+    }
+}
+
+#[derive(Debug)]
+struct TestRuntimeProcessRegistration {
+    agent_id: AgentId,
+    process_id: ProcessId,
+}
+
+#[async_trait]
+impl RuntimeProcessRegistrationPort for TestRuntimeProcessRegistration {
+    async fn register(
+        &self,
+        os_pid: OsProcessId,
+        start_time_ticks: u64,
+    ) -> Result<RuntimeProcessId, fabric::AgentControlError> {
+        Ok(RuntimeProcessId {
+            agent_id: self.agent_id,
+            process_id: self.process_id,
+            generation: 1,
+            os_pid,
+            start_time_ticks,
+        })
+    }
+
+    async fn clear(&self, _identity: RuntimeProcessId) -> Result<(), fabric::AgentControlError> {
+        Ok(())
     }
 }
 
@@ -160,6 +187,10 @@ fn input_with_inbox(
         root_process_id: process,
         inbox,
         cancellation: CancellationToken::new(),
+        runtime_process: Arc::new(TestRuntimeProcessRegistration {
+            agent_id: agent,
+            process_id: process,
+        }),
         background_cancellations: std::collections::HashMap::new(),
         background_registrations: std::collections::HashMap::new(),
         background_notification_targets: std::collections::HashMap::new(),

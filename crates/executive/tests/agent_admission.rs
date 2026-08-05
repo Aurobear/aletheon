@@ -319,7 +319,7 @@ async fn shared_root_rollout_releases_capacity_for_a_later_sibling() {
 }
 
 #[tokio::test]
-async fn lease_transitions_settle_once_and_expose_content_free_metrics() {
+async fn a_agent_003_lease_transitions_settle_once_and_expose_content_free_metrics() {
     let admission = BoundedAgentAdmission::new(2).unwrap();
     let request = spawn(AgentId::new(), None, "worker");
     let mut lease = admission
@@ -410,7 +410,7 @@ async fn policy_rejects_depth_internal_delegation_and_storage_before_resources()
 }
 
 #[test]
-fn service_reserves_policy_before_creating_any_child_resource() {
+fn a_agent_003_service_reserves_policy_before_creating_any_child_resource() {
     let source = include_str!("../src/application/agent_control/mod.rs");
     let reserve = source.find(".reserve(AgentAdmissionRequest").unwrap();
     let process = source.find(".spawn_process(SpawnSpec").unwrap();

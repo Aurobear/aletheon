@@ -892,6 +892,7 @@ crates/fabric/src/types/process.rs	struct	MailboxId	baseline	-	-	-
 crates/fabric/src/types/process.rs	struct	NamespaceId	baseline	-	-	-
 crates/fabric/src/types/process.rs	struct	OsProcessId	baseline	-	-	-
 crates/fabric/src/types/process.rs	struct	ProcessIdentity	baseline	-	-	-
+crates/fabric/src/types/process.rs	struct	RuntimeProcessId	governed	fabric	executive	docs/plans/Aletheon_Unified_Execution_Plan_2026-08-04.md#3.1
 crates/fabric/src/types/process.rs	struct	ProcessRecord	baseline	-	-	-
 crates/fabric/src/types/process.rs	struct	ProcessSnapshot	baseline	-	-	-
 crates/fabric/src/types/process.rs	struct	SpaceId	baseline	-	-	-

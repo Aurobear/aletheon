@@ -5,11 +5,40 @@ use std::time::Duration;
 
 use agent_control_support::{fixture, spawn_request, TestLauncher, TEST_RUNTIME};
 use executive::application::agent_control::AgentRuntimeLauncher;
-use fabric::{
-    AgentBudget, AgentContextFork, AgentControlErrorKind, AgentId, AgentProfileId, AgentRunStatus,
-    AgentRuntimeCapability, AgentSpawnIntent, AgentWaitRequest, RuntimeId,
+use executive::application::agent_control::{
+    AgentControlService, AgentRuntimeRegistry, BoundedAgentAdmission, SettlementReceiptStore,
 };
+use executive::testing::agent_control::SqliteAgentRunRepository;
+use fabric::{
+    AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind, AgentControlPort,
+    AgentId, AgentProfileId, AgentRunStatus, AgentRuntimeCapability, AgentSpawnIntent,
+    AgentWaitRequest, RuntimeId, SettlementReceipt,
+};
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use std::collections::BTreeSet;
+
+struct RejectingSettlementStore;
+
+#[async_trait::async_trait]
+impl SettlementReceiptStore for RejectingSettlementStore {
+    async fn get(
+        &self,
+        _idempotency_key: &str,
+    ) -> Result<Option<SettlementReceipt>, AgentControlError> {
+        Ok(None)
+    }
+
+    async fn put_if_absent(
+        &self,
+        _receipt: SettlementReceipt,
+    ) -> Result<SettlementReceipt, AgentControlError> {
+        Err(AgentControlError {
+            kind: AgentControlErrorKind::Persistence,
+            message: "receipt store unavailable".into(),
+        })
+    }
+}
 
 #[tokio::test]
 async fn runtime_resolution_and_admission_timeout_fail_before_process_creation() {
@@ -91,7 +120,7 @@ async fn one_runtime_task_reaches_durable_terminal_state() {
 }
 
 #[tokio::test]
-async fn launcher_failure_is_terminal_and_releases_admission() {
+async fn a_agent_001_launcher_failure_is_terminal_and_releases_admission() {
     let launcher: Arc<dyn AgentRuntimeLauncher> = TestLauncher::failing("provider failed");
     let fixture = fixture(1, launcher);
     let root = AgentId::new();
@@ -121,6 +150,57 @@ async fn launcher_failure_is_terminal_and_releases_admission() {
         .runtimes
         .resolve(&RuntimeId(TEST_RUNTIME.into()))
         .is_ok());
+}
+
+async fn assert_child_success_requires_host_receipt() {
+    let launcher = TestLauncher::blocked();
+    let clock = Arc::new(TestClock::new(1_700_000_000_000, 0));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+    let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
+    let runtimes = Arc::new(AgentRuntimeRegistry::default());
+    runtimes
+        .register(RuntimeId(TEST_RUNTIME.into()), launcher.clone())
+        .unwrap();
+    let service = Arc::new(
+        AgentControlService::new(
+            kernel,
+            clock,
+            repository,
+            Arc::new(BoundedAgentAdmission::new(1).unwrap()),
+            runtimes,
+            Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap()),
+        )
+        .with_subagent_settlement("daemon:receipt-test", Arc::new(RejectingSettlementStore)),
+    );
+    let root = AgentId::new();
+    let handle = service.spawn(spawn_request(root, None)).await.unwrap();
+    launcher.wait_started().await;
+    launcher.complete();
+
+    let snapshot = service
+        .wait(AgentWaitRequest {
+            caller_root_agent_id: root,
+            agent_id: handle.agent_id,
+            timeout_ms: 2_000,
+        })
+        .await
+        .unwrap();
+    assert_eq!(snapshot.status, AgentRunStatus::Failed);
+    assert!(snapshot.result.is_none());
+    assert!(snapshot
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.contains("receipt store unavailable")));
+}
+
+#[tokio::test]
+async fn u_resume_003_child_self_report_cannot_advance_parent_without_receipt() {
+    assert_child_success_requires_host_receipt().await;
+}
+
+#[tokio::test]
+async fn a_agent_001_child_success_requires_host_terminal_receipt() {
+    assert_child_success_requires_host_receipt().await;
 }
 
 #[tokio::test]

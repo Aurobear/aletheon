@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use super::pi::{pi_environment_from_process, pi_sandbox_policy, PiRuntime, ResolvedPiConfig};
 use super::pi_protocol::{parse_rpc_record, validate_rpc_response, PiRpcCommand, PiRpcRecord};
+use super::process_supervisor::process_start_time_ticks;
 use crate::application::agent_control::{
     AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput, AgentRuntimeLauncher,
 };
@@ -176,6 +177,24 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
             })?
             .with_protected_paths(protected);
         let (mut child, process_group, mut stdin, mut stdout) = self.spawn(&workspace).await?;
+        let start_time_ticks = process_start_time_ticks(process_group)
+            .map_err(|error| runtime_error(format!("reading Pi RPC process identity: {error}")));
+        let runtime_identity = match start_time_ticks {
+            Ok(start_time_ticks) => {
+                input
+                    .runtime_process
+                    .register(fabric::OsProcessId(process_group), start_time_ticks)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        let runtime_identity = match runtime_identity {
+            Ok(identity) => identity,
+            Err(error) => {
+                terminate_process_tree(process_group, &mut child).await;
+                return Err(error);
+            }
+        };
         let ids = (
             &input.handle.agent_id,
             &input.handle.process_id,
@@ -207,8 +226,9 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
         let deadline = tokio::time::sleep(timeout);
         tokio::pin!(deadline);
 
-        let outcome = loop {
-            tokio::select! {
+        let outcome = async {
+            loop {
+                tokio::select! {
                 biased;
                 _ = input.cancellation.cancelled() => {
                     next_id += 1;
@@ -267,11 +287,19 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
                     write_command(&mut stdin, &command).await?;
                     pending = Some(command);
                 }
+                }
             }
-        };
+        }
+        .await;
 
         drop(stdin);
         terminate_process_tree(process_group, &mut child).await;
+        if let Err(error) = input.runtime_process.clear(runtime_identity).await {
+            return Err(runtime_error(format!(
+                "clearing Pi RPC process identity: {}",
+                error.message
+            )));
+        }
         let (status, result) = match &outcome {
             Ok(result) => (AgentRunStatus::Succeeded, Some(result.clone())),
             Err(error) if error.kind == AgentControlErrorKind::Terminal => {

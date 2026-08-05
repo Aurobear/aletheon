@@ -129,7 +129,6 @@ pub(super) async fn build_agent_services(
     clock: Arc<dyn fabric::Clock>,
     cancel_token: CancellationToken,
     config: &DaemonConfig,
-    grok_hardening: &GrokHardeningConfig,
     corpus: Arc<dyn corpus::CorpusService>,
     agent_runtimes: Arc<crate::application::agent_control::AgentRuntimeRegistry>,
     tools: Arc<Mutex<corpus::tools::tools::ToolRegistry>>,
@@ -196,6 +195,9 @@ pub(super) async fn build_agent_services(
             ),
         ))
         .with_budget_controller(kernel.budget_controller())
+        .with_runtime_process_supervisor(Arc::new(
+            crate::adapters::runtime::LinuxRuntimeProcessSupervisor,
+        ))
         .with_event_spine(canonical_event_spine.clone())
         .with_event_projections(event_projections.clone())
         .with_lifecycle_hooks(Arc::new(
@@ -206,11 +208,7 @@ pub(super) async fn build_agent_services(
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         ))
         .with_durable_memory(durable_memory)
-        .with_subagent_settlement(
-            grok_hardening.subagent_settlement,
-            agent_daemon_generation.clone(),
-            settlement_receipts,
-        ),
+        .with_subagent_settlement(agent_daemon_generation.clone(), settlement_receipts),
     );
     let agent_recovery = agent_control_service
         .reconcile_startup(&agent_daemon_generation)

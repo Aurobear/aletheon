@@ -48,3 +48,7 @@ U-VERIFY-002	X8c	test	crates/executive/src/application/host_acceptance.rs
 U-VERIFY-003	X8c	test	crates/executive/src/application/settlement.rs
 U-VERIFY-004	X8c	test	crates/executive/src/application/settlement.rs
 A-TURN-002	X8c	test	crates/executive/src/application/settlement.rs
+U-RESUME-003	X9b	test	crates/executive/tests/agent_control_spawn.rs
+A-AGENT-001	X9b	test	crates/executive/tests/agent_control_spawn.rs
+A-AGENT-002	X9b	test	crates/executive/tests/agent_recovery.rs
+A-AGENT-003	X9b	test	crates/executive/tests/agent_admission.rs
