@@ -500,6 +500,19 @@ BLOCKER: publication/PR/merge intentionally deferred by owner; installed deploym
 MERGE_SHA: pending_by_owner
 ```
 
+## XF-010
+
+```text
+STATUS: code_complete
+NODE: XF-010
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Immediately after installed deployment, the monitor health RPC reached /run/user/1000/aletheon/aletheon.sock and reported daemon readiness=ready, yet returned systemd.active=false. The authoritative host command reported aletheon.service active with NRestarts=0. /proc evidence shows the installed MCP monitor process has HOME/USER but no XDG_RUNTIME_DIR or DBUS_SESSION_BUS_ADDRESS, so its inherited systemctl --user probe targets no usable user manager. Monitor health and diagnose now derive missing XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS from the numeric UID in the authoritative user socket while preserving explicit operator values. Focused health/diagnose tests pass 27/27; the complete monitor suite passes 88/88; Python compilation, documentation paths, and diff checks pass.
+FAILURES: monitor health contradicted the authoritative unit state; by repository policy this is a monitor defect and failed acceptance evidence.
+BLOCKER: publication/PR/merge intentionally deferred by owner; monitor redeployment and installed comparison remain pending.
+MERGE_SHA: pending_by_owner
+```
+
 ## X13
 
 ```text
