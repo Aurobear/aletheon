@@ -422,6 +422,19 @@ BLOCKER: publication/PR/merge intentionally deferred by owner; X12 rerun remains
 MERGE_SHA: pending_by_owner
 ```
 
+## XF-004
+
+```text
+STATUS: code_complete
+NODE: XF-004
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Retained installed coding diagnostics recorded repeated `apply_patch` errors. The model used the standard outer `*** Begin Patch` form with `*** Update File:` headers and bare `@@` hunks, while the parser accepted only unprefixed operation headers plus Aletheon-specific `>>>` fences. The repair accepts common update/add markers, multiple file operations in one outer document, `*** Move to:`, and inferred bare-hunk counts while retaining bounded complete-context matching and canonical path validation. Platform structured-patch tests 5/5 and all-target clippy `-D warnings` pass; canonical fenced and unified-diff formats remain covered.
+FAILURES: none
+BLOCKER: publication/PR/merge intentionally deferred by owner; installed X12 rerun remains pending.
+MERGE_SHA: pending_by_owner
+```
+
 ## X13
 
 ```text
