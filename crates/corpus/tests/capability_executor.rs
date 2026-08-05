@@ -376,7 +376,7 @@ async fn patch_producing_result_is_never_cached_even_if_tool_declares_policy() {
 }
 
 #[tokio::test]
-async fn cancelled_invocation_fails_closed_before_tool_lookup_and_emits_terminal() {
+async fn a_cap_002_cancelled_invocation_fails_closed_before_tool_lookup_and_emits_terminal() {
     let (executor, request, permit, calls, _temp) = fixture().await;
     request.control.cancel.cancel();
 

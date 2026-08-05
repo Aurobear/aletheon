@@ -152,7 +152,7 @@ async fn budget_quota_lease_operation_revoke_releases_active_resources() {
 }
 
 #[tokio::test]
-async fn budget_quota_lease_concurrent_budget_reservations_do_not_overspend() {
+async fn a_cap_003_budget_exhaustion_does_not_overspend_under_concurrency() {
     let clock = Arc::new(TestClock::new(0, 0));
     let budget = Arc::new(InMemoryBudgetController::new());
     budget.set_budget("agent-a", Some(100), None).await;

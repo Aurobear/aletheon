@@ -140,7 +140,7 @@ async fn kernel_permit_lease_navigate_stop_and_receipt_settlement_are_correlated
 }
 
 #[tokio::test]
-async fn missing_mismatched_and_expired_authority_fail_closed() {
+async fn a_cap_004_missing_mismatched_and_expired_authority_fail_closed() {
     let clock = Arc::new(ManualClock::new(10));
     let mut robot = SimulatedDevice::mobile_robot("bot", clock.clone());
     let command = TypedCommand {

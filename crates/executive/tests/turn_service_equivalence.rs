@@ -23,7 +23,7 @@ async fn spawn_test_process(kernel: &KernelRuntime) -> ProcessId {
 }
 
 #[tokio::test]
-async fn turn_service_submits_one_turn() {
+async fn a_turn_001_turn_service_submits_one_turn() {
     let kernel = test_kernel();
     let process_id = spawn_test_process(&kernel).await;
     let service = TurnService::new(

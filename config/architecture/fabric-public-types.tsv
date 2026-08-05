@@ -548,6 +548,7 @@ crates/fabric/src/types/capability.rs	enum	CapabilityLevel	baseline	-	-	-
 crates/fabric/src/types/capability.rs	struct	Capability	baseline	-	-	-
 crates/fabric/src/types/capability.rs	struct	CapabilitySet	baseline	-	-	-
 crates/fabric/src/types/change_transaction.rs	enum	ChangeTransactionPhase	baseline	-	-	-
+crates/fabric/src/types/change_transaction.rs	enum	MutationCoverage	governed	fabric	corpus,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A5
 crates/fabric/src/types/change_transaction.rs	enum	ValidationImpact	baseline	-	-	-
 crates/fabric/src/types/change_transaction.rs	enum	ValidationRisk	baseline	-	-	-
 crates/fabric/src/types/change_transaction.rs	enum	WorkFailureClass	baseline	-	-	-

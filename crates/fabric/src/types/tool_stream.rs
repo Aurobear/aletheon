@@ -375,16 +375,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deferred_terminal_is_hidden_until_host_settlement() {
+    async fn a_cap_005_deferred_terminal_is_hidden_until_host_settlement() {
         let (mut sink, mut rx) = tool_event_channel();
         sink.defer_terminal_delivery();
         sink.terminal(Ok(ok_result())).await;
-        assert!(rx.try_recv().is_err(), "provisional terminal must stay hidden");
+        assert!(
+            rx.try_recv().is_err(),
+            "provisional terminal must stay hidden"
+        );
 
-        sink.settle_deferred_terminal(Err(ToolExecutionError::Failed(
-            "audit failed".into(),
-        )))
-        .await;
+        sink.settle_deferred_terminal(Err(ToolExecutionError::Failed("audit failed".into())))
+            .await;
         assert!(matches!(
             rx.recv().await,
             Some(ToolExecutionEvent::Terminal(Err(ToolExecutionError::Failed(message))))

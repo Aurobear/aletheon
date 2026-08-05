@@ -7,8 +7,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::change_transaction::{
     ActiveCommandLease, ChangeTransactionId, ChangeTransactionPhase, ChangeTransactionSnapshot,
-    ChangedRange, ValidationImpact, ValidationRisk, VersionedValidationReceipt, WorkFailure,
-    WorkFailureClass, WorkspaceVersion,
+    ChangedRange, MutationCoverage, ValidationImpact, ValidationRisk, VersionedValidationReceipt,
+    WorkFailure, WorkFailureClass, WorkspaceVersion,
 };
 use fabric::repository::RepositoryContext;
 use serde_json::json;
@@ -63,6 +63,10 @@ impl ChangeTransactionRegistry {
             baseline: baseline.clone(),
             current: baseline,
             phase: ChangeTransactionPhase::Baseline,
+            // The current bounded snapshot intentionally does not claim full
+            // coverage for metadata, hardlinks, submodules or external writes.
+            mutation_coverage: MutationCoverage::BestEffort,
+            compensation_ref: None,
             changed_paths: Vec::new(),
             changed_ranges: Vec::new(),
             diff_artifact_ref: None,
@@ -653,12 +657,17 @@ impl Tool for TransactionalFileWriteTool {
                 return transaction_error(invalid_request(&error.to_string()), ctx, start)
             }
         };
+        if let Some(delta) = result.metadata.patch_delta.as_mut() {
+            delta.transaction_id = Some(id);
+            delta.mutation_coverage = Some(snapshot.mutation_coverage);
+        }
         result.content = json!({
             "kind": "file_write_receipt",
             "transaction_id": id.0.to_string(),
             "baseline_workspace_version": before.baseline.digest,
             "resulting_workspace_version": snapshot.current.digest,
             "transaction_phase": snapshot.phase,
+            "mutation_coverage": snapshot.mutation_coverage,
             "validation_plan": snapshot.validation_plan,
             "validation_omissions": snapshot.validation_omissions,
             "validation_impact": snapshot.validation_impact,
@@ -1009,11 +1018,16 @@ impl Tool for TransactionalApplyPatchTool {
                 return transaction_error(invalid_request(&error.to_string()), ctx, start)
             }
         };
+        if let Some(delta) = result.metadata.patch_delta.as_mut() {
+            delta.transaction_id = Some(id);
+            delta.mutation_coverage = Some(snapshot.mutation_coverage);
+        }
         if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(&result.content) {
             payload["transaction_id"] = json!(id.0.to_string());
             payload["baseline_workspace_version"] = json!(before.baseline.digest);
             payload["resulting_workspace_version"] = json!(snapshot.current.digest);
             payload["transaction_phase"] = json!(snapshot.phase);
+            payload["mutation_coverage"] = json!(snapshot.mutation_coverage);
             payload["validation_plan"] = json!(snapshot.validation_plan);
             payload["validation_omissions"] = json!(snapshot.validation_omissions);
             payload["validation_impact"] = json!(snapshot.validation_impact);
@@ -1393,6 +1407,65 @@ mod tests {
             .begin(&context.session_id, &context.working_dir)
             .await
             .unwrap()
+    }
+
+    fn assert_transaction_delta(
+        result: &ToolResult,
+        transaction_id: ChangeTransactionId,
+        expected_coverage: MutationCoverage,
+    ) {
+        let delta = result
+            .metadata
+            .patch_delta
+            .as_ref()
+            .expect("successful mutation must expose a typed patch delta");
+        assert_eq!(delta.transaction_id, Some(transaction_id));
+        assert_eq!(delta.mutation_coverage, Some(expected_coverage));
+    }
+
+    #[tokio::test]
+    async fn a_cap_001_file_mutations_bind_invocation_delta_to_transaction_coverage() {
+        let repo = init_repo();
+        let registry = ChangeTransactionRegistry::default();
+        let context = context(repo.path());
+        let transaction = begin(&registry, &context).await;
+        assert_eq!(
+            transaction.mutation_coverage,
+            MutationCoverage::BestEffort,
+            "the bounded UTF-8 checkpoint must not claim full rollback coverage"
+        );
+
+        let patch =
+            "*** Begin Patch\nUpdate File: file.txt\n>>>\n@@ -1 +1 @@\n-before\n+after\n>>>\n*** End Patch";
+        let patched = TransactionalApplyPatchTool::new(registry.clone())
+            .execute(
+                json!({"transaction_id": transaction.transaction_id.0, "patch": patch}),
+                &context,
+            )
+            .await;
+        assert!(!patched.is_error, "{}", patched.content);
+        assert_transaction_delta(
+            &patched,
+            transaction.transaction_id,
+            MutationCoverage::BestEffort,
+        );
+
+        let written = TransactionalFileWriteTool::new(registry)
+            .execute(
+                json!({
+                    "transaction_id": transaction.transaction_id.0,
+                    "path": "new.txt",
+                    "content": "transaction-bound\n"
+                }),
+                &context,
+            )
+            .await;
+        assert!(!written.is_error, "{}", written.content);
+        assert_transaction_delta(
+            &written,
+            transaction.transaction_id,
+            MutationCoverage::BestEffort,
+        );
     }
 
     #[tokio::test]

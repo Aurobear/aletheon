@@ -56,6 +56,18 @@ pub enum ChangeTransactionPhase {
     Conflicted,
 }
 
+/// Declares how completely a mutation can be detected and reversed by its
+/// governing transaction. This is evidence, not an inferred promise: callers
+/// must not offer automatic rollback for weaker coverage levels.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationCoverage {
+    Full,
+    #[default]
+    BestEffort,
+    NonRollbackable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeTransactionSnapshot {
     pub transaction_id: ChangeTransactionId,
@@ -65,6 +77,10 @@ pub struct ChangeTransactionSnapshot {
     pub baseline: WorkspaceVersion,
     pub current: WorkspaceVersion,
     pub phase: ChangeTransactionPhase,
+    #[serde(default)]
+    pub mutation_coverage: MutationCoverage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compensation_ref: Option<String>,
     pub changed_paths: Vec<String>,
     pub changed_ranges: Vec<ChangedRange>,
     pub diff_artifact_ref: Option<String>,
