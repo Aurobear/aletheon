@@ -308,13 +308,13 @@ impl CommandUseCases for DaemonChannelTurnExecutor {
             intent,
             &SubmitPromptIntent {
                 content: format!(
-                    "Execute the following user-requested shell command exactly through the `shell` capability and report its terminal result:\n{}",
+                    "Execute the following user-requested shell command exactly through the `exec_command` capability and report its terminal result:\n{}",
                     shell.command
                 ),
                 session_id: shell.session_id.clone(),
                 workspace: shell.workspace.clone(),
                 requirements: vec![fabric::TurnRequirement::InvokeCapability {
-                    name: "shell".into(),
+                    name: "exec_command".into(),
                 }],
                 task_kind: None,
                 permission_mode: shell.permission_mode,

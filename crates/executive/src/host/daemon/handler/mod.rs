@@ -97,7 +97,7 @@ impl CommandUseCases for DaemonCommandUseCases {
         // A host-authored capability obligation routes the command through the
         // ordinary policy, approval, audit, receipt, and Activity projection.
         let content = format!(
-            "Execute the following user-requested shell command exactly through the `shell` capability and report its terminal result:\n{}",
+            "Execute the following user-requested shell command exactly through the `exec_command` capability and report its terminal result:\n{}",
             shell.command
         );
         let response = self
@@ -109,7 +109,7 @@ impl CommandUseCases for DaemonCommandUseCases {
                 thread_id,
                 shell.workspace.clone(),
                 vec![fabric::TurnRequirement::InvokeCapability {
-                    name: "shell".into(),
+                    name: "exec_command".into(),
                 }],
                 None,
                 shell.permission_mode,

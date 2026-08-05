@@ -424,7 +424,7 @@ fn project_activities(task_id: &str, items: &[ItemRecord]) -> Vec<ActivitySnapsh
                         task_id: task_id.to_owned(),
                         turn_id: item.turn_id,
                         parent_activity_id: None,
-                        kind: if receipt.capability == "shell" {
+                        kind: if matches!(receipt.capability.as_str(), "exec_command" | "shell") {
                             ActivityKind::Command
                         } else {
                             ActivityKind::Runtime
@@ -535,7 +535,7 @@ mod tests {
                     invocation_id: "shell-call-1".into(),
                     operation_id: fabric::OperationId::new(),
                     process_id: fabric::ProcessId::new(),
-                    capability: "shell".into(),
+                    capability: "exec_command".into(),
                     status: fabric::CapabilityTerminalStatus::Succeeded,
                     started_at: fabric::MonoTime(10),
                     finished_at: fabric::MonoTime(20),
