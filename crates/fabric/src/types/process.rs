@@ -29,6 +29,19 @@ pub struct ProcessIdentity {
     pub os_pid: Option<OsProcessId>,
 }
 
+/// Durable identity of an operating-system child owned by one logical Agent
+/// process generation. `start_time_ticks` is the kernel process start value,
+/// not wall time; pairing it with the PID prevents reconciliation from
+/// signaling an unrelated process after PID reuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeProcessId {
+    pub agent_id: AgentId,
+    pub process_id: crate::types::operation::ProcessId,
+    pub generation: u64,
+    pub os_pid: OsProcessId,
+    pub start_time_ticks: u64,
+}
+
 impl Default for AgentId {
     fn default() -> Self {
         Self::new()

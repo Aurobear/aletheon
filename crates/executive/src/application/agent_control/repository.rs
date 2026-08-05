@@ -151,7 +151,32 @@ pub trait AgentRunRepository: Send + Sync {
 
     async fn list_open(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError>;
 
+    /// Stable keyset page used only while daemon bootstrap has spawn admission
+    /// closed. Unlike the public list surface, recovery must eventually visit
+    /// every durable open row rather than silently treating the first picker-
+    /// sized page as the complete process table.
+    async fn list_open_after(
+        &self,
+        after: Option<(i64, AgentId)>,
+        limit: usize,
+    ) -> Result<Vec<AgentRunRecord>, AgentControlError>;
+
     async fn list_recent(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError>;
+
+    async fn put_runtime_process(
+        &self,
+        identity: &fabric::RuntimeProcessId,
+    ) -> Result<(), AgentControlError>;
+
+    async fn runtime_process(
+        &self,
+        agent: AgentId,
+    ) -> Result<Option<fabric::RuntimeProcessId>, AgentControlError>;
+
+    async fn clear_runtime_process(
+        &self,
+        identity: &fabric::RuntimeProcessId,
+    ) -> Result<bool, AgentControlError>;
 
     async fn record_recovery(
         &self,

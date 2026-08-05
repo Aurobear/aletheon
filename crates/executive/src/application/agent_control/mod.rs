@@ -25,6 +25,7 @@ pub mod candidate_projection;
 pub mod cleanup;
 pub mod context_fork;
 pub mod execution;
+mod execution_runner;
 mod generation_fence;
 mod identity;
 pub mod lifecycle;
@@ -54,8 +55,9 @@ pub use execution::{
     AgentEventSink, AgentRecoveryRuntimeInput, AgentRuntimeEvent, AgentRuntimeInput,
     AgentRuntimeLauncher, AgentRuntimeRegistry, BackgroundResourceRegistration,
     CognitiveTaskAdmissionPort, CompatibilityRuntimeLauncher, NoopAgentEventSink,
-    SpineAgentEventSink,
+    NoopRuntimeProcessRegistration, RuntimeProcessRegistrationPort, SpineAgentEventSink,
 };
+use execution_runner::run_agent;
 use identity::{runtime_capability, ValidatedAgentIdentity};
 pub use lifecycle::{
     reduce_agent_lifecycle, reduce_agent_status_transition, AgentLifecycleEffect,
@@ -68,6 +70,7 @@ pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
 pub use memory::MemoryRecordingAgentEventSink;
 pub use recovery::{
     AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRecoveryReport,
+    FailClosedRuntimeProcessSupervisor, RuntimeProcessReclaimOutcome, RuntimeProcessSupervisor,
     MAX_STARTUP_RECOVERY_ROWS,
 };
 pub use repository::{
@@ -129,7 +132,6 @@ pub struct AgentControlService {
     sibling_routes: parking_lot::RwLock<HashSet<(AgentId, AgentId, AgentId)>>,
     agent_memory_vault: Arc<mnemosyne::AgentMemoryVault>,
     durable_memory: Option<Arc<dyn mnemosyne::MemoryService>>,
-    subagent_settlement: bool,
     settlement_generation: String,
     settlement_receipts: Arc<dyn SettlementReceiptStore>,
     settlement_metrics: Arc<SettlementMetrics>,
@@ -139,6 +141,71 @@ pub struct AgentControlService {
     cognitive_task_admission: Option<Arc<dyn CognitiveTaskAdmissionPort>>,
     capability_history:
         Option<Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>>,
+    runtime_process_supervisor: Arc<dyn RuntimeProcessSupervisor>,
+}
+
+struct DurableRuntimeProcessRegistration {
+    kernel: Arc<KernelRuntime>,
+    repository: Arc<dyn AgentRunRepository>,
+    agent_id: AgentId,
+    process_id: fabric::ProcessId,
+}
+
+impl std::fmt::Debug for DurableRuntimeProcessRegistration {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DurableRuntimeProcessRegistration")
+            .field("agent_id", &self.agent_id)
+            .field("process_id", &self.process_id)
+            .finish()
+    }
+}
+
+#[async_trait]
+impl RuntimeProcessRegistrationPort for DurableRuntimeProcessRegistration {
+    async fn register(
+        &self,
+        os_pid: fabric::OsProcessId,
+        start_time_ticks: u64,
+    ) -> Result<fabric::RuntimeProcessId, AgentControlError> {
+        if start_time_ticks == 0 {
+            return Err(control_error(
+                AgentControlErrorKind::InvalidRequest,
+                "runtime process start identity must be nonzero",
+            ));
+        }
+        let logical = self
+            .kernel
+            .bind_os_process_id(self.process_id, os_pid)
+            .await
+            .map_err(|error| control_error(AgentControlErrorKind::Conflict, error.to_string()))?;
+        if logical.agent_id != self.agent_id {
+            return Err(control_error(
+                AgentControlErrorKind::Conflict,
+                "runtime process registration crossed Agent authority",
+            ));
+        }
+        let identity = fabric::RuntimeProcessId {
+            agent_id: logical.agent_id,
+            process_id: logical.process_id,
+            generation: logical.generation,
+            os_pid,
+            start_time_ticks,
+        };
+        self.repository.put_runtime_process(&identity).await?;
+        Ok(identity)
+    }
+
+    async fn clear(&self, identity: fabric::RuntimeProcessId) -> Result<(), AgentControlError> {
+        if identity.agent_id != self.agent_id || identity.process_id != self.process_id {
+            return Err(control_error(
+                AgentControlErrorKind::Forbidden,
+                "runtime process clear crossed Agent authority",
+            ));
+        }
+        self.repository.clear_runtime_process(&identity).await?;
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -177,7 +244,6 @@ impl AgentControlService {
                 mnemosyne::AgentMemoryVault::in_memory().expect("in-memory Agent memory vault"),
             ),
             durable_memory: None,
-            subagent_settlement: false,
             settlement_generation: "disabled".into(),
             settlement_receipts: Arc::new(InMemorySettlementReceiptStore::default()),
             settlement_metrics: Arc::new(SettlementMetrics::default()),
@@ -186,6 +252,7 @@ impl AgentControlService {
             runtime_profile_requirements: HashMap::new(),
             cognitive_task_admission: None,
             capability_history: None,
+            runtime_process_supervisor: Arc::new(FailClosedRuntimeProcessSupervisor),
         }
     }
 
@@ -215,6 +282,14 @@ impl AgentControlService {
 
     pub fn with_lifecycle_hooks(mut self, hooks: Arc<dyn AgentLifecycleHookSink>) -> Self {
         self.lifecycle_hooks = hooks;
+        self
+    }
+
+    pub fn with_runtime_process_supervisor(
+        mut self,
+        supervisor: Arc<dyn RuntimeProcessSupervisor>,
+    ) -> Self {
+        self.runtime_process_supervisor = supervisor;
         self
     }
 
@@ -253,11 +328,9 @@ impl AgentControlService {
 
     pub fn with_subagent_settlement(
         mut self,
-        enabled: bool,
         generation: impl Into<String>,
         receipts: Arc<dyn SettlementReceiptStore>,
     ) -> Self {
-        self.subagent_settlement = enabled;
         self.settlement_generation = generation.into();
         self.settlement_receipts = receipts;
         self
@@ -292,102 +365,142 @@ impl AgentControlService {
             daemon_generation,
             self.clock.wall_now().0,
         )?;
-        let runs = self.repository.list_open(MAX_STARTUP_RECOVERY_ROWS).await?;
-        let mut report = AgentRecoveryReport {
-            open_rows: runs.len(),
-            ..Default::default()
-        };
-        for run in runs {
-            let process_live = self
-                .kernel
-                .inspect_process(run.snapshot.handle.process_id)
-                .await
-                .is_ok();
-            let operation_terminal = self
-                .kernel
-                .inspect_operation(run.snapshot.handle.operation_id)
-                .await
-                .ok()
-                .and_then(|operation| match operation.state {
-                    fabric::OperationState::Succeeded => Some(AgentRunStatus::Succeeded),
-                    fabric::OperationState::Failed => Some(AgentRunStatus::Failed),
-                    fabric::OperationState::Cancelled => Some(AgentRunStatus::Cancelled),
-                    _ => None,
-                });
-            let checkpoint_available = matches!(
-                &run.resumability,
-                fabric::RuntimeResumability::Checkpointed { reference }
-                    if !reference.trim().is_empty()
-            );
-            let observation = AgentRecoveryObservation {
-                process_live,
-                operation_terminal,
-                checkpoint_available,
-            };
-            match coordinator.recover_one(&run, observation).await {
-                Ok(fabric::AgentRecoveryDecision::Interrupt) => {
-                    if self.subagent_settlement {
+        let mut report = AgentRecoveryReport::default();
+        let mut cursor = None;
+        loop {
+            let runs = self
+                .repository
+                .list_open_after(cursor, MAX_STARTUP_RECOVERY_ROWS)
+                .await?;
+            if runs.is_empty() {
+                break;
+            }
+            report.open_rows = report.open_rows.saturating_add(runs.len());
+            cursor = runs
+                .last()
+                .map(|run| (run.snapshot.created_at_ms, run.agent_id()));
+            for run in runs {
+                if let Some(identity) = self.repository.runtime_process(run.agent_id()).await? {
+                    let outcome = self.runtime_process_supervisor.reclaim(identity).await?;
+                    self.repository.clear_runtime_process(&identity).await?;
+                    match outcome {
+                        RuntimeProcessReclaimOutcome::Reclaimed => report.orphan_reclaimed += 1,
+                        RuntimeProcessReclaimOutcome::AlreadyExited => {
+                            report.orphan_already_exited += 1;
+                        }
+                        RuntimeProcessReclaimOutcome::IdentityReused => {
+                            report.orphan_identity_reused += 1;
+                        }
+                    }
+                    tracing::info!(
+                        agent_id = %identity.agent_id.0,
+                        process_id = %identity.process_id.0,
+                        os_pid = identity.os_pid.0,
+                        ?outcome,
+                        "reconciled durable external runtime process"
+                    );
+                }
+                let process_live = self
+                    .kernel
+                    .inspect_process(run.snapshot.handle.process_id)
+                    .await
+                    .is_ok();
+                let operation_terminal = self
+                    .kernel
+                    .inspect_operation(run.snapshot.handle.operation_id)
+                    .await
+                    .ok()
+                    .and_then(|operation| match operation.state {
+                        fabric::OperationState::Succeeded => Some(AgentRunStatus::Succeeded),
+                        fabric::OperationState::Failed => Some(AgentRunStatus::Failed),
+                        fabric::OperationState::Cancelled => Some(AgentRunStatus::Cancelled),
+                        _ => None,
+                    });
+                let checkpoint_available = matches!(
+                    &run.resumability,
+                    fabric::RuntimeResumability::Checkpointed { reference }
+                        if !reference.trim().is_empty()
+                );
+                let observation = AgentRecoveryObservation {
+                    process_live,
+                    operation_terminal,
+                    checkpoint_available,
+                };
+                match coordinator.recover_one(&run, observation).await {
+                    Ok(fabric::AgentRecoveryDecision::Interrupt) => {
                         self.recover_settlement_resources(
                             &run,
                             fabric::AgentRecoveryDecision::Interrupt,
                             daemon_generation,
                         )
                         .await?;
+                        report.interrupted += 1;
                     }
-                    report.interrupted += 1;
-                }
-                Ok(fabric::AgentRecoveryDecision::Resume) => {
-                    let checkpoint_reference = match &run.resumability {
-                        fabric::RuntimeResumability::Checkpointed { reference } => {
-                            reference.clone()
+                    Ok(fabric::AgentRecoveryDecision::Resume) => {
+                        let checkpoint_reference = match &run.resumability {
+                            fabric::RuntimeResumability::Checkpointed { reference } => {
+                                reference.clone()
+                            }
+                            fabric::RuntimeResumability::Never => {
+                                unreachable!("resume requires checkpoint")
+                            }
+                        };
+                        match self.runtimes.resolve(&run.snapshot.handle.runtime_id) {
+                            Ok(runtime)
+                                if runtime.resumability() == run.resumability
+                                    && runtime
+                                        .resume_from_checkpoint(AgentRecoveryRuntimeInput {
+                                            handle: run.snapshot.handle.clone(),
+                                            request: run.request.clone(),
+                                            checkpoint_reference,
+                                        })
+                                        .await
+                                        .is_ok() =>
+                            {
+                                report.resumed += 1;
+                            }
+                            _ => report.recovery_failed += 1,
                         }
-                        fabric::RuntimeResumability::Never => {
-                            unreachable!("resume requires checkpoint")
-                        }
-                    };
-                    match self.runtimes.resolve(&run.snapshot.handle.runtime_id) {
-                        Ok(runtime)
-                            if runtime.resumability() == run.resumability
-                                && runtime
-                                    .resume_from_checkpoint(AgentRecoveryRuntimeInput {
-                                        handle: run.snapshot.handle.clone(),
-                                        request: run.request.clone(),
-                                        checkpoint_reference,
-                                    })
-                                    .await
-                                    .is_ok() =>
-                        {
-                            report.resumed += 1;
-                        }
-                        _ => report.recovery_failed += 1,
                     }
-                }
-                Ok(fabric::AgentRecoveryDecision::Finalize) => {
-                    if self.subagent_settlement {
+                    Ok(fabric::AgentRecoveryDecision::Finalize) => {
                         self.recover_settlement_resources(
                             &run,
                             fabric::AgentRecoveryDecision::Finalize,
                             daemon_generation,
                         )
                         .await?;
+                        report.finalized += 1;
                     }
-                    report.finalized += 1;
+                    _ => report.recovery_failed += 1,
                 }
-                _ => report.recovery_failed += 1,
             }
         }
-        report.unreconciled = self
-            .repository
-            .list_open(MAX_STARTUP_RECOVERY_ROWS)
-            .await?
-            .into_iter()
-            .filter(|run| {
-                !matches!(
-                    run.recovery.as_ref().map(|receipt| receipt.decision),
-                    Some(fabric::AgentRecoveryDecision::Resume)
-                )
-            })
-            .count();
+        let mut cursor = None;
+        loop {
+            let runs = self
+                .repository
+                .list_open_after(cursor, MAX_STARTUP_RECOVERY_ROWS)
+                .await?;
+            if runs.is_empty() {
+                break;
+            }
+            cursor = runs
+                .last()
+                .map(|run| (run.snapshot.created_at_ms, run.agent_id()));
+            report.unreconciled = report.unreconciled.saturating_add(
+                runs.into_iter()
+                    .filter(|run| {
+                        !matches!(
+                            run.recovery.as_ref(),
+                            Some(receipt)
+                                if receipt.daemon_generation == daemon_generation
+                                    && receipt.decision
+                                        == fabric::AgentRecoveryDecision::Resume
+                        )
+                    })
+                    .count(),
+            );
+        }
         Ok(report)
     }
 
@@ -1203,7 +1316,6 @@ impl AgentControlPort for AgentControlService {
         let events = self.events.clone();
         let event_spine = self.event_spine.clone();
         let event_projections = self.event_projections.clone();
-        let settlement_enabled = self.subagent_settlement;
         let settlement_generation = self.settlement_generation.clone();
         let settlement_receipts = self.settlement_receipts.clone();
         let settlement_metrics = self.settlement_metrics.clone();
@@ -1219,6 +1331,12 @@ impl AgentControlPort for AgentControlService {
             memory_context: memory_context.clone(),
             inbox,
             cancellation,
+            runtime_process: Arc::new(DurableRuntimeProcessRegistration {
+                kernel: kernel.clone(),
+                repository: repository.clone(),
+                agent_id: handle.agent_id,
+                process_id: handle.process_id,
+            }),
             background_cancellations,
             background_registrations,
             background_notification_targets,
@@ -1262,7 +1380,6 @@ impl AgentControlPort for AgentControlService {
                 snapshots,
                 scope,
                 admission,
-                settlement_enabled,
                 settlement_generation,
                 settlement_receipts,
                 settlement_metrics,
@@ -1456,378 +1573,6 @@ impl AgentControlPort for AgentControlService {
             .await
             .map(|records| records.into_iter().map(|record| record.snapshot).collect())
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn run_agent(
-    kernel: Arc<KernelRuntime>,
-    clock: Arc<dyn Clock>,
-    repository: Arc<dyn AgentRunRepository>,
-    live: Arc<LiveAgentRuns>,
-    launcher: Arc<dyn AgentRuntimeLauncher>,
-    events: Arc<dyn AgentEventSink>,
-    input: AgentRuntimeInput,
-    mailbox_bridge: AgentMailboxBridge,
-    snapshots: watch::Sender<AgentSnapshot>,
-    mut scope: OperationScope,
-    mut admission: Box<dyn AgentAdmissionLease>,
-    settlement_enabled: bool,
-    settlement_generation: String,
-    settlement_receipts: Arc<dyn SettlementReceiptStore>,
-    settlement_metrics: Arc<SettlementMetrics>,
-    event_spine: Arc<dyn EventSpine>,
-    memory_events: Arc<MemoryRecordingAgentEventSink>,
-    lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
-) {
-    let agent = input.handle.agent_id;
-    let root_agent = input.handle.root_agent_id;
-    let parent_agent = input.handle.parent_agent_id;
-    let process = input.handle.process_id;
-    let operation = input.handle.operation_id;
-    let start = async {
-        kernel.signal_process(process, ProcessSignal::Start).await?;
-        kernel.start_operation(operation).await?;
-        kernel
-            .set_active_operation(process, Some(operation))
-            .await?;
-        anyhow::Ok(())
-    }
-    .await;
-    if let Err(error) = start {
-        if let Ok(record) = repository
-            .transition(
-                agent,
-                AgentRunStatus::Queued,
-                AgentRunStatus::Failed,
-                None,
-                Some(error.to_string()),
-                clock.wall_now().0,
-            )
-            .await
-        {
-            snapshots.send_replace(record.snapshot);
-        }
-        let _ = kernel
-            .cancel_operation(operation, CancelReason::Other("Agent start failed".into()))
-            .await;
-        let _ = kernel
-            .terminate_process(process, ExitReason::Failed(error.to_string()))
-            .await;
-        let _ = admission.revoke().await;
-        live.remove(agent).await;
-        return;
-    }
-    let running = match repository
-        .transition(
-            agent,
-            AgentRunStatus::Queued,
-            AgentRunStatus::Running,
-            None,
-            None,
-            clock.wall_now().0,
-        )
-        .await
-    {
-        Ok(record) => record,
-        Err(error) => {
-            let _ = kernel
-                .cancel_operation(operation, CancelReason::Other("Agent state failed".into()))
-                .await;
-            let _ = kernel
-                .terminate_process(process, ExitReason::Failed(error.to_string()))
-                .await;
-            let _ = admission.revoke().await;
-            live.remove(agent).await;
-            return;
-        }
-    };
-    if let Err(error) = admission.mark_running().await {
-        let _ = kernel
-            .terminate_process(process, ExitReason::Failed(error.to_string()))
-            .await;
-        let _ = admission.revoke().await;
-        live.remove(agent).await;
-        return;
-    }
-    snapshots.send_replace(running.snapshot);
-    lifecycle_hooks
-        .emit(agent_lifecycle_hook_context(
-            fabric::hook::HookPoint::SubagentStart,
-            &input,
-            "running",
-        ))
-        .await;
-    let stop_hook_input = input.clone();
-    let wants_reparent = input
-        .request
-        .background_decls
-        .iter()
-        .any(|resource| resource.survive_child);
-
-    let (outcome_sender, outcome_receiver) = tokio::sync::oneshot::channel();
-    scope.spawn("agent-mailbox", async move {
-        match mailbox_bridge.run().await {
-            Ok(()) => OperationExitReason::Completed,
-            Err(error) => OperationExitReason::Failed(error.message),
-        }
-    });
-    let task_cancel = scope.token();
-    scope.spawn("agent-runtime", async move {
-        let outcome = tokio::select! {
-            _ = task_cancel.cancelled() => Err(control_error(AgentControlErrorKind::Terminal, "Agent runtime cancelled")),
-            outcome = launcher.launch(input, events) => outcome,
-        };
-        let reason = match &outcome {
-            Ok(_) => OperationExitReason::Completed,
-            Err(error) if error.kind == AgentControlErrorKind::Terminal => {
-                OperationExitReason::Cancelled(CancelReason::User)
-            }
-            Err(error) => OperationExitReason::Failed(error.message.clone()),
-        };
-        let _ = outcome_sender.send(outcome);
-        reason
-    });
-    let task_exit = scope.join_next().await;
-    let outcome = outcome_receiver.await.unwrap_or_else(|_| {
-        Err(control_error(
-            AgentControlErrorKind::Runtime,
-            "Agent runtime task ended without an outcome",
-        ))
-    });
-    let (next, result, error, process_exit) = match outcome {
-        Ok(result) => (
-            AgentRunStatus::Succeeded,
-            Some(result),
-            None,
-            ExitReason::Completed,
-        ),
-        Err(error) if error.kind == AgentControlErrorKind::Terminal => (
-            AgentRunStatus::Cancelled,
-            None,
-            Some(error.message),
-            ExitReason::Cancelled("Agent runtime cancelled".into()),
-        ),
-        Err(error) => (
-            AgentRunStatus::Failed,
-            None,
-            Some(error.message.clone()),
-            ExitReason::Failed(error.message),
-        ),
-    };
-    let settlement_usage = result.as_ref().map(|result| result.usage.clone());
-    let terminal_receipt = AgentTerminalReceipt {
-        agent_id: agent,
-        generation: settlement_generation.clone(),
-        status: next,
-        result: result.clone(),
-        recorded_at_ms: clock.wall_now().0,
-    };
-    if let Err(error) = repository.record_terminal_receipt(&terminal_receipt).await {
-        tracing::error!(agent = ?agent, %error, "failed to persist host terminal receipt");
-    }
-    match next {
-        AgentRunStatus::Succeeded => {
-            let _ = kernel.succeed_operation(operation).await;
-        }
-        AgentRunStatus::Cancelled => {
-            let _ = kernel.cancel_operation(operation, CancelReason::User).await;
-        }
-        AgentRunStatus::Failed => {
-            let message = error
-                .clone()
-                .unwrap_or_else(|| "Agent runtime failed".into());
-            let _ = kernel.fail_operation(operation, message).await;
-        }
-        _ => {}
-    }
-    if let Ok(record) = repository
-        .transition(
-            agent,
-            AgentRunStatus::Running,
-            next,
-            result,
-            error,
-            clock.wall_now().0,
-        )
-        .await
-    {
-        snapshots.send_replace(record.snapshot);
-    } else if let Some(exit) = task_exit {
-        tracing::error!(agent = ?agent, reason = ?exit.reason, "failed to persist terminal Agent state");
-    }
-    lifecycle_hooks
-        .emit(agent_lifecycle_hook_context(
-            fabric::hook::HookPoint::SubagentStop,
-            &stop_hook_input,
-            match next {
-                AgentRunStatus::Succeeded => "succeeded",
-                AgentRunStatus::Cancelled => "cancelled",
-                AgentRunStatus::Failed => "failed",
-                _ => "terminal",
-            },
-        ))
-        .await;
-    let _ = kernel.terminate_process(process, process_exit).await;
-    let lease_owner = format!("process:{}", process.0);
-    if settlement_enabled {
-        let terminal = match next {
-            AgentRunStatus::Succeeded => fabric::SettlementTerminal::Completed,
-            AgentRunStatus::Cancelled => fabric::SettlementTerminal::Cancelled,
-            AgentRunStatus::Failed => fabric::SettlementTerminal::Failed {
-                reason: "Agent runtime failed".into(),
-            },
-            _ => fabric::SettlementTerminal::Recoverable,
-        };
-        if let Some(live_run) = live.get(agent).await {
-            let parent_run = match parent_agent {
-                Some(parent) => live.get(parent).await,
-                None => None,
-            };
-            // Both sides are host-minted, spawn-time authority envelopes.
-            let parent_authority_covers = parent_run.as_ref().is_some_and(|parent| {
-                parent
-                    .reparent_authority()
-                    .covers(live_run.reparent_authority())
-            });
-            let _parent_budget_bounds_cover = parent_run.as_ref().is_some_and(|parent| {
-                parent
-                    .reparent_authority()
-                    .accepts_budget(live_run.reparent_authority())
-            });
-            let parent_cancellation = parent_run.as_ref().map(|run| run.cancellation.clone());
-            let parent_mailbox_target = parent_run.as_ref().map(|run| run.mailbox_target.clone());
-            let evidence = Arc::new(SpineSettlementEvidenceSink::new(
-                event_spine,
-                root_agent.0.to_string(),
-                agent.0.to_string(),
-                operation,
-            ));
-            let managed_resources = Arc::new(ManagedSettlementResourcePort::new(
-                live_run.clone(),
-                parent_authority_covers,
-                false,
-                parent_cancellation,
-                parent_mailbox_target,
-            ));
-            let engine = SettlementEngine::with_metrics(
-                settlement_receipts,
-                managed_resources.clone(),
-                Arc::new(RepositorySettlementLeasePort::new(repository.clone())),
-                evidence,
-                settlement_metrics,
-            )
-            .with_generation(settlement_generation.clone());
-            match engine.quiesce(&live_run).await {
-                Ok(resources) => {
-                    // Closing admission and fixing the resource snapshot must
-                    // precede the irreversible budget ownership transfer. A
-                    // crash before this point therefore leaves the reservation
-                    // wholly child-owned and recoverable.
-                    let budget_transfer_receipt = match (parent_agent, settlement_usage.as_ref()) {
-                        (Some(parent), Some(usage))
-                            if parent_authority_covers && wants_reparent =>
-                        {
-                            match admission.transfer_remaining_to(parent, usage).await {
-                                Ok(receipt) => Some(receipt),
-                                Err(error) => {
-                                    tracing::warn!(agent = ?agent, %error, "parent budget rejected remaining child reservation");
-                                    None
-                                }
-                            }
-                        }
-                        _ => None,
-                    };
-                    managed_resources.set_parent_budget_accepts(budget_transfer_receipt.is_some());
-                    let mut terminal =
-                        terminal_with_memory_flush(terminal, memory_events.take_error());
-                    if budget_transfer_receipt.is_none() {
-                        if let Err(error) =
-                            settle_admission(&mut *admission, &terminal, settlement_usage.as_ref())
-                                .await
-                        {
-                            tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
-                            terminal = fabric::SettlementTerminal::Failed {
-                                reason: format!(
-                                    "Agent admission settlement failed: {}",
-                                    error.message
-                                ),
-                            };
-                        }
-                    }
-                    let request = SettlementRequest {
-                        agent_id: agent.0.to_string(),
-                        attempt_id: operation.0.to_string(),
-                        generation: settlement_generation,
-                        old_owner: lease_owner.clone(),
-                        parent_owner: parent_agent.map(|parent| format!("agent:{}", parent.0)),
-                        terminal,
-                        lease_keys: ["admission", "mailbox", "execution"]
-                            .into_iter()
-                            .map(|label| format!("{label}:{}", agent.0))
-                            .collect(),
-                        settled_at_ms: clock.wall_now().0,
-                    };
-                    if let Err(error) = engine.settle(request, resources).await {
-                        tracing::error!(agent = ?agent, %error, "Agent settlement state machine failed");
-                    }
-                }
-                Err(error) => {
-                    tracing::error!(agent = ?agent, %error, "Agent quiescing failed");
-                    for resource in live_run.begin_quiescing().await {
-                        let _ = live_run
-                            .terminate_managed_resource(
-                                &resource.resource_id,
-                                &format!("quiesce-failed:{}", resource.resource_id),
-                            )
-                            .await;
-                    }
-                    let _ = admission.revoke().await;
-                    for label in ["admission", "mailbox", "execution"] {
-                        let _ = repository
-                            .delete_resource_lease(&format!("{label}:{}", agent.0), &lease_owner)
-                            .await;
-                    }
-                }
-            }
-        } else {
-            let _ = admission.revoke().await;
-            for label in ["admission", "mailbox", "execution"] {
-                let _ = repository
-                    .delete_resource_lease(&format!("{label}:{}", agent.0), &lease_owner)
-                    .await;
-            }
-        }
-    } else {
-        // Even with the richer receipt/reparent state machine disabled, a
-        // concrete registered producer must never outlive its child. Legacy
-        // mode has no reparent protocol, so every declaration is cancelled
-        // and awaited before releasing admission/leases.
-        if let Some(live_run) = live.get(agent).await {
-            for resource in live_run.begin_quiescing().await {
-                let _ = live_run
-                    .terminate_managed_resource(
-                        &resource.resource_id,
-                        &format!("legacy-terminal:{}", resource.resource_id),
-                    )
-                    .await;
-            }
-        }
-        let settlement = match settlement_usage {
-            Some(usage) if next == AgentRunStatus::Succeeded => {
-                AgentAdmissionLease::settle(&mut *admission, &usage).await
-            }
-            _ => admission.revoke().await,
-        };
-        if let Err(error) = settlement {
-            tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
-        }
-        for label in ["admission", "mailbox", "execution"] {
-            let _ = repository
-                .delete_resource_lease(&format!("{label}:{}", agent.0), &lease_owner)
-                .await;
-        }
-    }
-    live.remove(agent).await;
 }
 
 fn control_error(kind: AgentControlErrorKind, message: impl Into<String>) -> AgentControlError {

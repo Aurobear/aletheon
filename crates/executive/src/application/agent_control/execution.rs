@@ -17,6 +17,37 @@ use crate::core::sub_agent::{SubAgentExecutionContext, SubAgentRuntime};
 use super::context_fork::AgentContextProjection;
 use super::mailbox::AgentRuntimeInbox;
 
+#[async_trait]
+pub trait RuntimeProcessRegistrationPort: Send + Sync + std::fmt::Debug {
+    async fn register(
+        &self,
+        os_pid: fabric::OsProcessId,
+        start_time_ticks: u64,
+    ) -> Result<fabric::RuntimeProcessId, AgentControlError>;
+
+    async fn clear(&self, identity: fabric::RuntimeProcessId) -> Result<(), AgentControlError>;
+}
+
+#[derive(Debug, Default)]
+pub struct NoopRuntimeProcessRegistration;
+
+#[async_trait]
+impl RuntimeProcessRegistrationPort for NoopRuntimeProcessRegistration {
+    async fn register(
+        &self,
+        _os_pid: fabric::OsProcessId,
+        _start_time_ticks: u64,
+    ) -> Result<fabric::RuntimeProcessId, AgentControlError> {
+        Err(runtime_error(
+            "runtime process registration is unavailable at this composition boundary",
+        ))
+    }
+
+    async fn clear(&self, _identity: fabric::RuntimeProcessId) -> Result<(), AgentControlError> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum AgentRuntimeEvent {
     CapabilityAttenuated {
@@ -219,6 +250,9 @@ pub struct AgentRuntimeInput {
     pub memory_context: mnemosyne::AgentMemoryContext,
     pub inbox: AgentRuntimeInbox,
     pub cancellation: CancellationToken,
+    /// Host-owned durable binding for an OS child. Runtime adapters may report
+    /// identity, but cannot choose the logical Agent/process generation.
+    pub runtime_process: Arc<dyn RuntimeProcessRegistrationPort>,
     /// Per-declaration cancellation authority for background command
     /// producers. Producers must select by the reviewed resource ID instead
     /// of deriving an unmanaged token from the whole agent scope.

@@ -3,16 +3,30 @@ use std::sync::Arc;
 
 use executive::application::agent_control::{
     AgentControlService, AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRunRecord,
-    AgentRunRepository, AgentRuntimeRegistry, BoundedAgentAdmission,
+    AgentRunRepository, AgentRuntimeRegistry, BoundedAgentAdmission, RuntimeProcessReclaimOutcome,
+    RuntimeProcessSupervisor,
 };
 use fabric::{
     AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentProfileId, AgentRecoveryDecision,
-    AgentRecoveryReceipt, AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest,
-    AgoraSpaceId, AttemptUsage, OperationId, ProcessId, RuntimeId, RuntimeResumability,
+    AgentRecoveryReceipt, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId,
+    OperationId, ProcessId, RuntimeId, RuntimeResumability,
 };
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use tempfile::tempdir;
+
+#[derive(Debug)]
+struct ReclaimingSupervisor;
+
+#[async_trait::async_trait]
+impl RuntimeProcessSupervisor for ReclaimingSupervisor {
+    async fn reclaim(
+        &self,
+        _identity: fabric::RuntimeProcessId,
+    ) -> Result<RuntimeProcessReclaimOutcome, fabric::AgentControlError> {
+        Ok(RuntimeProcessReclaimOutcome::Reclaimed)
+    }
+}
 
 fn record(status: AgentRunStatus, resumability: RuntimeResumability) -> AgentRunRecord {
     let agent = AgentId::new();
@@ -284,34 +298,68 @@ async fn startup_reconciles_open_rows_before_admission_and_never_replays_native_
 }
 
 #[tokio::test]
-async fn host_terminal_receipt_wins_when_kernel_state_is_ambiguous() {
+async fn startup_recovery_visits_every_page_and_records_the_current_generation() {
+    let clock = Arc::new(TestClock::new(2_000, 0));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
     let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
-    let run = record(AgentRunStatus::Running, RuntimeResumability::Never);
-    persist(&repository, &run).await;
-    repository
-        .record_terminal_receipt(
-            &executive::application::agent_control::AgentTerminalReceipt {
-                agent_id: run.agent_id(),
-                generation: "daemon:terminal-receipt".into(),
-                status: AgentRunStatus::Succeeded,
-                result: Some(AgentResult {
-                    output: "host-confirmed".into(),
-                    usage: AttemptUsage::default(),
-                    evidence: vec![],
-                    artifacts: vec![],
-                }),
-                recorded_at_ms: 20,
-            },
-        )
-        .await
-        .unwrap();
+    let mut agents = Vec::new();
+    for _ in 0..1_001 {
+        let run = record(AgentRunStatus::Queued, RuntimeResumability::Never);
+        agents.push(run.agent_id());
+        persist(&repository, &run).await;
+    }
+    let service = AgentControlService::new(
+        kernel,
+        clock,
+        repository.clone(),
+        Arc::new(BoundedAgentAdmission::new(1).unwrap()),
+        Arc::new(AgentRuntimeRegistry::default()),
+        Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap()),
+    );
 
-    let coordinator =
-        AgentRecoveryCoordinator::new(repository.clone(), "daemon:restart", 30).unwrap();
+    let report = service.reconcile_startup("daemon:paged").await.unwrap();
+    assert!(report.ready());
+    assert_eq!(report.open_rows, 1_001);
+    assert_eq!(report.interrupted, 1_001);
+    for agent in agents {
+        let stored = repository.get(agent).await.unwrap().unwrap();
+        assert_eq!(stored.status(), AgentRunStatus::Interrupted);
+        assert_eq!(stored.recovery.unwrap().daemon_generation, "daemon:paged");
+    }
+}
+
+#[tokio::test]
+async fn a_new_daemon_generation_makes_a_fresh_recovery_decision() {
+    let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
+    let run = record(
+        AgentRunStatus::Running,
+        RuntimeResumability::Checkpointed {
+            reference: "checkpoint:first".into(),
+        },
+    );
+    persist(&repository, &run).await;
+    let first = AgentRecoveryCoordinator::new(repository.clone(), "daemon:first", 30).unwrap();
     assert_eq!(
-        coordinator
+        first
             .recover_one(
                 &run,
+                AgentRecoveryObservation {
+                    process_live: true,
+                    operation_terminal: None,
+                    checkpoint_available: true,
+                },
+            )
+            .await
+            .unwrap(),
+        AgentRecoveryDecision::Resume
+    );
+
+    let after_first = repository.get(run.agent_id()).await.unwrap().unwrap();
+    let second = AgentRecoveryCoordinator::new(repository.clone(), "daemon:second", 40).unwrap();
+    assert_eq!(
+        second
+            .recover_one(
+                &after_first,
                 AgentRecoveryObservation {
                     process_live: false,
                     operation_terminal: None,
@@ -320,9 +368,56 @@ async fn host_terminal_receipt_wins_when_kernel_state_is_ambiguous() {
             )
             .await
             .unwrap(),
-        AgentRecoveryDecision::Finalize
+        AgentRecoveryDecision::Interrupt
     );
     let stored = repository.get(run.agent_id()).await.unwrap().unwrap();
-    assert_eq!(stored.status(), AgentRunStatus::Succeeded);
-    assert_eq!(stored.snapshot.result.unwrap().output, "host-confirmed");
+    assert_eq!(stored.status(), AgentRunStatus::Interrupted);
+    assert_eq!(stored.recovery.unwrap().daemon_generation, "daemon:second");
+}
+
+#[tokio::test]
+async fn a_agent_002_startup_reclaims_and_clears_a_durable_external_process_before_interrupting() {
+    let clock = Arc::new(TestClock::new(3_000, 0));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+    let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
+    let run = record(AgentRunStatus::Running, RuntimeResumability::Never);
+    persist(&repository, &run).await;
+    let identity = fabric::RuntimeProcessId {
+        agent_id: run.agent_id(),
+        process_id: run.snapshot.handle.process_id,
+        generation: 1,
+        os_pid: fabric::OsProcessId(42_424),
+        start_time_ticks: 99,
+    };
+    repository.put_runtime_process(&identity).await.unwrap();
+    let service = AgentControlService::new(
+        kernel,
+        clock,
+        repository.clone(),
+        Arc::new(BoundedAgentAdmission::new(1).unwrap()),
+        Arc::new(AgentRuntimeRegistry::default()),
+        Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap()),
+    )
+    .with_runtime_process_supervisor(Arc::new(ReclaimingSupervisor));
+
+    let report = service
+        .reconcile_startup("daemon:orphan-reclaim")
+        .await
+        .unwrap();
+    assert!(report.ready());
+    assert_eq!(report.orphan_reclaimed, 1);
+    assert!(repository
+        .runtime_process(run.agent_id())
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        repository
+            .get(run.agent_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .status(),
+        AgentRunStatus::Interrupted
+    );
 }

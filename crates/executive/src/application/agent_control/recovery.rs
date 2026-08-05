@@ -13,6 +13,36 @@ use super::{AgentRunRecord, AgentRunRepository};
 pub const MAX_STARTUP_RECOVERY_ROWS: usize = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeProcessReclaimOutcome {
+    Reclaimed,
+    AlreadyExited,
+    IdentityReused,
+}
+
+#[async_trait::async_trait]
+pub trait RuntimeProcessSupervisor: Send + Sync {
+    async fn reclaim(
+        &self,
+        identity: fabric::RuntimeProcessId,
+    ) -> Result<RuntimeProcessReclaimOutcome, AgentControlError>;
+}
+
+#[derive(Debug, Default)]
+pub struct FailClosedRuntimeProcessSupervisor;
+
+#[async_trait::async_trait]
+impl RuntimeProcessSupervisor for FailClosedRuntimeProcessSupervisor {
+    async fn reclaim(
+        &self,
+        _identity: fabric::RuntimeProcessId,
+    ) -> Result<RuntimeProcessReclaimOutcome, AgentControlError> {
+        Err(AgentControlError::invalid(
+            "durable runtime process exists without a configured supervisor",
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentRecoveryObservation {
     pub process_live: bool,
     pub operation_terminal: Option<AgentRunStatus>,
@@ -27,6 +57,9 @@ pub struct AgentRecoveryReport {
     pub finalized: usize,
     pub recovery_failed: usize,
     pub unreconciled: usize,
+    pub orphan_reclaimed: usize,
+    pub orphan_already_exited: usize,
+    pub orphan_identity_reused: usize,
 }
 
 impl AgentRecoveryReport {
@@ -84,10 +117,13 @@ impl AgentRecoveryCoordinator {
         let decision = if terminal_receipt.is_some() {
             AgentRecoveryDecision::Finalize
         } else {
-            run.recovery.as_ref().map_or_else(
-                || Self::decide(run, observation),
-                |receipt| receipt.decision,
-            )
+            run.recovery
+                .as_ref()
+                .filter(|receipt| receipt.daemon_generation == self.daemon_generation)
+                .map_or_else(
+                    || Self::decide(run, observation),
+                    |receipt| receipt.decision,
+                )
         };
         let idempotency_key = format!(
             "sha256:{:x}",
@@ -101,7 +137,11 @@ impl AgentRecoveryCoordinator {
                 .as_bytes()
             )
         );
-        if run.recovery.is_none() {
+        if run
+            .recovery
+            .as_ref()
+            .is_none_or(|receipt| receipt.daemon_generation != self.daemon_generation)
+        {
             let receipt = AgentRecoveryReceipt {
                 decision,
                 daemon_generation: self.daemon_generation.clone(),
@@ -127,14 +167,15 @@ impl AgentRecoveryCoordinator {
                     .await?;
             }
             AgentRecoveryDecision::Finalize => {
-                let receipt = terminal_receipt.as_ref();
-                let mut terminal = receipt
+                let mut terminal = terminal_receipt
+                    .as_ref()
                     .map(|receipt| receipt.status)
                     .or(observation.operation_terminal)
                     .ok_or_else(|| {
                         AgentControlError::invalid("finalize recovery lacks terminal evidence")
                     })?;
-                let result = receipt
+                let result = terminal_receipt
+                    .as_ref()
                     .and_then(|receipt| receipt.result.clone())
                     .or_else(|| run.snapshot.result.clone());
                 if terminal == AgentRunStatus::Succeeded && result.is_none() {

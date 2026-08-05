@@ -25,6 +25,7 @@ use crate::application::agent_control::{
 const MIGRATION: &str = include_str!("migrations/001_agent_runs.sql");
 const MESSAGE_MIGRATION: &str = include_str!("migrations/002_agent_messages.sql");
 const RECOVERY_MIGRATION: &str = include_str!("migrations/003_agent_recovery.sql");
+const RUNTIME_PROCESS_MIGRATION: &str = include_str!("migrations/004_runtime_processes.sql");
 const RUN_COLUMNS: &str = "agent_id, root_agent_id, parent_agent_id, process_id, operation_id, \
     runtime_id, profile_id, status, request_json, request_hash, result_json, created_at_ms, \
     started_at_ms, ended_at_ms, last_error, version, retain_until_ms, workspace_id, \
@@ -64,6 +65,9 @@ impl SqliteAgentRunRepository {
             .map_err(persistence)?;
         connection
             .execute_batch(RECOVERY_MIGRATION)
+            .map_err(persistence)?;
+        connection
+            .execute_batch(RUNTIME_PROCESS_MIGRATION)
             .map_err(persistence)?;
         ensure_workspace_columns(&connection)?;
         Ok(Self {
@@ -302,6 +306,45 @@ impl AgentRunRepository for SqliteAgentRunRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
     }
 
+    async fn list_open_after(
+        &self,
+        after: Option<(i64, AgentId)>,
+        limit: usize,
+    ) -> Result<Vec<AgentRunRecord>, AgentControlError> {
+        if limit == 0 || limit > MAX_LIST_ITEMS {
+            return Err(AgentControlError::invalid(
+                "Agent recovery page limit is invalid",
+            ));
+        }
+        let connection = self.connection.lock();
+        let (sql, created_at_ms, agent_id) = match after {
+            Some((created_at_ms, agent_id)) => (
+                format!(
+                    "SELECT {RUN_COLUMNS} FROM agent_runs \
+                     WHERE status IN ('queued','running','waiting') \
+                       AND (created_at_ms>?1 OR (created_at_ms=?1 AND agent_id>?2)) \
+                     ORDER BY created_at_ms,agent_id LIMIT ?3"
+                ),
+                created_at_ms,
+                agent_id.0.to_string(),
+            ),
+            None => (
+                format!(
+                    "SELECT {RUN_COLUMNS} FROM agent_runs \
+                     WHERE status IN ('queued','running','waiting') \
+                     ORDER BY created_at_ms,agent_id LIMIT ?3"
+                ),
+                i64::MIN,
+                String::new(),
+            ),
+        };
+        let mut statement = connection.prepare(&sql).map_err(persistence)?;
+        let rows = statement
+            .query_map(params![created_at_ms, agent_id, limit as i64], map_run_row)
+            .map_err(persistence)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
+    }
+
     async fn list_recent(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError> {
         if limit == 0 || limit > MAX_LIST_ITEMS {
             return Err(AgentControlError::invalid(
@@ -317,6 +360,92 @@ impl AgentRunRepository for SqliteAgentRunRepository {
             .query_map([limit as i64], map_run_row)
             .map_err(persistence)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
+    }
+
+    async fn put_runtime_process(
+        &self,
+        identity: &fabric::RuntimeProcessId,
+    ) -> Result<(), AgentControlError> {
+        if identity.os_pid.0 <= 1 || identity.start_time_ticks == 0 || identity.generation == 0 {
+            return Err(AgentControlError::invalid(
+                "runtime process identity is incomplete",
+            ));
+        }
+        let connection = self.connection.lock();
+        connection
+            .execute(
+                "INSERT INTO agent_runtime_processes(
+                    agent_id,process_id,generation,os_pid,start_time_ticks
+                 ) VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(agent_id) DO UPDATE SET
+                    process_id=excluded.process_id,
+                    generation=excluded.generation,
+                    os_pid=excluded.os_pid,
+                    start_time_ticks=excluded.start_time_ticks",
+                params![
+                    identity.agent_id.0.to_string(),
+                    identity.process_id.0.to_string(),
+                    i64::try_from(identity.generation).map_err(persistence)?,
+                    i64::from(identity.os_pid.0),
+                    i64::try_from(identity.start_time_ticks).map_err(persistence)?,
+                ],
+            )
+            .map_err(persistence)?;
+        Ok(())
+    }
+
+    async fn runtime_process(
+        &self,
+        agent: AgentId,
+    ) -> Result<Option<fabric::RuntimeProcessId>, AgentControlError> {
+        let connection = self.connection.lock();
+        connection
+            .query_row(
+                "SELECT process_id,generation,os_pid,start_time_ticks
+                 FROM agent_runtime_processes WHERE agent_id=?1",
+                [agent.0.to_string()],
+                |row| {
+                    let process_id: String = row.get(0)?;
+                    let generation: u64 = row.get(1)?;
+                    let os_pid: u32 = row.get(2)?;
+                    let start_time_ticks: u64 = row.get(3)?;
+                    Ok((process_id, generation, os_pid, start_time_ticks))
+                },
+            )
+            .optional()
+            .map_err(persistence)?
+            .map(|(process_id, generation, os_pid, start_time_ticks)| {
+                Ok(fabric::RuntimeProcessId {
+                    agent_id: agent,
+                    process_id: ProcessId(parse_uuid(&process_id)?),
+                    generation,
+                    os_pid: fabric::OsProcessId(os_pid),
+                    start_time_ticks,
+                })
+            })
+            .transpose()
+    }
+
+    async fn clear_runtime_process(
+        &self,
+        identity: &fabric::RuntimeProcessId,
+    ) -> Result<bool, AgentControlError> {
+        let connection = self.connection.lock();
+        connection
+            .execute(
+                "DELETE FROM agent_runtime_processes
+                 WHERE agent_id=?1 AND process_id=?2 AND generation=?3
+                   AND os_pid=?4 AND start_time_ticks=?5",
+                params![
+                    identity.agent_id.0.to_string(),
+                    identity.process_id.0.to_string(),
+                    i64::try_from(identity.generation).map_err(persistence)?,
+                    i64::from(identity.os_pid.0),
+                    i64::try_from(identity.start_time_ticks).map_err(persistence)?,
+                ],
+            )
+            .map(|changed| changed == 1)
+            .map_err(persistence)
     }
 
     async fn record_recovery(
@@ -347,10 +476,12 @@ impl AgentRunRepository for SqliteAgentRunRepository {
             if stored == *receipt {
                 return query_one(&connection, agent);
             }
-            return Err(control_error(
-                AgentControlErrorKind::Conflict,
-                "Agent run already has a different recovery decision",
-            ));
+            if stored.daemon_generation == receipt.daemon_generation {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    "Agent run already has a different recovery decision for this daemon generation",
+                ));
+            }
         }
         let changed = connection
             .execute(
@@ -395,6 +526,12 @@ impl AgentRunRepository for SqliteAgentRunRepository {
         let mut removed = Vec::new();
         for value in ids {
             let id = parse_agent(&value)?;
+            transaction
+                .execute(
+                    "DELETE FROM agent_runtime_processes WHERE agent_id=?1",
+                    [&value],
+                )
+                .map_err(persistence)?;
             transaction
                 .execute("DELETE FROM agent_messages_v2 WHERE agent_id=?1", [&value])
                 .map_err(persistence)?;

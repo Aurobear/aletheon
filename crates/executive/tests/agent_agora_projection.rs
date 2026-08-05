@@ -81,6 +81,9 @@ fn input() -> AgentRuntimeInput {
         root_process_id: root,
         inbox: AgentRuntimeInbox::empty(),
         cancellation: CancellationToken::new(),
+        runtime_process: Arc::new(
+            executive::application::agent_control::NoopRuntimeProcessRegistration,
+        ),
         background_cancellations: std::collections::HashMap::new(),
         background_registrations: std::collections::HashMap::new(),
         background_notification_targets: std::collections::HashMap::new(),

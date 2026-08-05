@@ -1127,7 +1127,6 @@ impl RequestHandler {
             clock.clone(),
             cancel_token.clone(),
             config,
-            &grok_hardening,
             domains.corpus(),
             agent_runtimes,
             corpus_group.tools.clone(),

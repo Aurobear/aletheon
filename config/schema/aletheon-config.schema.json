@@ -1097,7 +1097,7 @@
         },
         "subagent_settlement": {
           "default": false,
-          "description": "G6 — subagent resource settlement state machine.",
+          "description": "Compatibility-only G6 flag. Settlement is now mandatory in the\nproduction Agent control path; X10 removes this accepted-but-ignored\nconfiguration field after its compatibility deadline.",
           "type": "boolean"
         },
         "workspace_checkpoint": {

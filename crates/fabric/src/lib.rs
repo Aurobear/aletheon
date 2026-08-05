@@ -299,7 +299,7 @@ pub use types::permission::{
 pub use types::process::{
     AgentId, AgentProfileId, ExitReason, ExitStatus, MailboxId, NamespaceId, OsProcessId,
     ProcessIdentity, ProcessOwnership, ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState,
-    SpaceId, SpawnSpec,
+    RuntimeProcessId, SpaceId, SpawnSpec,
 };
 pub use types::sandbox::{
     resolve_profile, IsolationLevel, ProfileName, ProfileResolveError, ResolvedSandboxPolicy,

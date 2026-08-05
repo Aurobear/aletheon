@@ -26,7 +26,9 @@ pub struct GrokHardeningConfig {
     pub workspace_checkpoint: bool,
     /// G5 — typed lifecycle contributor / hook effects.
     pub lifecycle_contributors: bool,
-    /// G6 — subagent resource settlement state machine.
+    /// Compatibility-only G6 flag. Settlement is now mandatory in the
+    /// production Agent control path; X10 removes this accepted-but-ignored
+    /// configuration field after its compatibility deadline.
     pub subagent_settlement: bool,
     /// G7 — endpoint-scoped memory-search credentials.
     pub memory_hybrid: bool,

@@ -227,6 +227,9 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         inbox: AgentRuntimeInbox::empty(),
         request,
         cancellation: cancel,
+        runtime_process: Arc::new(
+            executive::application::agent_control::NoopRuntimeProcessRegistration,
+        ),
         background_cancellations: std::collections::HashMap::new(),
         background_registrations: std::collections::HashMap::new(),
         background_notification_targets: std::collections::HashMap::new(),

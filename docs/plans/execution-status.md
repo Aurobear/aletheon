@@ -321,14 +321,14 @@ MERGE_SHA: 2ad35cd89aa879cdf73867912f7122eddd99037b
 ## X9b
 
 ```text
-STATUS: accepted
+STATUS: in_progress
 NODE: X9b
-BASE / BRANCH / PR / GOAL_ID: 2ad35cd89aa879cdf73867912f7122eddd99037b / auro/feat/20260805-x9b-runtime-reconciliation / #175 / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: ae6e6dfa470e07ad3ad5f230560bb6c286883d1f / auro/feat/20260805-x9b-child-reconciliation / #177 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: host-derived terminal receipts are persisted before lifecycle settlement; startup reconciliation prefers an immutable receipt when Kernel state is ambiguous; duplicate writes are idempotent and conflicting receipts fail closed. Agent recovery integration tests (4), full Executive lib tests (711), Executive Clippy -D warnings, formatting, diff and architecture gates pass locally. PR #175 retry run 30990604949 passed architecture fitness, PR validation, feature contracts, fuzz quick-check and source checks; merged into dev.
-FAILURES: first CI attempt was interrupted by the self-hosted runner and its retry hit a codeload.github.com SSL failure before checkout; the fresh synchronization run passed all enabled checks.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: host-owned PID plus Linux start-time identity is durably registered before Pi RPC execution; startup recovery reclaims only the matching process generation with bounded SIGTERM/SIGKILL and treats PID reuse as non-reclaimable. Agent terminal settlement is authoritative before terminal success, with receipt failure surfaced as a failed run. Runtime process, agent recovery, child settlement and PID-reuse tests pass; Executive Clippy -D warnings, all-target check, formatting and architecture gates pass locally. PR #177 is open.
+FAILURES: GitHub API queries intermittently timed out during PR creation monitoring; git push and PR creation succeeded.
 BLOCKER: none
-MERGE_SHA: ae6e6dfa470e07ad3ad5f230560bb6c286883d1f
+MERGE_SHA: pending
 ```
 
 ## X9c
