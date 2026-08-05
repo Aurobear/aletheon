@@ -321,14 +321,14 @@ MERGE_SHA: 2ad35cd89aa879cdf73867912f7122eddd99037b
 ## X9b
 
 ```text
-STATUS: in_progress
+STATUS: accepted
 NODE: X9b
 BASE / BRANCH / PR / GOAL_ID: 2ad35cd89aa879cdf73867912f7122eddd99037b / auro/feat/20260805-x9b-runtime-reconciliation / #175 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: host-derived terminal receipts are persisted before lifecycle settlement; startup reconciliation prefers an immutable receipt when Kernel state is ambiguous; duplicate writes are idempotent and conflicting receipts fail closed. Agent recovery integration tests (4), full Executive lib tests (711), Executive Clippy -D warnings, formatting, diff and architecture gates pass locally. Installed deployment and aggregate runtime evidence remain owned by X12; PR #175 pending.
-FAILURES: first PR #175 CI run had PR validation cancelled by self-hosted runner; rerun validation then failed while downloading actions/checkout from codeload.github.com (SSL), while architecture/feature/fuzz checks passed; retry triggered by this ledger update.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: host-derived terminal receipts are persisted before lifecycle settlement; startup reconciliation prefers an immutable receipt when Kernel state is ambiguous; duplicate writes are idempotent and conflicting receipts fail closed. Agent recovery integration tests (4), full Executive lib tests (711), Executive Clippy -D warnings, formatting, diff and architecture gates pass locally. PR #175 retry run 30990604949 passed architecture fitness, PR validation, feature contracts, fuzz quick-check and source checks; merged into dev.
+FAILURES: first CI attempt was interrupted by the self-hosted runner and its retry hit a codeload.github.com SSL failure before checkout; the fresh synchronization run passed all enabled checks.
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: ae6e6dfa470e07ad3ad5f230560bb6c286883d1f
 ```
 
 ## X9c
