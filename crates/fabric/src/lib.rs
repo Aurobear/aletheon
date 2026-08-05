@@ -39,6 +39,8 @@ pub use protocol::client::{
     EventCursor, EventSubscription, ReviewFinding, ReviewFindingLocation, ReviewFindingSeverity,
     ReviewFindingStatus, SessionEventPage, SessionListSnapshot, SessionReadSnapshot,
     SnapshotRequest, TaskPhase, TaskRuntimeFacts, TaskSettlement, TaskSnapshot, TaskStepSnapshot,
+    TransactionReviewAction, TransactionReviewParams, TransactionReviewSnapshot,
+    TransactionSettlementDecision, TransactionSettlementGetParams, TransactionSettlementReceipt,
     UiSnapshot, CHECKPOINT_LIST_SCHEMA_VERSION, CLIENT_PROTOCOL_VERSION,
     SESSION_READ_MODEL_SCHEMA_VERSION,
 };

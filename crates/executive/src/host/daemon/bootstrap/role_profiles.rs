@@ -32,8 +32,6 @@ const WRITE_TOOLS: &[&str] = &[
     "exec_command",
     "write_stdin",
     "validation_run",
-    "change_accept",
-    "change_rollback",
 ];
 
 fn explicit_tools(role: CognitiveRole) -> anyhow::Result<Vec<&'static str>> {

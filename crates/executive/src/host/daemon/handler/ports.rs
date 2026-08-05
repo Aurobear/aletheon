@@ -38,6 +38,7 @@ pub(crate) struct HandlerPorts {
     pub(crate) evaluation: Arc<crate::application::evaluation::EvaluationService>,
     pub(crate) workspace_checkpoint:
         Arc<crate::application::workspace_checkpoint::WorkspaceCheckpointService>,
+    pub(crate) transaction_review: Arc<crate::application::settlement::TransactionReviewService>,
     pub(crate) session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
     pub(crate) conscious_workspaces:
         Arc<crate::application::conscious_workspace::ConsciousWorkspaceRegistry>,
@@ -80,6 +81,7 @@ impl HandlerPorts {
         workspace_checkpoint: Arc<
             crate::application::workspace_checkpoint::WorkspaceCheckpointService,
         >,
+        transaction_review: Arc<crate::application::settlement::TransactionReviewService>,
         session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
         conscious_workspaces: Arc<
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry,
@@ -113,6 +115,7 @@ impl HandlerPorts {
             turn,
             evaluation,
             workspace_checkpoint,
+            transaction_review,
             session_input,
             conscious_workspaces,
             debug,

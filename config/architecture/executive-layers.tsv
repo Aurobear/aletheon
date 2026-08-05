@@ -359,3 +359,4 @@ crates/executive/src/application/command_dispatcher.rs	application	executive	can
 crates/executive/src/application/checkpoint_projection.rs	application	executive	checkpoint and transaction validation read projection
 crates/executive/src/application/settlement.rs	application	executive	host-owned review and settlement decision evaluator
 crates/executive/src/application/host_acceptance.rs	application	executive	host-owned engineering task acceptance and repair projection
+crates/executive/src/adapters/session/transaction_settlement_store_sqlite.rs	adapter	executive	durable host transaction settlement receipt store

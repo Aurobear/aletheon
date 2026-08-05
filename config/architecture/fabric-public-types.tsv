@@ -1055,3 +1055,9 @@ crates/fabric/src/protocol/client.rs	enum	ReviewFindingSeverity	governed	fabric	
 crates/fabric/src/protocol/client.rs	enum	ReviewFindingStatus	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
 crates/fabric/src/protocol/client.rs	struct	ReviewFindingLocation	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
 crates/fabric/src/protocol/client.rs	struct	ReviewFinding	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	enum	TransactionReviewAction	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	struct	TransactionReviewParams	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	enum	TransactionSettlementDecision	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	struct	TransactionSettlementReceipt	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	struct	TransactionReviewSnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	struct	TransactionSettlementGetParams	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4

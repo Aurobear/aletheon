@@ -57,6 +57,8 @@ pub enum ClientRpcRequest {
     ApprovalResponse(ApprovalResponseParams),
     DiffArtifactGet(DiffArtifactGetParams),
     CheckpointList(CheckpointListParams),
+    TransactionReview(TransactionReviewParams),
+    TransactionSettlementGet(TransactionSettlementGetParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
     MemorySearch(MemorySearchParams),
@@ -270,6 +272,56 @@ pub struct DiffArtifactGetParams {
 pub struct CheckpointListParams {
     pub session_id: String,
     pub limit: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionReviewAction {
+    Accept,
+    Repair,
+    Rollback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransactionReviewParams {
+    pub session_id: String,
+    pub transaction_id: String,
+    pub action: TransactionReviewAction,
+    #[serde(default)]
+    pub risk_acknowledged: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransactionSettlementGetParams {
+    pub session_id: String,
+    pub transaction_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionSettlementDecision {
+    Accepted,
+    RepairRequired,
+    RolledBack,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionSettlementReceipt {
+    pub settlement_id: String,
+    pub transaction_id: String,
+    pub session_id: String,
+    pub workspace_version: String,
+    pub decision: TransactionSettlementDecision,
+    pub finding_ids: Vec<String>,
+    pub validation_receipt_refs: Vec<String>,
+    pub validation_omissions: Vec<crate::change_transaction::ValidationPlanOmission>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionReviewSnapshot {
+    pub transaction: crate::change_transaction::ChangeTransactionSnapshot,
+    pub settlement: TransactionSettlementReceipt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -753,6 +805,12 @@ impl ClientRpcRequest {
             }
             Self::CheckpointList(params) => {
                 ("checkpoint.list/v1", Some(serde_json::to_value(params)?))
+            }
+            Self::TransactionReview(params) => {
+                ("task.review/settle/v1", Some(serde_json::to_value(params)?))
+            }
+            Self::TransactionSettlementGet(params) => {
+                ("task.review/latest/v1", Some(serde_json::to_value(params)?))
             }
             Self::MemoryAdd(params) => ("memory.add", Some(serde_json::to_value(params)?)),
             Self::MemoryList(params) => ("memory.list", Some(serde_json::to_value(params)?)),
@@ -1667,5 +1725,21 @@ mod request_tests {
         assert_eq!(request["params"]["prompt_index"], 7);
         assert!(request["params"].get("working_dir").is_none());
         assert!(request["params"].get("checkpoint_blob").is_none());
+    }
+
+    #[test]
+    fn transaction_review_serializes_typed_host_action() {
+        let request = ClientRpcRequest::TransactionReview(TransactionReviewParams {
+            session_id: "session-a".into(),
+            transaction_id: uuid::Uuid::nil().to_string(),
+            action: TransactionReviewAction::Rollback,
+            risk_acknowledged: true,
+        })
+        .to_json_rpc(Some(13))
+        .unwrap();
+        assert_eq!(request["method"], "task.review/settle/v1");
+        assert_eq!(request["params"]["action"], "rollback");
+        assert_eq!(request["params"]["risk_acknowledged"], true);
+        assert!(request["params"].get("working_dir").is_none());
     }
 }

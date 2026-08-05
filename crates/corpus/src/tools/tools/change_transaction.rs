@@ -410,6 +410,35 @@ impl ChangeTransactionRegistry {
         Ok(snapshot.clone())
     }
 
+    pub async fn request_repair(
+        &self,
+        transaction_id: ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &Path,
+    ) -> Result<ChangeTransactionSnapshot, WorkFailure> {
+        let verified = self
+            .verify_current(transaction_id, owner_session_id, owner_agent, root)
+            .await?;
+        if matches!(
+            verified.phase,
+            ChangeTransactionPhase::Accepted | ChangeTransactionPhase::RolledBack
+        ) {
+            return Err(invalid_request(
+                "accepted or rolled-back transactions cannot re-enter repair",
+            ));
+        }
+        let mut transactions = self.transactions.lock().await;
+        let snapshot = transactions
+            .get_mut(&transaction_id)
+            .ok_or_else(|| invalid_request("unknown change transaction"))?;
+        snapshot.phase = ChangeTransactionPhase::Repair;
+        snapshot.accepted_workspace_version = None;
+        snapshot.active_command = None;
+        snapshot.failure = None;
+        Ok(snapshot.clone())
+    }
+
     pub async fn rollback(
         &self,
         transaction_id: ChangeTransactionId,

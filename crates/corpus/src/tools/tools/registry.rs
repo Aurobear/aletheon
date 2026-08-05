@@ -14,6 +14,7 @@ pub struct ToolRegistry {
     package_tool_owners: HashMap<String, String>,
     next_id: u64,
     search_catalog: Option<Arc<RwLock<BM25Catalog>>>,
+    change_transactions: Option<super::change_transaction::ChangeTransactionRegistry>,
 }
 
 impl ToolRegistry {
@@ -25,6 +26,7 @@ impl ToolRegistry {
             package_tool_owners: HashMap::new(),
             next_id: 1,
             search_catalog: None,
+            change_transactions: None,
         }
     }
 
@@ -35,6 +37,15 @@ impl ToolRegistry {
 
     pub fn list(&self) -> Vec<&str> {
         self.tools.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Return the Host-shared change transaction authority used by built-in
+    /// mutation and managed-validation tools. Extension-only registries do not
+    /// own this authority.
+    pub fn change_transactions(
+        &self,
+    ) -> Option<super::change_transaction::ChangeTransactionRegistry> {
+        self.change_transactions.clone()
     }
 
     /// Atomically replace every tool owned by one extension package.
@@ -451,6 +462,7 @@ impl ToolRegistry {
     ) -> Self {
         let mut registry = Self::new();
         let change_transactions = super::change_transaction::ChangeTransactionRegistry::default();
+        registry.change_transactions = Some(change_transactions.clone());
         // Register built-in tools — panics on duplicate names (should never happen)
         registry
             .register(Arc::new(super::bash_exec::BashExecTool))
@@ -549,16 +561,10 @@ impl ToolRegistry {
                 ),
             ))
             .expect("duplicate built-in git tool");
-        registry
-            .register(Arc::new(super::change_transaction::ChangeAcceptTool::new(
-                change_transactions.clone(),
-            )))
-            .expect("duplicate built-in tool");
-        registry
-            .register(Arc::new(
-                super::change_transaction::ChangeRollbackTool::new(change_transactions),
-            ))
-            .expect("duplicate built-in tool");
+        // Acceptance and rollback are Host review actions, not model tools.
+        // The shared registry remains available to Executive through the
+        // typed getter above; exposing either action here would create a
+        // second settlement writer controlled by model output.
         registry
             .register(Arc::new(
                 super::web_fetch::WebFetchTool::new().with_network_policy(policy.clone()),

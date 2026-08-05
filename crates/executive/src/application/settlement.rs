@@ -5,29 +5,57 @@
 //! accepted terminal decision; persistence and transport remain outside this
 //! pure authority evaluator.
 
-use fabric::change_transaction::{
-    ChangeTransactionPhase, ChangeTransactionSnapshot, ValidationPlanOmission,
-};
+use fabric::change_transaction::{ChangeTransactionPhase, ChangeTransactionSnapshot};
 use fabric::{ReviewFinding, ReviewFindingStatus};
-use serde::{Deserialize, Serialize};
+pub use fabric::{
+    TransactionReviewAction, TransactionReviewSnapshot as TransactionReviewOutcome,
+    TransactionSettlementDecision as HostSettlementDecision,
+    TransactionSettlementReceipt as HostSettlementReceipt,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HostSettlementDecision {
-    Accepted,
-    Repair,
+#[async_trait::async_trait]
+pub trait TransactionSettlementStore: Send + Sync {
+    async fn append(&self, receipt: &HostSettlementReceipt) -> anyhow::Result<()>;
+    async fn latest(
+        &self,
+        session_id: &str,
+        transaction_id: &str,
+    ) -> anyhow::Result<Option<HostSettlementReceipt>>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HostSettlementReceipt {
-    pub transaction_id: String,
-    pub session_id: String,
-    pub workspace_version: String,
-    pub decision: HostSettlementDecision,
-    pub finding_ids: Vec<String>,
-    pub validation_receipt_refs: Vec<String>,
-    pub validation_omissions: Vec<ValidationPlanOmission>,
-    pub reason: String,
+#[derive(Default)]
+pub struct InMemoryTransactionSettlementStore {
+    receipts: tokio::sync::Mutex<std::collections::BTreeMap<String, HostSettlementReceipt>>,
+}
+
+#[async_trait::async_trait]
+impl TransactionSettlementStore for InMemoryTransactionSettlementStore {
+    async fn append(&self, receipt: &HostSettlementReceipt) -> anyhow::Result<()> {
+        let mut receipts = self.receipts.lock().await;
+        if let Some(existing) = receipts.get(&receipt.settlement_id) {
+            anyhow::ensure!(existing == receipt, "settlement idempotency conflict");
+            return Ok(());
+        }
+        receipts.insert(receipt.settlement_id.clone(), receipt.clone());
+        Ok(())
+    }
+
+    async fn latest(
+        &self,
+        session_id: &str,
+        transaction_id: &str,
+    ) -> anyhow::Result<Option<HostSettlementReceipt>> {
+        Ok(self
+            .receipts
+            .lock()
+            .await
+            .values()
+            .rev()
+            .find(|receipt| {
+                receipt.session_id == session_id && receipt.transaction_id == transaction_id
+            })
+            .cloned())
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -56,13 +84,15 @@ impl HostSettlementService {
         let decision = if self.acceptable(transaction, findings) {
             HostSettlementDecision::Accepted
         } else {
-            HostSettlementDecision::Repair
+            HostSettlementDecision::RepairRequired
         };
         let reason = match decision {
             HostSettlementDecision::Accepted => "host validation and review evidence passed".into(),
-            HostSettlementDecision::Repair => self.repair_reason(transaction, findings),
+            HostSettlementDecision::RepairRequired => self.repair_reason(transaction, findings),
+            HostSettlementDecision::RolledBack => "host restored the transaction baseline".into(),
         };
         HostSettlementReceipt {
+            settlement_id: settlement_id(transaction, decision),
             transaction_id: transaction.transaction_id.0.to_string(),
             session_id: transaction.owner_session_id.clone(),
             workspace_version: transaction.current.digest.clone(),
@@ -119,13 +149,210 @@ impl HostSettlementService {
     }
 }
 
+fn settlement_id(
+    transaction: &ChangeTransactionSnapshot,
+    decision: HostSettlementDecision,
+) -> String {
+    let material = format!(
+        "{}\0{}\0{}\0{decision:?}",
+        transaction.transaction_id.0, transaction.owner_session_id, transaction.current.digest
+    );
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, material.as_bytes()).to_string()
+}
+
+#[async_trait::async_trait]
+pub trait ChangeTransactionAuthority: Send + Sync {
+    async fn snapshot(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+    ) -> anyhow::Result<Option<ChangeTransactionSnapshot>>;
+
+    async fn accept(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<ChangeTransactionSnapshot>;
+
+    async fn request_repair(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<ChangeTransactionSnapshot>;
+
+    async fn rollback(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<ChangeTransactionSnapshot>;
+}
+
+#[derive(Clone)]
+pub struct TransactionReviewService {
+    transactions: std::sync::Arc<dyn ChangeTransactionAuthority>,
+    store: std::sync::Arc<dyn TransactionSettlementStore>,
+}
+
+impl TransactionReviewService {
+    pub fn new(
+        transactions: std::sync::Arc<dyn ChangeTransactionAuthority>,
+        store: std::sync::Arc<dyn TransactionSettlementStore>,
+    ) -> Self {
+        Self {
+            transactions,
+            store,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn review(
+        &self,
+        action: TransactionReviewAction,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        session_id: &str,
+        root: &std::path::Path,
+        findings: &[ReviewFinding],
+        risk_acknowledged: bool,
+    ) -> anyhow::Result<TransactionReviewOutcome> {
+        let current = self
+            .transactions
+            .snapshot(transaction_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown change transaction"))?;
+        anyhow::ensure!(
+            current.owner_session_id == session_id,
+            "transaction belongs to another session"
+        );
+        anyhow::ensure!(
+            std::path::Path::new(&current.root) == root,
+            "transaction workspace differs from host authority"
+        );
+        let (transaction, settlement) = match action {
+            TransactionReviewAction::Accept => {
+                let settlement = HostSettlementService.settle(&current, findings);
+                anyhow::ensure!(
+                    settlement.decision == HostSettlementDecision::Accepted,
+                    "{}",
+                    settlement.reason
+                );
+                let transaction = self
+                    .transactions
+                    .accept(transaction_id, session_id, None, root)
+                    .await?;
+                (transaction, settlement)
+            }
+            TransactionReviewAction::Repair => {
+                let transaction = self
+                    .transactions
+                    .request_repair(transaction_id, session_id, None, root)
+                    .await?;
+                let settlement = HostSettlementService.settle(&transaction, findings);
+                (transaction, settlement)
+            }
+            TransactionReviewAction::Rollback => {
+                use fabric::change_transaction::MutationCoverage;
+                match current.mutation_coverage {
+                    MutationCoverage::Full => {}
+                    MutationCoverage::BestEffort if risk_acknowledged => {}
+                    MutationCoverage::BestEffort => {
+                        anyhow::bail!("best-effort rollback requires explicit risk acknowledgement")
+                    }
+                    MutationCoverage::NonRollbackable => {
+                        anyhow::bail!("transaction declares non-rollbackable effects")
+                    }
+                }
+                let transaction = self
+                    .transactions
+                    .rollback(transaction_id, session_id, None, root)
+                    .await?;
+                let mut settlement = HostSettlementService.settle(&transaction, findings);
+                settlement.decision = HostSettlementDecision::RolledBack;
+                settlement.reason = "host restored the transaction baseline".into();
+                (transaction, settlement)
+            }
+        };
+        self.store.append(&settlement).await?;
+        Ok(TransactionReviewOutcome {
+            transaction,
+            settlement,
+        })
+    }
+
+    pub async fn latest(
+        &self,
+        session_id: &str,
+        transaction_id: &str,
+    ) -> anyhow::Result<Option<HostSettlementReceipt>> {
+        self.store.latest(session_id, transaction_id).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use corpus::tools::tools::change_transaction::ChangeTransactionRegistry;
     use fabric::change_transaction::{
-        ChangeTransactionId, ChangedRange, ValidationImpact, ValidationPlanStep, ValidationRisk,
-        VersionedValidationReceipt, WorkspaceVersion, WorkspaceVersionBasis,
+        ChangeTransactionId, ChangedRange, ValidationImpact, ValidationPlanOmission,
+        ValidationPlanStep, ValidationRisk, VersionedValidationReceipt, WorkspaceVersion,
+        WorkspaceVersionBasis,
     };
+
+    #[derive(Clone)]
+    struct RegistryAuthority(ChangeTransactionRegistry);
+
+    #[async_trait::async_trait]
+    impl ChangeTransactionAuthority for RegistryAuthority {
+        async fn snapshot(
+            &self,
+            transaction_id: fabric::change_transaction::ChangeTransactionId,
+        ) -> anyhow::Result<Option<ChangeTransactionSnapshot>> {
+            Ok(self.0.snapshot(transaction_id).await)
+        }
+
+        async fn accept(
+            &self,
+            transaction_id: fabric::change_transaction::ChangeTransactionId,
+            owner_session_id: &str,
+            owner_agent: Option<fabric::AgentToolContext>,
+            root: &std::path::Path,
+        ) -> anyhow::Result<ChangeTransactionSnapshot> {
+            self.0
+                .accept(transaction_id, owner_session_id, owner_agent, root)
+                .await
+                .map_err(|failure| anyhow::anyhow!(failure.summary))
+        }
+
+        async fn request_repair(
+            &self,
+            transaction_id: fabric::change_transaction::ChangeTransactionId,
+            owner_session_id: &str,
+            owner_agent: Option<fabric::AgentToolContext>,
+            root: &std::path::Path,
+        ) -> anyhow::Result<ChangeTransactionSnapshot> {
+            self.0
+                .request_repair(transaction_id, owner_session_id, owner_agent, root)
+                .await
+                .map_err(|failure| anyhow::anyhow!(failure.summary))
+        }
+
+        async fn rollback(
+            &self,
+            transaction_id: fabric::change_transaction::ChangeTransactionId,
+            owner_session_id: &str,
+            owner_agent: Option<fabric::AgentToolContext>,
+            root: &std::path::Path,
+        ) -> anyhow::Result<ChangeTransactionSnapshot> {
+            self.0
+                .rollback(transaction_id, owner_session_id, owner_agent, root)
+                .await
+                .map_err(|failure| anyhow::anyhow!(failure.summary))
+        }
+    }
 
     fn version(digest: &str) -> WorkspaceVersion {
         WorkspaceVersion {
@@ -209,7 +436,7 @@ mod tests {
                     &[finding(true)]
                 )
                 .decision,
-            HostSettlementDecision::Repair
+            HostSettlementDecision::RepairRequired
         );
     }
 
@@ -219,7 +446,7 @@ mod tests {
             &transaction(ChangeTransactionPhase::Validated),
             &[finding(false)],
         );
-        assert_eq!(receipt.decision, HostSettlementDecision::Repair);
+        assert_eq!(receipt.decision, HostSettlementDecision::RepairRequired);
         assert_eq!(receipt.finding_ids, vec!["finding-1"]);
     }
 
@@ -242,7 +469,7 @@ mod tests {
             reason: "external service unavailable".into(),
         });
         let receipt = HostSettlementService.settle(&tx, &[finding(true)]);
-        assert_eq!(receipt.decision, HostSettlementDecision::Repair);
+        assert_eq!(receipt.decision, HostSettlementDecision::RepairRequired);
         assert_eq!(receipt.validation_omissions.len(), 1);
     }
 
@@ -252,7 +479,92 @@ mod tests {
         tx.validation_receipts[0].terminal_status = "failed".into();
         assert_eq!(
             HostSettlementService.settle(&tx, &[finding(true)]).decision,
-            HostSettlementDecision::Repair
+            HostSettlementDecision::RepairRequired
+        );
+    }
+
+    #[tokio::test]
+    async fn host_review_service_executes_accept_repair_and_coverage_gated_rollback() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("tracked.txt"), "baseline").unwrap();
+        let registry = ChangeTransactionRegistry::default();
+        let accepted = registry.begin("accepted", temp.path()).await.unwrap();
+        registry
+            .record_apply(accepted.transaction_id, accepted.current.clone())
+            .await
+            .unwrap();
+        registry
+            .record_diff_review(accepted.transaction_id, "artifact://diff".into(), vec![])
+            .await
+            .unwrap();
+        let service = TransactionReviewService::new(
+            std::sync::Arc::new(RegistryAuthority(registry.clone())),
+            std::sync::Arc::new(InMemoryTransactionSettlementStore::default()),
+        );
+        let accepted = service
+            .review(
+                TransactionReviewAction::Accept,
+                accepted.transaction_id,
+                "accepted",
+                temp.path(),
+                &[],
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            accepted.settlement.decision,
+            HostSettlementDecision::Accepted
+        );
+        assert_eq!(accepted.transaction.phase, ChangeTransactionPhase::Accepted);
+
+        let repair = registry.begin("repair", temp.path()).await.unwrap();
+        let repair = service
+            .review(
+                TransactionReviewAction::Repair,
+                repair.transaction_id,
+                "repair",
+                temp.path(),
+                &[],
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(repair.transaction.phase, ChangeTransactionPhase::Repair);
+
+        let rollback = registry.begin("rollback", temp.path()).await.unwrap();
+        let rejected = service
+            .review(
+                TransactionReviewAction::Rollback,
+                rollback.transaction_id,
+                "rollback",
+                temp.path(),
+                &[],
+                false,
+            )
+            .await
+            .unwrap_err();
+        assert!(rejected
+            .to_string()
+            .contains("explicit risk acknowledgement"));
+        let rolled_back = service
+            .review(
+                TransactionReviewAction::Rollback,
+                rollback.transaction_id,
+                "rollback",
+                temp.path(),
+                &[],
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rolled_back.settlement.decision,
+            HostSettlementDecision::RolledBack
+        );
+        assert_eq!(
+            rolled_back.transaction.phase,
+            ChangeTransactionPhase::RolledBack
         );
     }
 }

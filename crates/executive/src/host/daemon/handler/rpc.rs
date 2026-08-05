@@ -62,6 +62,14 @@ impl RequestHandler {
             "review.status" => self.handle_review_status(connection, &id, &request).await,
             "review.wait" => self.handle_review_wait(connection, &id, &request).await,
             "review.cancel" => self.handle_review_cancel(connection, &id, &request).await,
+            "task.review/settle/v1" => {
+                self.handle_transaction_review(connection, &id, &request)
+                    .await
+            }
+            "task.review/latest/v1" => {
+                self.handle_transaction_settlement_latest(connection, &id, &request)
+                    .await
+            }
 
             // ── Admin / meta ──────────────────────────────────────────
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,

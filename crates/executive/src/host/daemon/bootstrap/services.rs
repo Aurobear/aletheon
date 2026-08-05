@@ -23,6 +23,72 @@ use crate::core::SessionGroup;
 use crate::host::daemon::session_manager::SessionManager;
 use crate::host::daemon::DaemonConfig;
 
+/// Composition adapter that keeps the concrete Corpus transaction registry at
+/// the bootstrap boundary while exposing only the Executive authority port to
+/// application services.
+pub(super) struct CorpusChangeTransactionAuthority(
+    corpus::tools::tools::change_transaction::ChangeTransactionRegistry,
+);
+
+impl CorpusChangeTransactionAuthority {
+    pub(super) fn new(
+        registry: corpus::tools::tools::change_transaction::ChangeTransactionRegistry,
+    ) -> Self {
+        Self(registry)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::application::settlement::ChangeTransactionAuthority
+    for CorpusChangeTransactionAuthority
+{
+    async fn snapshot(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+    ) -> anyhow::Result<Option<fabric::change_transaction::ChangeTransactionSnapshot>> {
+        Ok(self.0.snapshot(transaction_id).await)
+    }
+
+    async fn accept(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<fabric::change_transaction::ChangeTransactionSnapshot> {
+        self.0
+            .accept(transaction_id, owner_session_id, owner_agent, root)
+            .await
+            .map_err(|failure| anyhow::anyhow!(failure.summary))
+    }
+
+    async fn request_repair(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<fabric::change_transaction::ChangeTransactionSnapshot> {
+        self.0
+            .request_repair(transaction_id, owner_session_id, owner_agent, root)
+            .await
+            .map_err(|failure| anyhow::anyhow!(failure.summary))
+    }
+
+    async fn rollback(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<fabric::change_transaction::ChangeTransactionSnapshot> {
+        self.0
+            .rollback(transaction_id, owner_session_id, owner_agent, root)
+            .await
+            .map_err(|failure| anyhow::anyhow!(failure.summary))
+    }
+}
+
 // ── Stage 1: agent control service ──────────────────────────────────────
 
 pub(super) struct AgentServices {
