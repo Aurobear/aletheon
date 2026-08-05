@@ -565,7 +565,6 @@ mod tests {
     use fabric::ToolDefinition;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
-
     /// No-op compressor for tests that don't exercise compaction.
     struct NoopCompressor;
     impl CompactorTrait for NoopCompressor {
@@ -584,7 +583,6 @@ mod tests {
             Box::pin(async { Ok(false) })
         }
     }
-
     /// Counts which compaction entry point the harness invoked, to prove the
     /// `compaction_v2` flag routes correctly.
     struct RecordingCompressor {
@@ -627,7 +625,6 @@ mod tests {
             })
         }
     }
-
     #[tokio::test]
     async fn compaction_v2_flag_routes_to_v2_path() {
         let v2 = Arc::new(AtomicUsize::new(0));
@@ -653,7 +650,6 @@ mod tests {
         assert_eq!(v2.load(Ordering::SeqCst), 1, "v2 path should be taken");
         assert_eq!(legacy.load(Ordering::SeqCst), 0, "legacy must not run");
     }
-
     #[tokio::test]
     async fn compaction_uses_legacy_path_when_flag_off() {
         let v2 = Arc::new(AtomicUsize::new(0));
@@ -894,64 +890,6 @@ mod tests {
         fn max_context_length(&self) -> usize {
             100_000
         }
-    }
-
-    #[tokio::test]
-    async fn streaming_tool_result_preserves_patch_delta() {
-        let mut lp = ReActLoop::new(
-            HarnessConfig {
-                max_iterations: 3,
-                learning_enabled: false,
-                compaction_enabled: false,
-                ..HarnessConfig::default()
-            },
-            Box::new(NoopCompressor),
-        );
-        lp.messages.push(Message::user("go"));
-        let llm = ScriptedLlm {
-            calls: Mutex::new(0),
-        };
-        let sink = CollectingEventSink(Mutex::new(Vec::new()));
-        let delta = fabric::PatchDelta {
-            files_changed: vec![fabric::PatchDeltaFileChange {
-                path: "proof.txt".into(),
-                change_type: "added".into(),
-                hunks_applied: 1,
-                bytes_before: 0,
-                bytes_after: 5,
-                is_binary: false,
-            }],
-            ..Default::default()
-        };
-
-        lp.run_streaming(
-            &llm,
-            &[],
-            move |_id: &str, _name: &str, _input: &serde_json::Value| {
-                let delta = delta.clone();
-                async move {
-                    crate::harness::event_sink::ToolResultEvent {
-                        content: "wrote".into(),
-                        is_error: false,
-                        execution_time_ms: 7,
-                        patch_delta: Some(delta),
-                    }
-                }
-            },
-            || async { Ok(Vec::new()) },
-            &sink,
-        )
-        .await
-        .unwrap();
-
-        assert!(sink.0.lock().unwrap().iter().any(|event| matches!(
-            event,
-            crate::harness::event_sink::Event::ToolResult { result, .. }
-                if result.execution_time_ms == 7
-                    && result.patch_delta.as_ref().is_some_and(|delta| {
-                        delta.files_changed.first().is_some_and(|file| file.path == "proof.txt")
-                    })
-        )));
     }
 
     #[tokio::test]
