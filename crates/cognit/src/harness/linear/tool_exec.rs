@@ -789,10 +789,6 @@ enum ChangeTransactionObservation {
         workspace_version: String,
         artifact_ref: Option<String>,
     },
-    Accepted {
-        transaction_id: String,
-        workspace_version: String,
-    },
 }
 
 impl ReActLoop {
@@ -984,10 +980,10 @@ impl ReActLoop {
                             workspace_version: workspace_version.clone(),
                         });
                     }
-                    state.require_action(RequiredAction::AcceptChange {
-                        transaction_id,
-                        workspace_version,
-                    });
+                    // The model must produce review and validation evidence,
+                    // but cannot settle its own mutation. Acceptance/repair is
+                    // a later Host review action and is intentionally absent
+                    // from the production model-tool registry.
                 }
                 self.completion_gate_mode = CompletionGateMode::Enforce;
             }
@@ -1061,25 +1057,6 @@ impl ReActLoop {
                     state.phase = CognitiveWorkPhase::Synthesize;
                 }
             }
-            ChangeTransactionObservation::Accepted {
-                transaction_id,
-                workspace_version,
-            } => {
-                self.evidence_ledger.record(EvidenceRecord {
-                    id: EvidenceId(format!("change-acceptance:{call_id}")),
-                    subject: EvidenceSubject::ChangeAcceptance {
-                        transaction_id,
-                        workspace_version: workspace_version.clone(),
-                    },
-                    source: EvidenceSource::HostRuntime,
-                    level: EvidenceLevel::DeterministicallyVerified,
-                    terminal_status: TerminalStatus::Succeeded,
-                    locator: EvidenceLocator::DurableReceipt {
-                        receipt_id: call_id.into(),
-                    },
-                    digest: Some(workspace_version),
-                });
-            }
         }
     }
 }
@@ -1113,14 +1090,6 @@ fn change_transaction_observation(
                     })
                 })
                 .unwrap_or(true),
-        });
-    }
-    if capability == "change_accept"
-        && payload.get("kind")?.as_str()? == "change_acceptance_receipt"
-    {
-        return Some(ChangeTransactionObservation::Accepted {
-            transaction_id: payload.get("transaction_id")?.as_str()?.into(),
-            workspace_version: payload.get("workspace_version")?.as_str()?.into(),
         });
     }
     if capability == "git_diff" && payload.get("kind")?.as_str()? == "change_diff_receipt" {
@@ -1208,7 +1177,7 @@ mod change_transaction_tests {
     }
 
     #[test]
-    fn version_bound_change_cannot_complete_before_diff_validation_and_acceptance() {
+    fn version_bound_change_completes_after_diff_review_and_validation() {
         let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
         loop_state.observe_change_transaction(
             "apply_patch",
@@ -1221,7 +1190,7 @@ mod change_transaction_tests {
                 loop_state.cognitive_state.as_ref().unwrap(),
                 &loop_state.evidence_ledger
             ),
-            ProgressDecision::Continue { ref missing } if missing.len() == 3
+            ProgressDecision::Continue { ref missing } if missing.len() == 2
         ));
 
         loop_state.observe_change_transaction(
@@ -1236,20 +1205,6 @@ mod change_transaction_tests {
             r#"{"change_transaction":{"transaction_id":"tx","phase":"validated","validation_receipts":[{"workspace_version":"v1","output_ref":"artifact://sha256/test"}]}}"#,
             false,
         );
-        assert!(matches!(
-            ProgressAuditor.audit(
-                loop_state.cognitive_state.as_ref().unwrap(),
-                &loop_state.evidence_ledger
-            ),
-            ProgressDecision::Continue { ref missing } if missing.len() == 1
-        ));
-
-        loop_state.observe_change_transaction(
-            "change_accept",
-            "accept",
-            r#"{"kind":"change_acceptance_receipt","transaction_id":"tx","workspace_version":"v1","transaction_phase":"accepted"}"#,
-            false,
-        );
         assert_eq!(
             ProgressAuditor.audit(
                 loop_state.cognitive_state.as_ref().unwrap(),
@@ -1260,7 +1215,7 @@ mod change_transaction_tests {
     }
 
     #[test]
-    fn validation_free_change_completes_after_review_and_acceptance() {
+    fn validation_free_change_completes_after_host_derived_review() {
         let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
         loop_state.observe_change_transaction(
             "file_write",
@@ -1273,27 +1228,13 @@ mod change_transaction_tests {
                 loop_state.cognitive_state.as_ref().unwrap(),
                 &loop_state.evidence_ledger
             ),
-            ProgressDecision::Continue { ref missing } if missing.len() == 2
+            ProgressDecision::Continue { ref missing } if missing.len() == 1
         ));
 
         loop_state.observe_change_transaction(
             "git_diff",
             "diff",
             r#"{"kind":"change_diff_receipt","transaction_id":"tx","workspace_version":"v1","diff_artifact_ref":"artifact://sha256/diff","transaction_phase":"validated"}"#,
-            false,
-        );
-        assert!(matches!(
-            ProgressAuditor.audit(
-                loop_state.cognitive_state.as_ref().unwrap(),
-                &loop_state.evidence_ledger
-            ),
-            ProgressDecision::Continue { ref missing } if missing.len() == 1
-        ));
-
-        loop_state.observe_change_transaction(
-            "change_accept",
-            "accept",
-            r#"{"kind":"change_acceptance_receipt","transaction_id":"tx","workspace_version":"v1","transaction_phase":"accepted"}"#,
             false,
         );
         assert_eq!(
@@ -1331,7 +1272,7 @@ mod change_transaction_tests {
                 loop_state.cognitive_state.as_ref().unwrap(),
                 &loop_state.evidence_ledger
             ),
-            ProgressDecision::Continue { ref missing } if missing.len() == 3
+            ProgressDecision::Continue { ref missing } if missing.len() == 2
         ));
     }
 

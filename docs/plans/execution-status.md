@@ -487,6 +487,19 @@ BLOCKER: publication/PR/merge intentionally deferred by owner; X12 installed rer
 MERGE_SHA: pending_by_owner
 ```
 
+## XF-009
+
+```text
+STATUS: code_complete
+NODE: XF-009
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Installed artifact target/x12-xf005-installed-probe-20260805-225057/rust_bugfix.json used binary SHA 4b0a695cd9c29ad253e1b77113f0b844b51db6ba4f0573e241554cf57e5db606 with stable daemon generations. It changed only src/lib.rs to the correct boundary implementation and its second sandboxed cargo test succeeded. The run nevertheless reached 300 seconds without a terminal envelope; stderr records the enforced cognitive completion gate still missing RequiredAction::AcceptChange. Production registry/profile contracts intentionally keep change_accept Host-only, so the model cannot satisfy that obligation. Cognit now requires only the exact version-bound diff review and required validation before emitting its candidate; acceptance/repair remains a subsequent Host-owned action. Four focused change-transaction tests, the full-loop exact-closure regression, Cognit all-target clippy with -D warnings, formatting, documentation paths, and the complete architecture suite pass.
+FAILURES: installed rust_bugfix probe ended execution_timeout with no authoritative terminal snapshot despite correct scoped code and successful validation; this result does not count toward U-INST-003.
+BLOCKER: publication/PR/merge intentionally deferred by owner; installed deployment and same-probe rerun remain pending.
+MERGE_SHA: pending_by_owner
+```
+
 ## X13
 
 ```text
