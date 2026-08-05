@@ -1,7 +1,10 @@
 # key\tsurface\tparent\tname\taliases\tsummary\tcategory\tusage\texecution\tavailability\tvisibility\tintent
 cli.core	cli	-	core	-	Start the machine-scoped inference core	internal	aletheon core	compatibility	always	internal	-
 cli.daemon	cli	-	daemon	-	Start daemon (auto-detects systemd/container/foreground)	operations	aletheon daemon	compatibility	always	public	-
-cli.exec	cli	-	exec	-	Non-interactive execution	task	aletheon exec --prompt <PROMPT>	compatibility	always	public	-
+cli.exec	cli	-	exec	-	Non-interactive execution	task	aletheon exec --prompt <PROMPT>	application	always	public	-
+cli.run	cli	-	run	-	Run a human-facing governed task	task	aletheon run [PROMPT]	application	always	public	-
+cli.resume	cli	-	resume	-	Resume a session or select one from history	session	aletheon resume [SESSION]	application	always	public	-
+cli.completion	cli	-	completion	-	Print a generated shell completion script	configuration	aletheon completion <SHELL>	local	always	public	-
 cli.version	cli	-	version	-	Print version	information	aletheon version	local	always	public	-
 cli.restore-terminal	cli	-	restore-terminal	-	Restore terminal modes after an interrupted TUI session	internal	aletheon restore-terminal	local	always	internal	-
 cli.config	cli	-	config	-	Inspect effective configuration (merged layers)	configuration	aletheon config <ACTION>	compatibility	always	public	-

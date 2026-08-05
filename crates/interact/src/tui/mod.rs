@@ -129,6 +129,7 @@ pub async fn run_with_workspace_requirements(
         workspace,
         turn_requirements,
         None,
+        crate::host::InitialSession::New,
     )
     .await
 }
@@ -139,6 +140,7 @@ pub async fn run_with_workspace_requirements_and_task_kind(
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
+    initial_session: crate::host::InitialSession,
 ) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
     let clock: Arc<dyn Clock> = Arc::new(self::host_time::ClientClock::new());
@@ -163,6 +165,10 @@ pub async fn run_with_workspace_requirements_and_task_kind(
     if (!atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout))
         && test_config.test_input.is_none()
     {
+        anyhow::ensure!(
+            initial_session == crate::host::InitialSession::New,
+            "session selection requires an interactive terminal; pass `aletheon run PROMPT --resume SESSION` for non-interactive use"
+        );
         return simple_line_mode(
             stream,
             caps,
@@ -193,6 +199,7 @@ pub async fn run_with_workspace_requirements_and_task_kind(
             workspace.clone(),
             turn_requirements.clone(),
             task_kind,
+            initial_session,
         )
         .await
     } else {
@@ -272,6 +279,7 @@ pub async fn run_with_workspace_requirements_and_task_kind(
             workspace,
             turn_requirements,
             task_kind,
+            initial_session,
         )
         .await;
 

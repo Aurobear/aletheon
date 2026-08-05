@@ -89,6 +89,15 @@ pub struct MessageLaunch {
     pub message: String,
     pub required_agent_runtimes: Vec<String>,
     pub task_kind: Option<fabric::TaskKind>,
+    pub session_id: Option<fabric::SessionId>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum InitialSession {
+    #[default]
+    New,
+    Resume(fabric::SessionId),
+    Pick,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +106,7 @@ pub struct TuiLaunch {
     pub workspace: WorkspaceLaunch,
     pub required_agent_runtimes: Vec<String>,
     pub task_kind: Option<fabric::TaskKind>,
+    pub initial_session: InitialSession,
 }
 
 fn agent_runtime_requirements(runtime_ids: Vec<String>) -> Vec<fabric::TurnRequirement> {
@@ -193,6 +203,7 @@ pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {
         &workspace,
         agent_runtime_requirements(request.required_agent_runtimes),
         request.task_kind,
+        request.session_id,
     )
     .await
 }
@@ -208,6 +219,7 @@ pub async fn run_tui(request: TuiLaunch, config: crate::tui::TestConfig) -> anyh
         workspace,
         agent_runtime_requirements(request.required_agent_runtimes),
         request.task_kind,
+        request.initial_session,
     )
     .await
 }

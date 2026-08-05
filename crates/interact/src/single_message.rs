@@ -27,13 +27,14 @@ pub(crate) async fn run(
     workspace: &fabric::WorkspacePolicy,
     requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
+    session_id: Option<fabric::SessionId>,
 ) -> Result<()> {
     let mut stream = UnixStream::connect(socket).await?;
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
 
-    let request =
-        prompt_request(message, workspace, requirements, task_kind).to_json_rpc(Some(1))?;
+    let request = prompt_request(message, workspace, requirements, task_kind, session_id)
+        .to_json_rpc(Some(1))?;
     let req_str = serde_json::to_string(&request)?;
     writer.write_all(req_str.as_bytes()).await?;
     writer.write_all(b"\n").await?;
@@ -172,11 +173,14 @@ fn prompt_request(
     workspace: &fabric::WorkspacePolicy,
     requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
+    session_id: Option<fabric::SessionId>,
 ) -> ClientRpcRequest {
     let permission_mode = crate::host::permission_mode_from_environment();
-    let explicit_session = std::env::var("ALETHEON_BENCHMARK_SESSION_ID")
-        .ok()
-        .filter(|session_id| !session_id.trim().is_empty());
+    let explicit_session = session_id.map(|session_id| session_id.0).or_else(|| {
+        std::env::var("ALETHEON_BENCHMARK_SESSION_ID")
+            .ok()
+            .filter(|session_id| !session_id.trim().is_empty())
+    });
     crate::intent::rpc(prompt_intent(
         message,
         workspace,

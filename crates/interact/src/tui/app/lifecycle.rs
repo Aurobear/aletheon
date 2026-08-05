@@ -25,6 +25,27 @@ use super::super::{
 use super::key_handler::{handle_key, handle_mouse};
 use super::submit::submit_message;
 
+fn initial_session_request(
+    initial_session: crate::host::InitialSession,
+) -> (ClientRpcRequest, super::super::PendingCommand) {
+    match initial_session {
+        crate::host::InitialSession::New => (
+            ClientRpcRequest::SessionNew,
+            super::super::PendingCommand::InitializeSession,
+        ),
+        crate::host::InitialSession::Resume(session_id) => (
+            ClientRpcRequest::resume(session_id.0),
+            super::super::PendingCommand::Resume {
+                previous_session_id: None,
+            },
+        ),
+        crate::host::InitialSession::Pick => (
+            ClientRpcRequest::Sessions,
+            super::super::PendingCommand::OpenSessionPicker,
+        ),
+    }
+}
+
 pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     stream: UnixStream,
@@ -36,6 +57,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
+    initial_session: crate::host::InitialSession,
 ) -> anyhow::Result<()> {
     let mut app = App::new(
         stream,
@@ -69,12 +91,11 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
     // Populate completion/help from the daemon-owned Skill catalog. The
     // registry retains its last valid catalog if a later refresh fails.
-    // A terminal connection owns a fresh session by default. Reusing the
-    // workspace's most recent session makes concurrent TUI instances share
-    // history and lets one client's output appear in another client's view.
-    let init_id = super::submit::write_request(&mut app, ClientRpcRequest::SessionNew).await;
-    app.pending_commands
-        .insert(init_id, super::super::PendingCommand::InitializeSession);
+    // The top-level CLI chooses whether this terminal owns a fresh session,
+    // resumes an explicit session, or opens the daemon-backed history picker.
+    let (initial_request, initial_pending) = initial_session_request(initial_session);
+    let init_id = super::submit::write_request(&mut app, initial_request).await;
+    app.pending_commands.insert(init_id, initial_pending);
     let skills_id = super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
     app.pending_commands
         .insert(skills_id, super::super::PendingCommand::InitializeSkills);
@@ -480,5 +501,26 @@ fn evaluation_receipt_from_protocol_message(
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_session_selection_uses_typed_session_requests() {
+        let cases = [
+            (crate::host::InitialSession::New, "session.new"),
+            (
+                crate::host::InitialSession::Resume(fabric::SessionId("session-7".into())),
+                "resume",
+            ),
+            (crate::host::InitialSession::Pick, "sessions"),
+        ];
+        for (selection, method) in cases {
+            let (request, _) = initial_session_request(selection);
+            assert_eq!(request.to_json_rpc(Some(1)).unwrap()["method"], method);
+        }
     }
 }

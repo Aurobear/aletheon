@@ -111,6 +111,12 @@ enum ExecOutputArg {
     Jsonl,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CompletionShell {
+    Bash,
+    Zsh,
+}
+
 impl PermissionModeArg {
     fn effective(self, full: bool) -> &'static str {
         if full {
@@ -186,6 +192,18 @@ enum Commands {
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
         timeout_seconds: Option<u64>,
     },
+    /// Run one human-facing governed task, or open its interactive session.
+    Run {
+        /// Task prompt. When omitted, opens the interactive TUI.
+        prompt: Option<String>,
+        /// Resume this session instead of creating a new one.
+        #[arg(long, value_name = "SESSION")]
+        resume: Option<String>,
+    },
+    /// Resume a session, selecting from history when SESSION is omitted.
+    Resume { session: Option<String> },
+    /// Print the generated shell completion script.
+    Completion { shell: CompletionShell },
     /// Print version
     Version,
     /// Restore terminal modes after an interrupted TUI session
@@ -484,6 +502,47 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        (Some(Commands::Run { prompt, resume }), _) => {
+            let session_id = resume.clone().map(fabric::SessionId);
+            if let Some(prompt) = prompt {
+                interact::host::run_single_message(interact::host::MessageLaunch {
+                    socket: cli.socket.clone(),
+                    workspace: cli.workspace.interact_launch(),
+                    message: prompt.clone(),
+                    required_agent_runtimes: cli.required_agent_runtimes.clone(),
+                    task_kind: cli.task_kind.map(Into::into),
+                    session_id,
+                })
+                .await
+            } else {
+                run_interactive(
+                    &cli,
+                    session_id.map_or(
+                        interact::host::InitialSession::New,
+                        interact::host::InitialSession::Resume,
+                    ),
+                )
+                .await
+            }
+        }
+        (Some(Commands::Resume { session }), _) => {
+            let initial_session = session
+                .clone()
+                .map_or(interact::host::InitialSession::Pick, |session| {
+                    interact::host::InitialSession::Resume(fabric::SessionId(session))
+                });
+            run_interactive(&cli, initial_session).await
+        }
+        (Some(Commands::Completion { shell }), _) => {
+            let script = match shell {
+                CompletionShell::Bash => {
+                    include_str!("../../../scripts/completions/aletheon.bash")
+                }
+                CompletionShell::Zsh => include_str!("../../../scripts/completions/aletheon.zsh"),
+            };
+            print!("{script}");
+            Ok(())
+        }
         (Some(Commands::Version), _) => {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -538,31 +597,34 @@ async fn main() -> Result<()> {
                 message: msg.clone(),
                 required_agent_runtimes: cli.required_agent_runtimes.clone(),
                 task_kind: cli.task_kind.map(Into::into),
+                session_id: None,
             })
             .await
         }
         // No subcommand, no -m: TUI mode. The unified binary owns argument
         // parsing, so pass instrumentation through instead of parsing twice.
-        (None, None) => {
-            let config = interact::tui::TestConfig {
-                test_input: cli.test_input,
-                record_frames: cli.record_frames,
-                record_events: cli.record_events,
-                auto_submit: cli.auto_submit,
-                test_timeout: cli.test_timeout,
-            };
-            interact::host::run_tui(
-                interact::host::TuiLaunch {
-                    socket: cli.socket.clone(),
-                    workspace: cli.workspace.interact_launch(),
-                    required_agent_runtimes: cli.required_agent_runtimes.clone(),
-                    task_kind: cli.task_kind.map(Into::into),
-                },
-                config,
-            )
-            .await
-        }
+        (None, None) => run_interactive(&cli, interact::host::InitialSession::New).await,
     }
+}
+
+async fn run_interactive(cli: &Cli, initial_session: interact::host::InitialSession) -> Result<()> {
+    interact::host::run_tui(
+        interact::host::TuiLaunch {
+            socket: cli.socket.clone(),
+            workspace: cli.workspace.interact_launch(),
+            required_agent_runtimes: cli.required_agent_runtimes.clone(),
+            task_kind: cli.task_kind.map(Into::into),
+            initial_session,
+        },
+        interact::tui::TestConfig {
+            test_input: cli.test_input.clone(),
+            record_frames: cli.record_frames.clone(),
+            record_events: cli.record_events.clone(),
+            auto_submit: cli.auto_submit,
+            test_timeout: cli.test_timeout,
+        },
+    )
+    .await
 }
 
 fn parse_cli() -> Cli {
@@ -846,6 +908,33 @@ mod daemon_cli_tests {
 
         let tui = Cli::try_parse_from(["aletheon", "--task-kind", "coding"]).unwrap();
         assert_eq!(tui.task_kind, Some(TaskKindArg::Coding));
+    }
+
+    #[test]
+    fn run_resume_and_completion_are_canonical_top_level_commands() {
+        let run =
+            Cli::try_parse_from(["aletheon", "run", "inspect", "--resume", "session-7"]).unwrap();
+        assert!(matches!(
+            run.command,
+            Some(Commands::Run {
+                prompt: Some(prompt),
+                resume: Some(session),
+            }) if prompt == "inspect" && session == "session-7"
+        ));
+
+        let resume = Cli::try_parse_from(["aletheon", "resume"]).unwrap();
+        assert!(matches!(
+            resume.command,
+            Some(Commands::Resume { session: None })
+        ));
+
+        let completion = Cli::try_parse_from(["aletheon", "completion", "zsh"]).unwrap();
+        assert!(matches!(
+            completion.command,
+            Some(Commands::Completion {
+                shell: CompletionShell::Zsh
+            })
+        ));
     }
 
     #[test]
