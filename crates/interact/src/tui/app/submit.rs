@@ -487,6 +487,12 @@ pub async fn submit_message(app: &mut App, text: String) {
     }
 
     // Regular chat message
+    if let Err(error) = super::super::input_safety::resolve_attachments(&text, &app.workspace) {
+        app.input_buf = text;
+        app.cursor = app.input_buf.len();
+        app.app_state.last_error = Some(format!("attachment rejected: {error}"));
+        return;
+    }
     app.history.push(text.clone());
     app.persist_input_state();
     app.chat.add_text(ChatRole::User, text.clone());

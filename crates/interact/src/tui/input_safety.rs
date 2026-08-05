@@ -130,6 +130,23 @@ pub fn resolve_attachment(
     })
 }
 
+/// Parse and validate every whitespace-delimited `@path` reference before a
+/// prompt crosses the client boundary. The returned values retain workspace
+/// authority and byte-size evidence instead of degrading to unchecked text.
+pub fn resolve_attachments(
+    input: &str,
+    workspace: &WorkspacePolicy,
+) -> Result<Vec<AttachmentReference>, String> {
+    input
+        .split_whitespace()
+        .filter(|token| token.starts_with('@'))
+        .map(|token| {
+            let token = token.trim_end_matches([',', ';', ')', ']', '}']);
+            resolve_attachment(token, workspace)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +175,28 @@ mod tests {
         );
         #[cfg(unix)]
         assert!(resolve_attachment("@link.txt", &workspace).is_err());
+    }
+
+    #[test]
+    fn u_input_003_prompt_references_become_typed_workspace_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("evidence.txt"), "proof").unwrap();
+        let workspace =
+            WorkspacePolicy::from_resolved_roots(dir.path().to_path_buf(), vec![]).unwrap();
+        let attachments =
+            resolve_attachments("review @evidence.txt, then report", &workspace).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].requested, "evidence.txt");
+        assert_eq!(attachments[0].byte_len, 5);
+        assert!(attachments[0].resolved.starts_with(dir.path()));
+    }
+
+    #[test]
+    fn u_input_006_attachment_escape_is_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace =
+            WorkspacePolicy::from_resolved_roots(dir.path().to_path_buf(), vec![]).unwrap();
+        assert!(resolve_attachments("read @../secret", &workspace).is_err());
+        assert!(resolve_attachments("read @missing", &workspace).is_err());
     }
 }

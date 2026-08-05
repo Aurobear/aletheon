@@ -16,6 +16,7 @@ pub mod command;
 pub mod completion;
 pub mod conscious_core;
 pub mod diff_view;
+pub mod file_picker;
 
 pub mod help_overlay;
 pub mod history_search;

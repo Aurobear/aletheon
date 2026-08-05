@@ -15,6 +15,9 @@ pub(crate) fn refresh_command_completion(app: &mut App) {
     if app.input_buf.starts_with('/') {
         app.completion
             .show_commands(&app.input_buf, &app.registry, app.turn_active);
+    } else if app.input_buf.starts_with('@') && !app.input_buf.contains(char::is_whitespace) {
+        app.completion
+            .show_attachments(&app.input_buf, &app.workspace);
     } else {
         app.completion.hide();
     }

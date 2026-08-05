@@ -23,3 +23,6 @@ U-TUI-004	X6a	test	crates/interact/src/tui/task_console.rs
 U-TUI-005	X6a	test	crates/interact/src/tui/app/key_handler.rs
 U-TUI-006	X6a	test	crates/interact/src/tui/task_console.rs
 U-TUI-007	X6a	test	crates/interact/src/tui/task_console.rs
+U-INPUT-001	X6b	test	crates/interact/src/tui/file_picker.rs
+U-INPUT-003	X6b	test	crates/interact/src/tui/input_safety.rs
+U-INPUT-006	X6b	test	crates/interact/src/tui/input_safety.rs
