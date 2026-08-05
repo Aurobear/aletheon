@@ -1217,6 +1217,10 @@ pub struct CheckpointListEntry {
     pub checkpoint_id: String,
     pub turn_id: String,
     pub prompt_index: u64,
+    /// Canonical Session event boundary for a historical fork. This is
+    /// resolved by the Host from the checkpoint turn identity; clients must
+    /// never infer it from `prompt_index`.
+    pub through_sequence: u64,
     pub created_at_ms: i64,
     pub finalized: bool,
 }

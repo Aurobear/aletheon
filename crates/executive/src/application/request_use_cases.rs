@@ -619,6 +619,11 @@ pub trait TurnUseCases: Send + Sync {
         id: SessionId,
         through: u64,
     ) -> anyhow::Result<fabric::SessionRecord>;
+    async fn session_sequence_through_turn(
+        &self,
+        id: SessionId,
+        turn_id: fabric::TurnId,
+    ) -> anyhow::Result<u64>;
     async fn session_interrupt(&self, id: SessionId) -> anyhow::Result<InterruptOutcome>;
     async fn session_replay(
         &self,
@@ -756,6 +761,13 @@ impl TurnUseCases for ProductionTurnUseCases {
         through: u64,
     ) -> anyhow::Result<fabric::SessionRecord> {
         self.sessions.fork(&id, through).await
+    }
+    async fn session_sequence_through_turn(
+        &self,
+        id: SessionId,
+        turn_id: fabric::TurnId,
+    ) -> anyhow::Result<u64> {
+        self.sessions.sequence_through_turn(&id, turn_id).await
     }
     async fn session_interrupt(&self, id: SessionId) -> anyhow::Result<InterruptOutcome> {
         self.sessions.interrupt(&id).await

@@ -280,21 +280,63 @@ impl RequestHandler {
             .list_session_checkpoints(session_id, limit)
             .await
         {
-            Ok(checkpoints) => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "schema_version": fabric::CHECKPOINT_LIST_SCHEMA_VERSION,
-                    "session_id": session_id,
-                    "checkpoints": checkpoints.into_iter().map(|checkpoint| json!({
+            Ok(checkpoints) => {
+                let mut entries = Vec::with_capacity(checkpoints.len());
+                for checkpoint in checkpoints {
+                    let through_sequence = match self
+                        .ports
+                        .turn
+                        .session_sequence_through_turn(
+                            fabric::SessionId(session_id.to_owned()),
+                            match uuid::Uuid::parse_str(&checkpoint.turn_id) {
+                                Ok(turn_id) => fabric::TurnId(turn_id),
+                                Err(error) => {
+                                    return json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "error": {
+                                            "code": -32043,
+                                            "message": "checkpoint list contains invalid turn identity",
+                                            "data": error.to_string()
+                                        }
+                                    });
+                                }
+                            },
+                        )
+                        .await
+                    {
+                        Ok(sequence) => sequence,
+                        Err(error) => {
+                            return json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "error": {
+                                    "code": -32043,
+                                    "message": "checkpoint list could not resolve session boundary",
+                                    "data": error.to_string()
+                                }
+                            });
+                        }
+                    };
+                    entries.push(json!({
                         "checkpoint_id": checkpoint.checkpoint_id.0.to_string(),
                         "turn_id": checkpoint.turn_id,
                         "prompt_index": checkpoint.prompt_index,
+                        "through_sequence": through_sequence,
                         "created_at_ms": checkpoint.created_at_ms,
                         "finalized": matches!(checkpoint.finalize_state, fabric::types::workspace_checkpoint::CheckpointFinalizeState::Finalized),
-                    })).collect::<Vec<_>>(),
+                    }));
                 }
-            }),
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "schema_version": fabric::CHECKPOINT_LIST_SCHEMA_VERSION,
+                        "session_id": session_id,
+                        "checkpoints": entries,
+                    }
+                })
+            }
             Err(error) => json!({
                 "jsonrpc": "2.0",
                 "id": id,

@@ -465,6 +465,26 @@ impl SessionService {
         Ok(child)
     }
 
+    /// Resolve the canonical event boundary for a turn in a session.
+    ///
+    /// Checkpoint clients must not guess that a user-facing prompt index is an
+    /// event sequence. A turn can contain multiple items, so a historical fork
+    /// is anchored after the last persisted item owned by that turn.
+    pub async fn sequence_through_turn(
+        &self,
+        session_id: &SessionId,
+        turn_id: TurnId,
+    ) -> Result<u64> {
+        self.store
+            .load_items(session_id, None)
+            .await?
+            .into_iter()
+            .filter(|item| item.turn_id == turn_id)
+            .map(|item| item.sequence)
+            .max()
+            .ok_or_else(|| anyhow::anyhow!("checkpoint turn is absent from session authority"))
+    }
+
     pub async fn replay(
         &self,
         session_id: &SessionId,

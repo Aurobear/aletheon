@@ -151,6 +151,7 @@ mod tests {
                 checkpoint_id: "checkpoint".into(),
                 turn_id: "turn".into(),
                 prompt_index: 42,
+                through_sequence: 17,
                 created_at_ms: 1,
                 finalized: true,
             }],
