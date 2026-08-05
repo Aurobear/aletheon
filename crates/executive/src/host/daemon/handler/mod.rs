@@ -430,10 +430,37 @@ impl RequestHandler {
                 "session.resume" => self.ports.turn.session_resume(session_id.clone()).await.map(|resume| serde_json::json!({
                     "session": resume.session, "next_sequence": resume.next_sequence, "messages": resume.messages,
                 })),
-                "session.fork" => self.ports.turn.session_fork(
-                    session_id.clone(),
-                    params.get("through_sequence").and_then(|v| v.as_u64()).unwrap_or(0),
-                ).await.and_then(|record| serde_json::to_value(record).map_err(Into::into)),
+                "session.fork" => async {
+                    let parent_key = crate::application::thread_authority::ThreadAuthorityKey::new(
+                        connection.principal_id.clone(),
+                        fabric::ThreadId(session_id.0.clone()),
+                    );
+                    let settings = self
+                        .thread_authority
+                        .get(&parent_key)
+                        .map_err(anyhow::Error::from)?
+                        .ok_or_else(|| anyhow::anyhow!("no host-bound authority for parent session"))?;
+                    let record = self
+                        .ports
+                        .turn
+                        .session_fork(
+                            session_id.clone(),
+                            params
+                                .get("through_sequence")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                        )
+                        .await?;
+                    let child_key = crate::application::thread_authority::ThreadAuthorityKey::new(
+                        connection.principal_id.clone(),
+                        fabric::ThreadId(record.id.0.clone()),
+                    );
+                    self.thread_authority
+                        .bind_or_verify(&child_key, &settings)
+                        .map_err(anyhow::Error::from)?;
+                    serde_json::to_value(record).map_err(Into::into)
+                }
+                .await,
                 "session.interrupt" => self.ports.turn.session_interrupt(session_id.clone()).await.map(|outcome| serde_json::json!({
                     "outcome": format!("{outcome:?}").to_lowercase(),
                 })),
