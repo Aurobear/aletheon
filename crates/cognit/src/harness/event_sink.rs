@@ -264,6 +264,17 @@ pub struct ToolResultEvent {
     pub patch_delta: Option<fabric::PatchDelta>,
 }
 
+impl From<(String, bool)> for ToolResultEvent {
+    fn from((content, is_error): (String, bool)) -> Self {
+        Self {
+            content,
+            is_error,
+            execution_time_ms: 0,
+            patch_delta: None,
+        }
+    }
+}
+
 impl From<&ToolResult> for ToolResultEvent {
     fn from(tr: &ToolResult) -> Self {
         Self {

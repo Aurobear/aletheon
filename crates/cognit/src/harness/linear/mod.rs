@@ -858,7 +858,33 @@ mod tests {
             _m: &[Message],
             _t: &[ToolDefinition],
         ) -> anyhow::Result<LlmStream> {
-            unimplemented!("not used in test")
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            let chunks = if *n == 1 {
+                vec![
+                    Ok(StreamChunk::ToolUseStart {
+                        id: "call_1".into(),
+                        name: "echo_tool".into(),
+                    }),
+                    Ok(StreamChunk::ToolUseComplete {
+                        id: "call_1".into(),
+                        input: serde_json::json!({"text": "hi"}),
+                    }),
+                    Ok(StreamChunk::Done {
+                        stop_reason: StopReason::ToolUse,
+                    }),
+                ]
+            } else {
+                vec![
+                    Ok(StreamChunk::TextDelta {
+                        text: "done: hi".into(),
+                    }),
+                    Ok(StreamChunk::Done {
+                        stop_reason: StopReason::EndTurn,
+                    }),
+                ]
+            };
+            Ok(Box::pin(futures::stream::iter(chunks)))
         }
 
         fn name(&self) -> &str {
@@ -868,6 +894,64 @@ mod tests {
         fn max_context_length(&self) -> usize {
             100_000
         }
+    }
+
+    #[tokio::test]
+    async fn streaming_tool_result_preserves_patch_delta() {
+        let mut lp = ReActLoop::new(
+            HarnessConfig {
+                max_iterations: 3,
+                learning_enabled: false,
+                compaction_enabled: false,
+                ..HarnessConfig::default()
+            },
+            Box::new(NoopCompressor),
+        );
+        lp.messages.push(Message::user("go"));
+        let llm = ScriptedLlm {
+            calls: Mutex::new(0),
+        };
+        let sink = CollectingEventSink(Mutex::new(Vec::new()));
+        let delta = fabric::PatchDelta {
+            files_changed: vec![fabric::PatchDeltaFileChange {
+                path: "proof.txt".into(),
+                change_type: "added".into(),
+                hunks_applied: 1,
+                bytes_before: 0,
+                bytes_after: 5,
+                is_binary: false,
+            }],
+            ..Default::default()
+        };
+
+        lp.run_streaming(
+            &llm,
+            &[],
+            move |_id: &str, _name: &str, _input: &serde_json::Value| {
+                let delta = delta.clone();
+                async move {
+                    crate::harness::event_sink::ToolResultEvent {
+                        content: "wrote".into(),
+                        is_error: false,
+                        execution_time_ms: 7,
+                        patch_delta: Some(delta),
+                    }
+                }
+            },
+            || async { Ok(Vec::new()) },
+            &sink,
+        )
+        .await
+        .unwrap();
+
+        assert!(sink.0.lock().unwrap().iter().any(|event| matches!(
+            event,
+            crate::harness::event_sink::Event::ToolResult { result, .. }
+                if result.execution_time_ms == 7
+                    && result.patch_delta.as_ref().is_some_and(|delta| {
+                        delta.files_changed.first().is_some_and(|file| file.path == "proof.txt")
+                    })
+        )));
     }
 
     #[tokio::test]
@@ -1689,7 +1773,7 @@ mod tests {
                 &llm,
                 &[],
                 |_id: &str, _name: &str, _input: &serde_json::Value| async {
-                    unreachable!("no tool calls expected")
+                    ("unexpected tool call".into(), true)
                 },
                 || async { Ok(Vec::new()) },
                 &sink,
@@ -1849,7 +1933,7 @@ mod tests {
                 &llm,
                 &[],
                 |_id: &str, _name: &str, _input: &serde_json::Value| async {
-                    unreachable!("model never requested a tool")
+                    ("unexpected tool call".into(), true)
                 },
             )
             .await

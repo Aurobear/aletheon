@@ -1062,7 +1062,12 @@ impl TurnPipeline {
                         }
                     }
                 }
-                (result.output, result.is_error)
+                cognit::harness::event_sink::ToolResultEvent {
+                    content: result.output,
+                    is_error: result.is_error,
+                    execution_time_ms: result.usage.wall_time_ms,
+                    patch_delta: result.patch_delta,
+                }
             }
         };
 
