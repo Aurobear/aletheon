@@ -230,14 +230,14 @@ MERGE_SHA: 370c294c492bcf6918c3b26bee40c962f754ae96
 ## X6b
 
 ```text
-STATUS: in_progress
+STATUS: code_complete
 NODE: X6b
-BASE / BRANCH / PR / GOAL_ID: c977aa04 / auro/feat/20260805-x4c-run-exec-wire / #171 / external supervisor active
-BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pasted input now passes through a bounded ANSI/OSC/C0/C1 sanitizer before editor insertion; multi-line CJK paste remains inert until explicit Enter/IME handling; Action Palette search ranks name, alias, category and description; bounded @ file discovery passes the 10,000-file/300ms focused test; @path attachment validation rejects traversal, symlinks, protected paths, out-of-authority paths and oversized files; input history and draft storage are scoped by OS uid plus workspace digest with bounded atomic JSON writes; persistence is debounced and history search is reachable through Ctrl+R. Focused sanitizer, attachment, paste, file-picker, history-search and interact clippy tests pass. PR #171 merge evidence: required CI run 30981180832 passed; merge 370c294c492bcf6918c3b26bee40c962f754ae96.
-FAILURES: governed ! receipt, retention/delete policy and U-INPUT-004 remain open; PR #171 checks passed and the completed input-safety portion is merged.
-BLOCKER: none
-MERGE_SHA: 370c294c492bcf6918c3b26bee40c962f754ae96
+BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/feat/20260805-x6b-secure-input-clean-v2 / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=2
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: The X6a sanitizer, IME/paste handling, Action Palette, bounded @ discovery, typed workspace attachments, and scoped history/draft storage remain intact. X6b closes the remaining governed ! path through canonical command intent, explicit confirmation, Host capability execution, typed progress/terminal receipt projection, and persisted shell receipt; input-state retention now removes expired entries fail-closed. U-INPUT-001..006 are bound in acceptance-ids.tsv. Interact 156/156 library tests and Executive command-dispatcher 3/3 pass; Interact and Executive clippy -D warnings, architecture acceptance, and fmt pass. `sudo bash scripts/aletheon.sh deploy` passed from this branch: target/release, /usr/bin, machine core, user daemon, and Memory Agent share SHA-256 96e274c286b6e8eaf41298e46e79f1d2a0403c8eab6f51b207894c58ed43c2ea; all three services are active with NRestarts=0; official Memory Agent protocol and official user-socket real LLM request passed.
+FAILURES: Initial full Interact run found the exact public builtin snapshot omitted the intentional shell command; commit 90b5cd8b updated the canonical expectation and the rerun passed 156/156.
+BLOCKER: publication/PR/merge intentionally deferred by owner; implementation and installed evidence are complete.
+MERGE_SHA: pending_by_owner
 ```
 
 ## X7
