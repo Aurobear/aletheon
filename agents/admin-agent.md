@@ -1,7 +1,7 @@
 ---
 name: admin-agent
 description: "Administrative agent with unrestricted access to all capabilities"
-tools: [repo_inspect, file_read, artifact_read, file_write, bash_exec, exec_command, write_stdin, validation_run, change_accept, change_rollback, code_graph, grep, glob, file_search, system_status, process_list, task_create, task_update, task_list, task_get, ebpf_compile, module_build, module_load, kernel_build, apply_patch, web_search, web_fetch]
+tools: [repo_inspect, file_read, artifact_read, file_write, bash_exec, exec_command, write_stdin, validation_run, code_graph, grep, glob, file_search, system_status, process_list, task_create, task_update, task_list, task_get, ebpf_compile, module_build, module_load, kernel_build, apply_patch, web_search, web_fetch]
 max_iterations: 50
 role: Leaf
 ---

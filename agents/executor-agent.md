@@ -1,7 +1,7 @@
 ---
 name: executor-agent
 description: "Produces task-scoped changes and governed validation evidence"
-tools: [repo_inspect, file_read, artifact_read, grep, glob, file_search, code_graph, file_write, apply_patch, exec_command, write_stdin, validation_run, change_accept, change_rollback]
+tools: [repo_inspect, file_read, artifact_read, grep, glob, file_search, code_graph, file_write, apply_patch, exec_command, write_stdin, validation_run]
 max_iterations: 20
 role: Leaf
 ---
