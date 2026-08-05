@@ -54,3 +54,5 @@ A-AGENT-002	X9b	test	crates/executive/tests/agent_recovery.rs
 A-AGENT-003	X9b	test	crates/executive/tests/agent_admission.rs
 A-DELETE-001	X10	test	crates/metacog/tests/compatibility_deletion.rs
 A-DELETE-002	X10	test	crates/metacog/tests/compatibility_deletion.rs
+U-INST-001	X12	manual-evidence	docs/testing/x12-installed-acceptance-2026-08-05.md
+U-INST-002	X12	manual-evidence	docs/testing/x12-installed-acceptance-2026-08-05.md
