@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{AuditEventId, OperationId, PermitId, SessionId, TurnStop};
+use crate::{AuditEventId, OperationId, PermitId, PrincipalId, SessionId, TurnStop};
 
 pub const SESSION_SCHEMA_VERSION: u16 = 4;
 
@@ -253,5 +253,17 @@ pub trait SessionAppendStore: Send + Sync {
     async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>>;
     async fn list_sessions(&self, _limit: usize) -> Result<Vec<SessionRecord>> {
         anyhow::bail!("Session listing is unavailable for this store")
+    }
+
+    /// Bind a durable authenticated principal to a session. Implementations
+    /// must reject rebinding to a different principal; the default keeps
+    /// legacy in-memory stores source-compatible without claiming ownership.
+    async fn bind_principal(&self, _session: &SessionId, _principal: &PrincipalId) -> Result<()> {
+        Ok(())
+    }
+
+    /// Read the durable principal binding used by picker/snapshot isolation.
+    async fn principal_for(&self, _session: &SessionId) -> Result<Option<PrincipalId>> {
+        Ok(None)
     }
 }

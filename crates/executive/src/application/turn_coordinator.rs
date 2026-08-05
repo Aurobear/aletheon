@@ -517,6 +517,12 @@ impl TurnCoordinator {
                 tracker.record(result);
             }
         }
+        // Persist the authenticated owner separately from the Session record
+        // so a restart or a picker request cannot widen principal visibility.
+        self.store
+            .bind_principal(&session_id, &request.context.principal_id)
+            .await
+            .context("bind session principal")?;
 
         let turn_id = request
             .context

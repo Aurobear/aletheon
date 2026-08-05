@@ -252,13 +252,14 @@ impl RequestHandler {
             .await
     }
 
-    pub(crate) async fn protocol_snapshot(
+    pub(crate) async fn protocol_snapshot_for(
         &self,
+        principal: &fabric::PrincipalId,
         session_id: &fabric::SessionId,
     ) -> anyhow::Result<fabric::protocol::client::UiSnapshot> {
         self.ports
             .session_gateway
-            .protocol_snapshot(session_id)
+            .protocol_snapshot_for(principal, session_id)
             .await
     }
 
@@ -272,31 +273,48 @@ impl RequestHandler {
             .await
     }
 
-    pub(crate) async fn protocol_session_list(
+    pub(crate) async fn protocol_read_snapshot_for(
         &self,
-    ) -> anyhow::Result<fabric::protocol::client::SessionListSnapshot> {
-        self.ports.session_gateway.protocol_session_list().await
+        principal: &fabric::PrincipalId,
+        session_id: &fabric::SessionId,
+    ) -> anyhow::Result<fabric::protocol::client::SessionReadSnapshot> {
+        self.ports
+            .session_gateway
+            .protocol_read_snapshot_for(principal, session_id)
+            .await
     }
 
-    pub(crate) async fn protocol_events_after(
+    pub(crate) async fn protocol_session_list_for(
         &self,
+        principal: &fabric::PrincipalId,
+    ) -> anyhow::Result<fabric::protocol::client::SessionListSnapshot> {
+        self.ports
+            .session_gateway
+            .protocol_session_list_for(principal)
+            .await
+    }
+
+    pub(crate) async fn protocol_events_after_for(
+        &self,
+        principal: &fabric::PrincipalId,
         session_id: &fabric::SessionId,
         after: &fabric::protocol::client::EventCursor,
     ) -> anyhow::Result<Vec<fabric::protocol::client::ClientEvent>> {
         self.ports
             .session_gateway
-            .protocol_events_after(session_id, after)
+            .protocol_events_after_for(principal, session_id, after)
             .await
     }
 
-    pub(crate) async fn protocol_event_page(
+    pub(crate) async fn protocol_event_page_for(
         &self,
+        principal: &fabric::PrincipalId,
         session_id: &fabric::SessionId,
         after: &fabric::protocol::client::EventCursor,
     ) -> anyhow::Result<fabric::protocol::client::SessionEventPage> {
         self.ports
             .session_gateway
-            .protocol_event_page(session_id, after)
+            .protocol_event_page_for(principal, session_id, after)
             .await
     }
 

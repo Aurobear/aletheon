@@ -25,6 +25,7 @@ pub mod candidate_projection;
 pub mod cleanup;
 pub mod context_fork;
 pub mod execution;
+mod generation_fence;
 mod identity;
 pub mod lifecycle;
 mod lifecycle_hooks;
@@ -441,7 +442,8 @@ impl AgentControlService {
             Arc::new(RepositorySettlementLeasePort::new(self.repository.clone())),
             Arc::new(NoopSettlementEvidenceSink),
             self.settlement_metrics.clone(),
-        );
+        )
+        .with_generation(daemon_generation);
         engine
             .settle(
                 SettlementRequest {
@@ -1707,7 +1709,8 @@ async fn run_agent(
                 Arc::new(RepositorySettlementLeasePort::new(repository.clone())),
                 evidence,
                 settlement_metrics,
-            );
+            )
+            .with_generation(settlement_generation.clone());
             match engine.quiesce(&live_run).await {
                 Ok(resources) => {
                     // Closing admission and fixing the resource snapshot must

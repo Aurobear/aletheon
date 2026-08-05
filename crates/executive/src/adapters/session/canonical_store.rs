@@ -5,7 +5,7 @@ use std::{path::Path, sync::Mutex};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use fabric::{
-    AppendOutcome, ItemId, ItemRecord, SessionAppendStore, SessionId, SessionRecord,
+    AppendOutcome, ItemId, ItemRecord, PrincipalId, SessionAppendStore, SessionId, SessionRecord,
     SESSION_SCHEMA_VERSION,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -20,7 +20,7 @@ pub struct CanonicalSessionStore {
 // migration. Version 4 adds EvaluationReceiptRef Session items; older JSON
 // payloads are structurally compatible but must have their explicit record
 // version advanced before event-spine reconciliation compares them.
-const DATABASE_SCHEMA_VERSION: i64 = 4;
+const DATABASE_SCHEMA_VERSION: i64 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MigrationStep {
@@ -118,6 +118,11 @@ fn migrate_with_step_hook(
                classification TEXT NOT NULL,
                PRIMARY KEY(session_id, turn_id),
                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+             );
+             CREATE TABLE IF NOT EXISTS session_principals(
+               session_id TEXT PRIMARY KEY,
+               principal_id TEXT NOT NULL,
+               FOREIGN KEY(session_id) REFERENCES sessions(session_id)
              );",
         )?;
         if current >= 1 {
@@ -155,6 +160,9 @@ fn migrate_with_step_hook(
     connection
         .prepare("SELECT session_id,turn_id,classification FROM recovered_turns LIMIT 0")
         .context("session database v1 recovered_turns schema is incomplete")?;
+    connection
+        .prepare("SELECT session_id,principal_id FROM session_principals LIMIT 0")
+        .context("session database v5 session_principals schema is incomplete")?;
     Ok(())
 }
 
@@ -375,6 +383,37 @@ impl SessionAppendStore for CanonicalSessionStore {
         rows.into_iter()
             .map(|json| serde_json::from_str(&json).map_err(Into::into))
             .collect()
+    }
+
+    async fn bind_principal(&self, session: &SessionId, principal: &PrincipalId) -> Result<()> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        connection.execute(
+            "INSERT INTO session_principals(session_id,principal_id) VALUES(?1,?2)
+             ON CONFLICT(session_id) DO UPDATE SET principal_id=excluded.principal_id
+             WHERE session_principals.principal_id=excluded.principal_id",
+            params![session.0, principal.0],
+        )?;
+        let owner: String = connection.query_row(
+            "SELECT principal_id FROM session_principals WHERE session_id=?1",
+            params![session.0],
+            |row| row.get(0),
+        )?;
+        if owner != principal.0 {
+            bail!("session is already owned by another principal");
+        }
+        Ok(())
+    }
+
+    async fn principal_for(&self, session: &SessionId) -> Result<Option<PrincipalId>> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let owner = connection
+            .query_row(
+                "SELECT principal_id FROM session_principals WHERE session_id=?1",
+                params![session.0],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(owner.map(PrincipalId))
     }
 }
 

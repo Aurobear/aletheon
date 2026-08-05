@@ -74,6 +74,7 @@ crates/executive/src/application/agent_control/candidate_projection.rs	applicati
 crates/executive/src/application/agent_control/cleanup.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/context_fork.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/execution.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/agent_control/generation_fence.rs	application	executive	generation fencing for daemon recovery receipts
 crates/executive/src/application/agent_control/identity.rs	application	executive	identity and runtime capability projection
 crates/executive/src/application/agent_control/lifecycle.rs	application	executive	pure Agent lifecycle reducer
 crates/executive/src/application/agent_control/lifecycle_hooks.rs	application	executive	Agent lifecycle hook boundary and adapters

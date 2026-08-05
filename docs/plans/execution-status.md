@@ -273,7 +273,7 @@ STATUS: accepted
 NODE: X8b
 BASE / BRANCH / PR / GOAL_ID: abc6a5c8 / auro/feat/20260805-x4c-run-exec-wire / #171 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TUI DiffView now projects canonical PatchDelta file changes, diff preview, mutation coverage, rollback availability and partial/conflicted evidence; j/k file picker and Ctrl+D or /diff open the review surface. CheckpointReviewSnapshot carries the deterministic TurnCheckpointProjection fields without becoming a persistence authority. Host-verified checkpoint listing is now available through checkpoint.list/v1; /rewind opens a daemon-backed picker with code-only rewind, fork-only, and fork-then-rewind modes. Fork boundaries are resolved from the authoritative Session turn sequence, and fork-then-rewind waits for the fork terminal response before issuing the host rewind. No client paths or checkpoint blobs are accepted. U-CHK-001/U-CHK-002/U-CHK-005/U-CHK-006, checkpoint picker/fork sequencing, protocol/Executive/Interact focused tests and architecture acceptance pass. PR #171 merge evidence: required CI run 30981180832 passed; merge 370c294c492bcf6918c3b26bee40c962f754ae96.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TUI DiffView now projects canonical PatchDelta file changes, diff preview, mutation coverage, rollback availability and partial/conflicted evidence; j/k file picker and Ctrl+D or /diff open the review surface. CheckpointReviewSnapshot carries the deterministic TurnCheckpointProjection fields without becoming a persistence authority. Host-verified checkpoint listing is now available through checkpoint.list/v1; /rewind opens a daemon-backed picker with code-only rewind, fork-only, and fork-then-rewind modes. Fork boundaries are resolved from the authoritative Session turn sequence, and fork-then-rewind waits for the fork terminal response before issuing the host rewind. No client paths or checkpoint blobs are accepted. U-CHK-001/U-CHK-002/U-CHK-005/U-CHK-006, checkpoint picker/fork sequencing, protocol/Executive/Interact focused tests and architecture acceptance pass. PR #172 merge evidence: required CI run 30982959144 passed; merge fa62aa5a46f33d133876f0ebca23e8fa5e3605fe.
 FAILURES: installed PTY/deployment evidence remains owned by X12; PR #171 checks passed and Diff/rewind implementation is merged.
 BLOCKER: none
 MERGE_SHA: 370c294c492bcf6918c3b26bee40c962f754ae96
@@ -299,7 +299,7 @@ STATUS: accepted
 NODE: X8d
 BASE / BRANCH / PR / GOAL_ID: 4bf3027d / auro/feat/20260805-x4c-run-exec-wire / #171 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commits 7a19b5a3, 8f1d821d and f75af9d9 provide the governed review CLI/TUI projection, typed settlement receipt rendering, explicit rollback confirmation and the canonical rewind command surface; focused review CLI/TUI, completion, architecture, formatting and full PR validation passed. PR #171 merge evidence: required CI run 30981180832 passed; merge 370c294c492bcf6918c3b26bee40c962f754ae96.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commits 7a19b5a3, 8f1d821d and f75af9d9 provide the governed review CLI/TUI projection, typed settlement receipt rendering, explicit rollback confirmation and the canonical rewind command surface; follow-up commit eee3230a gates scripted prompts on the daemon session projection before continuing. Focused review CLI/TUI, completion, architecture, formatting and full PR validation passed. PR #172 merge evidence: required CI run 30982959144 passed; merge fa62aa5a46f33d133876f0ebca23e8fa5e3605fe.
 FAILURES: none; review CLI/TUI projection tests, completion checks, architecture gates and all required PR checks passed; merged into dev.
 BLOCKER: none
 MERGE_SHA: 370c294c492bcf6918c3b26bee40c962f754ae96
@@ -308,11 +308,11 @@ MERGE_SHA: 370c294c492bcf6918c3b26bee40c962f754ae96
 ## X9a
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X9a
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: fa62aa5a46f33d133876f0ebca23e8fa5e3605fe / auro/feat/20260805-x9a-session-recovery / #173 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: session principal ownership is persisted through schema-v5 migration and enforced by principal-aware snapshots, lists, event pages and subscriptions; new turns bind the authenticated principal; late settlement receipts are fenced by daemon generation and emit typed rejection evidence; generation-fence, session-service, canonical-store, Executive check, formatting, diff and architecture gates pass locally. Installed deployment and aggregate runtime evidence remain owned by X12; PR #173 CI/merge pending.
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
