@@ -152,12 +152,12 @@ MERGE_SHA: 4bf3027d6e79fadbe9276210b36bee7b69ffcdf9
 ## X4c
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X4c
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: 4bf3027d6e79fadbe9276210b36bee7b69ffcdf9 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commit dc82d08b adds versioned ordered JSONL, stable terminal exit classes, stdin, durable principal-scoped idempotency, non-interactive approval blocking, cancellation and bounded output backpressure; focused Fabric/Executive/Aletheon tests, package Clippy -D warnings, architecture, formatting and diff gates passed; sudo system deploy passed with target/release, /usr/bin, machine-core and user-daemon SHA-256 3d6a72beb93d0faaa8f9d2f387ac9b72e5d1e8343d6112c3ff61dd495da1590a; installed exec real request returned X4C_READY as a two-event JSONL stream; services remained at zero restarts
+FAILURES: none; owner deferred PR/CI/merge until aggregate validation
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -165,12 +165,12 @@ MERGE_SHA: pending
 ## X4d
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X4d
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: dc82d08b / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commit 8dc8a756 adds canonical CommandSpec-backed run/resume/completion adapters; run supports explicit session reuse and human approval, resume opens the daemon-backed picker when ID is omitted, and completion prints the exact generated Bash/Zsh assets; focused Interact/Aletheon tests, help/completion contract tests, package Clippy -D warnings, architecture, formatting and diff gates passed; B1 external supervisor remains the explicit Goal control plane
+FAILURES: installed PTY and aggregate deployment verification deferred by owner
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -178,11 +178,11 @@ MERGE_SHA: pending
 ## X5a
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X5a
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: 8dc8a756 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: reviewed mapping in docs/plans/Aletheon_Session_Authority_Mapping_2026-08-05.md; wire-surfaces.tsv records the existing SessionAppendStore, EventSpine and EventProjection convergence without a synonymous authority
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
