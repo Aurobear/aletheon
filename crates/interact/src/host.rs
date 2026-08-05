@@ -139,6 +139,14 @@ pub(crate) fn resolve_user_socket(explicit: Option<PathBuf>) -> anyhow::Result<P
     resolve_socket_with(explicit, &ProcessRuntimeEnvironment)
 }
 
+/// Resolve and ensure the canonical installed user daemon for a non-TUI
+/// presentation adapter.
+pub async fn ensure_user_socket(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    let socket = resolve_user_socket(explicit)?;
+    ensure_resolved_user_socket(&socket, &ExecutiveDaemonEnsurer).await?;
+    Ok(socket)
+}
+
 async fn ensure_resolved_user_socket(
     socket: &std::path::Path,
     ensurer: &dyn DaemonEnsurer,

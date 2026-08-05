@@ -378,6 +378,9 @@ struct App {
     session_picker: Option<session_picker::SessionPicker>,
     /// Local selection cursor over the daemon-owned checkpoint list.
     checkpoint_picker: Option<checkpoint_picker::CheckpointPicker>,
+    /// Transaction awaiting a second explicit rollback keypress because the
+    /// Host reports only best-effort mutation coverage.
+    review_risk_confirmation: Option<String>,
     /// Frame counter for spinner animation.
     frame_counter: u64,
     /// Centralized application state (mode, awareness, context).
@@ -461,6 +464,7 @@ impl App {
             pager: None,
             session_picker: None,
             checkpoint_picker: None,
+            review_risk_confirmation: None,
             frame_counter: 0,
             app_state,
             plan_view: PlanViewState::default(),
@@ -512,6 +516,8 @@ enum PendingCommand {
     CheckpointRewind {
         child_session_id: Option<String>,
     },
+    TransactionReview,
+    TransactionSettlementLatest,
     ProjectionSnapshot {
         session_id: String,
     },

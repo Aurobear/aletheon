@@ -25,6 +25,7 @@ mod acp;
 mod extension_cli;
 mod memory_agent;
 mod memory_cli;
+mod review_cli;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
@@ -239,6 +240,11 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         sub: MemoryCommand,
+    },
+    /// Inspect or apply a Host-owned change transaction review.
+    Review {
+        #[command(subcommand)]
+        sub: review_cli::ReviewCommand,
     },
 }
 
@@ -583,6 +589,10 @@ async fn main() -> Result<()> {
         (Some(Commands::Memory { sub }), _) => {
             init_tracing("aletheon::memory");
             memory_cli::run(sub, cli.socket.clone()).await
+        }
+        (Some(Commands::Review { sub }), _) => {
+            init_tracing("aletheon::review");
+            review_cli::run(sub, cli.socket.clone()).await
         }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();

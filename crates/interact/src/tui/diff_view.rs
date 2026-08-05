@@ -27,6 +27,10 @@ pub struct DiffView {
     pub selected_file: usize,
     pub coverage: Option<MutationCoverage>,
     pub conflicted: bool,
+    /// Host-authored terminal/recovery decision. This is a projection only;
+    /// the TUI never derives or persists settlement state.
+    pub settlement: Option<fabric::TransactionSettlementReceipt>,
+    pub findings: Vec<fabric::ReviewFinding>,
 }
 
 impl DiffView {
@@ -38,6 +42,8 @@ impl DiffView {
             selected_file: 0,
             coverage: None,
             conflicted: false,
+            settlement: None,
+            findings: Vec::new(),
         }
     }
 
@@ -67,6 +73,8 @@ impl DiffView {
             selected_file: 0,
             coverage: delta.mutation_coverage,
             conflicted: !delta.failed.is_empty(),
+            settlement: None,
+            findings: Vec::new(),
         }
     }
     pub fn scroll_down(&mut self) {
@@ -97,6 +105,14 @@ impl DiffView {
             None => "rollback: unknown (host review required)",
         }
     }
+
+    pub fn project_settlement(&mut self, receipt: fabric::TransactionSettlementReceipt) {
+        self.settlement = Some(receipt);
+    }
+
+    pub fn project_findings(&mut self, findings: Vec<fabric::ReviewFinding>) {
+        self.findings = findings;
+    }
 }
 
 impl Widget for &DiffView {
@@ -125,7 +141,54 @@ impl Widget for &DiffView {
                     Color::DarkGray
                 }),
             )),
+            Line::from(Span::styled(
+                " actions: a accept · p repair · x rollback · f full diff · Esc close",
+                Style::default().fg(Color::DarkGray),
+            )),
         ];
+        if let Some(settlement) = &self.settlement {
+            header.push(Line::from(vec![
+                Span::styled(" host settlement ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{:?}", settlement.decision).to_lowercase(),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+                Span::styled(settlement.reason.clone(), Style::default().fg(Color::White)),
+            ]));
+            if !settlement.finding_ids.is_empty() {
+                header.push(Line::from(Span::styled(
+                    format!(" findings: {}", settlement.finding_ids.join(", ")),
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
+        }
+        for finding in &self.findings {
+            let location = finding
+                .location
+                .as_ref()
+                .map_or_else(String::new, |location| {
+                    format!(
+                        " @ {}{}",
+                        location.path,
+                        location
+                            .line
+                            .map(|line| format!(":{line}"))
+                            .unwrap_or_default()
+                    )
+                });
+            header.push(Line::from(Span::styled(
+                format!(
+                    " finding {} [{:?}/{:?}]{location}: {}",
+                    finding.finding_id, finding.severity, finding.status, finding.summary
+                ),
+                Style::default().fg(if finding.status == fabric::ReviewFindingStatus::Resolved {
+                    Color::Green
+                } else {
+                    Color::Red
+                }),
+            )));
+        }
         if !self.files.is_empty() {
             header.push(Line::from(Span::styled(
                 " files (j/k select; Esc close; f open full diff):",

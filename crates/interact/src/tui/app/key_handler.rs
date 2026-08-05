@@ -26,6 +26,72 @@ pub(crate) fn refresh_command_completion(app: &mut App) {
     }
 }
 
+async fn request_transaction_review(
+    app: &mut App,
+    action: fabric::TransactionReviewAction,
+    risk_acknowledged: bool,
+) {
+    let Some(session_id) = app.app_state.session_id.clone() else {
+        app.chat
+            .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+        return;
+    };
+    let Some(transaction_id) = app
+        .latest_patch
+        .as_ref()
+        .and_then(|patch| patch.transaction_id)
+        .map(|id| id.0.to_string())
+    else {
+        app.chat.add_text(
+            ChatRole::System,
+            "当前差异没有 Host change transaction，无法执行 review action".to_string(),
+        );
+        return;
+    };
+    let request_id = write_request(
+        app,
+        ClientRpcRequest::TransactionReview(fabric::TransactionReviewParams {
+            session_id,
+            transaction_id,
+            action,
+            risk_acknowledged,
+        }),
+    )
+    .await;
+    app.pending_commands
+        .insert(request_id, super::super::PendingCommand::TransactionReview);
+    app.pending_non_turn.insert(request_id);
+    app.streaming = true;
+    app.status.waiting = true;
+}
+
+async fn request_latest_transaction_settlement(app: &mut App) {
+    let Some(session_id) = app.app_state.session_id.clone() else {
+        return;
+    };
+    let Some(transaction_id) = app
+        .latest_patch
+        .as_ref()
+        .and_then(|patch| patch.transaction_id)
+        .map(|id| id.0.to_string())
+    else {
+        return;
+    };
+    let request_id = write_request(
+        app,
+        ClientRpcRequest::TransactionSettlementGet(fabric::TransactionSettlementGetParams {
+            session_id,
+            transaction_id,
+        }),
+    )
+    .await;
+    app.pending_commands.insert(
+        request_id,
+        super::super::PendingCommand::TransactionSettlementLatest,
+    );
+    app.pending_non_turn.insert(request_id);
+}
+
 /// Insert a bracketed-paste payload as inert editor text. Newlines and CJK
 /// codepoints are preserved, and paste never invokes submit by itself.
 pub(crate) fn insert_paste(app: &mut App, text: &str) {
@@ -235,7 +301,93 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                         .map(super::super::diff_view::DiffView::new)
                 })
         };
+        if let Some(detail) = app.detail.as_mut() {
+            detail.project_findings(
+                app.app_state
+                    .tasks
+                    .iter()
+                    .flat_map(|task| task.review_findings.clone())
+                    .collect(),
+            );
+        }
+        if app.detail.is_some() {
+            request_latest_transaction_settlement(app).await;
+        }
         return;
+    }
+    if app.detail.is_some() {
+        match key.code {
+            KeyCode::Char('a') => {
+                app.review_risk_confirmation = None;
+                request_transaction_review(app, fabric::TransactionReviewAction::Accept, false)
+                    .await;
+                return;
+            }
+            KeyCode::Char('p') => {
+                app.review_risk_confirmation = None;
+                request_transaction_review(app, fabric::TransactionReviewAction::Repair, false)
+                    .await;
+                return;
+            }
+            KeyCode::Char('x') => {
+                let coverage = app
+                    .latest_patch
+                    .as_ref()
+                    .and_then(|patch| patch.mutation_coverage);
+                let transaction_id = app
+                    .latest_patch
+                    .as_ref()
+                    .and_then(|patch| patch.transaction_id)
+                    .map(|id| id.0.to_string());
+                match (coverage, transaction_id) {
+                    (Some(fabric::change_transaction::MutationCoverage::Full), Some(_)) => {
+                        request_transaction_review(
+                            app,
+                            fabric::TransactionReviewAction::Rollback,
+                            false,
+                        )
+                        .await;
+                    }
+                    (
+                        Some(fabric::change_transaction::MutationCoverage::BestEffort),
+                        Some(transaction_id),
+                    ) if app.review_risk_confirmation.as_deref()
+                        == Some(transaction_id.as_str()) =>
+                    {
+                        app.review_risk_confirmation = None;
+                        request_transaction_review(
+                            app,
+                            fabric::TransactionReviewAction::Rollback,
+                            true,
+                        )
+                        .await;
+                    }
+                    (
+                        Some(fabric::change_transaction::MutationCoverage::BestEffort),
+                        Some(transaction_id),
+                    ) => {
+                        app.review_risk_confirmation = Some(transaction_id);
+                        app.chat.add_text(
+                            ChatRole::System,
+                            "这是 best-effort rollback，可能残留外部副作用；再次按 x 显式确认风险"
+                                .to_string(),
+                        );
+                    }
+                    (Some(fabric::change_transaction::MutationCoverage::NonRollbackable), _) => {
+                        app.chat.add_text(
+                            ChatRole::System,
+                            "Host 声明该事务不可回滚；未发送 rollback 请求".to_string(),
+                        );
+                    }
+                    _ => app.chat.add_text(
+                        ChatRole::System,
+                        "缺少 Host transaction/coverage，未发送 rollback 请求".to_string(),
+                    ),
+                }
+                return;
+            }
+            _ => {}
+        }
     }
     if let Some(detail) = app.detail.as_mut() {
         match key.code {
@@ -745,6 +897,61 @@ mod tests {
 
     fn ctrl_c() -> KeyEvent {
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    }
+
+    fn review_patch(coverage: fabric::change_transaction::MutationCoverage) -> fabric::PatchDelta {
+        fabric::PatchDelta {
+            transaction_id: Some(fabric::change_transaction::ChangeTransactionId(
+                uuid::Uuid::nil(),
+            )),
+            mutation_coverage: Some(coverage),
+            applied: vec![],
+            failed: vec![],
+            files_changed: vec![],
+            diff_preview: Some("diff".into()),
+            diff_artifact: None,
+            diff_preview_truncated: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn best_effort_rollback_requires_two_explicit_keypresses() {
+        let mut app = idle_app().await;
+        app.app_state.session_id = Some("session-a".into());
+        app.latest_patch = Some(review_patch(
+            fabric::change_transaction::MutationCoverage::BestEffort,
+        ));
+        app.detail = app
+            .latest_patch
+            .as_ref()
+            .map(crate::tui::diff_view::DiffView::from_patch_delta);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x'))).await;
+        assert!(app.review_risk_confirmation.is_some());
+        assert!(app.pending_commands.is_empty());
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x'))).await;
+        assert!(app.review_risk_confirmation.is_none());
+        assert!(app
+            .pending_commands
+            .values()
+            .any(|pending| *pending == crate::tui::PendingCommand::TransactionReview));
+    }
+
+    #[tokio::test]
+    async fn non_rollbackable_transaction_never_sends_a_review_action() {
+        let mut app = idle_app().await;
+        app.app_state.session_id = Some("session-a".into());
+        app.latest_patch = Some(review_patch(
+            fabric::change_transaction::MutationCoverage::NonRollbackable,
+        ));
+        app.detail = app
+            .latest_patch
+            .as_ref()
+            .map(crate::tui::diff_view::DiffView::from_patch_delta);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x'))).await;
+        assert!(app.pending_commands.is_empty());
     }
 
     #[tokio::test]

@@ -619,6 +619,46 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                     .add_text(ChatRole::System, "代码检查点恢复完成".to_string());
             }
         }
+        (super::PendingCommand::TransactionReview, Some(result), None) => {
+            match serde_json::from_value::<fabric::TransactionReviewSnapshot>(result.clone()) {
+                Ok(snapshot) => {
+                    if let Some(detail) = app.detail.as_mut() {
+                        detail.project_settlement(snapshot.settlement.clone());
+                    }
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!(
+                            "Host review {:?}: {}",
+                            snapshot.settlement.decision, snapshot.settlement.reason
+                        ),
+                    );
+                }
+                Err(error) => app.chat.add_text(
+                    ChatRole::System,
+                    format!("daemon 返回的 Host review snapshot 无效：{error}"),
+                ),
+            }
+        }
+        (super::PendingCommand::TransactionSettlementLatest, Some(result), None) => {
+            match result
+                .get("receipt")
+                .cloned()
+                .ok_or_else(|| "missing receipt".to_string())
+                .and_then(|value| {
+                    serde_json::from_value::<fabric::TransactionSettlementReceipt>(value)
+                        .map_err(|error| error.to_string())
+                }) {
+                Ok(receipt) => {
+                    if let Some(detail) = app.detail.as_mut() {
+                        detail.project_settlement(receipt);
+                    }
+                }
+                Err(error) => app.chat.add_text(
+                    ChatRole::System,
+                    format!("daemon 返回的 settlement receipt 无效：{error}"),
+                ),
+            }
+        }
         (super::PendingCommand::ProjectionSnapshot { session_id }, Some(result), None) => {
             match serde_json::from_value::<
                 fabric::protocol::client::ClientMessage<
@@ -730,6 +770,26 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 ChatRole::System,
                 format!("Error: {message}。请检查 terminal restore receipt 后重试或人工恢复。"),
             );
+        }
+        (super::PendingCommand::TransactionReview, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Host review action 失败");
+            app.chat
+                .add_text(ChatRole::System, format!("Error: {message}"));
+        }
+        (super::PendingCommand::TransactionSettlementLatest, _, Some(error)) => {
+            // No prior receipt is a normal pending-review state. Other daemon
+            // errors remain visible without fabricating local settlement.
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("settlement receipt 查询失败");
+            if message != "transaction settlement not found" {
+                app.chat
+                    .add_text(ChatRole::System, format!("Error: {message}"));
+            }
         }
         (super::PendingCommand::ProjectionSnapshot { session_id }, _, Some(error)) => {
             if app.projection_target_session_id.as_deref() == Some(session_id.as_str()) {
@@ -1250,6 +1310,50 @@ mod tests {
 
         assert!(app.registry.is_skill("test-skill"));
         assert!(app.chat.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tui_review_projects_the_exact_host_settlement_receipt() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        app.detail = Some(crate::tui::diff_view::DiffView::new("diff"));
+        app.pending_commands
+            .insert(8, PendingCommand::TransactionSettlementLatest);
+        let receipt = fabric::TransactionSettlementReceipt {
+            settlement_id: "settlement-1".into(),
+            transaction_id: "transaction-1".into(),
+            session_id: "session-1".into(),
+            workspace_version: "version-1".into(),
+            decision: fabric::TransactionSettlementDecision::RepairRequired,
+            finding_ids: vec!["finding-1".into()],
+            validation_receipt_refs: vec!["artifact://validation".into()],
+            validation_omissions: vec![],
+            reason: "required validation failed".into(),
+        };
+
+        process_response(
+            &mut app,
+            serde_json::json!({"id": 8, "result": {"receipt": receipt.clone()}}),
+        );
+
+        assert_eq!(
+            app.detail.and_then(|detail| detail.settlement),
+            Some(receipt)
+        );
     }
 
     #[tokio::test]
