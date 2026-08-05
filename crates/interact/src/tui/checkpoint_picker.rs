@@ -10,7 +10,16 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 pub enum CheckpointPickerAction {
     Continue,
     Close,
-    Rewind(u64),
+    RewindCode {
+        prompt_index: u64,
+    },
+    ForkSession {
+        through_sequence: u64,
+    },
+    ForkAndRewind {
+        prompt_index: u64,
+        through_sequence: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,9 +64,16 @@ impl CheckpointPicker {
                 self.selected = self.entries.len().saturating_sub(1);
                 CheckpointPickerAction::Continue
             }
-            KeyCode::Enter => {
-                CheckpointPickerAction::Rewind(self.entries[self.selected].prompt_index)
-            }
+            KeyCode::Char('r') => CheckpointPickerAction::RewindCode {
+                prompt_index: self.entries[self.selected].prompt_index,
+            },
+            KeyCode::Char('f') => CheckpointPickerAction::ForkSession {
+                through_sequence: self.entries[self.selected].through_sequence,
+            },
+            KeyCode::Enter | KeyCode::Char('b') => CheckpointPickerAction::ForkAndRewind {
+                prompt_index: self.entries[self.selected].prompt_index,
+                through_sequence: self.entries[self.selected].through_sequence,
+            },
             _ => CheckpointPickerAction::Continue,
         }
     }
@@ -125,7 +141,7 @@ impl CheckpointPicker {
                 1,
             );
             Line::from(Span::styled(
-                "↑/↓ select  Enter rewind  Esc close",
+                "↑/↓ select  r rewind code  f fork only  Enter/b fork + rewind  Esc close",
                 Style::default().fg(Color::DarkGray),
             ))
             .render(footer, buf);
@@ -159,7 +175,37 @@ mod tests {
         .unwrap();
         assert_eq!(
             picker.handle_key(key(KeyCode::Enter)),
-            CheckpointPickerAction::Rewind(42)
+            CheckpointPickerAction::ForkAndRewind {
+                prompt_index: 42,
+                through_sequence: 17,
+            }
+        );
+    }
+
+    #[test]
+    fn picker_exposes_each_recovery_mode_without_guessing_event_sequence() {
+        let snapshot = fabric::CheckpointListSnapshot {
+            schema_version: fabric::CHECKPOINT_LIST_SCHEMA_VERSION,
+            session_id: "session".into(),
+            checkpoints: vec![fabric::CheckpointListEntry {
+                checkpoint_id: "checkpoint".into(),
+                turn_id: "turn".into(),
+                prompt_index: 42,
+                through_sequence: 17,
+                created_at_ms: 1,
+                finalized: true,
+            }],
+        };
+        let mut picker = CheckpointPicker::from_snapshot(snapshot).unwrap();
+        assert_eq!(
+            picker.handle_key(key(KeyCode::Char('r'))),
+            CheckpointPickerAction::RewindCode { prompt_index: 42 }
+        );
+        assert_eq!(
+            picker.handle_key(key(KeyCode::Char('f'))),
+            CheckpointPickerAction::ForkSession {
+                through_sequence: 17,
+            }
         );
     }
 }

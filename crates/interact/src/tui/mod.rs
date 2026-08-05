@@ -322,6 +322,9 @@ struct App {
     next_request_id: u64,
     /// UI mutations which must happen only after their matching RPC succeeds.
     pending_commands: BTreeMap<u64, PendingCommand>,
+    /// Transport-only sequencing for fork-and-rewind. Recovery authority stays
+    /// in the daemon; the client emits rewind only after a successful fork.
+    deferred_checkpoint_rewind: Option<DeferredCheckpointRewind>,
     /// Non-turn RPCs whose result should stop the command spinner immediately.
     pending_non_turn: std::collections::BTreeSet<u64>,
     /// Connection-local driver for the daemon-owned Session projection.
@@ -427,6 +430,7 @@ impl App {
             caps,
             next_request_id: 1,
             pending_commands: BTreeMap::new(),
+            deferred_checkpoint_rewind: None,
             pending_non_turn: std::collections::BTreeSet::new(),
             projection_session_id: None,
             projection_target_session_id: None,
@@ -496,11 +500,31 @@ impl App {
 enum PendingCommand {
     InitializeSession,
     InitializeSkills,
-    NewSession { clear_screen: bool },
+    NewSession {
+        clear_screen: bool,
+    },
     OpenSessionPicker,
     OpenCheckpointPicker,
-    ProjectionSnapshot { session_id: String },
-    ProjectionEvents { session_id: String },
+    CheckpointFork {
+        parent_session_id: String,
+        prompt_index: Option<u64>,
+    },
+    CheckpointRewind {
+        child_session_id: Option<String>,
+    },
+    ProjectionSnapshot {
+        session_id: String,
+    },
+    ProjectionEvents {
+        session_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeferredCheckpointRewind {
+    parent_session_id: String,
+    child_session_id: String,
+    prompt_index: u64,
 }
 
 #[cfg(test)]

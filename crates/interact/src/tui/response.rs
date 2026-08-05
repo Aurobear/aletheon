@@ -574,6 +574,51 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 ),
             }
         }
+        (
+            super::PendingCommand::CheckpointFork {
+                parent_session_id,
+                prompt_index,
+            },
+            Some(result),
+            None,
+        ) => match serde_json::from_value::<fabric::SessionRecord>(result.clone()) {
+            Ok(child) => {
+                let child_session_id = child.id.0;
+                if let Some(prompt_index) = prompt_index {
+                    app.deferred_checkpoint_rewind = Some(super::DeferredCheckpointRewind {
+                        parent_session_id,
+                        child_session_id,
+                        prompt_index,
+                    });
+                } else {
+                    app.projection_target_session_id = Some(child_session_id.clone());
+                    app.projection_session_id = None;
+                    app.projection_polling = false;
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!("已分叉并切换到历史会话：{child_session_id}"),
+                    );
+                }
+            }
+            Err(error) => app.chat.add_text(
+                ChatRole::System,
+                format!("daemon 返回的会话分支无效：{error}；未恢复代码"),
+            ),
+        },
+        (super::PendingCommand::CheckpointRewind { child_session_id }, Some(_), None) => {
+            if let Some(child_session_id) = child_session_id {
+                app.projection_target_session_id = Some(child_session_id.clone());
+                app.projection_session_id = None;
+                app.projection_polling = false;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("代码已恢复；已切换到历史会话分支：{child_session_id}"),
+                );
+            } else {
+                app.chat
+                    .add_text(ChatRole::System, "代码检查点恢复完成".to_string());
+            }
+        }
         (super::PendingCommand::ProjectionSnapshot { session_id }, Some(result), None) => {
             match serde_json::from_value::<
                 fabric::protocol::client::ClientMessage<
@@ -665,6 +710,26 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
         (super::PendingCommand::InitializeSkills, _, Some(_)) => {
             // Startup catalog refresh is best-effort. Keep the TUI clean and
             // retain the built-in command registry when the daemon is unavailable.
+        }
+        (super::PendingCommand::CheckpointFork { .. }, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("会话分支创建失败");
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Error: {message}。未恢复代码，原会话保持不变。"),
+            );
+        }
+        (super::PendingCommand::CheckpointRewind { .. }, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("工作区恢复失败");
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Error: {message}。请检查 terminal restore receipt 后重试或人工恢复。"),
+            );
         }
         (super::PendingCommand::ProjectionSnapshot { session_id }, _, Some(error)) => {
             if app.projection_target_session_id.as_deref() == Some(session_id.as_str()) {
@@ -1185,6 +1250,54 @@ mod tests {
 
         assert!(app.registry.is_skill("test-skill"));
         assert!(app.chat.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fork_and_rewind_waits_for_authoritative_fork_response() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        app.pending_commands.insert(
+            9,
+            PendingCommand::CheckpointFork {
+                parent_session_id: "parent".into(),
+                prompt_index: Some(4),
+            },
+        );
+        let child = fabric::SessionRecord {
+            schema_version: fabric::SESSION_SCHEMA_VERSION,
+            id: fabric::SessionId("child".into()),
+            parent: Some(fabric::SessionFork {
+                session_id: fabric::SessionId("parent".into()),
+                through_sequence: 12,
+            }),
+            created_at_ms: 1,
+            status: fabric::SessionStatus::Active,
+        };
+
+        process_response(&mut app, serde_json::json!({"id": 9, "result": child}));
+
+        let deferred = app
+            .deferred_checkpoint_rewind
+            .expect("rewind must be deferred until the fork succeeds");
+        assert_eq!(deferred.parent_session_id, "parent");
+        assert_eq!(deferred.child_session_id, "child");
+        assert_eq!(deferred.prompt_index, 4);
+        assert_eq!(app.projection_target_session_id, None);
     }
 
     #[tokio::test]

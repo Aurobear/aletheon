@@ -599,4 +599,71 @@ mod tests {
                 if content.contains("source=workspace") && content.contains("branch=feature")
         ));
     }
+
+    #[tokio::test]
+    async fn historical_fork_boundary_uses_last_item_in_checkpoint_turn() {
+        let store: Arc<dyn SessionAppendStore> = Arc::new(
+            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
+                .unwrap(),
+        );
+        let session_id = SessionId("fork-boundary-session".into());
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 1,
+                status: SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let checkpoint_turn = TurnId::new();
+        for sequence in [1, 2] {
+            store
+                .append(
+                    &session_id,
+                    sequence,
+                    ItemRecord {
+                        schema_version: SESSION_SCHEMA_VERSION,
+                        id: ItemId::new(),
+                        session_id: session_id.clone(),
+                        turn_id: checkpoint_turn,
+                        sequence,
+                        created_at_ms: sequence,
+                        payload: ItemPayload::SystemNotice {
+                            content: format!("item-{sequence}"),
+                        },
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        store
+            .append(
+                &session_id,
+                3,
+                ItemRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: ItemId::new(),
+                    session_id: session_id.clone(),
+                    turn_id: TurnId::new(),
+                    sequence: 3,
+                    created_at_ms: 3,
+                    payload: ItemPayload::SystemNotice {
+                        content: "later".into(),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let service = SessionService::new(store, Arc::new(Mutex::new(Default::default())));
+
+        assert_eq!(
+            service
+                .sequence_through_turn(&session_id, checkpoint_turn)
+                .await
+                .unwrap(),
+            2
+        );
+    }
 }

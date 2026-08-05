@@ -264,7 +264,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     );
                     return;
                 };
-                send_request(
+                let request_id = write_request(
                     app,
                     ClientRpcRequest::WorkspaceRewind(
                         fabric::protocol::client::WorkspaceRewindParams {
@@ -274,6 +274,15 @@ pub async fn submit_message(app: &mut App, text: String) {
                     ),
                 )
                 .await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::CheckpointRewind {
+                        child_session_id: None,
+                    },
+                );
+                app.pending_non_turn.insert(request_id);
+                app.streaming = true;
+                app.status.waiting = true;
                 app.chat.add_text(
                     ChatRole::System,
                     format!("请求恢复工作区检查点 {prompt_index}…"),

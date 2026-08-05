@@ -120,7 +120,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         match picker.handle_key(key) {
             CheckpointPickerAction::Continue => app.checkpoint_picker = Some(picker),
             CheckpointPickerAction::Close => {}
-            CheckpointPickerAction::Rewind(prompt_index) => {
+            CheckpointPickerAction::RewindCode { prompt_index } => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
                     app.chat
                         .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
@@ -136,12 +136,62 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     ),
                 )
                 .await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::CheckpointRewind {
+                        child_session_id: None,
+                    },
+                );
                 app.pending_non_turn.insert(request_id);
                 app.streaming = true;
                 app.status.waiting = true;
                 app.chat.add_text(
                     ChatRole::System,
                     format!("请求恢复工作区检查点 {prompt_index}…"),
+                );
+            }
+            action @ (CheckpointPickerAction::ForkSession { .. }
+            | CheckpointPickerAction::ForkAndRewind { .. }) => {
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat
+                        .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+                    return;
+                };
+                let (through_sequence, prompt_index) = match action {
+                    CheckpointPickerAction::ForkSession { through_sequence } => {
+                        (through_sequence, None)
+                    }
+                    CheckpointPickerAction::ForkAndRewind {
+                        through_sequence,
+                        prompt_index,
+                    } => (through_sequence, Some(prompt_index)),
+                    _ => unreachable!(),
+                };
+                let request_id = write_request(
+                    app,
+                    ClientRpcRequest::SessionFork(fabric::protocol::client::SessionForkParams {
+                        session_id: fabric::SessionId(session_id.clone()),
+                        through_sequence,
+                    }),
+                )
+                .await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::CheckpointFork {
+                        parent_session_id: session_id,
+                        prompt_index,
+                    },
+                );
+                app.pending_non_turn.insert(request_id);
+                app.streaming = true;
+                app.status.waiting = true;
+                app.chat.add_text(
+                    ChatRole::System,
+                    if prompt_index.is_some() {
+                        "创建历史会话分支，成功后再恢复代码…".to_string()
+                    } else {
+                        "创建历史会话分支…".to_string()
+                    },
                 );
             }
         }

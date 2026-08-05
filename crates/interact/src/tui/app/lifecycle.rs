@@ -223,6 +223,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         // Try reading daemon response (with optional event recording)
         needs_redraw |= try_read_socket_with_recorder(&mut app, &mut event_recorder);
+        drive_deferred_checkpoint_rewind(&mut app).await;
         drive_session_projection(&mut app).await;
 
         // Check if a turn just completed and we should auto-submit next line
@@ -254,6 +255,31 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         app.persist_input_state();
     }
     Ok(())
+}
+
+async fn drive_deferred_checkpoint_rewind(app: &mut App) {
+    let Some(deferred) = app.deferred_checkpoint_rewind.take() else {
+        return;
+    };
+    let request_id = super::submit::write_request(
+        app,
+        fabric::protocol::client::ClientRpcRequest::WorkspaceRewind(
+            fabric::protocol::client::WorkspaceRewindParams {
+                session_id: fabric::SessionId(deferred.parent_session_id),
+                prompt_index: deferred.prompt_index,
+            },
+        ),
+    )
+    .await;
+    app.pending_commands.insert(
+        request_id,
+        super::super::PendingCommand::CheckpointRewind {
+            child_session_id: Some(deferred.child_session_id),
+        },
+    );
+    app.pending_non_turn.insert(request_id);
+    app.streaming = true;
+    app.status.waiting = true;
 }
 
 async fn drive_session_projection(app: &mut App) {
