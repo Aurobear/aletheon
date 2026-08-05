@@ -37,3 +37,4 @@ A-TURN-001	X7	test	crates/executive/tests/turn_service_equivalence.rs
 A-MEM-001	X14	test	crates/mnemosyne/tests/unified_memory_contract.rs
 A-MEM-002	X14	test	crates/mnemosyne/tests/unified_memory_contract.rs
 A-MEM-003	X14	test	crates/mnemosyne/tests/unified_memory_contract.rs
+U-CHK-003	X8a	test	crates/fabric/src/types/workspace_checkpoint.rs
