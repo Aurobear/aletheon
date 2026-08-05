@@ -74,7 +74,7 @@ case "$mode" in
     systemd-analyze verify "$staged"
     for contract in \
       '^User=aletheon$' '^Group=aletheon$' '^NoNewPrivileges=yes$' \
-      '^ProtectSystem=strict$' '^StandardOutput=journal$' \
+      '^ProtectSystem=strict$' '^KillMode=control-group$' '^TimeoutStopSec=30$' \
       '^RestrictAddressFamilies=.*AF_UNIX'; do
       require_contract "$staged" "$contract" 'core unit verification'
     done

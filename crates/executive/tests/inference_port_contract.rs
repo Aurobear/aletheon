@@ -3,9 +3,25 @@ use std::sync::Arc;
 
 use cognit::testing::mock_llm::MockLlmProvider;
 use executive::application::inference_port::{
-    CoreInferenceRequest, InferencePort, LocalInferencePort,
+    CoreInferenceRequest, InferenceError, InferencePort, LocalInferencePort,
 };
-use fabric::{LlmStream, Message, StopReason, StreamChunk, ToolDefinition};
+use fabric::{LlmResponse, LlmStream, Message, StopReason, StreamChunk, ToolDefinition};
+
+struct NoAuthorityPort;
+
+#[async_trait::async_trait]
+impl InferencePort for NoAuthorityPort {
+    async fn complete(
+        &self,
+        _request: CoreInferenceRequest,
+    ) -> Result<LlmResponse, InferenceError> {
+        Err(anyhow::anyhow!("fixture completion unavailable").into())
+    }
+
+    async fn stream(&self, _request: CoreInferenceRequest) -> Result<LlmStream, InferenceError> {
+        Err(anyhow::anyhow!("fixture stream unavailable").into())
+    }
+}
 
 fn request() -> CoreInferenceRequest {
     CoreInferenceRequest {
@@ -72,4 +88,23 @@ fn core_inference_request_contains_no_identity_or_workspace_authority() {
     for forbidden in ["uid", "gid", "workspace", "working_dir"] {
         assert!(!wire.contains(forbidden), "request leaked {forbidden}");
     }
+}
+
+#[tokio::test]
+async fn unimplemented_provider_authority_fails_closed_instead_of_using_local_state() {
+    let port = NoAuthorityPort;
+    let error = match port.acquire_provider_permit("provider::fixture").await {
+        Ok(_) => panic!("a port without machine authority must not create a local permit"),
+        Err(error) => error,
+    };
+    assert!(error
+        .to_string()
+        .contains("provider machine authority unavailable"));
+    let error = port
+        .provider_backpressure_metrics()
+        .await
+        .expect_err("metrics must not silently report an unrelated local registry");
+    assert!(error
+        .to_string()
+        .contains("provider machine authority unavailable"));
 }

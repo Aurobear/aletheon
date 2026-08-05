@@ -90,8 +90,37 @@ impl CoreRpcServer {
         if max_frame_bytes == 0 {
             anyhow::bail!("core RPC frame limit must be positive");
         }
-        if socket_path.exists() {
-            tokio::fs::remove_file(socket_path).await?;
+        // Never unlink a live core socket: doing so would leave the previous
+        // machine-core listener serving an unlinked endpoint while a second
+        // core takes over the pathname. Probe first and only reclaim a socket
+        // whose listener is demonstrably gone.
+        match std::fs::symlink_metadata(socket_path) {
+            Ok(metadata) => {
+                use std::os::unix::fs::FileTypeExt;
+                if !metadata.file_type().is_socket() {
+                    anyhow::bail!(
+                        "refusing to replace non-socket core RPC path {}",
+                        socket_path.display()
+                    );
+                }
+                match UnixStream::connect(socket_path).await {
+                    Ok(_) => anyhow::bail!(
+                        "core RPC socket is already served by another process: {}",
+                        socket_path.display()
+                    ),
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+                        ) =>
+                    {
+                        tokio::fs::remove_file(socket_path).await?;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
         let listener = UnixListener::bind(socket_path)?;
         #[cfg(unix)]
