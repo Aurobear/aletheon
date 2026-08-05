@@ -222,11 +222,26 @@ impl CapabilityTerminalReceipt {
         finished_at: MonoTime,
         details: CapabilityReceiptDetails,
     ) -> Self {
-        let status = details.status.unwrap_or(if result.is_error {
-            CapabilityTerminalStatus::Failed
+        // A result for another invocation must never become successful
+        // evidence for this call. Executors may run concurrently and their
+        // output is untrusted until it is bound back to the host-minted call
+        // id. Keep the receipt terminal (rather than panicking) so the host
+        // can persist the protocol violation and settle the turn as failed.
+        let result_binds_call = result.call_id == call.call_id;
+        let status = if result_binds_call {
+            details.status.unwrap_or(if result.is_error {
+                CapabilityTerminalStatus::Failed
+            } else {
+                CapabilityTerminalStatus::Succeeded
+            })
         } else {
-            CapabilityTerminalStatus::Succeeded
-        });
+            CapabilityTerminalStatus::Failed
+        };
+        let error_class = if result_binds_call {
+            details.error_class
+        } else {
+            Some(CapabilityErrorClass::InvalidRequest)
+        };
         Self {
             invocation_id: call.call_id.clone(),
             operation_id: call.operation_id,
@@ -236,7 +251,7 @@ impl CapabilityTerminalReceipt {
             started_at,
             finished_at,
             exit_code: details.exit_code.or(result.usage.exit_code),
-            error_class: details.error_class,
+            error_class,
             artifact_ids: details.artifact_ids,
             evidence_ids: details.evidence_ids,
             output_ref: details.output_ref,
@@ -428,5 +443,50 @@ mod terminal_receipt_tests {
         );
         assert!(!receipt.proves_success());
         assert_eq!(receipt.status, CapabilityTerminalStatus::TimedOut);
+    }
+
+    #[test]
+    fn mismatched_result_cannot_become_success_evidence_for_an_invocation() {
+        let call = CapabilityCall {
+            operation_id: OperationId::new(),
+            process_id: ProcessId::new(),
+            name: "managed_command".into(),
+            input: serde_json::Value::Null,
+            call_id: "host-minted-call".into(),
+            deadline: None,
+        };
+        let result = CapabilityResult {
+            // Simulates an adapter accidentally returning a concurrent
+            // invocation's result.
+            call_id: "other-call".into(),
+            output: "completed".into(),
+            is_error: false,
+            usage: UsageReport {
+                exit_code: Some(0),
+                ..UsageReport::default()
+            },
+            audit_id: None,
+            patch_delta: None,
+            served_from_cache: false,
+        };
+
+        let receipt = CapabilityTerminalReceipt::from_terminal_result(
+            &call,
+            &result,
+            MonoTime(10),
+            MonoTime(20),
+            CapabilityReceiptDetails {
+                status: Some(CapabilityTerminalStatus::Succeeded),
+                ..CapabilityReceiptDetails::default()
+            },
+        );
+
+        assert_eq!(receipt.invocation_id, call.call_id);
+        assert_eq!(receipt.status, CapabilityTerminalStatus::Failed);
+        assert_eq!(
+            receipt.error_class,
+            Some(CapabilityErrorClass::InvalidRequest)
+        );
+        assert!(!receipt.proves_success());
     }
 }
