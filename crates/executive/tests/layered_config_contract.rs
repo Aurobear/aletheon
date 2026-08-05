@@ -262,13 +262,15 @@ fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
         );
         assert!(
             config.evaluation.enabled,
-            "checked-in runtime config must explicitly enable shadow evaluation: {}",
+            "checked-in runtime config must explicitly enable host evaluation: {}",
             path.display()
         );
-        assert_eq!(
-            config.evaluation.default_mode,
+        let expected_evaluation_mode = if path.ends_with("default.toml") {
+            fabric::EvaluationMode::Enforce
+        } else {
             fabric::EvaluationMode::Shadow
-        );
+        };
+        assert_eq!(config.evaluation.default_mode, expected_evaluation_mode);
         assert_eq!(config.evaluation.coding_rubric, "coding-v2");
 
         let official = config
