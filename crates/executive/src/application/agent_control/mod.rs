@@ -75,7 +75,7 @@ pub use recovery::{
 };
 pub use repository::{
     agent_workspace_id, AgentMessageRecord, AgentResourceLease, AgentResourceLeaseKind,
-    AgentRunRecord, AgentRunRepository,
+    AgentRunRecord, AgentRunRepository, AgentTerminalReceipt,
 };
 pub use settlement::{
     recovery_disposition, settle_admission, terminal_with_memory_flush,

@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::application::agent_control::repository::{
     AgentMessageRecord, AgentResourceLease, AgentResourceLeaseKind, AgentRunRecord,
-    AgentRunRepository,
+    AgentRunRepository, AgentTerminalReceipt,
 };
 use crate::application::agent_control::{
     agent_spawn_request_hash, reduce_agent_status_transition, AgentLifecycleEffect,
@@ -750,6 +750,91 @@ impl AgentRunRepository for SqliteAgentRunRepository {
             ));
         }
         Ok(record)
+    }
+
+    async fn record_terminal_receipt(
+        &self,
+        receipt: &AgentTerminalReceipt,
+    ) -> Result<(), AgentControlError> {
+        receipt.validate()?;
+        let result_json = receipt
+            .result
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(persistence)?;
+        let mut connection = self.connection.lock();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(persistence)?;
+        let existing: Option<(String, String, Option<String>, i64)> = transaction
+            .query_row(
+                "SELECT generation,status,result_json,recorded_at_ms FROM agent_terminal_receipts WHERE agent_id=?1",
+                [receipt.agent_id.0.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(persistence)?;
+        if let Some((generation, status, stored_result, recorded_at_ms)) = existing {
+            let same = generation == receipt.generation
+                && parse_status_text(&status)? == receipt.status
+                && stored_result == result_json
+                && recorded_at_ms == receipt.recorded_at_ms;
+            if same {
+                transaction.commit().map_err(persistence)?;
+                return Ok(());
+            }
+            return Err(control_error(
+                AgentControlErrorKind::Conflict,
+                "terminal receipt is already recorded differently",
+            ));
+        }
+        transaction
+            .execute(
+                "INSERT INTO agent_terminal_receipts(agent_id,generation,status,result_json,recorded_at_ms) VALUES(?1,?2,?3,?4,?5)",
+                params![
+                    receipt.agent_id.0.to_string(),
+                    receipt.generation,
+                    status_wire(receipt.status),
+                    result_json,
+                    receipt.recorded_at_ms,
+                ],
+            )
+            .map_err(persistence)?;
+        transaction.commit().map_err(persistence)
+    }
+
+    async fn terminal_receipt(
+        &self,
+        agent: AgentId,
+    ) -> Result<Option<AgentTerminalReceipt>, AgentControlError> {
+        let connection = self.connection.lock();
+        connection
+            .query_row(
+                "SELECT generation,status,result_json,recorded_at_ms FROM agent_terminal_receipts WHERE agent_id=?1",
+                [agent.0.to_string()],
+                |row| {
+                    let generation: String = row.get(0)?;
+                    let status: String = row.get(1)?;
+                    let result_json: Option<String> = row.get(2)?;
+                    let recorded_at_ms: i64 = row.get(3)?;
+                    Ok((generation, status, result_json, recorded_at_ms))
+                },
+            )
+            .optional()
+            .map_err(persistence)?
+            .map(|(generation, status, result_json, recorded_at_ms)| {
+                Ok(AgentTerminalReceipt {
+                    agent_id: agent,
+                    generation,
+                    status: parse_status_text(&status)?,
+                    result: result_json
+                        .map(|value| serde_json::from_str(&value).map_err(persistence))
+                        .transpose()?,
+                    recorded_at_ms,
+                })
+            })
+            .transpose()
     }
 }
 

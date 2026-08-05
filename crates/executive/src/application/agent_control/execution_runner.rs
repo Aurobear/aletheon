@@ -145,6 +145,16 @@ pub(super) async fn run_agent(
         Err(error) => (AgentRunStatus::Failed, None, Some(error.message.clone())),
     };
     let settlement_usage = result.as_ref().map(|result| result.usage.clone());
+    let terminal_receipt = AgentTerminalReceipt {
+        agent_id: agent,
+        generation: settlement_generation.clone(),
+        status: candidate_status,
+        result: result.clone(),
+        recorded_at_ms: clock.wall_now().0,
+    };
+    if let Err(error) = repository.record_terminal_receipt(&terminal_receipt).await {
+        tracing::error!(agent = ?agent, %error, "failed to persist host terminal receipt");
+    }
     let lease_owner = format!("process:{}", process.0);
     let authoritative_terminal;
     {

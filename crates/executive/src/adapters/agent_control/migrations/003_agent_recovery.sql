@@ -12,3 +12,12 @@ CREATE TABLE IF NOT EXISTS agent_resource_leases (
 
 CREATE INDEX IF NOT EXISTS idx_agent_resource_leases_expiry
 ON agent_resource_leases(expires_at_ms, lease_key);
+
+CREATE TABLE IF NOT EXISTS agent_terminal_receipts (
+    agent_id TEXT PRIMARY KEY,
+    generation TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('succeeded','failed','cancelled','interrupted')),
+    result_json TEXT,
+    recorded_at_ms INTEGER NOT NULL,
+    FOREIGN KEY(agent_id) REFERENCES agent_runs(agent_id)
+);
