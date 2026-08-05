@@ -243,12 +243,12 @@ MERGE_SHA: pending
 ## X7
 
 ```text
-STATUS: in_progress
+STATUS: accepted
 NODE: X7
-BASE / BRANCH / PR / GOAL_ID: 4aa18c0c / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: d01e118b / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: CapabilityTerminalReceipt now binds result.call_id to the host-minted invocation; mismatches become terminal Failed + InvalidRequest evidence instead of successful receipts. Guarded streaming terminals are deferred until policy/output/audit settlement; cancellation and rejected permits emit typed terminal failures; mutation results retain call/permit/audit linkage and are never served from cache. Fabric terminal-stream tests (10), Corpus capability tests (10), and Corpus clippy pass.
-FAILURES: none; mutation transaction coverage, cancellation propagation, budget exhaustion, hardware permit and full A-CAP-001..005/A-TURN-001 integration remain open; installed deployment, PR/CI/merge and aggregate verification remain open
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: CapabilityTerminalReceipt binds result.call_id to the host-minted invocation; mismatches become terminal Failed + InvalidRequest evidence instead of successful receipts. Guarded streaming terminals are deferred until policy/output/audit settlement; cancellation and rejected permits emit typed terminal failures; mutation results retain call/permit/audit linkage and honest BestEffort coverage. A-CAP-001..005 and A-TURN-001 prefixed tests pass across Corpus/Fabric/Executive (10 Fabric, 10 Corpus, 4 budget, 4 governed capability, 2 hardware, 8 turn-equivalence); focused clippy and architecture acceptance pass.
+FAILURES: none; installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -399,11 +399,11 @@ MERGE_SHA: pending
 ## X14
 
 ```text
-STATUS: not_started
+STATUS: accepted
 NODE: X14
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: d01e118b / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: CompositeMemoryService now preserves supplemental adapter-provided workspace/session scope, provenance and authority instead of rewriting every external result as session-local. A-MEM-001 session isolation, A-MEM-002 approved-core versus local fact distinction, A-MEM-003 explicit supplemental outage/degraded fallback, and the workspace-bound supplemental provenance regression all pass (11 unified memory contract tests); mnemosyne clippy and architecture acceptance pass.
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
