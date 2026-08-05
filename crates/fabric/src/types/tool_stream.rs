@@ -101,6 +101,11 @@ pub struct ToolEventSink {
     call_id: Option<String>,
     terminal_sent: bool,
     terminal_result: Option<Result<ToolResult, ToolExecutionError>>,
+    /// Guarded executors defer delivery until policy/output/audit settlement is
+    /// known. Tool implementations may still publish progress immediately,
+    /// but may not expose an unvalidated terminal as success.
+    terminal_delivery_deferred: bool,
+    terminal_delivered: bool,
 }
 
 /// Host-bound receiver for a governed call. Keeping the binding beside the
@@ -163,7 +168,43 @@ impl ToolEventSink {
         }
         self.terminal_sent = true;
         self.terminal_result = Some(result.clone());
+        if !self.terminal_delivery_deferred {
+            let _ = self.tx.send(ToolExecutionEvent::Terminal(result)).await;
+            self.terminal_delivered = true;
+        }
+    }
+
+    /// Defer terminal delivery until a governed executor has validated and
+    /// audited the result. This is a host-only boundary: progress remains
+    /// visible, while a tool cannot expose provisional success as terminal
+    /// evidence before the guard completes.
+    pub fn defer_terminal_delivery(&mut self) {
+        debug_assert!(
+            !self.terminal_sent,
+            "terminal delivery must be deferred before tool execution"
+        );
+        self.terminal_delivery_deferred = true;
+    }
+
+    /// Publish the authoritative terminal chosen by the guarded executor.
+    /// This may replace a tool-provided provisional terminal after a policy,
+    /// output, or audit failure. It is only valid after
+    /// [`Self::defer_terminal_delivery`].
+    pub async fn settle_deferred_terminal(
+        &mut self,
+        result: Result<ToolResult, ToolExecutionError>,
+    ) {
+        debug_assert!(
+            self.terminal_delivery_deferred,
+            "only deferred terminals may be settled by the host"
+        );
+        if !self.terminal_delivery_deferred || self.terminal_delivered {
+            return;
+        }
+        self.terminal_sent = true;
+        self.terminal_result = Some(result.clone());
         let _ = self.tx.send(ToolExecutionEvent::Terminal(result)).await;
+        self.terminal_delivered = true;
     }
 
     /// Whether the terminal has been sent.
@@ -187,6 +228,8 @@ pub fn tool_event_channel() -> (ToolEventSink, mpsc::Receiver<ToolExecutionEvent
             call_id: None,
             terminal_sent: false,
             terminal_result: None,
+            terminal_delivery_deferred: false,
+            terminal_delivered: false,
         },
         rx,
     )
@@ -208,6 +251,8 @@ pub fn tool_event_channel_for_call(
             call_id: Some(call_id.clone()),
             terminal_sent: false,
             terminal_result: None,
+            terminal_delivery_deferred: false,
+            terminal_delivered: false,
         },
         BoundToolEventReceiver { call_id, rx },
     )
@@ -327,6 +372,24 @@ mod tests {
         }
         term.await.unwrap();
         assert!(saw_terminal, "terminal must be delivered, never dropped");
+    }
+
+    #[tokio::test]
+    async fn deferred_terminal_is_hidden_until_host_settlement() {
+        let (mut sink, mut rx) = tool_event_channel();
+        sink.defer_terminal_delivery();
+        sink.terminal(Ok(ok_result())).await;
+        assert!(rx.try_recv().is_err(), "provisional terminal must stay hidden");
+
+        sink.settle_deferred_terminal(Err(ToolExecutionError::Failed(
+            "audit failed".into(),
+        )))
+        .await;
+        assert!(matches!(
+            rx.recv().await,
+            Some(ToolExecutionEvent::Terminal(Err(ToolExecutionError::Failed(message))))
+                if message == "audit failed"
+        ));
     }
 
     #[tokio::test]

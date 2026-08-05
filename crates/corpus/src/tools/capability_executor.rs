@@ -136,6 +136,10 @@ impl CorpusToolExecutor {
         now: fabric::MonoTime,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
+            !request.control.cancel.is_cancelled(),
+            "capability invocation cancelled before execution"
+        );
+        anyhow::ensure!(
             permit.operation_id == request.call.operation_id
                 && permit.process_id == request.call.process_id
                 && permit.capability == CapabilityId(request.call.name.clone()),
@@ -169,6 +173,23 @@ impl CorpusToolExecutor {
                 cache_policy,
             )
         })
+    }
+
+    async fn emit_stream_terminal_error(
+        sink: &mut fabric::ToolEventSink,
+        error: fabric::ToolExecutionError,
+    ) {
+        if !sink.terminal_sent() {
+            sink.terminal(Err(error)).await;
+        }
+    }
+
+    fn terminal_error_for(message: &str) -> fabric::ToolExecutionError {
+        if message == "capability invocation cancelled before execution" {
+            fabric::ToolExecutionError::Cancelled(message.to_owned())
+        } else {
+            fabric::ToolExecutionError::Failed(message.to_owned())
+        }
     }
 
     async fn authorize_cache_hit(
@@ -344,7 +365,9 @@ impl ToolExecutor for CorpusToolExecutor {
         sink: &mut fabric::ToolEventSink,
     ) -> CapabilityResult {
         if let Err(error) = Self::validate(request, permit, self.clock.mono_now()) {
-            return Self::error_result(request, permit, error.to_string(), AuditEventId::new());
+            let message = error.to_string();
+            Self::emit_stream_terminal_error(sink, Self::terminal_error_for(&message)).await;
+            return Self::error_result(request, permit, message, AuditEventId::new());
         }
 
         let tool = {
@@ -352,12 +375,13 @@ impl ToolExecutor for CorpusToolExecutor {
             registry.get(&request.call.name).cloned()
         };
         let Some(tool) = tool else {
-            return Self::error_result(
-                request,
-                permit,
-                format!("tool not found: {}", request.call.name),
-                AuditEventId::new(),
-            );
+            let message = format!("tool not found: {}", request.call.name);
+            Self::emit_stream_terminal_error(
+                sink,
+                fabric::ToolExecutionError::Failed(message.clone()),
+            )
+            .await;
+            return Self::error_result(request, permit, message, AuditEventId::new());
         };
 
         let context = ToolContext {
@@ -448,7 +472,15 @@ impl ToolExecutor for CorpusToolExecutor {
                 }
                 capability
             }
-            Err(error) => Self::error_result(request, permit, error.to_string(), report.audit_id),
+            Err(error) => {
+                let message = error.to_string();
+                Self::emit_stream_terminal_error(
+                    sink,
+                    fabric::ToolExecutionError::Failed(message.clone()),
+                )
+                .await;
+                Self::error_result(request, permit, message, report.audit_id)
+            }
         }
     }
 }
