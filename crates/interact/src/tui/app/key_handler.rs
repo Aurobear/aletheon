@@ -143,9 +143,14 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         app.detail = if app.detail.is_some() {
             None
         } else {
-            app.latest_diff
-                .clone()
-                .map(super::super::diff_view::DiffView::new)
+            app.latest_patch
+                .as_ref()
+                .map(super::super::diff_view::DiffView::from_patch_delta)
+                .or_else(|| {
+                    app.latest_diff
+                        .clone()
+                        .map(super::super::diff_view::DiffView::new)
+                })
         };
         return;
     }
@@ -156,10 +161,12 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Char('j') | KeyCode::Down => {
+                detail.select_next();
                 detail.scroll_down();
                 return;
             }
             KeyCode::Char('k') | KeyCode::Up => {
+                detail.select_previous();
                 detail.scroll_up();
                 return;
             }

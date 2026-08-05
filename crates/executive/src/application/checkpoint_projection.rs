@@ -107,6 +107,57 @@ impl TurnCheckpointProjection {
             created_at_ms: checkpoint.created_at_ms,
         })
     }
+
+    pub fn to_review_snapshot(&self) -> fabric::CheckpointReviewSnapshot {
+        let mutation_coverage = match self.mutation_coverage {
+            MutationCoverage::Full => fabric::CheckpointMutationCoverage::Full,
+            MutationCoverage::BestEffort => fabric::CheckpointMutationCoverage::BestEffort,
+            MutationCoverage::NonRollbackable => {
+                fabric::CheckpointMutationCoverage::NonRollbackable
+            }
+        };
+        let rollback_action = match self.mutation_coverage {
+            MutationCoverage::Full => fabric::CheckpointRollbackAction::AutomaticAllowed,
+            MutationCoverage::BestEffort => {
+                fabric::CheckpointRollbackAction::ExplicitApprovalRequired
+            }
+            MutationCoverage::NonRollbackable => fabric::CheckpointRollbackAction::Unavailable,
+        };
+        let settlement = match self.settlement {
+            CheckpointSettlement::Open => fabric::CheckpointReviewSettlement::Open,
+            CheckpointSettlement::Finalized => fabric::CheckpointReviewSettlement::Finalized,
+            CheckpointSettlement::Aborted => fabric::CheckpointReviewSettlement::Aborted,
+            CheckpointSettlement::RepairRequired => {
+                fabric::CheckpointReviewSettlement::RepairRequired
+            }
+            CheckpointSettlement::Accepted => fabric::CheckpointReviewSettlement::Accepted,
+            CheckpointSettlement::RolledBack => fabric::CheckpointReviewSettlement::RolledBack,
+            CheckpointSettlement::Conflicted => fabric::CheckpointReviewSettlement::Conflicted,
+        };
+        fabric::CheckpointReviewSnapshot {
+            schema_version: self.schema_version,
+            checkpoint_id: self.checkpoint_id.0.to_string(),
+            session_id: self.session_id.clone(),
+            task_id: format!("session:{}:task", self.session_id),
+            turn_id: self.turn_id.clone(),
+            parent_checkpoint_id: self.parent_checkpoint_id.map(|id| id.0.to_string()),
+            workspace_before: self.workspace_before.clone(),
+            workspace_after: self.workspace_after.clone(),
+            changed_paths: self.changed_paths.clone(),
+            diff_artifact_ref: self.diff_artifact_ref.clone(),
+            validation_receipt_count: self.validation_receipts.len(),
+            validation_omission_count: self.validation_omissions.len(),
+            validation_receipts: self.validation_receipts.clone(),
+            validation_omissions: self.validation_omissions.clone(),
+            mutation_coverage,
+            rollback_action,
+            settlement,
+            conversation_cursor: self.conversation_cursor,
+            plan_revision: self.plan_revision.clone(),
+            created_at_ms: self.created_at_ms,
+            recovery_evidence: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -213,5 +264,33 @@ mod tests {
             });
         transaction.owner_turn_id = Some("other-turn".into());
         assert!(TurnCheckpointProjection::project(&checkpoint, &transaction, None, None).is_err());
+    }
+
+    #[test]
+    fn u_chk_005_weaker_coverage_never_projects_automatic_rollback() {
+        let checkpoint = checkpoint();
+        for (coverage, expected) in [
+            (
+                MutationCoverage::BestEffort,
+                fabric::CheckpointRollbackAction::ExplicitApprovalRequired,
+            ),
+            (
+                MutationCoverage::NonRollbackable,
+                fabric::CheckpointRollbackAction::Unavailable,
+            ),
+        ] {
+            let mut transaction = accepted_transaction();
+            transaction.mutation_coverage = coverage;
+            transaction
+                .validation_omissions
+                .push(ValidationPlanOmission {
+                    validation_kind: "tests".into(),
+                    reason: "explicit".into(),
+                });
+            let review = TurnCheckpointProjection::project(&checkpoint, &transaction, None, None)
+                .unwrap()
+                .to_review_snapshot();
+            assert_eq!(review.rollback_action, expected);
+        }
     }
 }

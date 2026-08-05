@@ -148,6 +148,9 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             patch_delta,
             ..
         } => {
+            if let Some(delta) = patch_delta.as_ref() {
+                app.latest_patch = Some(delta.clone());
+            }
             if let Some(preview) = patch_delta
                 .as_ref()
                 .and_then(|delta| delta.diff_preview.clone())

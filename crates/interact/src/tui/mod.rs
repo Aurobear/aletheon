@@ -353,6 +353,7 @@ struct App {
     selected_activity: Option<usize>,
     detail: Option<diff_view::DiffView>,
     latest_diff: Option<String>,
+    latest_patch: Option<fabric::PatchDelta>,
     /// Streaming controller for incremental rendering
     stream_ctrl: StreamController,
     /// Current turn's token count
@@ -440,6 +441,7 @@ impl App {
             selected_activity: None,
             detail: None,
             latest_diff: None,
+            latest_patch: None,
             stream_ctrl: StreamController::new(Arc::clone(&clock)),
             turn_tokens: None,
             total_tokens: 0,

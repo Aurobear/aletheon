@@ -39,3 +39,7 @@ A-MEM-002	X14	test	crates/mnemosyne/tests/unified_memory_contract.rs
 A-MEM-003	X14	test	crates/mnemosyne/tests/unified_memory_contract.rs
 U-CHK-003	X8a	test	crates/fabric/src/types/workspace_checkpoint.rs
 U-CHK-004	X8a	test	crates/executive/src/application/checkpoint_projection.rs
+U-CHK-001	X8b	test	crates/corpus/src/tools/tools/change_transaction.rs
+U-CHK-002	X8b	test	crates/corpus/src/tools/tools/change_transaction.rs
+U-CHK-005	X8b	test	crates/interact/src/tui/diff_view.rs
+U-CHK-006	X8b	test	crates/interact/src/tui/diff_view.rs

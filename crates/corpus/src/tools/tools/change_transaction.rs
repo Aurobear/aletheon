@@ -1534,7 +1534,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrent_modification_fails_before_patch_application() {
+    async fn u_chk_002_concurrent_modification_conflicts_before_patch_application() {
         let repo = init_repo();
         let registry = ChangeTransactionRegistry::default();
         let context = context(repo.path());
@@ -1906,7 +1906,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rollback_restores_preexisting_dirty_baseline_and_removes_new_files() {
+    async fn u_chk_001_rollback_restores_preexisting_user_baseline_and_removes_turn_files() {
         let repo = init_repo();
         std::fs::write(repo.path().join("file.txt"), "dirty baseline\n").unwrap();
         std::fs::write(repo.path().join("preexisting.txt"), "keep me\n").unwrap();

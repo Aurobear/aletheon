@@ -93,6 +93,7 @@ impl SessionProjection {
             pending_approvals: Vec::new(),
             budget: None,
             checkpoint_head: None,
+            checkpoint_review: None,
             settlement,
             runtime_facts,
         };

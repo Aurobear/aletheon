@@ -79,6 +79,7 @@ fn read_snapshot(sequence: u64, items: Vec<ItemRecord>) -> SessionReadSnapshot {
             pending_approvals: vec![],
             budget: None,
             checkpoint_head: None,
+            checkpoint_review: None,
             settlement: None,
             runtime_facts: None,
         }],

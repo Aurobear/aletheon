@@ -411,26 +411,14 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Diff)) => {
-                let output = std::process::Command::new("git")
-                    .args(["diff", "--stat"])
-                    .current_dir(app.workspace.cwd())
-                    .output();
-                let message = match output {
-                    Ok(output) if output.status.success() => {
-                        let diff = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        if diff.is_empty() {
-                            "工作区没有未暂存差异".to_string()
-                        } else {
-                            format!("=== Workspace Diff ===\n{diff}")
-                        }
-                    }
-                    Ok(output) => format!(
-                        "无法读取工作区差异：{}",
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    ),
-                    Err(error) => format!("无法执行 git diff：{error}"),
-                };
-                app.chat.add_text(ChatRole::System, message);
+                if let Some(delta) = app.latest_patch.as_ref() {
+                    app.detail = Some(super::super::diff_view::DiffView::from_patch_delta(delta));
+                    return;
+                }
+                app.chat.add_text(
+                    ChatRole::System,
+                    "No authoritative checkpoint diff is available for this turn".to_string(),
+                );
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Mention { path })) => {

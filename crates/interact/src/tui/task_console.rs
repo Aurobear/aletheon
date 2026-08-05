@@ -222,6 +222,43 @@ fn render_activity_panel(
             Style::default().fg(theme.error),
         )));
     }
+    if let Some(review) = active_task(state).and_then(|task| task.checkpoint_review.as_ref()) {
+        let coverage = match review.mutation_coverage {
+            fabric::CheckpointMutationCoverage::Full => "full",
+            fabric::CheckpointMutationCoverage::BestEffort => "best-effort",
+            fabric::CheckpointMutationCoverage::NonRollbackable => "non-rollbackable",
+        };
+        let rollback = match review.rollback_action {
+            fabric::CheckpointRollbackAction::AutomaticAllowed => "automatic rollback available",
+            fabric::CheckpointRollbackAction::ExplicitApprovalRequired => {
+                "rollback requires explicit approval"
+            }
+            fabric::CheckpointRollbackAction::Unavailable => "rollback unavailable",
+        };
+        change_lines.push(Line::from(Span::styled(
+            format!("CHECKPOINT {coverage} · {rollback}"),
+            Style::default().fg(theme.accent),
+        )));
+        change_lines.extend(
+            review
+                .changed_paths
+                .iter()
+                .take(changes_inner.height as usize)
+                .map(|path| Line::from(format!(" {} {path}", caps.bullet()))),
+        );
+        if matches!(
+            review.settlement,
+            fabric::CheckpointReviewSettlement::Partial
+                | fabric::CheckpointReviewSettlement::Conflicted
+        ) {
+            change_lines.extend(review.recovery_evidence.iter().map(|evidence| {
+                Line::from(Span::styled(
+                    format!(" RECOVERY {evidence}"),
+                    Style::default().fg(theme.warning),
+                ))
+            }));
+        }
+    }
     if let Some(activity) = selected_activity.and_then(|index| state.activities.get(index)) {
         change_lines.push(Line::from(Span::styled(
             format!("DETAIL {:?}: {}", activity.kind, activity.label),
@@ -465,6 +502,7 @@ mod tests {
             pending_approvals: vec![],
             budget: Some(serde_json::json!({"remaining": 12})),
             checkpoint_head: None,
+            checkpoint_review: None,
             settlement: None,
             runtime_facts: Some(fabric::TaskRuntimeFacts {
                 effective_provider: Some("deepseek".into()),
@@ -588,6 +626,7 @@ mod tests {
             pending_approvals: vec![],
             budget: None,
             checkpoint_head: None,
+            checkpoint_review: None,
             settlement: None,
             runtime_facts: Some(fabric::TaskRuntimeFacts {
                 effective_provider: Some("provider".into()),

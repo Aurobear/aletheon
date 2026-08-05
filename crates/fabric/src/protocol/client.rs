@@ -1109,6 +1109,77 @@ pub enum TaskSettlement {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointMutationCoverage {
+    Full,
+    BestEffort,
+    NonRollbackable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointRollbackAction {
+    AutomaticAllowed,
+    ExplicitApprovalRequired,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointReviewSettlement {
+    Open,
+    Finalized,
+    Aborted,
+    RepairRequired,
+    Accepted,
+    RolledBack,
+    Partial,
+    Conflicted,
+}
+
+/// Versioned daemon-owned checkpoint read projection. It carries only typed
+/// host facts and references; checkpoint/transaction stores remain authoritative.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointReviewSnapshot {
+    pub schema_version: u16,
+    #[serde(default)]
+    pub checkpoint_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub task_id: String,
+    pub turn_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_checkpoint_id: Option<String>,
+    #[serde(default)]
+    pub workspace_before: String,
+    #[serde(default)]
+    pub workspace_after: String,
+    pub changed_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_artifact_ref: Option<String>,
+    pub validation_receipt_count: usize,
+    pub validation_omission_count: usize,
+    #[serde(default)]
+    #[schemars(with = "Vec<serde_json::Value>")]
+    pub validation_receipts: Vec<crate::change_transaction::VersionedValidationReceipt>,
+    #[serde(default)]
+    #[schemars(with = "Vec<serde_json::Value>")]
+    pub validation_omissions: Vec<crate::change_transaction::ValidationPlanOmission>,
+    pub mutation_coverage: CheckpointMutationCoverage,
+    pub rollback_action: CheckpointRollbackAction,
+    pub settlement: CheckpointReviewSettlement,
+    #[serde(default)]
+    pub conversation_cursor: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_revision: Option<String>,
+    #[serde(default)]
+    pub created_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery_evidence: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TaskStepSnapshot {
     pub step_id: String,
@@ -1142,6 +1213,8 @@ pub struct TaskSnapshot {
     pub budget: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_review: Option<CheckpointReviewSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settlement: Option<TaskSettlement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

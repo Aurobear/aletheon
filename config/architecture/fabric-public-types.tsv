@@ -1036,6 +1036,10 @@ crates/fabric/src/protocol/client.rs	enum	ActivityKind	governed	fabric	executive
 crates/fabric/src/protocol/client.rs	enum	ActivityState	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.2
 crates/fabric/src/protocol/client.rs	enum	TaskPhase	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.1
 crates/fabric/src/protocol/client.rs	enum	TaskSettlement	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.4
+crates/fabric/src/protocol/client.rs	enum	CheckpointMutationCoverage	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
+crates/fabric/src/protocol/client.rs	enum	CheckpointReviewSettlement	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
+crates/fabric/src/protocol/client.rs	enum	CheckpointRollbackAction	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
+crates/fabric/src/protocol/client.rs	struct	CheckpointReviewSnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
 crates/fabric/src/protocol/client.rs	struct	ActivitySnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.2
 crates/fabric/src/protocol/client.rs	struct	SessionEventPage	governed	fabric	executive,interact	docs/plans/Aletheon_Session_Authority_Mapping_2026-08-05.md#5
 crates/fabric/src/protocol/client.rs	struct	SessionListSnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_Session_Authority_Mapping_2026-08-05.md#6

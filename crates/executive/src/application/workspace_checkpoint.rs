@@ -1232,7 +1232,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protection_and_restore_failures_do_not_truncate_future_checkpoints() {
+    async fn u_chk_006_partial_restore_failure_preserves_retry_evidence() {
         for (fail_protect, fail_restore, expected) in [
             (true, false, RestoreOutcome::UnprotectedChangesAbort),
             (
