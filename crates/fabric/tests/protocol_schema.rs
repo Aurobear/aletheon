@@ -57,6 +57,14 @@ fn typed_requests_round_trip_at_the_supported_version() {
         ClientRequest::Snapshot(SnapshotRequest {
             session_id: session_id.clone(),
         }),
+        ClientRequest::ReadSnapshot(SnapshotRequest {
+            session_id: session_id.clone(),
+        }),
+        ClientRequest::ReadSessions,
+        ClientRequest::ReadEvents(EventSubscription {
+            session_id: session_id.clone(),
+            after: EventCursor::origin(),
+        }),
         ClientRequest::Subscribe(EventSubscription {
             session_id,
             after: EventCursor {

@@ -36,6 +36,149 @@ struct WaitParams {
 }
 
 impl RequestHandler {
+    pub(super) async fn handle_transaction_settlement_latest(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &Value,
+        request: &Value,
+    ) -> Value {
+        let params = match serde_json::from_value::<fabric::TransactionSettlementGetParams>(
+            request["params"].clone(),
+        ) {
+            Ok(params)
+                if !params.session_id.trim().is_empty()
+                    && !params.transaction_id.trim().is_empty() =>
+            {
+                params
+            }
+            Ok(_) => {
+                return rpc_error(
+                    id,
+                    INVALID_PARAMS,
+                    "session_id and transaction_id are required",
+                )
+            }
+            Err(error) => {
+                return rpc_error(
+                    id,
+                    INVALID_PARAMS,
+                    format!("invalid settlement query: {error}"),
+                )
+            }
+        };
+        let authority_key = crate::application::thread_authority::ThreadAuthorityKey::new(
+            connection.principal_id.clone(),
+            fabric::ThreadId(params.session_id.clone()),
+        );
+        match self.thread_authority.get(&authority_key) {
+            Ok(Some(_)) => {}
+            Ok(None) => return rpc_error(id, NOT_FOUND, "session workspace authority not found"),
+            Err(error) => return rpc_error(id, SERVICE_ERROR, error.to_string()),
+        }
+        match self
+            .ports
+            .transaction_review
+            .latest(&params.session_id, &params.transaction_id)
+            .await
+        {
+            Ok(Some(receipt)) => json!({"jsonrpc":"2.0", "id":id, "result":{"receipt":receipt}}),
+            Ok(None) => rpc_error(id, NOT_FOUND, "transaction settlement not found"),
+            Err(error) => rpc_error(id, SERVICE_ERROR, error.to_string()),
+        }
+    }
+
+    pub(super) async fn handle_transaction_review(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &Value,
+        request: &Value,
+    ) -> Value {
+        let params = match serde_json::from_value::<fabric::TransactionReviewParams>(
+            request["params"].clone(),
+        ) {
+            Ok(params)
+                if !params.session_id.trim().is_empty()
+                    && !params.transaction_id.trim().is_empty() =>
+            {
+                params
+            }
+            Ok(_) => {
+                return rpc_error(
+                    id,
+                    INVALID_PARAMS,
+                    "session_id and transaction_id are required",
+                )
+            }
+            Err(error) => {
+                return rpc_error(
+                    id,
+                    INVALID_PARAMS,
+                    format!("invalid transaction review request: {error}"),
+                )
+            }
+        };
+        let transaction_id = match uuid::Uuid::parse_str(&params.transaction_id) {
+            Ok(id) => fabric::change_transaction::ChangeTransactionId(id),
+            Err(error) => {
+                return rpc_error(
+                    id,
+                    INVALID_PARAMS,
+                    format!("invalid transaction_id: {error}"),
+                )
+            }
+        };
+        let authority_key = crate::application::thread_authority::ThreadAuthorityKey::new(
+            connection.principal_id.clone(),
+            fabric::ThreadId(params.session_id.clone()),
+        );
+        let settings = match self.thread_authority.get(&authority_key) {
+            Ok(Some(settings)) => settings,
+            Ok(None) => return rpc_error(id, NOT_FOUND, "session workspace authority not found"),
+            Err(error) => return rpc_error(id, SERVICE_ERROR, error.to_string()),
+        };
+        let action = match params.action {
+            fabric::TransactionReviewAction::Accept => {
+                crate::application::settlement::TransactionReviewAction::Accept
+            }
+            fabric::TransactionReviewAction::Repair => {
+                crate::application::settlement::TransactionReviewAction::Repair
+            }
+            fabric::TransactionReviewAction::Rollback => {
+                crate::application::settlement::TransactionReviewAction::Rollback
+            }
+        };
+        // Review findings come from the canonical daemon-owned Session/Task
+        // projection. The client may choose an action, but it cannot omit,
+        // resolve, or forge findings to influence Host settlement.
+        let findings = match self
+            .protocol_read_snapshot(&fabric::SessionId(params.session_id.clone()))
+            .await
+        {
+            Ok(snapshot) => snapshot
+                .tasks
+                .into_iter()
+                .flat_map(|task| task.review_findings)
+                .collect::<Vec<_>>(),
+            Err(error) => return rpc_error(id, SERVICE_ERROR, error.to_string()),
+        };
+        match self
+            .ports
+            .transaction_review
+            .review(
+                action,
+                transaction_id,
+                &params.session_id,
+                settings.workspace.cwd(),
+                &findings,
+                params.risk_acknowledged,
+            )
+            .await
+        {
+            Ok(outcome) => json!({"jsonrpc":"2.0", "id":id, "result":outcome}),
+            Err(error) => rpc_error(id, SERVICE_ERROR, error.to_string()),
+        }
+    }
+
     pub(super) async fn handle_review_capabilities(&self, id: &Value) -> Value {
         let Some(service) = &self.ports.review else {
             return json!({

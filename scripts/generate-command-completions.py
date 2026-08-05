@@ -77,7 +77,7 @@ _aletheon_cli_completion() {{
         -P|--permission-mode)
             COMPREPLY=($(compgen -W "safe dev full" -- "$cur")); return ;;
         --output)
-            COMPREPLY=($(compgen -W "text json" -- "$cur")); return ;;
+            COMPREPLY=($(compgen -W "text json jsonl" -- "$cur")); return ;;
         --sandbox)
             COMPREPLY=($(compgen -W "auto require forbid" -- "$cur")); return ;;
     esac
@@ -94,7 +94,13 @@ _aletheon_cli_completion() {{
     case "$command_path" in
 {nested_cases}
         exec)
-            COMPREPLY=($(compgen -W "--prompt --model --max-turns --sandbox --config --output" -- "$cur"))
+            COMPREPLY=($(compgen -W "--prompt --model --max-turns --sandbox --config --output --idempotency-key --timeout-seconds" -- "$cur"))
+            ;;
+        run)
+            COMPREPLY=($(compgen -W "--resume" -- "$cur"))
+            ;;
+        completion)
+            COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
             ;;
         daemon)
             COMPREPLY=($(compgen -W "--config --env --socket --container --image --enable-evolution --execd" -- "$cur"))
@@ -137,7 +143,9 @@ _aletheon_cli_completion() {{
   command_path="${{(j:.:)words[2,CURRENT-1]}}"
   case "$command_path" in
 {nested_cases}
-    exec) _arguments '--prompt[task prompt]:' '--model[model route]:' '--max-turns[maximum turns]:' '--sandbox[sandbox preference]:(auto require forbid)' '--config[config file]:_files' '--output[output format]:(text json)' ;;
+    exec) _arguments '--prompt[task prompt]:' '--model[model route]:' '--max-turns[maximum turns]:' '--sandbox[sandbox preference]:(auto require forbid)' '--config[config file]:_files' '--output[output format]:(text json jsonl)' '--idempotency-key[stable caller key]:' '--timeout-seconds[cancellation deadline]:' ;;
+    run) _arguments '--resume[session to resume]:' ;;
+    completion) _values 'shell' bash zsh ;;
   esac
 }}
 

@@ -122,6 +122,13 @@ pub struct ToolResult {
 /// and filesystem application.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatchDelta {
+    /// Host-minted transaction governing this mutation. A mutating result
+    /// without this reference cannot be settled as transaction-covered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<crate::change_transaction::ChangeTransactionId>,
+    /// Honest rollback/detection coverage declared by the governing adapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mutation_coverage: Option<crate::change_transaction::MutationCoverage>,
     pub applied: Vec<PatchDeltaApplied>,
     pub failed: Vec<PatchDeltaFailed>,
     pub files_changed: Vec<PatchDeltaFileChange>,

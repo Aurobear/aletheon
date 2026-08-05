@@ -8,7 +8,9 @@ use fabric::{
     CapabilityInvoker, CapabilityRequest, CapabilityScope, ExecutionPermit, InvocationControl,
     PermitId, PrincipalId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
-use kernel::admission::AllowAllAdmissionController;
+use kernel::admission::{
+    AllowAllAdmissionController, InMemoryBudgetController, ProductionAdmissionController,
+};
 use kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor, ToolExecutor};
 use kernel::chronos::TestClock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -280,6 +282,50 @@ impl ToolExecutor for BlockingExecutor {
     ) -> fabric::CapabilityResult {
         std::future::pending().await
     }
+}
+
+struct CountingExecutor(AtomicUsize);
+
+#[async_trait::async_trait]
+impl ToolExecutor for CountingExecutor {
+    async fn execute_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+    ) -> fabric::CapabilityResult {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        fabric::CapabilityResult {
+            call_id: request.call.call_id.clone(),
+            output: "unexpected external execution".into(),
+            is_error: false,
+            usage: UsageReport {
+                permit_id: permit.id,
+                ..Default::default()
+            },
+            audit_id: None,
+            patch_delta: None,
+            served_from_cache: false,
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_cap_003_exhausted_budget_rejects_before_external_executor() {
+    let budget = Arc::new(InMemoryBudgetController::new());
+    budget.set_budget("test-agent", Some(0), None).await;
+    let admission = Arc::new(ProductionAdmissionController::new(test_clock()).with_budget(budget));
+    let executor = Arc::new(CountingExecutor(AtomicUsize::new(0)));
+    let invoker = DefaultCapabilityInvoker::new(admission, executor.clone());
+    let mut request = authorized_request("test.external", serde_json::json!({}), "no-budget");
+    request.authority.budget = Some(fabric::BudgetRequest {
+        max_tokens: Some(1),
+        max_cost_micro: None,
+    });
+
+    let result = invoker.invoke(request).await;
+
+    assert!(result.is_error);
+    assert_eq!(executor.0.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

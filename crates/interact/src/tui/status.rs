@@ -200,6 +200,14 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
             ));
         }
 
+        // Consistent keyboard footer. These actions are safe in both colour
+        // and ASCII terminals, and do not imply that the client owns task state.
+        spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            "Alt↑↓ activity · Ctrl+T transcript · Ctrl+D diff · Ctrl+C quit",
+            Style::default().fg(Color::DarkGray),
+        ));
+
         let line = Line::from(spans);
 
         // Fill background

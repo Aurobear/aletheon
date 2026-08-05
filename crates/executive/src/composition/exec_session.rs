@@ -8,6 +8,7 @@
 //! Executive composition adapter.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -39,6 +40,18 @@ pub struct ExecSessionBuilder {
     working_dir: PathBuf,
     sandbox: String,
     inference: Option<Arc<dyn InferencePort>>,
+    cancellation: CancellationToken,
+}
+
+#[derive(Default)]
+pub struct ExecSessionFacts {
+    approval_unavailable: AtomicBool,
+}
+
+impl ExecSessionFacts {
+    pub fn approval_unavailable(&self) -> bool {
+        self.approval_unavailable.load(Ordering::SeqCst)
+    }
 }
 
 impl ExecSessionBuilder {
@@ -50,6 +63,7 @@ impl ExecSessionBuilder {
             working_dir,
             sandbox: "auto".to_string(),
             inference: None,
+            cancellation: CancellationToken::new(),
         }
     }
 
@@ -78,9 +92,22 @@ impl ExecSessionBuilder {
         self
     }
 
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
+
     /// Wire up the full exec stack and return the turn service, provider view,
     /// risk level, and registered kernel process that owns the turn.
-    pub async fn build(self) -> Result<(TurnService, Arc<dyn LlmProvider>, RiskLevel, ProcessId)> {
+    pub async fn build(
+        self,
+    ) -> Result<(
+        TurnService,
+        Arc<dyn LlmProvider>,
+        RiskLevel,
+        ProcessId,
+        Arc<ExecSessionFacts>,
+    )> {
         let working_dir = self.working_dir.canonicalize().with_context(|| {
             format!("resolving exec workspace '{}'", self.working_dir.display())
         })?;
@@ -185,7 +212,7 @@ impl ExecSessionBuilder {
             session_id,
             working_dir,
             SandboxRequirement::NotRequired,
-            CancellationToken::new(),
+            self.cancellation,
         ));
         let capability = CapabilityRuntimeFactory::build(kernel.admission(), executor, authority);
 
@@ -206,11 +233,13 @@ impl ExecSessionBuilder {
             ),
         );
 
+        let facts = Arc::new(ExecSessionFacts::default());
         let services = Arc::new(ExecTurnServices {
             llm: llm.clone(),
             tool_definitions,
             system_prompt,
             capability,
+            facts: facts.clone(),
         });
 
         let harness_config = HarnessConfig {
@@ -221,7 +250,7 @@ impl ExecSessionBuilder {
             .with_coordinator(coordinator)
             .with_harness_config(harness_config);
 
-        Ok((turn_service, llm, RiskLevel::ReadOnly, process.id))
+        Ok((turn_service, llm, RiskLevel::ReadOnly, process.id, facts))
     }
 }
 
@@ -232,6 +261,7 @@ struct ExecTurnServices {
     tool_definitions: Vec<ToolDefinition>,
     system_prompt: String,
     capability: Arc<dyn TurnCapabilityInvoker>,
+    facts: Arc<ExecSessionFacts>,
 }
 
 #[async_trait::async_trait]
@@ -254,6 +284,14 @@ impl TurnServices for ExecTurnServices {
 
     async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
         self.capability.invoke(req).await
+    }
+
+    async fn record_capability_receipt(&self, receipt: fabric::CapabilityTerminalReceipt) {
+        if receipt.error_class == Some(fabric::CapabilityErrorClass::Permission) {
+            self.facts
+                .approval_unavailable
+                .store(true, Ordering::SeqCst);
+        }
     }
 
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {

@@ -23,6 +23,91 @@ use crate::core::SessionGroup;
 use crate::host::daemon::session_manager::SessionManager;
 use crate::host::daemon::DaemonConfig;
 
+/// Composition adapter that keeps the concrete Corpus transaction registry at
+/// the bootstrap boundary while exposing only the Executive authority port to
+/// application services.
+pub(super) struct CorpusChangeTransactionAuthority(
+    corpus::tools::tools::change_transaction::ChangeTransactionRegistry,
+);
+
+impl CorpusChangeTransactionAuthority {
+    pub(super) fn new(
+        registry: corpus::tools::tools::change_transaction::ChangeTransactionRegistry,
+    ) -> Self {
+        Self(registry)
+    }
+}
+
+pub(super) async fn build_transaction_review_service(
+    tools: &Arc<Mutex<corpus::tools::tools::ToolRegistry>>,
+    data_dir: &std::path::Path,
+) -> anyhow::Result<Arc<crate::application::settlement::TransactionReviewService>> {
+    let registry = tools
+        .lock()
+        .await
+        .change_transactions()
+        .context("built-in tool registry lacks change transaction authority")?;
+    Ok(Arc::new(crate::application::settlement::TransactionReviewService::new(
+        Arc::new(CorpusChangeTransactionAuthority::new(registry)),
+        Arc::new(
+            crate::adapters::session::transaction_settlement_store_sqlite::SqliteTransactionSettlementStore::open(
+                data_dir.join("transaction-settlements.sqlite"),
+            )?,
+        ),
+    )))
+}
+
+#[async_trait::async_trait]
+impl crate::application::settlement::ChangeTransactionAuthority
+    for CorpusChangeTransactionAuthority
+{
+    async fn snapshot(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+    ) -> anyhow::Result<Option<fabric::change_transaction::ChangeTransactionSnapshot>> {
+        Ok(self.0.snapshot(transaction_id).await)
+    }
+
+    async fn accept(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<fabric::change_transaction::ChangeTransactionSnapshot> {
+        self.0
+            .accept(transaction_id, owner_session_id, owner_agent, root)
+            .await
+            .map_err(|failure| anyhow::anyhow!(failure.summary))
+    }
+
+    async fn request_repair(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<fabric::change_transaction::ChangeTransactionSnapshot> {
+        self.0
+            .request_repair(transaction_id, owner_session_id, owner_agent, root)
+            .await
+            .map_err(|failure| anyhow::anyhow!(failure.summary))
+    }
+
+    async fn rollback(
+        &self,
+        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        owner_session_id: &str,
+        owner_agent: Option<fabric::AgentToolContext>,
+        root: &std::path::Path,
+    ) -> anyhow::Result<fabric::change_transaction::ChangeTransactionSnapshot> {
+        self.0
+            .rollback(transaction_id, owner_session_id, owner_agent, root)
+            .await
+            .map_err(|failure| anyhow::anyhow!(failure.summary))
+    }
+}
+
 // ── Stage 1: agent control service ──────────────────────────────────────
 
 pub(super) struct AgentServices {
@@ -68,20 +153,13 @@ pub(super) async fn build_agent_services(
             data_dir.join("events.db"),
             config.backpressure.max_event_spine_bytes,
         )
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "canonical event spine unavailable; using process-local fallback");
-                crate::adapters::events::SqliteEventSpine::open(":memory:")
-                    .expect("in-memory event spine")
-            }),
+        .context("open durable canonical event spine")?,
     );
     let event_projections = Arc::new(
         crate::adapters::events::DefaultEventProjectionSet::open(
             data_dir.join("event-projections.db"),
         )
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "event projections unavailable; using process-local fallback");
-            crate::adapters::events::DefaultEventProjectionSet::in_memory()
-        }),
+        .context("open durable event projections")?,
     );
     let agent_daemon_generation = format!("daemon:{}", uuid::Uuid::new_v4());
     let settlement_receipts = Arc::new(
@@ -233,6 +311,8 @@ pub(super) struct TurnServices {
     pub approved_apply: Option<Arc<crate::application::approval::ApplyCoordinator>>,
     pub lifecycle_registry: Arc<crate::application::lifecycle_contributors::LifecycleRegistry>,
     pub evaluation_service: Arc<crate::application::evaluation::EvaluationService>,
+    pub workspace_checkpoint:
+        Arc<crate::application::workspace_checkpoint::WorkspaceCheckpointService>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -295,11 +375,7 @@ pub(super) async fn build_turn_services(
     }
     let canonical_store =
         crate::adapters::session::canonical_store::CanonicalSessionStore::open(&session_db)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, path = %session_db.display(), "canonical session store unavailable; using process-local fallback");
-                crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
-                    .expect("in-memory canonical session store")
-            });
+            .with_context(|| format!("open durable Session read model {}", session_db.display()))?;
     let session_recovery =
         crate::adapters::session::event_sourced_store::reconcile_committed_session_events(
             canonical_event_spine.as_ref(),
@@ -404,7 +480,10 @@ pub(super) async fn build_turn_services(
         )
         .with_backpressure(config.backpressure.clone())
         .with_session_input(session_input.clone())
-        .with_evaluation_service(evaluation_service.clone()),
+        .with_evaluation_service(evaluation_service.clone())
+        .with_host_acceptance(Arc::new(
+            crate::application::host_acceptance::HostAcceptanceController::new(domains.agora()),
+        )),
     );
     let workspace_checkpoint = Arc::new(
         crate::application::workspace_checkpoint::WorkspaceCheckpointService::new(
@@ -582,5 +661,6 @@ pub(super) async fn build_turn_services(
         approved_apply,
         lifecycle_registry,
         evaluation_service,
+        workspace_checkpoint,
     })
 }

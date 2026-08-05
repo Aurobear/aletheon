@@ -362,6 +362,20 @@ impl SessionAppendStore for CanonicalSessionStore {
             .collect();
         items
     }
+
+    async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let mut statement =
+            connection.prepare("SELECT record_json FROM sessions ORDER BY rowid DESC LIMIT ?1")?;
+        let rows = statement
+            .query_map(params![limit.clamp(1, 1_000)], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|json| serde_json::from_str(&json).map_err(Into::into))
+            .collect()
+    }
 }
 
 pub use crate::application::session_projection::project_messages;

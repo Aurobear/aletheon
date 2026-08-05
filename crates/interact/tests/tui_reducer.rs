@@ -1,7 +1,11 @@
-use fabric::protocol::client::{EventCursor, ItemEvent, ItemPhase, UiSnapshot};
+use fabric::protocol::client::{
+    ClientEvent, EventCursor, ItemEvent, ItemPhase, SessionEventPage, SessionReadSnapshot,
+    TaskPhase, TaskSnapshot, UiSnapshot,
+};
 use fabric::{
     EvaluationContractId, EvaluationDecision, EvaluationReceiptId, EvaluationReceiptRef, ItemId,
-    ItemPayload, ItemRecord, SessionId, TurnId, SESSION_SCHEMA_VERSION,
+    ItemPayload, ItemRecord, SessionId, SessionRecord, SessionStatus, TurnId,
+    SESSION_READ_MODEL_SCHEMA_VERSION, SESSION_SCHEMA_VERSION,
 };
 use interact::tui::reducer::{format_evaluation_receipt_ref, reduce, UiAction, UiEffect};
 use interact::tui::state::AppState;
@@ -43,6 +47,44 @@ fn evaluation(sequence: u64) -> ItemRecord {
                 created_at_ms: 1,
             },
         },
+    }
+}
+
+fn read_snapshot(sequence: u64, items: Vec<ItemRecord>) -> SessionReadSnapshot {
+    let session_id = SessionId("session-1".into());
+    SessionReadSnapshot {
+        schema_version: SESSION_READ_MODEL_SCHEMA_VERSION,
+        session: SessionRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: session_id.clone(),
+            parent: None,
+            created_at_ms: 1,
+            status: SessionStatus::Active,
+        },
+        through: EventCursor {
+            sequence,
+            event_id: (sequence > 0).then(|| format!("event-{sequence}")),
+        },
+        items,
+        tasks: vec![TaskSnapshot {
+            task_id: "session:session-1:task".into(),
+            session_id,
+            goal: Some("authoritative goal".into()),
+            phase: TaskPhase::Active,
+            plan_revision: None,
+            steps: vec![],
+            active_turn_id: None,
+            active_runtime_children: vec![],
+            active_commands: vec![],
+            pending_approvals: vec![],
+            budget: None,
+            checkpoint_head: None,
+            checkpoint_review: None,
+            settlement: None,
+            review_findings: vec![],
+            runtime_facts: None,
+        }],
+        activities: vec![],
     }
 }
 
@@ -164,4 +206,99 @@ fn evaluation_receipt_is_cached_and_rendered_as_separate_metrics() {
         format_evaluation_receipt_ref(&receipt),
         "[evaluation] decision=observed_fail score=82.4 coverage=80.0% confidence=100.0% failed_gates=tests_passed"
     );
+}
+
+#[test]
+fn a_session_003_local_state_loss_recovers_from_daemon_snapshot_and_ordered_pages() {
+    let snapshot = read_snapshot(10, vec![completed(1, "durable")]);
+    let mut retained = AppState {
+        model_name: "local-only-model-label".into(),
+        ..AppState::default()
+    };
+    retained.items.insert(
+        "local-draft".into(),
+        interact::tui::state::UiItem::streaming("local-draft".into()),
+    );
+    let retained_effects = reduce(&mut retained, UiAction::ReadSnapshot(snapshot.clone()));
+
+    let mut recovered = AppState::default();
+    let recovered_effects = reduce(&mut recovered, UiAction::ReadSnapshot(snapshot));
+    assert_eq!(retained_effects, recovered_effects);
+    assert_eq!(retained.cursor, recovered.cursor);
+    assert_eq!(retained.session_id, recovered.session_id);
+    assert_eq!(retained.projected_session, recovered.projected_session);
+    assert_eq!(retained.items.len(), recovered.items.len());
+    assert_eq!(
+        retained
+            .items
+            .values()
+            .map(|item| (&item.id, &item.content))
+            .collect::<Vec<_>>(),
+        recovered
+            .items
+            .values()
+            .map(|item| (&item.id, &item.content))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(retained.tasks, recovered.tasks);
+    assert_eq!(retained.activities, recovered.activities);
+    assert!(!retained.items.contains_key("local-draft"));
+
+    let next = completed(2, "tail");
+    let page = SessionEventPage {
+        schema_version: SESSION_READ_MODEL_SCHEMA_VERSION,
+        session_id: SessionId("session-1".into()),
+        after: recovered.cursor.clone(),
+        next: EventCursor {
+            sequence: 11,
+            event_id: Some("event-11".into()),
+        },
+        events: vec![ClientEvent::Item(ItemEvent {
+            cursor: EventCursor {
+                sequence: 11,
+                event_id: Some("event-11".into()),
+            },
+            item_id: "turn:assistant".into(),
+            phase: ItemPhase::Completed,
+            delta: None,
+            item: Some(next),
+            error: None,
+        })],
+    };
+    assert_eq!(
+        reduce(&mut recovered, UiAction::EventPage(page.clone())),
+        vec![
+            UiEffect::Render,
+            UiEffect::ReloadSnapshot(SessionId("session-1".into()))
+        ]
+    );
+    assert!(reduce(&mut recovered, UiAction::EventPage(page)).is_empty());
+
+    let before = recovered.cursor.clone();
+    let out_of_order = SessionEventPage {
+        schema_version: SESSION_READ_MODEL_SCHEMA_VERSION,
+        session_id: SessionId("session-1".into()),
+        after: EventCursor::origin(),
+        next: EventCursor {
+            sequence: 12,
+            event_id: Some("event-12".into()),
+        },
+        events: vec![ClientEvent::Item(ItemEvent {
+            cursor: EventCursor {
+                sequence: 12,
+                event_id: Some("event-12".into()),
+            },
+            item_id: "gap".into(),
+            phase: ItemPhase::Started,
+            delta: None,
+            item: None,
+            error: None,
+        })],
+    };
+    let effects = reduce(&mut recovered, UiAction::EventPage(out_of_order));
+    assert!(matches!(
+        effects.as_slice(),
+        [UiEffect::AnnounceError(_), UiEffect::ReloadSnapshot(_)]
+    ));
+    assert_eq!(recovered.cursor, before);
 }

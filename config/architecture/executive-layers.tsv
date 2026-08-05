@@ -118,6 +118,7 @@ crates/executive/src/application/daemon_turn/lifecycle.rs	application	executive	
 crates/executive/src/application/daemon_turn/mod.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/orchestrator.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/daemon_turn/test_support.rs	compatibility	executive	test-only concrete fixture
+crates/executive/src/application/exec.rs	application	executive	one-shot execution idempotency authority
 crates/executive/src/application/daemon_turn_engine.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/dasein_workspace_adapter.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/durable_write.rs	application	executive	use-case orchestration and ports
@@ -355,3 +356,7 @@ crates/executive/src/host/daemon/bootstrap/extension_connectors.rs	composition	e
 crates/executive/src/host/daemon/bootstrap/extension_publisher.rs	composition	executive	daemon composition boundary
 crates/executive/src/host/daemon/handler/rpc/rpc_extension.rs	host	executive	transport and request handling
 crates/executive/src/application/command_dispatcher.rs	application	executive	canonical typed command dispatch use case
+crates/executive/src/application/checkpoint_projection.rs	application	executive	checkpoint and transaction validation read projection
+crates/executive/src/application/settlement.rs	application	executive	host-owned review and settlement decision evaluator
+crates/executive/src/application/host_acceptance.rs	application	executive	host-owned engineering task acceptance and repair projection
+crates/executive/src/adapters/session/transaction_settlement_store_sqlite.rs	adapter	executive	durable host transaction settlement receipt store

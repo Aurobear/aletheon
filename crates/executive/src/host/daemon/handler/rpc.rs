@@ -62,6 +62,14 @@ impl RequestHandler {
             "review.status" => self.handle_review_status(connection, &id, &request).await,
             "review.wait" => self.handle_review_wait(connection, &id, &request).await,
             "review.cancel" => self.handle_review_cancel(connection, &id, &request).await,
+            "task.review/settle/v1" => {
+                self.handle_transaction_review(connection, &id, &request)
+                    .await
+            }
+            "task.review/latest/v1" => {
+                self.handle_transaction_settlement_latest(connection, &id, &request)
+                    .await
+            }
 
             // ── Admin / meta ──────────────────────────────────────────
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,
@@ -178,6 +186,9 @@ impl RequestHandler {
             "workspace.rewind" if self.grok_hardening.workspace_checkpoint => {
                 self.handle_workspace_rewind(connection, &id, &request)
                     .await
+            }
+            "checkpoint.list/v1" if self.grok_hardening.workspace_checkpoint => {
+                self.handle_checkpoint_list(connection, &id, &request).await
             }
 
             _ => serde_json::json!({

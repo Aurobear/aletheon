@@ -44,8 +44,6 @@ const WRITE_TOOLS: &[&str] = &[
     "exec_command",
     "write_stdin",
     "validation_run",
-    "change_accept",
-    "change_rollback",
 ];
 
 struct ScriptedLlm {

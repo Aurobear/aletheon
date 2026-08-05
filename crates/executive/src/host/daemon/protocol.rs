@@ -123,6 +123,22 @@ impl ConnectionProtocolState {
         official_memory_agent: bool,
         official_memory_admin: bool,
     ) -> anyhow::Result<ProtocolAction> {
+        // During the X5c presentation migration, legacy TUI connections may
+        // consume the canonical read-only Session projection without gaining
+        // access to any versioned mutation. This is deliberately limited to
+        // snapshot/subscription reads and can be deleted once every TUI
+        // command uses the versioned connection.
+        if matches!(self, Self::Ready { negotiated: None })
+            && matches!(
+                request,
+                ClientRequest::ReadSnapshot(_)
+                    | ClientRequest::ReadSessions
+                    | ClientRequest::ReadEvents(_)
+                    | ClientRequest::Subscribe(_)
+            )
+        {
+            return Ok(ProtocolAction::Dispatch);
+        }
         if request.requires_memory_gateway() {
             let enabled = matches!(
                 self,
@@ -226,6 +242,44 @@ mod tests {
         assert!(reduce_protocol(&versioned, ProtocolEvent::Initialized).is_err());
         assert!(reduce_protocol(&versioned, ProtocolEvent::LegacyRequest).is_err());
         assert!(reduce_protocol(&legacy, ProtocolEvent::Request).is_err());
+    }
+
+    #[test]
+    fn legacy_connection_can_only_bridge_canonical_projection_reads() {
+        let mut state = ConnectionProtocolState::New;
+        state.accept_legacy().unwrap();
+        let session_id = fabric::SessionId("session-1".into());
+        assert!(state
+            .accept(&ClientRequest::ReadSnapshot(
+                fabric::protocol::client::SnapshotRequest {
+                    session_id: session_id.clone(),
+                },
+            ))
+            .is_ok());
+        assert!(state.accept(&ClientRequest::ReadSessions).is_ok());
+        assert!(state
+            .accept(&ClientRequest::ReadEvents(
+                fabric::protocol::client::EventSubscription {
+                    session_id: fabric::SessionId("session-1".into()),
+                    after: fabric::protocol::client::EventCursor::origin(),
+                },
+            ))
+            .is_ok());
+        assert!(state
+            .accept(&ClientRequest::Subscribe(
+                fabric::protocol::client::EventSubscription {
+                    session_id,
+                    after: fabric::protocol::client::EventCursor::origin(),
+                },
+            ))
+            .is_ok());
+        assert!(state
+            .accept(&ClientRequest::Snapshot(
+                fabric::protocol::client::SnapshotRequest {
+                    session_id: fabric::SessionId("session-1".into()),
+                },
+            ))
+            .is_err());
     }
 
     #[test]

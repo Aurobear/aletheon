@@ -92,6 +92,21 @@ impl SessionGateway {
         self.canonical_sessions.protocol_snapshot(session_id).await
     }
 
+    pub async fn protocol_read_snapshot(
+        &self,
+        session_id: &fabric::SessionId,
+    ) -> anyhow::Result<fabric::protocol::client::SessionReadSnapshot> {
+        self.canonical_sessions
+            .protocol_read_snapshot(session_id)
+            .await
+    }
+
+    pub async fn protocol_session_list(
+        &self,
+    ) -> anyhow::Result<fabric::protocol::client::SessionListSnapshot> {
+        self.canonical_sessions.protocol_session_list().await
+    }
+
     pub async fn protocol_events_after(
         &self,
         session_id: &fabric::SessionId,
@@ -99,6 +114,16 @@ impl SessionGateway {
     ) -> anyhow::Result<Vec<fabric::protocol::client::ClientEvent>> {
         self.canonical_sessions
             .protocol_events_after(session_id, after)
+            .await
+    }
+
+    pub async fn protocol_event_page(
+        &self,
+        session_id: &fabric::SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> anyhow::Result<fabric::protocol::client::SessionEventPage> {
+        self.canonical_sessions
+            .protocol_event_page(session_id, after)
             .await
     }
 

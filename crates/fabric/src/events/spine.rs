@@ -163,4 +163,24 @@ pub struct SpineEvent {
 
 pub trait EventSpine: Send + Sync {
     fn append(&self, event: UnsequencedEvent) -> Result<SpineEvent>;
+
+    /// Capture the insertion-ordered durable prefix available for replay.
+    /// The watermark is opaque to domain callers and only orders committed
+    /// journal entries; tree-local ordering remains in `EventPosition`.
+    fn committed_watermark(&self) -> Result<u64> {
+        anyhow::bail!("event spine committed reads unavailable")
+    }
+
+    /// Read a bounded page from a previously captured committed prefix.
+    /// Implementations must return strictly increasing opaque positions and
+    /// must not include entries appended after `through`.
+    fn read_committed_page(
+        &self,
+        after: u64,
+        through: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, SpineEvent)>> {
+        let _ = (after, through, limit);
+        anyhow::bail!("event spine committed reads unavailable")
+    }
 }

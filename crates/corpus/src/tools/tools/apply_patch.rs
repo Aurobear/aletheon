@@ -403,6 +403,7 @@ fn patch_delta(
             mime: artifact.mime,
         }),
         diff_preview_truncated,
+        ..Default::default()
     }
 }
 

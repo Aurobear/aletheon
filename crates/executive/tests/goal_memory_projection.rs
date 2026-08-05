@@ -201,6 +201,19 @@ impl EventSpine for FailingSpine {
     fn append(&self, _: UnsequencedEvent) -> anyhow::Result<SpineEvent> {
         anyhow::bail!("credential=must-not-leak")
     }
+
+    fn committed_watermark(&self) -> anyhow::Result<u64> {
+        anyhow::bail!("credential=must-not-leak")
+    }
+
+    fn read_committed_page(
+        &self,
+        _: u64,
+        _: u64,
+        _: usize,
+    ) -> anyhow::Result<Vec<(u64, SpineEvent)>> {
+        anyhow::bail!("credential=must-not-leak")
+    }
 }
 
 #[tokio::test]

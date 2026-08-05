@@ -11,9 +11,14 @@ use fabric::{
 use rusqlite::{params, Connection, OptionalExtension};
 use tokio::sync::Mutex;
 
-use crate::application::session_projection::project_messages;
+use crate::{
+    adapters::events::session_projection::SessionProjection,
+    application::session_projection::project_messages,
+};
 
 use super::turn_coordinator::{ActiveTurn, ActiveTurnKey};
+
+const SESSION_EVENT_PAGE_LIMIT: usize = 256;
 
 pub struct ResumeResult {
     pub session: SessionRecord,
@@ -237,17 +242,47 @@ impl SessionService {
         &self,
         session_id: &SessionId,
     ) -> Result<fabric::protocol::client::UiSnapshot> {
+        let snapshot = self.protocol_read_snapshot(session_id).await?;
+        Ok(fabric::protocol::client::UiSnapshot {
+            session_id: session_id.clone(),
+            cursor: snapshot.through,
+            provider: None,
+            model: None,
+            items: snapshot.items,
+            approvals: Vec::new(),
+            agents: Vec::new(),
+        })
+    }
+
+    pub async fn protocol_read_snapshot(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<fabric::protocol::client::SessionReadSnapshot> {
+        let session = self
+            .store
+            .load_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session not found"))?;
         let items = self.items(session_id).await?;
         self.sync_canonical_protocol_events(session_id).await?;
         let cursor = self.protocol_tail_cursor(session_id)?;
-        Ok(fabric::protocol::client::UiSnapshot {
-            session_id: session_id.clone(),
-            cursor,
-            provider: None,
-            model: None,
+        let (tasks, activities) = SessionProjection::read_model(&session, &items);
+        Ok(fabric::protocol::client::SessionReadSnapshot {
+            schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
+            session,
+            through: cursor,
             items,
-            approvals: Vec::new(),
-            agents: Vec::new(),
+            tasks,
+            activities,
+        })
+    }
+
+    pub async fn protocol_session_list(
+        &self,
+    ) -> Result<fabric::protocol::client::SessionListSnapshot> {
+        Ok(fabric::protocol::client::SessionListSnapshot {
+            schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
+            sessions: self.store.list_sessions(256).await?,
         })
     }
 
@@ -259,6 +294,14 @@ impl SessionService {
         session_id: &SessionId,
         after: &fabric::protocol::client::EventCursor,
     ) -> Result<Vec<fabric::protocol::client::ClientEvent>> {
+        Ok(self.protocol_event_page(session_id, after).await?.events)
+    }
+
+    pub async fn protocol_event_page(
+        &self,
+        session_id: &SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> Result<fabric::protocol::client::SessionEventPage> {
         self.sync_canonical_protocol_events(session_id).await?;
         if after.sequence == 0 {
             if after.event_id.is_some() {
@@ -281,15 +324,32 @@ impl SessionService {
         }
         let connection = self.protocol.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement = connection.prepare(
-            "SELECT event_json FROM protocol_events WHERE session_id=?1 AND sequence>?2 ORDER BY sequence",
+            "SELECT event_json FROM protocol_events WHERE session_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3",
         )?;
-        let events = statement
-            .query_map(params![session_id.0, after.sequence], |row| {
-                row.get::<_, String>(0)
-            })?
-            .map(|row| Ok(serde_json::from_str(&row?)?))
-            .collect();
-        events
+        let rows = statement
+            .query_map(
+                params![session_id.0, after.sequence, SESSION_EVENT_PAGE_LIMIT],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let events = rows
+            .into_iter()
+            .map(|json| serde_json::from_str(&json))
+            .collect::<serde_json::Result<Vec<fabric::protocol::client::ClientEvent>>>()?;
+        let next = events.last().map_or_else(
+            || after.clone(),
+            |event| match event {
+                fabric::protocol::client::ClientEvent::Item(item) => item.cursor.clone(),
+                _ => after.clone(),
+            },
+        );
+        Ok(fabric::protocol::client::SessionEventPage {
+            schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
+            session_id: session_id.clone(),
+            after: after.clone(),
+            next,
+            events,
+        })
     }
 
     fn protocol_tail_cursor(
@@ -405,6 +465,26 @@ impl SessionService {
         Ok(child)
     }
 
+    /// Resolve the canonical event boundary for a turn in a session.
+    ///
+    /// Checkpoint clients must not guess that a user-facing prompt index is an
+    /// event sequence. A turn can contain multiple items, so a historical fork
+    /// is anchored after the last persisted item owned by that turn.
+    pub async fn sequence_through_turn(
+        &self,
+        session_id: &SessionId,
+        turn_id: TurnId,
+    ) -> Result<u64> {
+        self.store
+            .load_items(session_id, None)
+            .await?
+            .into_iter()
+            .filter(|item| item.turn_id == turn_id)
+            .map(|item| item.sequence)
+            .max()
+            .ok_or_else(|| anyhow::anyhow!("checkpoint turn is absent from session authority"))
+    }
+
     pub async fn replay(
         &self,
         session_id: &SessionId,
@@ -518,5 +598,72 @@ mod tests {
             ItemPayload::SystemNotice { content }
                 if content.contains("source=workspace") && content.contains("branch=feature")
         ));
+    }
+
+    #[tokio::test]
+    async fn historical_fork_boundary_uses_last_item_in_checkpoint_turn() {
+        let store: Arc<dyn SessionAppendStore> = Arc::new(
+            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
+                .unwrap(),
+        );
+        let session_id = SessionId("fork-boundary-session".into());
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 1,
+                status: SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let checkpoint_turn = TurnId::new();
+        for sequence in [1, 2] {
+            store
+                .append(
+                    &session_id,
+                    sequence,
+                    ItemRecord {
+                        schema_version: SESSION_SCHEMA_VERSION,
+                        id: ItemId::new(),
+                        session_id: session_id.clone(),
+                        turn_id: checkpoint_turn,
+                        sequence,
+                        created_at_ms: sequence,
+                        payload: ItemPayload::SystemNotice {
+                            content: format!("item-{sequence}"),
+                        },
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        store
+            .append(
+                &session_id,
+                3,
+                ItemRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: ItemId::new(),
+                    session_id: session_id.clone(),
+                    turn_id: TurnId::new(),
+                    sequence: 3,
+                    created_at_ms: 3,
+                    payload: ItemPayload::SystemNotice {
+                        content: "later".into(),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let service = SessionService::new(store, Arc::new(Mutex::new(Default::default())));
+
+        assert_eq!(
+            service
+                .sequence_through_turn(&session_id, checkpoint_turn)
+                .await
+                .unwrap(),
+            2
+        );
     }
 }

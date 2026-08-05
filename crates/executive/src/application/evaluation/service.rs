@@ -199,11 +199,11 @@ impl EvaluationService {
                             metrics: artifacts.projection_metrics.clone(),
                         },
                     };
-                    // Receipt durability and Evaluation operation settlement are
-                    // already authoritative. Projection is observational only.
-                    tokio::spawn(async move {
-                        let _ = projection.project(record).await;
-                    });
+                    // Complete the bounded observational fan-out before the
+                    // Host applies its task-graph settlement. Otherwise the
+                    // Agora observation can race the authoritative repair
+                    // transition at the same workspace version.
+                    let _ = projection.project(record).await;
                 }
                 Ok(receipt)
             }

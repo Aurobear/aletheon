@@ -1,7 +1,8 @@
 //! Pure protocol-to-view-state reducer.
 
 use fabric::protocol::client::{
-    AgentEvent, ApprovalEvent, EventCursor, ItemEvent, ItemPhase, UiSnapshot,
+    AgentEvent, ApprovalEvent, EventCursor, ItemEvent, ItemPhase, SessionEventPage,
+    SessionReadSnapshot, UiSnapshot,
 };
 use fabric::{EvaluationDecision, EvaluationReceiptRef, ItemPayload, ItemRecord};
 use serde::Serialize;
@@ -11,6 +12,8 @@ use super::state::{AppState, UiItem, UiItemStatus};
 #[derive(Debug, Clone)]
 pub enum UiAction {
     Snapshot(UiSnapshot),
+    ReadSnapshot(SessionReadSnapshot),
+    EventPage(SessionEventPage),
     Item(ItemEvent),
     Approval(ApprovalEvent),
     Agent(AgentEvent),
@@ -28,6 +31,7 @@ pub struct UiError {
 pub enum UiEffect {
     Render,
     SubscribeAfter(EventCursor),
+    ReloadSnapshot(fabric::SessionId),
     AnnounceError(String),
 }
 
@@ -56,44 +60,13 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
             state.last_error = None;
             vec![UiEffect::Render]
         }
+        UiAction::ReadSnapshot(snapshot) => reduce_read_snapshot(state, snapshot),
+        UiAction::EventPage(page) => reduce_event_page(state, page),
         UiAction::Item(event) => {
             if event.cursor.sequence <= state.cursor.sequence {
                 return Vec::new();
             }
-            state.cursor = event.cursor;
-            let id = event.item_id;
-            match event.phase {
-                ItemPhase::Started => {
-                    state
-                        .items
-                        .entry(id.clone())
-                        .or_insert_with(|| UiItem::streaming(id));
-                }
-                ItemPhase::Streaming => {
-                    let item = state
-                        .items
-                        .entry(id.clone())
-                        .or_insert_with(|| UiItem::streaming(id));
-                    if item.status != UiItemStatus::Completed {
-                        item.status = UiItemStatus::Streaming;
-                        item.content
-                            .push_str(event.delta.as_deref().unwrap_or_default());
-                    }
-                }
-                ItemPhase::Completed => {
-                    if let Some(item) = event.item {
-                        upsert_completed(state, item);
-                    }
-                }
-                ItemPhase::Failed => {
-                    let item = state
-                        .items
-                        .entry(id.clone())
-                        .or_insert_with(|| UiItem::streaming(id));
-                    item.status = UiItemStatus::Failed;
-                    item.content = event.error.unwrap_or_else(|| "item failed".into());
-                }
-            }
+            apply_item_event(state, event);
             vec![UiEffect::Render]
         }
         UiAction::Approval(event) => {
@@ -130,6 +103,153 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
             }
             state.last_error = Some(error.message.clone());
             vec![UiEffect::AnnounceError(error.message), UiEffect::Render]
+        }
+    }
+}
+
+fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> Vec<UiEffect> {
+    if snapshot.schema_version != fabric::SESSION_READ_MODEL_SCHEMA_VERSION {
+        return vec![UiEffect::AnnounceError(format!(
+            "unsupported Session read-model schema {}",
+            snapshot.schema_version
+        ))];
+    }
+    if snapshot
+        .items
+        .iter()
+        .any(|item| item.session_id != snapshot.session.id)
+        || snapshot
+            .tasks
+            .iter()
+            .any(|task| task.session_id != snapshot.session.id)
+        || snapshot.activities.iter().any(|activity| {
+            !snapshot
+                .tasks
+                .iter()
+                .any(|task| task.task_id == activity.task_id)
+        })
+    {
+        return vec![UiEffect::AnnounceError(
+            "Session read snapshot contains cross-session projection data".into(),
+        )];
+    }
+
+    state.cursor = snapshot.through;
+    state.session_id = Some(snapshot.session.id.0.clone());
+    state.projected_session = Some(snapshot.session);
+    state.items.clear();
+    state.latest_evaluation = None;
+    for item in snapshot.items {
+        upsert_completed(state, item);
+    }
+    state.tasks = snapshot.tasks;
+    state.activities = snapshot.activities;
+    state.last_error = None;
+    vec![
+        UiEffect::Render,
+        UiEffect::SubscribeAfter(state.cursor.clone()),
+    ]
+}
+
+fn reduce_event_page(state: &mut AppState, page: SessionEventPage) -> Vec<UiEffect> {
+    if page.schema_version != fabric::SESSION_READ_MODEL_SCHEMA_VERSION {
+        return vec![UiEffect::AnnounceError(format!(
+            "unsupported Session event-page schema {}",
+            page.schema_version
+        ))];
+    }
+    if state.session_id.as_deref() != Some(page.session_id.0.as_str()) {
+        return Vec::new();
+    }
+    if page.next.sequence <= state.cursor.sequence {
+        return Vec::new();
+    }
+    if page.after != state.cursor {
+        return vec![
+            UiEffect::AnnounceError(
+                "Session event page is out of order; reloading snapshot".into(),
+            ),
+            UiEffect::ReloadSnapshot(page.session_id),
+        ];
+    }
+
+    let mut expected = page.after.sequence;
+    for event in &page.events {
+        let fabric::protocol::client::ClientEvent::Item(item) = event else {
+            return vec![
+                UiEffect::AnnounceError(
+                    "Session event page contains a non-item projection event".into(),
+                ),
+                UiEffect::ReloadSnapshot(page.session_id),
+            ];
+        };
+        expected = expected.saturating_add(1);
+        if item.cursor.sequence != expected {
+            return vec![
+                UiEffect::AnnounceError(
+                    "Session event page contains a sequence gap; reloading snapshot".into(),
+                ),
+                UiEffect::ReloadSnapshot(page.session_id),
+            ];
+        }
+    }
+    if page.next.sequence != expected
+        || page.events.last().is_some_and(|event| match event {
+            fabric::protocol::client::ClientEvent::Item(item) => item.cursor != page.next,
+            _ => true,
+        })
+    {
+        return vec![
+            UiEffect::AnnounceError(
+                "Session event page next cursor does not match its ordered tail".into(),
+            ),
+            UiEffect::ReloadSnapshot(page.session_id),
+        ];
+    }
+
+    for event in page.events {
+        let fabric::protocol::client::ClientEvent::Item(item) = event else {
+            unreachable!("event page was validated before mutation")
+        };
+        apply_item_event(state, item);
+    }
+    vec![UiEffect::Render, UiEffect::ReloadSnapshot(page.session_id)]
+}
+
+fn apply_item_event(state: &mut AppState, event: ItemEvent) {
+    state.cursor = event.cursor;
+    let id = event.item_id;
+    match event.phase {
+        ItemPhase::Started => {
+            state
+                .items
+                .entry(id.clone())
+                .or_insert_with(|| UiItem::streaming(id));
+        }
+        ItemPhase::Streaming => {
+            let item = state
+                .items
+                .entry(id.clone())
+                .or_insert_with(|| UiItem::streaming(id));
+            if item.status != UiItemStatus::Completed {
+                item.status = UiItemStatus::Streaming;
+                item.content
+                    .push_str(event.delta.as_deref().unwrap_or_default());
+            }
+        }
+        ItemPhase::Completed => {
+            if let Some(item) = event.item {
+                state.items.remove(&id);
+                upsert_completed(state, item);
+            }
+        }
+        ItemPhase::Failed => {
+            let item = state
+                .items
+                .entry(id.clone())
+                .or_insert_with(|| UiItem::streaming(id));
+            item.status = UiItemStatus::Failed;
+            item.content = event.error.unwrap_or_else(|| "item failed".into());
         }
     }
 }

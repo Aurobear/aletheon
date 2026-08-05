@@ -89,6 +89,15 @@ pub struct MessageLaunch {
     pub message: String,
     pub required_agent_runtimes: Vec<String>,
     pub task_kind: Option<fabric::TaskKind>,
+    pub session_id: Option<fabric::SessionId>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum InitialSession {
+    #[default]
+    New,
+    Resume(fabric::SessionId),
+    Pick,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +106,7 @@ pub struct TuiLaunch {
     pub workspace: WorkspaceLaunch,
     pub required_agent_runtimes: Vec<String>,
     pub task_kind: Option<fabric::TaskKind>,
+    pub initial_session: InitialSession,
 }
 
 fn agent_runtime_requirements(runtime_ids: Vec<String>) -> Vec<fabric::TurnRequirement> {
@@ -127,6 +137,14 @@ fn resolve_socket_with(
 /// explicit CLI value, `ALETHEON_SOCKET`, then XDG runtime.
 pub(crate) fn resolve_user_socket(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     resolve_socket_with(explicit, &ProcessRuntimeEnvironment)
+}
+
+/// Resolve and ensure the canonical installed user daemon for a non-TUI
+/// presentation adapter.
+pub async fn ensure_user_socket(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    let socket = resolve_user_socket(explicit)?;
+    ensure_resolved_user_socket(&socket, &ExecutiveDaemonEnsurer).await?;
+    Ok(socket)
 }
 
 async fn ensure_resolved_user_socket(
@@ -193,6 +211,7 @@ pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {
         &workspace,
         agent_runtime_requirements(request.required_agent_runtimes),
         request.task_kind,
+        request.session_id,
     )
     .await
 }
@@ -208,6 +227,7 @@ pub async fn run_tui(request: TuiLaunch, config: crate::tui::TestConfig) -> anyh
         workspace,
         agent_runtime_requirements(request.required_agent_runtimes),
         request.task_kind,
+        request.initial_session,
     )
     .await
 }

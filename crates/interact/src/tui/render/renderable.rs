@@ -9,13 +9,13 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Widget, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Widget},
 };
 
-use super::super::chat::ChatWidget;
 use super::super::completion::CompletionPopup;
 use super::super::state::AppState;
 use super::super::status::StatusBar;
+use super::super::task_console::TaskConsole;
 use super::super::term_compat::TermCaps;
 
 // ── Renderable trait ────────────────────────────────────────────────
@@ -112,7 +112,6 @@ impl Renderable for HeaderRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let bg = self.caps.color(20, 20, 60);
 
-        let provider = self.state.provider_name.as_deref().unwrap_or("provider —");
         let line = Line::from(vec![
             Span::styled(
                 "  ALETHEON  ",
@@ -121,12 +120,7 @@ impl Renderable for HeaderRenderable<'_> {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(
-                    "{}  ·  route {}  ·  {}",
-                    self.state.mode.display_name(),
-                    self.state.model_name,
-                    provider
-                ),
+                format!("Task Console  ·  mode {}", self.state.mode.display_name()),
                 Style::default().fg(Color::Cyan),
             ),
         ]);
@@ -142,33 +136,28 @@ impl Renderable for HeaderRenderable<'_> {
 
 // ── ChatRenderable ──────────────────────────────────────────────────
 
-/// Renders the chat area with inline tool cards and scroll support.
-pub struct ChatRenderable<'a> {
-    pub chat: &'a ChatWidget,
-    pub frame_counter: u64,
+/// Renders the canonical task console. Conversation is intentionally
+/// separate from daemon-projected Activity and Changes panels.
+pub struct TaskConsoleRenderable<'a> {
     pub caps: &'a TermCaps,
+    pub state: &'a AppState,
+    pub workspace: &'a fabric::WorkspacePolicy,
+    pub selected_activity: Option<usize>,
 }
 
-impl Renderable for ChatRenderable<'_> {
+impl Renderable for TaskConsoleRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let chat_block = Block::default()
-            .borders(Borders::NONE)
-            .padding(Padding::horizontal(1));
-        let chat_inner = chat_block.inner(area);
-        chat_block.render(area, buf);
-
-        let visible = self.chat.visible_lines(
-            self.frame_counter,
-            chat_inner.width as usize,
-            chat_inner.height,
-        );
-        Paragraph::new(visible)
-            .wrap(Wrap { trim: false })
-            .render(chat_inner, buf);
+        TaskConsole {
+            state: self.state,
+            caps: self.caps,
+            workspace: self.workspace,
+            selected_activity: self.selected_activity,
+        }
+        .render(area, buf);
     }
 
     fn desired_height(&self, _width: u16) -> u16 {
-        0 // flex — takes remaining space
+        0
     }
 }
 
@@ -304,11 +293,14 @@ impl InputRenderable<'_> {
 /// Renders the single-row status bar at the bottom of the screen.
 pub struct StatusRenderable<'a> {
     pub status: &'a StatusBar,
+    pub state: &'a AppState,
 }
 
 impl Renderable for StatusRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.status.render_widget().render(area, buf);
+        self.status
+            .render_widget_from_state(self.state)
+            .render(area, buf);
     }
 
     fn desired_height(&self, _width: u16) -> u16 {

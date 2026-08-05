@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::Event;
-use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
+use fabric::protocol::client::{
+    ClientRequest, ClientRpcRequest, SnapshotRequest, TransientApprovalDecision,
+};
 use fabric::Clock;
 use ratatui::Terminal;
 use tokio::net::UnixStream;
@@ -25,6 +27,37 @@ use super::super::{
 use super::key_handler::{handle_key, handle_mouse};
 use super::submit::submit_message;
 
+enum InitialRequest {
+    Legacy(ClientRpcRequest),
+    Projection(ClientRequest),
+}
+
+fn initial_session_request(
+    initial_session: crate::host::InitialSession,
+) -> (InitialRequest, super::super::PendingCommand) {
+    match initial_session {
+        crate::host::InitialSession::New => (
+            InitialRequest::Legacy(ClientRpcRequest::SessionNew),
+            super::super::PendingCommand::InitializeSession,
+        ),
+        crate::host::InitialSession::Resume(session_id) => {
+            let requested_session_id = session_id.0.clone();
+            (
+                InitialRequest::Projection(ClientRequest::ReadSnapshot(SnapshotRequest {
+                    session_id,
+                })),
+                super::super::PendingCommand::ProjectionSnapshot {
+                    session_id: requested_session_id,
+                },
+            )
+        }
+        crate::host::InitialSession::Pick => (
+            InitialRequest::Projection(ClientRequest::ReadSessions),
+            super::super::PendingCommand::OpenSessionPicker,
+        ),
+    }
+}
+
 pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     stream: UnixStream,
@@ -36,6 +69,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
+    initial_session: crate::host::InitialSession,
 ) -> anyhow::Result<()> {
     let mut app = App::new(
         stream,
@@ -69,26 +103,34 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
     // Populate completion/help from the daemon-owned Skill catalog. The
     // registry retains its last valid catalog if a later refresh fails.
-    // A terminal connection owns a fresh session by default. Reusing the
-    // workspace's most recent session makes concurrent TUI instances share
-    // history and lets one client's output appear in another client's view.
-    let init_id = super::submit::write_request(&mut app, ClientRpcRequest::SessionNew).await;
-    app.pending_commands
-        .insert(init_id, super::super::PendingCommand::InitializeSession);
+    // The top-level CLI chooses whether this terminal owns a fresh session,
+    // resumes an explicit session, or opens the daemon-backed history picker.
+    let (initial_request, initial_pending) = initial_session_request(initial_session);
+    let init_id = match initial_request {
+        InitialRequest::Legacy(request) => super::submit::write_request(&mut app, request).await,
+        InitialRequest::Projection(request) => {
+            super::submit::write_protocol_request(&mut app, request).await
+        }
+    };
+    if let super::super::PendingCommand::ProjectionSnapshot { session_id } = &initial_pending {
+        app.projection_target_session_id = Some(session_id.clone());
+        app.projection_request_in_flight = true;
+    }
+    app.pending_commands.insert(init_id, initial_pending);
     let skills_id = super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
     app.pending_commands
         .insert(skills_id, super::super::PendingCommand::InitializeSkills);
 
-    // If test mode with auto_submit, submit the first line immediately
-    if let Some(ref mut reader) = test_input {
-        if reader.auto_submit {
-            if let Some(line) = reader.next_line() {
-                submit_message(&mut app, line).await;
-            }
-        }
-    }
+    // A scripted prompt must not race session.new/session.read. Until the
+    // canonical projection selects the session, omitting session_id would make
+    // the Host route the prompt onto a different thread.
+    let mut initial_test_submit_pending =
+        test_input.as_ref().is_some_and(|reader| reader.auto_submit);
 
     while app.running {
+        if app.input_dirty && app.clock.mono_now().0 >= app.input_persist_at.0 {
+            app.persist_input_state();
+        }
         // Test timeout check
         if test_input.is_some()
             && (app.clock.mono_now().0 - test_start.0) >= test_timeout.as_millis() as u64
@@ -124,6 +166,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                     app.cursor = 0;
                     app.has_cjk = false;
                     submit_message(&mut app, text).await;
+                    app.persist_input_state();
                 }
             }
         }
@@ -141,16 +184,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 match crossterm::event::read()? {
                     Event::Key(key) => {
                         handle_key(&mut app, key).await;
+                        app.mark_input_dirty();
                         needs_redraw = true;
                     }
                     Event::Paste(text) => {
-                        // Paste: insert at cursor
-                        for ch in text.chars() {
-                            app.input_buf.insert(app.cursor, ch);
-                            app.cursor += ch.len_utf8();
-                        }
-                        app.check_cjk();
-                        super::key_handler::refresh_command_completion(&mut app);
+                        super::key_handler::insert_paste(&mut app, &text);
+                        app.mark_input_dirty();
                         needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {
@@ -181,13 +220,31 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         // Try reading daemon response (with optional event recording)
         needs_redraw |= try_read_socket_with_recorder(&mut app, &mut event_recorder);
+        drive_deferred_checkpoint_rewind(&mut app).await;
+        drive_session_projection(&mut app).await;
 
         // Check if a turn just completed and we should auto-submit next line
+        let mut submitted_script_line = false;
         if let Some(ref mut reader) = test_input {
+            if initial_test_submit_pending
+                && app.app_state.session_id.is_some()
+                && !app.turn_active
+                && !app.streaming
+            {
+                if let Some(line) = reader.next_line() {
+                    submit_message(&mut app, line).await;
+                    submitted_script_line = true;
+                }
+                initial_test_submit_pending = false;
+            }
             // Use turn_active (set by turn_start, cleared by turn_done) instead
             // of streaming (which is also cleared by process_response and would
             // trigger premature auto-submit before the turn actually completes).
-            if !app.turn_active {
+            // The first submitted request is streaming before its turn_start
+            // event arrives. Treat that transport state as in-flight too, or
+            // test mode can consume every scripted line and exit before the
+            // daemon has admitted the first turn.
+            if !submitted_script_line && !app.turn_active && !app.streaming {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
                     ClientTimer.sleep(Duration::from_millis(100)).await;
@@ -196,7 +253,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 }
             }
             // All inputs consumed and last turn done
-            if reader.done && !app.turn_active {
+            if reader.done && !app.turn_active && !app.streaming {
                 app.running = false;
             }
         }
@@ -207,7 +264,85 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         }
     }
 
+    if app.input_dirty {
+        app.persist_input_state();
+    }
     Ok(())
+}
+
+async fn drive_deferred_checkpoint_rewind(app: &mut App) {
+    let Some(deferred) = app.deferred_checkpoint_rewind.take() else {
+        return;
+    };
+    let request_id = super::submit::write_request(
+        app,
+        fabric::protocol::client::ClientRpcRequest::WorkspaceRewind(
+            fabric::protocol::client::WorkspaceRewindParams {
+                session_id: fabric::SessionId(deferred.parent_session_id),
+                prompt_index: deferred.prompt_index,
+            },
+        ),
+    )
+    .await;
+    app.pending_commands.insert(
+        request_id,
+        super::super::PendingCommand::CheckpointRewind {
+            child_session_id: Some(deferred.child_session_id),
+        },
+    );
+    app.pending_non_turn.insert(request_id);
+    app.streaming = true;
+    app.status.waiting = true;
+}
+
+async fn drive_session_projection(app: &mut App) {
+    let Some(session_id) = app
+        .projection_target_session_id
+        .clone()
+        .or_else(|| app.app_state.session_id.clone())
+    else {
+        app.projection_session_id = None;
+        app.projection_polling = false;
+        return;
+    };
+    if app.projection_request_in_flight {
+        return;
+    }
+    if app.projection_session_id.as_deref() != Some(session_id.as_str()) {
+        let request_id = super::submit::write_protocol_request(
+            app,
+            fabric::protocol::client::ClientRequest::ReadSnapshot(
+                fabric::protocol::client::SnapshotRequest {
+                    session_id: fabric::SessionId(session_id.clone()),
+                },
+            ),
+        )
+        .await;
+        app.pending_commands.insert(
+            request_id,
+            super::super::PendingCommand::ProjectionSnapshot { session_id },
+        );
+        app.projection_request_in_flight = true;
+        return;
+    }
+    if !app.projection_polling || app.clock.mono_now().0 < app.projection_next_poll_at.0 {
+        return;
+    }
+    let request_id = super::submit::write_protocol_request(
+        app,
+        fabric::protocol::client::ClientRequest::ReadEvents(
+            fabric::protocol::client::EventSubscription {
+                session_id: fabric::SessionId(session_id.clone()),
+                after: app.app_state.cursor.clone(),
+            },
+        ),
+    )
+    .await;
+    app.pending_commands.insert(
+        request_id,
+        super::super::PendingCommand::ProjectionEvents { session_id },
+    );
+    app.projection_request_in_flight = true;
 }
 
 /// Simple line-based mode for non-TTY (piped) input.
@@ -255,22 +390,32 @@ pub async fn simple_line_mode(
                     println!("{}", registry.help_text());
                     continue;
                 }
-                Some(CommandType::Builtin(BuiltinCommand::Clear)) => ClientRpcRequest::Clear,
+                Some(CommandType::Builtin(BuiltinCommand::Clear)) => {
+                    InitialRequest::Legacy(ClientRpcRequest::Clear)
+                }
                 Some(CommandType::Builtin(BuiltinCommand::Status)) => {
-                    crate::intent::rpc(crate::intent::status(
+                    InitialRequest::Legacy(crate::intent::rpc(crate::intent::status(
                         fabric::contract::command::ClientSurface::Tui,
                         format!("line-status:{}", uuid::Uuid::new_v4()),
                         None,
-                    ))
+                    )))
                 }
-                Some(CommandType::Builtin(BuiltinCommand::Sessions)) => ClientRpcRequest::Sessions,
+                Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
+                    InitialRequest::Projection(ClientRequest::ReadSessions)
+                }
                 Some(CommandType::Builtin(BuiltinCommand::Resume { id })) if !id.is_empty() => {
-                    ClientRpcRequest::resume(id)
+                    InitialRequest::Projection(ClientRequest::ReadSnapshot(SnapshotRequest {
+                        session_id: fabric::SessionId(id),
+                    }))
                 }
-                Some(CommandType::Builtin(BuiltinCommand::Compact)) => ClientRpcRequest::Compact,
-                Some(CommandType::Builtin(BuiltinCommand::Model)) => ClientRpcRequest::ModelList,
+                Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
+                    InitialRequest::Legacy(ClientRpcRequest::Compact)
+                }
+                Some(CommandType::Builtin(BuiltinCommand::Model)) => {
+                    InitialRequest::Legacy(ClientRpcRequest::ModelList)
+                }
                 Some(CommandType::Skill { name, args }) => {
-                    ClientRpcRequest::skill_invoke(name, args, &workspace)
+                    InitialRequest::Legacy(ClientRpcRequest::skill_invoke(name, args, &workspace))
                 }
                 Some(CommandType::Unknown {
                     name, suggestions, ..
@@ -291,18 +436,23 @@ pub async fn simple_line_mode(
                 }
             }
         } else {
-            crate::intent::rpc(crate::intent::submit_prompt(crate::intent::PromptIntent {
-                surface: fabric::contract::command::ClientSurface::Tui,
-                correlation_id: format!("line:{}", uuid::Uuid::new_v4()),
-                content: trimmed,
-                session_id: None,
-                workspace: &workspace,
-                requirements: turn_requirements.clone(),
-                task_kind,
-                permission_mode: crate::host::permission_mode_from_environment(),
-            }))
+            InitialRequest::Legacy(crate::intent::rpc(crate::intent::submit_prompt(
+                crate::intent::PromptIntent {
+                    surface: fabric::contract::command::ClientSurface::Tui,
+                    correlation_id: format!("line:{}", uuid::Uuid::new_v4()),
+                    content: trimmed,
+                    session_id: None,
+                    workspace: &workspace,
+                    requirements: turn_requirements.clone(),
+                    task_kind,
+                    permission_mode: crate::host::permission_mode_from_environment(),
+                },
+            )))
         };
-        let msg = request.to_json_rpc(Some(1))?;
+        let msg = match request {
+            InitialRequest::Legacy(request) => request.to_json_rpc(Some(1))?,
+            InitialRequest::Projection(request) => request.to_json_rpc(1)?,
+        };
         let payload = serde_json::to_string(&msg)?;
         stream.write_all(format!("{payload}\n").as_bytes()).await?;
         stream.flush().await?;
@@ -426,7 +576,24 @@ pub async fn simple_line_mode(
                             }
 
                             // This is the actual JSON-RPC response — process it
-                            if let Some(text) = msg["result"]["response"].as_str() {
+                            if let Ok(message) = serde_json::from_value::<
+                                fabric::protocol::client::ClientMessage<
+                                    fabric::protocol::client::SessionListSnapshot,
+                                >,
+                            >(msg["result"].clone()) {
+                                if let Ok(list) = message.into_v1() {
+                                    let sessions = serde_json::to_value(list.sessions)?;
+                                    println!("\n{}\n", format_sessions(&sessions));
+                                }
+                            } else if let Ok(message) = serde_json::from_value::<
+                                fabric::protocol::client::ClientMessage<
+                                    fabric::protocol::client::SessionReadSnapshot,
+                                >,
+                            >(msg["result"].clone()) {
+                                if let Ok(snapshot) = message.into_v1() {
+                                    println!("\n{}\n", format_read_snapshot(&snapshot));
+                                }
+                            } else if let Some(text) = msg["result"]["response"].as_str() {
                                 println!("\n{text}\n");
                             } else if !msg["result"]["status"].is_null() {
                                 println!("\n{}\n", format_status(&msg["result"]["status"]));
@@ -462,6 +629,29 @@ pub async fn simple_line_mode(
     Ok(())
 }
 
+fn format_read_snapshot(snapshot: &fabric::protocol::client::SessionReadSnapshot) -> String {
+    let mut lines = vec![format!(
+        "Session {} ({} durable items)",
+        snapshot.session.id.0,
+        snapshot.items.len()
+    )];
+    for item in &snapshot.items {
+        match &item.payload {
+            fabric::ItemPayload::UserMessage { content } => {
+                lines.push(format!("user: {content}"));
+            }
+            fabric::ItemPayload::AssistantMessage { content } => {
+                lines.push(format!("assistant: {content}"));
+            }
+            fabric::ItemPayload::SystemNotice { content } => {
+                lines.push(format!("system: {content}"));
+            }
+            _ => {}
+        }
+    }
+    lines.join("\n")
+}
+
 fn evaluation_receipt_from_protocol_message(
     message: &serde_json::Value,
 ) -> Option<fabric::EvaluationReceiptRef> {
@@ -480,5 +670,33 @@ fn evaluation_receipt_from_protocol_message(
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_session_selection_uses_typed_session_requests() {
+        let cases = [
+            (crate::host::InitialSession::New, "session.new"),
+            (
+                crate::host::InitialSession::Resume(fabric::SessionId("session-7".into())),
+                "session.read_snapshot/v1",
+            ),
+            (
+                crate::host::InitialSession::Pick,
+                "session.read_sessions/v1",
+            ),
+        ];
+        for (selection, method) in cases {
+            let (request, _) = initial_session_request(selection);
+            let wire = match request {
+                InitialRequest::Legacy(request) => request.to_json_rpc(Some(1)).unwrap(),
+                InitialRequest::Projection(request) => request.to_json_rpc(1).unwrap(),
+            };
+            assert_eq!(wire["method"], method);
+        }
     }
 }

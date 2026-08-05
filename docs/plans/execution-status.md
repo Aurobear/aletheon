@@ -139,25 +139,25 @@ MERGE_SHA: 7ea6e66f226a0aa2628ad17292f85a2a72e23cc8
 ## X4b
 
 ```text
-STATUS: code_complete
+STATUS: accepted
 NODE: X4b
 BASE / BRANCH / PR / GOAL_ID: 7ea6e66f226a0aa2628ad17292f85a2a72e23cc8 / auro/feat/20260805-x4b-interact-ensure-running / #170 / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=2
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commits cde69177 and eb8d7a1d make Interact resolve the canonical user socket and invoke the Executive lifecycle before TUI or one-shot connection; system/user-local/dev-foreground mode selection, exact socket provenance, owned stale-socket recovery, typed protocol/runtime negotiation, and bounded JSON diagnostics are preserved; healthy durable-state cold starts have a 30-second readiness deadline while systemd and foreground bootstrap exits produce immediate daemon_bootstrap_failed diagnostics; focused Executive lifecycle/readiness/launcher and Interact host tests, package Clippy -D warnings, architecture, formatting, and diff gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 b66b7f576d666f34dcab084a76c9027fee28b10549c8531f9c50c68bfe6420fa; U-BOOT-001 installed cold start completed without manual daemon activation in 25068ms; U-BOOT-002 installed invalid-config test returned structured daemon_bootstrap_failed in 91ms; post-test official-socket real LLM request returned X4B_READY, services remained active with zero restarts
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commits cde69177 and eb8d7a1d make Interact resolve the canonical user socket and invoke the Executive lifecycle before TUI or one-shot connection; system/user-local/dev-foreground mode selection, exact socket provenance, owned stale-socket recovery, typed protocol/runtime negotiation, and bounded JSON diagnostics are preserved; the original 30-second readiness deadline passed the then-current cold-start evidence, while the current populated installation has a 60-second bounded default after observed Dasein/Session replay exceeded 30 seconds; systemd and foreground bootstrap exits still produce immediate daemon_bootstrap_failed diagnostics; focused Executive lifecycle/readiness/launcher and Interact host tests, package Clippy -D warnings, architecture, formatting, and diff gates pass; sudo system deploy passed with target/release, /usr/bin, machine-core, and user-daemon SHA-256 b66b7f576d666f34dcab084a76c9027fee28b10549c8531f9c50c68bfe6420fa; U-BOOT-001 installed cold start completed without manual daemon activation in 25068ms; U-BOOT-002 installed invalid-config test returned structured daemon_bootstrap_failed in 91ms; post-test official-socket real LLM request returned X4B_READY, services remained active with zero restarts; GitHub CI 5 passed and 4 skipped
 FAILURES: attempt 1 used a single four-second readiness deadline and misclassified the installed daemon's approximately 21-second durable-state restore as a timeout; attempt 2 separated fast bootstrap-failure observation from healthy readiness waiting
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: 4bf3027d6e79fadbe9276210b36bee7b69ffcdf9
 ```
 
 ## X4c
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X4c
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: 4bf3027d6e79fadbe9276210b36bee7b69ffcdf9 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commit dc82d08b adds versioned ordered JSONL, stable terminal exit classes, stdin, durable principal-scoped idempotency, non-interactive approval blocking, cancellation and bounded output backpressure; focused Fabric/Executive/Aletheon tests, package Clippy -D warnings, architecture, formatting and diff gates passed; sudo system deploy passed with target/release, /usr/bin, machine-core and user-daemon SHA-256 3d6a72beb93d0faaa8f9d2f387ac9b72e5d1e8343d6112c3ff61dd495da1590a; installed exec real request returned X4C_READY as a two-event JSONL stream; services remained at zero restarts
+FAILURES: none; owner deferred PR/CI/merge until aggregate validation
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -165,12 +165,12 @@ MERGE_SHA: pending
 ## X4d
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X4d
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: dc82d08b / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: commit 8dc8a756 adds canonical CommandSpec-backed run/resume/completion adapters; run supports explicit session reuse and human approval, resume opens the daemon-backed picker when ID is omitted, and completion prints the exact generated Bash/Zsh assets; focused Interact/Aletheon tests, help/completion contract tests, package Clippy -D warnings, architecture, formatting and diff gates passed; B1 external supervisor remains the explicit Goal control plane
+FAILURES: installed PTY and aggregate deployment verification deferred by owner
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -178,11 +178,11 @@ MERGE_SHA: pending
 ## X5a
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X5a
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: 8dc8a756 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: reviewed mapping in docs/plans/Aletheon_Session_Authority_Mapping_2026-08-05.md; wire-surfaces.tsv records the existing SessionAppendStore, EventSpine and EventProjection convergence without a synonymous authority
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
@@ -191,12 +191,12 @@ MERGE_SHA: pending
 ## X5b
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X5b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: 72677148 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Fabric now defines schema-v1 SessionReadSnapshot, SessionListSnapshot, TaskSnapshot, ActivitySnapshot and bounded SessionEventPage contracts; canonical session.read_sessions/v1 discovery is served from SessionAppendStore; EventSpine exposes transport-neutral bounded committed-prefix reads and startup reconciliation consumes the port rather than the SQLite concrete adapter; Executive deterministically projects Task/Activity state from authoritative Session items; installed daemon persistence initialization fails closed instead of creating process-local event/projection/session stores; A-SESSION-001 replays the same TaskSnapshot after every item-boundary interruption and A-SESSION-002 proves duplicate item/event keys retain one Task/Activity projection; crash-between-authority-append/materialization recovery, protocol schema, Fabric architecture gates and focused Session protocol tests pass
+FAILURES: none; owner deferred installed deployment, PR/CI/merge and aggregate verification
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -204,12 +204,12 @@ MERGE_SHA: pending
 ## X5c
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X5c
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: 414eb58f / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Interact startup, resume and picker now consume canonical ReadSnapshot/ReadSessions and poll bounded ReadEvents; the reducer replaces Session/Task/Activity state atomically from schema-v1 snapshots, ignores duplicate pages, rejects gaps/out-of-order pages before mutation, and reloads authoritative snapshots; A-SESSION-003, reducer replay, typed session protocol, focused lifecycle tests, Interact all-target clippy and architecture acceptance pass
+FAILURES: none; owner deferred installed deployment, PR/CI/merge and aggregate verification
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -217,12 +217,12 @@ MERGE_SHA: pending
 ## X6a
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X6a
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: 05f63446 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Interact now renders a daemon-projected Task console with project/session/task/phase/goal/runtime identity/permission header, authoritative Conversation, Activity timeline, Changes/diagnostics panel and keyboard footer; U-TUI-001..007 focused frame/key tests pass across 80x24, 120x40 and 200x60; provider error and typed runtime/cache metrics are visible without transcript inference. Active context is shown only from typed runtime facts, never cumulative usage. Interact package tests (128), TaskConsole tests (9), all-target clippy and architecture acceptance pass.
+FAILURES: none; full PTY/accessibility/line-mode and installed provider/session evidence, installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -230,12 +230,12 @@ MERGE_SHA: pending
 ## X6b
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X6b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: c977aa04 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pasted input now passes through a bounded ANSI/OSC/C0/C1 sanitizer before editor insertion; multi-line CJK paste remains inert until explicit Enter/IME handling; Action Palette search ranks name, alias, category and description; bounded @ file discovery passes the 10,000-file/300ms focused test; @path attachment validation rejects traversal, symlinks, protected paths, out-of-authority paths and oversized files; input history and draft storage are scoped by OS uid plus workspace digest with bounded atomic JSON writes; persistence is debounced and history search is reachable through Ctrl+R. Focused sanitizer, attachment, paste, file-picker, history-search and interact clippy tests pass.
+FAILURES: none; governed ! receipt, retention/delete policy and U-INPUT-004 remain open; U-INPUT-005 paste-prefix literal test passes. Installed deployment, PR/CI/merge and aggregate verification also remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -243,12 +243,12 @@ MERGE_SHA: pending
 ## X7
 
 ```text
-STATUS: not_started
+STATUS: accepted
 NODE: X7
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: d01e118b / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: CapabilityTerminalReceipt binds result.call_id to the host-minted invocation; mismatches become terminal Failed + InvalidRequest evidence instead of successful receipts. Guarded streaming terminals are deferred until policy/output/audit settlement; cancellation and rejected permits emit typed terminal failures; mutation results retain call/permit/audit linkage and honest BestEffort coverage. A-CAP-001..005 and A-TURN-001 prefixed tests pass across Corpus/Fabric/Executive (10 Fabric, 10 Corpus, 4 budget, 4 governed capability, 2 hardware, 8 turn-equivalence); focused clippy and architecture acceptance pass.
+FAILURES: none; installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -256,12 +256,12 @@ MERGE_SHA: pending
 ## X8a
 
 ```text
-STATUS: not_started
+STATUS: accepted
 NODE: X8a
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: e3c32965 + checkpoint projection follow-up / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TurnCheckpoint integrity verification rejects file-count mismatch; Executive read projection binds checkpoint and transaction to session/turn authority, carries mutation coverage and validation evidence, and requires one receipt or explicit omission for acceptance. U-CHK-003/U-CHK-004, the workspace-checkpoint unit set, Executive projection tests, and Corpus transaction projection tests pass; architecture acceptance passes.
+FAILURES: none; installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -269,12 +269,12 @@ MERGE_SHA: pending
 ## X8b
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X8b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: abc6a5c8 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TUI DiffView now projects canonical PatchDelta file changes, diff preview, mutation coverage, rollback availability and partial/conflicted evidence; j/k file picker and Ctrl+D or /diff open the review surface. CheckpointReviewSnapshot carries the deterministic TurnCheckpointProjection fields without becoming a persistence authority. Host-verified checkpoint listing is now available through checkpoint.list/v1; /rewind opens a daemon-backed picker with code-only rewind, fork-only, and fork-then-rewind modes. Fork boundaries are resolved from the authoritative Session turn sequence, and fork-then-rewind waits for the fork terminal response before issuing the host rewind. No client paths or checkpoint blobs are accepted. U-CHK-001/U-CHK-002/U-CHK-005/U-CHK-006, checkpoint picker/fork sequencing, protocol/Executive/Interact focused tests and architecture acceptance pass.
+FAILURES: application Accept/Repair/Rollback actions are implemented by X8c; installed PTY/deployment evidence, PR/CI/merge and aggregate runtime verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -282,14 +282,14 @@ MERGE_SHA: pending
 ## X8c
 
 ```text
-STATUS: not_started
+STATUS: accepted
 NODE: X8c
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: ad7b7598 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / active
+BUDGET: bounded implementation stage; attempt=2
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Commits f7b150d8, 1e1a518a, ba99ae95 and ad7b7598 establish ReviewFinding plus HostSettlementService as the only Accept/Repair/Rollback writer, enforce failed evaluation as repair, remove model-facing settlement tools from the registry and every shipped profile, expose typed task.review/settle/v1 and task.review/latest/v1 contracts, and persist idempotent SQLite settlement receipts. U-VERIFY-001..004 and A-TURN-002 settlement tests pass; durable-store, Fabric RPC, Corpus transaction, specialized-role, shipped-profile regression, evaluation-turn, Executive check/clippy, Interact reducer, fmt and architecture gates pass. Final `sudo bash scripts/aletheon.sh deploy` installed SHA-256 591dfcacaa740262516499d6256fdcb5da1d5c3e5c2659dccc12338271822fa3 identically at target/release, /usr/bin, system core, user daemon and memory agent; machine and user restart counters stayed at zero across the stability window; the current daemon loaded all required cognitive profiles without quarantine; `/usr/bin/aletheon run` over the official user socket completed a real provider request with `X8C_RUNTIME_READY` and no rendered inference error.
+FAILURES: attempt 1 removed the registry tools but left them in bundled profile assets, causing required profiles to be quarantined and the installed daemon to restart; ad7b7598 removed the stale declarations and added a regression test before the successful second deployment. PR/CI/merge remain explicitly deferred by the owner in favor of local commits and later aggregate verification.
 BLOCKER: none
-MERGE_SHA: pending
+MERGE_SHA: pending (owner-deferred)
 ```
 
 ## X8d
@@ -399,11 +399,11 @@ MERGE_SHA: pending
 ## X14
 
 ```text
-STATUS: not_started
+STATUS: accepted
 NODE: X14
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: d01e118b / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: CompositeMemoryService now preserves supplemental adapter-provided workspace/session scope, provenance and authority instead of rewriting every external result as session-local. A-MEM-001 session isolation, A-MEM-002 approved-core versus local fact distinction, A-MEM-003 explicit supplemental outage/degraded fallback, and the workspace-bound supplemental provenance regression all pass (11 unified memory contract tests); mnemosyne clippy and architecture acceptance pass.
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending

@@ -17,7 +17,6 @@ use fabric::{
 use uuid::Uuid;
 
 use crate::adapters::events::session_projection::SessionProjection;
-use crate::adapters::events::SqliteEventSpine;
 use crate::application::event_projection::EventProjectionSink;
 
 const SESSION_EVENT_NAMESPACE: Uuid = Uuid::from_u128(0x01b2f7f1_0d98_441a_a30e_4f637b27be55);
@@ -34,11 +33,11 @@ pub struct SessionEventReconcileReport {
 /// the compatibility Session read model. Every operation is idempotent, so a
 /// restart can safely replay events committed before any prior crash point.
 pub async fn reconcile_committed_session_events(
-    event_spine: &SqliteEventSpine,
+    event_spine: &dyn EventSpine,
     event_projections: &dyn EventProjectionSink,
     read_model: &dyn SessionAppendStore,
 ) -> Result<SessionEventReconcileReport> {
-    let through_row_id = event_spine.committed_row_watermark()?;
+    let through_row_id = event_spine.committed_watermark()?;
     let mut after_row_id = 0;
     let mut report = SessionEventReconcileReport::default();
 
@@ -322,5 +321,9 @@ impl SessionAppendStore for EventSourcedSessionStore {
 
     async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>> {
         self.read_model.load_items(session, after).await
+    }
+
+    async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
+        self.read_model.list_sessions(limit).await
     }
 }

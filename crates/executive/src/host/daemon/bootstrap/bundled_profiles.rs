@@ -151,6 +151,18 @@ mod tests {
     }
 
     #[test]
+    fn shipped_profiles_do_not_claim_host_only_settlement_tools() {
+        for (name, profile) in PROFILES {
+            for host_only_tool in ["change_accept", "change_rollback"] {
+                assert!(
+                    !profile.contains(host_only_tool),
+                    "shipped profile {name} exposes Host-only tool {host_only_tool}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn seed_refreshes_shipped_legacy_mirrors_without_touching_user_profiles() {
         let temporary = tempfile::tempdir().unwrap();
         let agents_dir = temporary.path().join("agents");

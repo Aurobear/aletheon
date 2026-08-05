@@ -2,20 +2,107 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
 use super::super::chat::{ChatWidget, Role as ChatRole};
+use super::super::checkpoint_picker::CheckpointPickerAction;
 use super::super::session_picker::SessionPickerAction;
 use super::super::App;
-use super::submit::{submit_message, write_request};
+use super::submit::{submit_message, write_protocol_request, write_request};
 
-use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
+use fabric::protocol::client::{
+    ClientRequest, ClientRpcRequest, SnapshotRequest, TransientApprovalDecision,
+};
 use fabric::ui_event::CollaborationMode;
 
 pub(crate) fn refresh_command_completion(app: &mut App) {
-    if app.input_buf.starts_with('/') {
+    if app.input_literal {
+        app.completion.hide();
+    } else if app.input_buf.starts_with('/') {
         app.completion
             .show_commands(&app.input_buf, &app.registry, app.turn_active);
+    } else if app.input_buf.starts_with('@') && !app.input_buf.contains(char::is_whitespace) {
+        app.completion
+            .show_attachments(&app.input_buf, &app.workspace);
     } else {
         app.completion.hide();
     }
+}
+
+async fn request_transaction_review(
+    app: &mut App,
+    action: fabric::TransactionReviewAction,
+    risk_acknowledged: bool,
+) {
+    let Some(session_id) = app.app_state.session_id.clone() else {
+        app.chat
+            .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+        return;
+    };
+    let Some(transaction_id) = app
+        .latest_patch
+        .as_ref()
+        .and_then(|patch| patch.transaction_id)
+        .map(|id| id.0.to_string())
+    else {
+        app.chat.add_text(
+            ChatRole::System,
+            "当前差异没有 Host change transaction，无法执行 review action".to_string(),
+        );
+        return;
+    };
+    let request_id = write_request(
+        app,
+        ClientRpcRequest::TransactionReview(fabric::TransactionReviewParams {
+            session_id,
+            transaction_id,
+            action,
+            risk_acknowledged,
+        }),
+    )
+    .await;
+    app.pending_commands
+        .insert(request_id, super::super::PendingCommand::TransactionReview);
+    app.pending_non_turn.insert(request_id);
+    app.streaming = true;
+    app.status.waiting = true;
+}
+
+async fn request_latest_transaction_settlement(app: &mut App) {
+    let Some(session_id) = app.app_state.session_id.clone() else {
+        return;
+    };
+    let Some(transaction_id) = app
+        .latest_patch
+        .as_ref()
+        .and_then(|patch| patch.transaction_id)
+        .map(|id| id.0.to_string())
+    else {
+        return;
+    };
+    let request_id = write_request(
+        app,
+        ClientRpcRequest::TransactionSettlementGet(fabric::TransactionSettlementGetParams {
+            session_id,
+            transaction_id,
+        }),
+    )
+    .await;
+    app.pending_commands.insert(
+        request_id,
+        super::super::PendingCommand::TransactionSettlementLatest,
+    );
+    app.pending_non_turn.insert(request_id);
+}
+
+/// Insert a bracketed-paste payload as inert editor text. Newlines and CJK
+/// codepoints are preserved, and paste never invokes submit by itself.
+pub(crate) fn insert_paste(app: &mut App, text: &str) {
+    let text = super::super::input_safety::sanitize_paste(text);
+    app.input_buf.insert_str(app.cursor, &text);
+    app.cursor += text.len();
+    if app.input_buf.trim_start().starts_with(['/', '@', '!']) {
+        app.input_literal = true;
+    }
+    app.check_cjk();
+    app.completion.hide();
 }
 
 fn accept_selected_completion(app: &mut App) -> bool {
@@ -24,6 +111,7 @@ fn accept_selected_completion(app: &mut App) -> bool {
     };
     app.input_buf = selected;
     app.cursor = app.input_buf.len();
+    app.input_literal = false;
     app.completion.hide();
     app.check_cjk();
     true
@@ -53,23 +141,133 @@ pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
 }
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) {
+    if let Some(mut search) = app.history_search.take() {
+        if search.handle_key(key) {
+            if let Some(entry) = search.selected_entry() {
+                app.input_buf = entry;
+                app.cursor = app.input_buf.len();
+                app.input_literal = false;
+                app.check_cjk();
+            }
+        } else {
+            app.history_search = Some(search);
+        }
+        return;
+    }
+
     if let Some(mut picker) = app.session_picker.take() {
         match picker.handle_key(key) {
             SessionPickerAction::Continue => app.session_picker = Some(picker),
             SessionPickerAction::Close => {}
             SessionPickerAction::Resume(session_id) => {
-                let request_id =
-                    write_request(app, ClientRpcRequest::resume(session_id.clone())).await;
+                let request_id = write_protocol_request(
+                    app,
+                    ClientRequest::ReadSnapshot(SnapshotRequest {
+                        session_id: fabric::SessionId(session_id.clone()),
+                    }),
+                )
+                .await;
                 app.pending_commands.insert(
                     request_id,
-                    super::super::PendingCommand::Resume {
-                        previous_session_id: app.app_state.session_id.clone(),
+                    super::super::PendingCommand::ProjectionSnapshot {
+                        session_id: session_id.clone(),
                     },
                 );
+                app.projection_target_session_id = Some(session_id.clone());
+                app.projection_request_in_flight = true;
                 app.chat
                     .add_text(ChatRole::System, format!("恢复会话 {session_id}..."));
             }
         }
+        return;
+    }
+
+    if let Some(mut picker) = app.checkpoint_picker.take() {
+        match picker.handle_key(key) {
+            CheckpointPickerAction::Continue => app.checkpoint_picker = Some(picker),
+            CheckpointPickerAction::Close => {}
+            CheckpointPickerAction::RewindCode { prompt_index } => {
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat
+                        .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+                    return;
+                };
+                let request_id = write_request(
+                    app,
+                    ClientRpcRequest::WorkspaceRewind(
+                        fabric::protocol::client::WorkspaceRewindParams {
+                            session_id: fabric::SessionId(session_id),
+                            prompt_index,
+                        },
+                    ),
+                )
+                .await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::CheckpointRewind {
+                        child_session_id: None,
+                    },
+                );
+                app.pending_non_turn.insert(request_id);
+                app.streaming = true;
+                app.status.waiting = true;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("请求恢复工作区检查点 {prompt_index}…"),
+                );
+            }
+            action @ (CheckpointPickerAction::ForkSession { .. }
+            | CheckpointPickerAction::ForkAndRewind { .. }) => {
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat
+                        .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+                    return;
+                };
+                let (through_sequence, prompt_index) = match action {
+                    CheckpointPickerAction::ForkSession { through_sequence } => {
+                        (through_sequence, None)
+                    }
+                    CheckpointPickerAction::ForkAndRewind {
+                        through_sequence,
+                        prompt_index,
+                    } => (through_sequence, Some(prompt_index)),
+                    _ => unreachable!(),
+                };
+                let request_id = write_request(
+                    app,
+                    ClientRpcRequest::SessionFork(fabric::protocol::client::SessionForkParams {
+                        session_id: fabric::SessionId(session_id.clone()),
+                        through_sequence,
+                    }),
+                )
+                .await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::CheckpointFork {
+                        parent_session_id: session_id,
+                        prompt_index,
+                    },
+                );
+                app.pending_non_turn.insert(request_id);
+                app.streaming = true;
+                app.status.waiting = true;
+                app.chat.add_text(
+                    ChatRole::System,
+                    if prompt_index.is_some() {
+                        "创建历史会话分支，成功后再恢复代码…".to_string()
+                    } else {
+                        "创建历史会话分支…".to_string()
+                    },
+                );
+            }
+        }
+        return;
+    }
+
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+        app.history_search = Some(super::super::history_search::HistorySearchOverlay::new(
+            app.history.entries().to_vec(),
+        ));
         return;
     }
 
@@ -94,19 +292,116 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         app.detail = if app.detail.is_some() {
             None
         } else {
-            app.latest_diff
-                .clone()
-                .map(super::super::diff_view::DiffView::new)
+            app.latest_patch
+                .as_ref()
+                .map(super::super::diff_view::DiffView::from_patch_delta)
+                .or_else(|| {
+                    app.latest_diff
+                        .clone()
+                        .map(super::super::diff_view::DiffView::new)
+                })
         };
+        if let Some(detail) = app.detail.as_mut() {
+            detail.project_findings(
+                app.app_state
+                    .tasks
+                    .iter()
+                    .flat_map(|task| task.review_findings.clone())
+                    .collect(),
+            );
+        }
+        if app.detail.is_some() {
+            request_latest_transaction_settlement(app).await;
+        }
         return;
+    }
+    if app.detail.is_some() {
+        match key.code {
+            KeyCode::Char('a') => {
+                app.review_risk_confirmation = None;
+                request_transaction_review(app, fabric::TransactionReviewAction::Accept, false)
+                    .await;
+                return;
+            }
+            KeyCode::Char('p') => {
+                app.review_risk_confirmation = None;
+                request_transaction_review(app, fabric::TransactionReviewAction::Repair, false)
+                    .await;
+                return;
+            }
+            KeyCode::Char('x') => {
+                let coverage = app
+                    .latest_patch
+                    .as_ref()
+                    .and_then(|patch| patch.mutation_coverage);
+                let transaction_id = app
+                    .latest_patch
+                    .as_ref()
+                    .and_then(|patch| patch.transaction_id)
+                    .map(|id| id.0.to_string());
+                match (coverage, transaction_id) {
+                    (Some(fabric::change_transaction::MutationCoverage::Full), Some(_)) => {
+                        request_transaction_review(
+                            app,
+                            fabric::TransactionReviewAction::Rollback,
+                            false,
+                        )
+                        .await;
+                    }
+                    (
+                        Some(fabric::change_transaction::MutationCoverage::BestEffort),
+                        Some(transaction_id),
+                    ) if app.review_risk_confirmation.as_deref()
+                        == Some(transaction_id.as_str()) =>
+                    {
+                        app.review_risk_confirmation = None;
+                        request_transaction_review(
+                            app,
+                            fabric::TransactionReviewAction::Rollback,
+                            true,
+                        )
+                        .await;
+                    }
+                    (
+                        Some(fabric::change_transaction::MutationCoverage::BestEffort),
+                        Some(transaction_id),
+                    ) => {
+                        app.review_risk_confirmation = Some(transaction_id);
+                        app.chat.add_text(
+                            ChatRole::System,
+                            "这是 best-effort rollback，可能残留外部副作用；再次按 x 显式确认风险"
+                                .to_string(),
+                        );
+                    }
+                    (Some(fabric::change_transaction::MutationCoverage::NonRollbackable), _) => {
+                        app.chat.add_text(
+                            ChatRole::System,
+                            "Host 声明该事务不可回滚；未发送 rollback 请求".to_string(),
+                        );
+                    }
+                    _ => app.chat.add_text(
+                        ChatRole::System,
+                        "缺少 Host transaction/coverage，未发送 rollback 请求".to_string(),
+                    ),
+                }
+                return;
+            }
+            _ => {}
+        }
     }
     if let Some(detail) = app.detail.as_mut() {
         match key.code {
+            KeyCode::Esc => {
+                app.detail = None;
+                return;
+            }
             KeyCode::Char('j') | KeyCode::Down => {
+                detail.select_next();
                 detail.scroll_down();
                 return;
             }
             KeyCode::Char('k') | KeyCode::Up => {
+                detail.select_previous();
                 detail.scroll_up();
                 return;
             }
@@ -233,6 +528,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             app.input_buf.clear();
             app.cursor = 0;
             app.has_cjk = false;
+            app.input_literal = false;
             app.pending_submit = None;
             app.completion.hide();
             return;
@@ -260,35 +556,36 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Alt+Up/Down: navigate the complete tool activity timeline.
+    // Alt+Up/Down: navigate the daemon-projected activity timeline.
     if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Up {
-        app.chat.select_previous_exec();
+        let len = app.app_state.activities.len();
+        app.selected_activity = if len == 0 {
+            None
+        } else {
+            Some(app.selected_activity.unwrap_or(len).saturating_sub(1))
+        };
         return;
     }
     if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Down {
-        app.chat.select_next_exec();
+        let len = app.app_state.activities.len();
+        app.selected_activity = if len == 0 {
+            None
+        } else {
+            Some(
+                app.selected_activity
+                    .map_or(0, |index| index.saturating_add(1).min(len - 1)),
+            )
+        };
         return;
     }
 
-    // Ctrl+B: toggle selected tool card, falling back to the last card.
+    // Ctrl+B: show/hide authoritative activity details, defaulting to the tail.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
-        if app.chat.toggle_selected_exec() {
-            return;
-        }
-        // Iterate entries in reverse, find the last ExecEntry and toggle it
-        let call_id = {
-            let mut found = None;
-            for entry in app.chat.entries.iter().rev() {
-                if let super::super::chat::ChatEntry::Exec(ref ee) = entry {
-                    found = Some(ee.call_id.clone());
-                    break;
-                }
-            }
-            found
+        app.selected_activity = if app.selected_activity.is_some() {
+            None
+        } else {
+            app.app_state.activities.len().checked_sub(1)
         };
-        if let Some(cid) = call_id {
-            app.chat.toggle_exec(&cid);
-        }
         return;
     }
 
@@ -555,6 +852,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             app.input_buf.clear();
             app.cursor = 0;
             app.has_cjk = false;
+            app.input_literal = false;
             app.pending_submit = None;
         }
 
@@ -601,6 +899,61 @@ mod tests {
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
     }
 
+    fn review_patch(coverage: fabric::change_transaction::MutationCoverage) -> fabric::PatchDelta {
+        fabric::PatchDelta {
+            transaction_id: Some(fabric::change_transaction::ChangeTransactionId(
+                uuid::Uuid::nil(),
+            )),
+            mutation_coverage: Some(coverage),
+            applied: vec![],
+            failed: vec![],
+            files_changed: vec![],
+            diff_preview: Some("diff".into()),
+            diff_artifact: None,
+            diff_preview_truncated: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn best_effort_rollback_requires_two_explicit_keypresses() {
+        let mut app = idle_app().await;
+        app.app_state.session_id = Some("session-a".into());
+        app.latest_patch = Some(review_patch(
+            fabric::change_transaction::MutationCoverage::BestEffort,
+        ));
+        app.detail = app
+            .latest_patch
+            .as_ref()
+            .map(crate::tui::diff_view::DiffView::from_patch_delta);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x'))).await;
+        assert!(app.review_risk_confirmation.is_some());
+        assert!(app.pending_commands.is_empty());
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x'))).await;
+        assert!(app.review_risk_confirmation.is_none());
+        assert!(app
+            .pending_commands
+            .values()
+            .any(|pending| *pending == crate::tui::PendingCommand::TransactionReview));
+    }
+
+    #[tokio::test]
+    async fn non_rollbackable_transaction_never_sends_a_review_action() {
+        let mut app = idle_app().await;
+        app.app_state.session_id = Some("session-a".into());
+        app.latest_patch = Some(review_patch(
+            fabric::change_transaction::MutationCoverage::NonRollbackable,
+        ));
+        app.detail = app
+            .latest_patch
+            .as_ref()
+            .map(crate::tui::diff_view::DiffView::from_patch_delta);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Char('x'))).await;
+        assert!(app.pending_commands.is_empty());
+    }
+
     #[tokio::test]
     async fn first_ctrl_c_requests_cancel_without_exiting_streaming_turn() {
         let mut app = streaming_app().await;
@@ -633,5 +986,30 @@ mod tests {
         assert_eq!(app.input_buf, "/memory");
         assert_eq!(app.cursor, app.input_buf.len());
         assert!(!app.completion.visible);
+    }
+
+    #[tokio::test]
+    async fn u_tui_005_cjk_multiline_paste_is_inert_and_submits_once_after_ime_delay() {
+        let mut app = idle_app().await;
+        insert_paste(&mut app, "第一行\n第二行");
+
+        assert_eq!(app.input_buf, "第一行\n第二行");
+        assert_eq!(app.cursor, app.input_buf.len());
+        assert!(app.has_cjk);
+        assert!(app.pending_submit.is_none());
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter)).await;
+        assert!(app.pending_submit.is_some());
+        assert_eq!(app.input_buf, "第一行\n第二行");
+    }
+
+    #[tokio::test]
+    async fn u_input_005_pasted_action_prefixes_remain_literal() {
+        for value in ["/clear", "@secret", "!rm -rf workspace"] {
+            let mut app = idle_app().await;
+            insert_paste(&mut app, value);
+            assert!(app.input_literal);
+            assert!(!app.completion.visible);
+        }
     }
 }

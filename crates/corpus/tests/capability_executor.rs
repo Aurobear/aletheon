@@ -374,3 +374,67 @@ async fn patch_producing_result_is_never_cached_even_if_tool_declares_policy() {
     assert!(!second.served_from_cache);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn a_cap_002_cancelled_invocation_fails_closed_before_tool_lookup_and_emits_terminal() {
+    let (executor, request, permit, calls, _temp) = fixture().await;
+    request.control.cancel.cancel();
+
+    let (mut sink, mut events) = fabric::tool_event_channel();
+    let result = executor
+        .execute_streaming_with_permit(&request, &permit, &mut sink)
+        .await;
+
+    assert!(result.is_error);
+    assert!(result.output.contains("cancelled before execution"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        events.recv().await,
+        Some(fabric::ToolExecutionEvent::Terminal(Err(
+            fabric::ToolExecutionError::Cancelled(message)
+        ))) if message == "capability invocation cancelled before execution"
+    ));
+    assert!(sink.terminal_sent());
+}
+
+#[tokio::test]
+async fn streaming_rejected_permits_emit_a_failed_terminal_without_tool_execution() {
+    let (executor, request, mut permit, calls, _temp) = fixture().await;
+    permit.sandbox = SandboxDecision::Unavailable;
+
+    let (mut sink, mut events) = fabric::tool_event_channel();
+    let result = executor
+        .execute_streaming_with_permit(&request, &permit, &mut sink)
+        .await;
+
+    assert!(result.is_error);
+    assert!(result
+        .output
+        .contains("permit expired or sandbox unavailable"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        events.recv().await,
+        Some(fabric::ToolExecutionEvent::Terminal(Err(
+            fabric::ToolExecutionError::Failed(message)
+        ))) if message == "permit expired or sandbox unavailable"
+    ));
+    assert!(sink.terminal_sent());
+}
+
+#[tokio::test]
+async fn mutation_delta_retains_invocation_permit_and_audit_linkage() {
+    let (executor, request, permit, calls, _temp) = fixture_with_options(false, true).await;
+
+    let result = executor.execute_with_permit(&request, &permit).await;
+
+    assert!(!result.is_error, "{}", result.output);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(result.call_id, request.call.call_id);
+    assert_eq!(result.usage.permit_id, permit.id);
+    assert!(
+        result.audit_id.is_some(),
+        "mutation needs an audit identity"
+    );
+    assert_eq!(result.patch_delta, Some(fabric::PatchDelta::default()));
+    assert!(!result.served_from_cache);
+}

@@ -127,6 +127,7 @@ impl SpineAgentEventSink {
                 "terminal",
                 serde_json::json!({
                     "status": format!("{status:?}"),
+                    "turn_terminal_status": status.turn_terminal_status(),
                     "has_result": result.is_some(),
                 }),
             ),

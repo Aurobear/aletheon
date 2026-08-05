@@ -251,4 +251,7 @@ pub trait SessionAppendStore: Send + Sync {
     ) -> Result<()>;
     async fn load_session(&self, session: &SessionId) -> Result<Option<SessionRecord>>;
     async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>>;
+    async fn list_sessions(&self, _limit: usize) -> Result<Vec<SessionRecord>> {
+        anyhow::bail!("Session listing is unavailable for this store")
+    }
 }

@@ -22,6 +22,7 @@ pub mod embodiment;
 pub mod episode_report;
 pub mod evaluation;
 pub mod evidence;
+pub mod exec;
 pub mod extension;
 pub mod extension_asset;
 pub mod extension_package;

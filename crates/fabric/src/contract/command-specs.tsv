@@ -1,7 +1,15 @@
 # key\tsurface\tparent\tname\taliases\tsummary\tcategory\tusage\texecution\tavailability\tvisibility\tintent
 cli.core	cli	-	core	-	Start the machine-scoped inference core	internal	aletheon core	compatibility	always	internal	-
 cli.daemon	cli	-	daemon	-	Start daemon (auto-detects systemd/container/foreground)	operations	aletheon daemon	compatibility	always	public	-
-cli.exec	cli	-	exec	-	Non-interactive execution	task	aletheon exec --prompt <PROMPT>	compatibility	always	public	-
+cli.exec	cli	-	exec	-	Non-interactive execution	task	aletheon exec --prompt <PROMPT>	application	always	public	-
+cli.run	cli	-	run	-	Run a human-facing governed task	task	aletheon run [PROMPT]	application	always	public	-
+cli.resume	cli	-	resume	-	Resume a session or select one from history	session	aletheon resume [SESSION]	application	always	public	-
+cli.review	cli	-	review	-	Inspect or apply a Host-owned change transaction review	review	aletheon review <ACTION>	application	always	public	-
+cli.review.show	cli	review	show	-	Show the latest authoritative settlement receipt	review	aletheon review show <SESSION> <TRANSACTION>	application	always	public	-
+cli.review.accept	cli	review	accept	-	Accept a fully validated change transaction	review	aletheon review accept <SESSION> <TRANSACTION>	application	always	public	-
+cli.review.repair	cli	review	repair	-	Return a change transaction to repair	review	aletheon review repair <SESSION> <TRANSACTION>	application	always	public	-
+cli.review.rollback	cli	review	rollback	-	Restore the transaction baseline when coverage permits	review	aletheon review rollback <SESSION> <TRANSACTION>	application	always	public	-
+cli.completion	cli	-	completion	-	Print a generated shell completion script	configuration	aletheon completion <SHELL>	local	always	public	-
 cli.version	cli	-	version	-	Print version	information	aletheon version	local	always	public	-
 cli.restore-terminal	cli	-	restore-terminal	-	Restore terminal modes after an interrupted TUI session	internal	aletheon restore-terminal	local	always	internal	-
 cli.config	cli	-	config	-	Inspect effective configuration (merged layers)	configuration	aletheon config <ACTION>	compatibility	always	public	-
@@ -40,6 +48,7 @@ tui.compact	tui	-	compact	cmp	压缩上下文	会话	/compact	compatibility	idle
 tui.sessions	tui	-	sessions	sess	列出历史会话	会话	/sessions	compatibility	always	public	-
 tui.resume	tui	-	resume	-	选择历史会话，或按 ID 恢复	会话	/resume <id>	compatibility	idle_only	public	-
 tui.fork	tui	-	fork	-	从当前会话创建分支	会话	/fork	compatibility	idle_only	public	-
+tui.rewind	tui	-	rewind	-	恢复主机管理的工作区检查点	会话	/rewind <prompt-index>	compatibility	idle_only	public	-
 tui.model	tui	-	model	m	查询或切换模型	会话	/model	compatibility	always	public	-
 tui.permissions	tui	-	permissions	-	查看权限与审批策略	会话	/permissions	local	always	public	-
 tui.context	tui	-	context	ctx	显示当前上下文信息	会话	/context	local	always	public	-

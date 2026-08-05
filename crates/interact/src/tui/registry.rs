@@ -165,12 +165,18 @@ impl CommandRegistry {
                     .aliases
                     .iter()
                     .any(|alias| alias.to_lowercase().starts_with(&query));
+                let description = command.description.to_lowercase();
+                let category = command.category.to_lowercase();
                 let score = if query.is_empty() || name.starts_with(&query) {
                     0
                 } else if alias_prefix {
                     1
-                } else if fuzzy_subsequence(&name, &query) {
+                } else if category.starts_with(&query) {
                     2
+                } else if description.contains(&query) {
+                    3
+                } else if fuzzy_subsequence(&name, &query) {
+                    4
                 } else {
                     return None;
                 };
@@ -374,6 +380,9 @@ fn to_builtin(key: &str, args: &str) -> Option<BuiltinCommand> {
         "tui.sessions" => BuiltinCommand::Sessions,
         "tui.resume" => BuiltinCommand::Resume { id: args.into() },
         "tui.fork" => BuiltinCommand::Fork,
+        "tui.rewind" => BuiltinCommand::Rewind {
+            prompt_index: args.into(),
+        },
         "tui.model" => BuiltinCommand::Model,
         "tui.permissions" => BuiltinCommand::Permissions,
         "tui.context" => BuiltinCommand::Context,
@@ -469,6 +478,7 @@ mod tests {
                 "profile",
                 "quit",
                 "resume",
+                "rewind",
                 "sessions",
                 "skills",
                 "status",
@@ -593,5 +603,17 @@ mod tests {
             results.first().map(|command| command.name.as_str()),
             Some("copy")
         );
+    }
+
+    #[test]
+    fn action_palette_searches_description_alias_and_category() {
+        let registry = CommandRegistry::new();
+        assert!(!registry.find("session").is_empty());
+        assert!(!registry.find("resume").is_empty());
+        let alias = registry
+            .all()
+            .find_map(|command| command.aliases.first())
+            .expect("at least one alias");
+        assert!(!registry.find(alias).is_empty());
     }
 }

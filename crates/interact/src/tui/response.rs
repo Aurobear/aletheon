@@ -148,6 +148,9 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             patch_delta,
             ..
         } => {
+            if let Some(delta) = patch_delta.as_ref() {
+                app.latest_patch = Some(delta.clone());
+            }
             if let Some(preview) = patch_delta
                 .as_ref()
                 .and_then(|delta| delta.diff_preview.clone())
@@ -497,10 +500,19 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
         return false;
     };
 
+    if matches!(
+        pending,
+        super::PendingCommand::ProjectionSnapshot { .. }
+            | super::PendingCommand::ProjectionEvents { .. }
+    ) {
+        app.projection_request_in_flight = false;
+    }
+
     match (pending, message.get("result"), message.get("error")) {
         (super::PendingCommand::InitializeSession, Some(result), None) => {
             if let Some(session_id) = result.get("session_id").and_then(serde_json::Value::as_str) {
-                app.app_state.session_id = Some(session_id.to_owned());
+                app.projection_target_session_id = Some(session_id.to_owned());
+                app.projection_session_id = None;
             }
         }
         (super::PendingCommand::InitializeSkills, Some(result), None) => {
@@ -509,15 +521,204 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             }
         }
         (super::PendingCommand::OpenSessionPicker, Some(result), None) => {
-            let sessions = result.get("sessions").unwrap_or(&serde_json::Value::Null);
-            match super::session_picker::SessionPicker::from_json(
-                sessions,
-                app.app_state.session_id.clone(),
-            ) {
-                Ok(picker) => app.session_picker = Some(picker),
+            match serde_json::from_value::<
+                fabric::protocol::client::ClientMessage<
+                    fabric::protocol::client::SessionListSnapshot,
+                >,
+            >(result.clone())
+            .map_err(|error| error.to_string())
+            .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
+            {
+                Ok(list) if list.schema_version == fabric::SESSION_READ_MODEL_SCHEMA_VERSION => {
+                    match serde_json::to_value(list.sessions)
+                        .map_err(|error| error.to_string())
+                        .and_then(|sessions| {
+                            super::session_picker::SessionPicker::from_json(
+                                &sessions,
+                                app.app_state.session_id.clone(),
+                            )
+                            .map_err(|error| error.to_string())
+                        }) {
+                        Ok(picker) => app.session_picker = Some(picker),
+                        Err(error) => app
+                            .chat
+                            .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
+                    }
+                }
+                Ok(list) => app.chat.add_text(
+                    ChatRole::System,
+                    format!(
+                        "无法打开会话列表：unsupported schema {}",
+                        list.schema_version
+                    ),
+                ),
                 Err(error) => app
                     .chat
                     .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
+            }
+        }
+        (super::PendingCommand::OpenCheckpointPicker, Some(result), None) => {
+            match serde_json::from_value::<fabric::CheckpointListSnapshot>(result.clone()) {
+                Ok(snapshot) => {
+                    match super::checkpoint_picker::CheckpointPicker::from_snapshot(snapshot) {
+                        Ok(picker) => app.checkpoint_picker = Some(picker),
+                        Err(error) => app.chat.add_text(
+                            ChatRole::System,
+                            format!("无法打开工作区检查点列表：{error}"),
+                        ),
+                    }
+                }
+                Err(error) => app.chat.add_text(
+                    ChatRole::System,
+                    format!("无法读取工作区检查点列表：{error}"),
+                ),
+            }
+        }
+        (
+            super::PendingCommand::CheckpointFork {
+                parent_session_id,
+                prompt_index,
+            },
+            Some(result),
+            None,
+        ) => match serde_json::from_value::<fabric::SessionRecord>(result.clone()) {
+            Ok(child) => {
+                let child_session_id = child.id.0;
+                if let Some(prompt_index) = prompt_index {
+                    app.deferred_checkpoint_rewind = Some(super::DeferredCheckpointRewind {
+                        parent_session_id,
+                        child_session_id,
+                        prompt_index,
+                    });
+                } else {
+                    app.projection_target_session_id = Some(child_session_id.clone());
+                    app.projection_session_id = None;
+                    app.projection_polling = false;
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!("已分叉并切换到历史会话：{child_session_id}"),
+                    );
+                }
+            }
+            Err(error) => app.chat.add_text(
+                ChatRole::System,
+                format!("daemon 返回的会话分支无效：{error}；未恢复代码"),
+            ),
+        },
+        (super::PendingCommand::CheckpointRewind { child_session_id }, Some(_), None) => {
+            if let Some(child_session_id) = child_session_id {
+                app.projection_target_session_id = Some(child_session_id.clone());
+                app.projection_session_id = None;
+                app.projection_polling = false;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("代码已恢复；已切换到历史会话分支：{child_session_id}"),
+                );
+            } else {
+                app.chat
+                    .add_text(ChatRole::System, "代码检查点恢复完成".to_string());
+            }
+        }
+        (super::PendingCommand::TransactionReview, Some(result), None) => {
+            match serde_json::from_value::<fabric::TransactionReviewSnapshot>(result.clone()) {
+                Ok(snapshot) => {
+                    if let Some(detail) = app.detail.as_mut() {
+                        detail.project_settlement(snapshot.settlement.clone());
+                    }
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!(
+                            "Host review {:?}: {}",
+                            snapshot.settlement.decision, snapshot.settlement.reason
+                        ),
+                    );
+                }
+                Err(error) => app.chat.add_text(
+                    ChatRole::System,
+                    format!("daemon 返回的 Host review snapshot 无效：{error}"),
+                ),
+            }
+        }
+        (super::PendingCommand::TransactionSettlementLatest, Some(result), None) => {
+            match result
+                .get("receipt")
+                .cloned()
+                .ok_or_else(|| "missing receipt".to_string())
+                .and_then(|value| {
+                    serde_json::from_value::<fabric::TransactionSettlementReceipt>(value)
+                        .map_err(|error| error.to_string())
+                }) {
+                Ok(receipt) => {
+                    if let Some(detail) = app.detail.as_mut() {
+                        detail.project_settlement(receipt);
+                    }
+                }
+                Err(error) => app.chat.add_text(
+                    ChatRole::System,
+                    format!("daemon 返回的 settlement receipt 无效：{error}"),
+                ),
+            }
+        }
+        (super::PendingCommand::ProjectionSnapshot { session_id }, Some(result), None) => {
+            match serde_json::from_value::<
+                fabric::protocol::client::ClientMessage<
+                    fabric::protocol::client::SessionReadSnapshot,
+                >,
+            >(result.clone())
+            .map_err(|error| error.to_string())
+            .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
+            {
+                Ok(snapshot) => {
+                    let effects = super::reducer::reduce(
+                        &mut app.app_state,
+                        super::reducer::UiAction::ReadSnapshot(snapshot),
+                    );
+                    apply_projection_effects(app, effects);
+                    if app.app_state.session_id.as_deref() == Some(session_id.as_str()) {
+                        app.projection_target_session_id = Some(session_id.clone());
+                        app.projection_session_id = Some(session_id);
+                        app.projection_polling = true;
+                    } else {
+                        app.projection_polling = false;
+                    }
+                    app.projection_next_poll_at = app.clock.mono_now();
+                }
+                Err(error) => {
+                    app.projection_polling = false;
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!("Session projection snapshot rejected: {error}"),
+                    );
+                }
+            }
+        }
+        (super::PendingCommand::ProjectionEvents { session_id }, Some(result), None) => {
+            if app.projection_target_session_id.as_deref() != Some(session_id.as_str()) {
+                return true;
+            }
+            match serde_json::from_value::<
+                fabric::protocol::client::ClientMessage<fabric::protocol::client::SessionEventPage>,
+            >(result.clone())
+            .map_err(|error| error.to_string())
+            .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
+            {
+                Ok(page) => {
+                    let effects = super::reducer::reduce(
+                        &mut app.app_state,
+                        super::reducer::UiAction::EventPage(page),
+                    );
+                    apply_projection_effects(app, effects);
+                    app.projection_next_poll_at =
+                        fabric::MonoTime(app.clock.mono_now().0.saturating_add(200));
+                }
+                Err(error) => {
+                    app.projection_session_id = None;
+                    app.projection_polling = false;
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!("Session projection event page rejected: {error}"),
+                    );
+                }
             }
         }
         (super::PendingCommand::NewSession { clear_screen }, Some(result), None)
@@ -533,29 +734,10 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("session_id")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("unknown");
-            app.app_state.session_id = Some(session_id.to_owned());
+            app.projection_target_session_id = Some(session_id.to_owned());
+            app.projection_session_id = None;
             app.chat
                 .add_text(ChatRole::System, format!("已创建新会话：{session_id}"));
-        }
-        (super::PendingCommand::Resume { .. }, Some(result), None)
-            if result
-                .get("session_id")
-                .and_then(serde_json::Value::as_str)
-                .is_some() =>
-        {
-            let session_id = result
-                .get("session_id")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown");
-            let recovered = result
-                .get("recovered_messages")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            app.app_state.session_id = Some(session_id.to_owned());
-            app.chat.add_text(
-                ChatRole::System,
-                format!("已恢复会话：{session_id}（{recovered} 条消息）"),
-            );
         }
         (super::PendingCommand::InitializeSession, _, Some(error)) => {
             let message = error
@@ -569,14 +751,52 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             // Startup catalog refresh is best-effort. Keep the TUI clean and
             // retain the built-in command registry when the daemon is unavailable.
         }
-        (
-            super::PendingCommand::Resume {
-                previous_session_id,
-            },
-            _,
-            Some(error),
-        ) => {
-            app.app_state.session_id = previous_session_id;
+        (super::PendingCommand::CheckpointFork { .. }, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("会话分支创建失败");
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Error: {message}。未恢复代码，原会话保持不变。"),
+            );
+        }
+        (super::PendingCommand::CheckpointRewind { .. }, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("工作区恢复失败");
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Error: {message}。请检查 terminal restore receipt 后重试或人工恢复。"),
+            );
+        }
+        (super::PendingCommand::TransactionReview, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Host review action 失败");
+            app.chat
+                .add_text(ChatRole::System, format!("Error: {message}"));
+        }
+        (super::PendingCommand::TransactionSettlementLatest, _, Some(error)) => {
+            // No prior receipt is a normal pending-review state. Other daemon
+            // errors remain visible without fabricating local settlement.
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("settlement receipt 查询失败");
+            if message != "transaction settlement not found" {
+                app.chat
+                    .add_text(ChatRole::System, format!("Error: {message}"));
+            }
+        }
+        (super::PendingCommand::ProjectionSnapshot { session_id }, _, Some(error)) => {
+            if app.projection_target_session_id.as_deref() == Some(session_id.as_str()) {
+                app.projection_target_session_id = app.app_state.session_id.clone();
+                app.projection_session_id = app.app_state.session_id.clone();
+                app.projection_polling = app.app_state.session_id.is_some();
+            }
             let message = error
                 .get("message")
                 .and_then(serde_json::Value::as_str)
@@ -585,6 +805,16 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 ChatRole::System,
                 format!("Error: {message}。旧会话保持不变。"),
             );
+        }
+        (super::PendingCommand::ProjectionEvents { .. }, _, Some(error)) => {
+            app.projection_session_id = None;
+            app.projection_polling = false;
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("会话事件读取失败");
+            app.chat
+                .add_text(ChatRole::System, format!("Error: {message}"));
         }
         (_, _, Some(error)) => {
             let message = error
@@ -604,6 +834,29 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
         }
     }
     true
+}
+
+fn apply_projection_effects(app: &mut App, effects: Vec<super::reducer::UiEffect>) {
+    for effect in effects {
+        match effect {
+            super::reducer::UiEffect::Render | super::reducer::UiEffect::SubscribeAfter(_) => {}
+            super::reducer::UiEffect::ReloadSnapshot(session_id) => {
+                if app.app_state.session_id.as_deref() == Some(session_id.0.as_str()) {
+                    app.projection_session_id = None;
+                    app.projection_polling = false;
+                }
+            }
+            super::reducer::UiEffect::AnnounceError(message) => {
+                app.chat.add_text(ChatRole::System, message);
+            }
+        }
+    }
+    if app
+        .selected_activity
+        .is_some_and(|index| index >= app.app_state.activities.len())
+    {
+        app.selected_activity = app.app_state.activities.len().checked_sub(1);
+    }
 }
 
 fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {
@@ -1057,6 +1310,98 @@ mod tests {
 
         assert!(app.registry.is_skill("test-skill"));
         assert!(app.chat.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tui_review_projects_the_exact_host_settlement_receipt() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        app.detail = Some(crate::tui::diff_view::DiffView::new("diff"));
+        app.pending_commands
+            .insert(8, PendingCommand::TransactionSettlementLatest);
+        let receipt = fabric::TransactionSettlementReceipt {
+            settlement_id: "settlement-1".into(),
+            transaction_id: "transaction-1".into(),
+            session_id: "session-1".into(),
+            workspace_version: "version-1".into(),
+            decision: fabric::TransactionSettlementDecision::RepairRequired,
+            finding_ids: vec!["finding-1".into()],
+            validation_receipt_refs: vec!["artifact://validation".into()],
+            validation_omissions: vec![],
+            reason: "required validation failed".into(),
+        };
+
+        process_response(
+            &mut app,
+            serde_json::json!({"id": 8, "result": {"receipt": receipt.clone()}}),
+        );
+
+        assert_eq!(
+            app.detail.and_then(|detail| detail.settlement),
+            Some(receipt)
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_and_rewind_waits_for_authoritative_fork_response() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        app.pending_commands.insert(
+            9,
+            PendingCommand::CheckpointFork {
+                parent_session_id: "parent".into(),
+                prompt_index: Some(4),
+            },
+        );
+        let child = fabric::SessionRecord {
+            schema_version: fabric::SESSION_SCHEMA_VERSION,
+            id: fabric::SessionId("child".into()),
+            parent: Some(fabric::SessionFork {
+                session_id: fabric::SessionId("parent".into()),
+                through_sequence: 12,
+            }),
+            created_at_ms: 1,
+            status: fabric::SessionStatus::Active,
+        };
+
+        process_response(&mut app, serde_json::json!({"id": 9, "result": child}));
+
+        let deferred = app
+            .deferred_checkpoint_rewind
+            .expect("rewind must be deferred until the fork succeeds");
+        assert_eq!(deferred.parent_session_id, "parent");
+        assert_eq!(deferred.child_session_id, "child");
+        assert_eq!(deferred.prompt_index, 4);
+        assert_eq!(app.projection_target_session_id, None);
     }
 
     #[tokio::test]

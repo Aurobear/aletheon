@@ -884,7 +884,7 @@ impl RequestHandler {
             session_approvals,
         };
         let corpus_group = crate::core::CorpusGroup {
-            tools,
+            tools: tools.clone(),
             hook_registry,
         };
         let corpus_executor = Arc::new(corpus::CorpusToolExecutor::new(
@@ -1523,6 +1523,8 @@ impl RequestHandler {
             workflow_use_cases,
             turn_use_cases,
             evaluation_service,
+            turn_svc.workspace_checkpoint,
+            super::services::build_transaction_review_service(&tools, &data_dir).await?,
             session_input,
             conscious_registry,
             debug_handler,
@@ -1552,7 +1554,6 @@ impl RequestHandler {
             mcp: retained_mcp,
         };
         let handler = composition.into_handler();
-
         super::params::register_initial_params(
             &param_registry,
             clock_2.clone(),
@@ -1562,7 +1563,6 @@ impl RequestHandler {
             config.sandbox_preference.clone(),
         )
         .await;
-
         // Fire OnSessionStart hook
         handler
             .ports

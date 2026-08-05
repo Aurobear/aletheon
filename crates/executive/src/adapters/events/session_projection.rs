@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
 use fabric::{
-    EventPayload, EventVisibility, ItemRecord, SessionAppendStore, SessionForkedEvent, SessionId,
-    SessionRecord, SpineEvent, SESSION_SCHEMA_VERSION,
+    ActivityKind, ActivitySnapshot, ActivityState, EventPayload, EventVisibility, ItemPayload,
+    ItemRecord, SessionAppendStore, SessionForkedEvent, SessionId, SessionRecord, SessionStatus,
+    SpineEvent, TaskPhase, TaskRuntimeFacts, TaskSettlement, TaskSnapshot, TaskStepSnapshot,
+    SESSION_SCHEMA_VERSION,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -26,6 +28,90 @@ pub struct PublicSessionView {
 pub struct SessionProjection;
 
 impl SessionProjection {
+    /// Fold the public Session history into the daemon-owned Task/Activity
+    /// read model. The function is deliberately pure: replaying an identical
+    /// ordered item prefix produces byte-equivalent JSON without consulting
+    /// process-local state.
+    pub fn read_model(
+        session: &SessionRecord,
+        items: &[ItemRecord],
+    ) -> (Vec<TaskSnapshot>, Vec<ActivitySnapshot>) {
+        let task_id = format!("session:{}:task", session.id.0);
+        let goal = items.iter().find_map(|item| match &item.payload {
+            ItemPayload::UserMessage { content } => Some(content.clone()),
+            _ => None,
+        });
+        let mut turns = BTreeMap::<String, Vec<&ItemRecord>>::new();
+        for item in items {
+            turns
+                .entry(item.turn_id.0.to_string())
+                .or_default()
+                .push(item);
+        }
+
+        let mut steps = turns
+            .values()
+            .filter_map(|turn_items| {
+                let first = turn_items.first()?;
+                let last = turn_items.last()?;
+                Some(TaskStepSnapshot {
+                    step_id: format!("turn:{}", first.turn_id.0),
+                    turn_id: first.turn_id,
+                    phase: turn_phase(turn_items),
+                    first_sequence: first.sequence,
+                    last_sequence: last.sequence,
+                })
+            })
+            .collect::<Vec<_>>();
+        steps.sort_by_key(|step| step.first_sequence);
+        let active_turn_id = steps
+            .iter()
+            .rev()
+            .find(|step| step.phase == TaskPhase::Active)
+            .map(|step| step.turn_id);
+        let phase = session_task_phase(session.status);
+        let latest_evaluation = items
+            .iter()
+            .filter_map(|item| match &item.payload {
+                ItemPayload::EvaluationReceiptRef { receipt } => Some((item.sequence, receipt)),
+                _ => None,
+            })
+            .max_by_key(|(sequence, _)| *sequence)
+            .map(|(_, receipt)| receipt);
+        let (evaluation_settlement, review_findings) = latest_evaluation
+            .map(project_evaluation_settlement)
+            .unwrap_or_default();
+        let settlement = match session.status {
+            SessionStatus::Failed => Some(TaskSettlement::Failed),
+            SessionStatus::Interrupted => Some(TaskSettlement::Cancelled),
+            // Completion is not acceptance. Only the persisted Host evaluation
+            // receipt can project an accepted or repair settlement.
+            SessionStatus::Active | SessionStatus::Completed => evaluation_settlement,
+        };
+
+        let activities = project_activities(&task_id, items);
+        let runtime_facts = project_runtime_facts(items);
+        let task = TaskSnapshot {
+            task_id,
+            session_id: session.id.clone(),
+            goal,
+            phase,
+            plan_revision: None,
+            steps,
+            active_turn_id,
+            active_runtime_children: Vec::new(),
+            active_commands: Vec::new(),
+            pending_approvals: Vec::new(),
+            budget: None,
+            checkpoint_head: None,
+            checkpoint_review: None,
+            settlement,
+            review_findings,
+            runtime_facts,
+        };
+        (vec![task], activities)
+    }
+
     /// Materialize one already-persisted spine event into the compatibility
     /// SessionAppendStore read model. Production handlers never pass an
     /// independently assembled Session/Item value to that store.
@@ -198,6 +284,233 @@ impl SessionProjection {
     }
 }
 
+fn project_evaluation_settlement(
+    receipt: &fabric::EvaluationReceiptRef,
+) -> (Option<TaskSettlement>, Vec<fabric::ReviewFinding>) {
+    use fabric::{EvaluationDecision, ReviewFindingSeverity, ReviewFindingStatus};
+
+    let repair_link =
+        (receipt.subject_kind == "turn").then(|| format!("root:{}", receipt.subject_id));
+    let evidence_ref = format!("evaluation-receipt:{}", receipt.receipt_id.0);
+    let mut findings = receipt
+        .failed_gates
+        .iter()
+        .enumerate()
+        .map(|(index, gate)| fabric::ReviewFinding {
+            finding_id: format!("evaluation:{}:{index}", receipt.receipt_id.0),
+            severity: ReviewFindingSeverity::Error,
+            summary: format!("required validation gate failed: {gate}"),
+            location: None,
+            evidence_refs: vec![evidence_ref.clone()],
+            status: ReviewFindingStatus::Open,
+            repair_link: repair_link.clone(),
+        })
+        .collect::<Vec<_>>();
+    let settlement = match receipt.decision {
+        EvaluationDecision::Accepted if findings.is_empty() => Some(TaskSettlement::Accepted),
+        EvaluationDecision::Accepted
+        | EvaluationDecision::Rejected
+        | EvaluationDecision::ObservedFail => {
+            if findings.is_empty() {
+                findings.push(fabric::ReviewFinding {
+                    finding_id: format!("evaluation:{}:decision", receipt.receipt_id.0),
+                    severity: ReviewFindingSeverity::Error,
+                    summary: "host evaluation rejected the engineering result".into(),
+                    location: None,
+                    evidence_refs: vec![evidence_ref],
+                    status: ReviewFindingStatus::Open,
+                    repair_link,
+                });
+            }
+            Some(TaskSettlement::RepairRequired)
+        }
+        EvaluationDecision::Indeterminate => Some(TaskSettlement::Blocked),
+        // Shadow success is evidence, not Host acceptance.
+        EvaluationDecision::ObservedPass => None,
+    };
+    (settlement, findings)
+}
+
+fn turn_phase(items: &[&ItemRecord]) -> TaskPhase {
+    if items.iter().any(|item| {
+        matches!(
+            item.payload,
+            ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. }
+        )
+    }) {
+        return TaskPhase::Completed;
+    }
+    if items.iter().any(|item| match &item.payload {
+        ItemPayload::InferenceReceipt { receipt } => {
+            receipt.status == fabric::types::inference_receipt::InferenceTerminalStatus::Failed
+        }
+        ItemPayload::CapabilityReceipt { receipt } => matches!(
+            receipt.status,
+            fabric::CapabilityTerminalStatus::Failed | fabric::CapabilityTerminalStatus::TimedOut
+        ),
+        _ => false,
+    }) {
+        return TaskPhase::Failed;
+    }
+    TaskPhase::Active
+}
+
+fn session_task_phase(status: SessionStatus) -> TaskPhase {
+    match status {
+        SessionStatus::Interrupted => TaskPhase::Interrupted,
+        SessionStatus::Failed => TaskPhase::Failed,
+        SessionStatus::Completed => TaskPhase::Completed,
+        SessionStatus::Active => TaskPhase::Active,
+    }
+}
+
+fn project_activities(task_id: &str, items: &[ItemRecord]) -> Vec<ActivitySnapshot> {
+    let mut activities = BTreeMap::<String, ActivitySnapshot>::new();
+    for item in items {
+        match &item.payload {
+            ItemPayload::ToolCall { call_id, name, .. } => {
+                let activity_id = format!("tool:{}:{call_id}", item.turn_id.0);
+                activities
+                    .entry(activity_id.clone())
+                    .or_insert(ActivitySnapshot {
+                        activity_id,
+                        task_id: task_id.to_owned(),
+                        turn_id: item.turn_id,
+                        parent_activity_id: None,
+                        kind: ActivityKind::Tool,
+                        label: name.clone(),
+                        state: ActivityState::Running,
+                        started_at: item.created_at_ms,
+                        updated_at: item.created_at_ms,
+                        progress: None,
+                        artifact_refs: Vec::new(),
+                        receipt_ref: None,
+                    });
+            }
+            ItemPayload::ToolResult {
+                call_id, is_error, ..
+            } => {
+                let activity_id = format!("tool:{}:{call_id}", item.turn_id.0);
+                let activity = activities
+                    .entry(activity_id.clone())
+                    .or_insert(ActivitySnapshot {
+                        activity_id,
+                        task_id: task_id.to_owned(),
+                        turn_id: item.turn_id,
+                        parent_activity_id: None,
+                        kind: ActivityKind::Tool,
+                        label: call_id.clone(),
+                        state: ActivityState::Lost,
+                        started_at: item.created_at_ms,
+                        updated_at: item.created_at_ms,
+                        progress: None,
+                        artifact_refs: Vec::new(),
+                        receipt_ref: None,
+                    });
+                activity.state = if *is_error {
+                    ActivityState::Failed
+                } else {
+                    ActivityState::Completed
+                };
+                activity.updated_at = item.created_at_ms;
+                activity.receipt_ref = Some(format!("item:{}", item.id.0));
+            }
+            ItemPayload::CapabilityReceipt { receipt } => {
+                let activity_id = format!("capability:{}", receipt.invocation_id);
+                activities.insert(
+                    activity_id.clone(),
+                    ActivitySnapshot {
+                        activity_id,
+                        task_id: task_id.to_owned(),
+                        turn_id: item.turn_id,
+                        parent_activity_id: None,
+                        kind: ActivityKind::Runtime,
+                        label: receipt.capability.clone(),
+                        state: match receipt.status {
+                            fabric::CapabilityTerminalStatus::Succeeded => ActivityState::Completed,
+                            fabric::CapabilityTerminalStatus::Failed
+                            | fabric::CapabilityTerminalStatus::TimedOut => ActivityState::Failed,
+                            fabric::CapabilityTerminalStatus::Cancelled => ActivityState::Cancelled,
+                        },
+                        started_at: receipt.started_at.0,
+                        updated_at: receipt.finished_at.0,
+                        progress: None,
+                        artifact_refs: receipt.artifact_ids.clone(),
+                        receipt_ref: Some(format!("item:{}", item.id.0)),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut projected = activities.into_values().collect::<Vec<_>>();
+    projected.sort_by(|left, right| {
+        left.started_at
+            .cmp(&right.started_at)
+            .then_with(|| left.activity_id.cmp(&right.activity_id))
+    });
+    projected
+}
+
+fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
+    let receipts = items
+        .iter()
+        .filter_map(|item| match &item.payload {
+            ItemPayload::InferenceReceipt { receipt } => Some(receipt),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let latest = receipts.last()?;
+    let sum = |select: fn(&fabric::InferenceUsage) -> Option<u64>| {
+        receipts.iter().try_fold(0_u64, |total, receipt| {
+            select(&receipt.usage).map(|value| total.saturating_add(value))
+        })
+    };
+    let total_input_tokens = sum(|usage| usage.total_input_tokens);
+    let output_tokens = sum(|usage| usage.output_tokens);
+    let cache_read_tokens = sum(|usage| usage.cache_read_tokens);
+    let cache_write_tokens = sum(|usage| usage.cache_write_tokens);
+    let uncached_input_tokens = sum(|usage| usage.uncached_input_tokens);
+    let cache_telemetry = if receipts
+        .iter()
+        .all(|receipt| receipt.usage.cache_telemetry == fabric::CacheTelemetry::Reported)
+    {
+        fabric::CacheTelemetry::Reported
+    } else if receipts
+        .iter()
+        .all(|receipt| receipt.usage.cache_telemetry == fabric::CacheTelemetry::Unsupported)
+    {
+        fabric::CacheTelemetry::Unsupported
+    } else {
+        fabric::CacheTelemetry::Unknown
+    };
+    let cache_known = cache_telemetry == fabric::CacheTelemetry::Reported;
+    Some(TaskRuntimeFacts {
+        effective_provider: Some(latest.provider_id.clone()),
+        effective_model: Some(latest.model_id.clone()),
+        context_capacity_tokens: None,
+        active_context_occupancy_tokens: None,
+        cumulative_usage: fabric::InferenceUsage {
+            total_input_tokens,
+            output_tokens,
+            uncached_input_tokens: cache_known.then_some(uncached_input_tokens).flatten(),
+            cache_read_tokens: cache_known.then_some(cache_read_tokens).flatten(),
+            cache_write_tokens: cache_known.then_some(cache_write_tokens).flatten(),
+            cache_telemetry,
+        },
+        inference_rounds: receipts.len() as u64,
+        provider_retries: None,
+        tool_calls: items
+            .iter()
+            .filter(|item| matches!(item.payload, ItemPayload::ToolCall { .. }))
+            .count() as u64,
+        terminal_tool_results: items
+            .iter()
+            .filter(|item| matches!(item.payload, ItemPayload::ToolResult { .. }))
+            .count() as u64,
+    })
+}
+
 async fn materialize_session_creation(
     store: &dyn SessionAppendStore,
     created: SessionRecord,
@@ -327,4 +640,57 @@ fn validate_items(session: &SessionId, items: &[ItemRecord]) -> Result<(), Proje
 
 fn invalid(message: &str) -> ProjectionError {
     ProjectionError::InvalidDescriptor(message.into())
+}
+
+#[cfg(test)]
+mod host_settlement_tests {
+    use super::*;
+
+    fn receipt(
+        decision: fabric::EvaluationDecision,
+        failed_gates: Vec<&str>,
+    ) -> fabric::EvaluationReceiptRef {
+        fabric::EvaluationReceiptRef {
+            schema_version: fabric::EVALUATION_SCHEMA_V1,
+            receipt_id: fabric::EvaluationReceiptId::new(),
+            contract_id: fabric::EvaluationContractId::new(),
+            subject_kind: "turn".into(),
+            subject_id: fabric::TurnId::new().0.to_string(),
+            decision,
+            weighted_total_millis: Some(50_000),
+            evidence_coverage_millis: 800,
+            confidence_millis: 900,
+            failed_gates: failed_gates.into_iter().map(str::to_owned).collect(),
+            created_at_ms: 1,
+        }
+    }
+
+    #[test]
+    fn failed_tests_override_model_completion_claims() {
+        let receipt = receipt(
+            fabric::EvaluationDecision::Rejected,
+            vec!["required_tests_passed"],
+        );
+        let (settlement, findings) = project_evaluation_settlement(&receipt);
+        assert_eq!(settlement, Some(TaskSettlement::RepairRequired));
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].status, fabric::ReviewFindingStatus::Open);
+        assert!(findings[0]
+            .repair_link
+            .as_deref()
+            .unwrap()
+            .starts_with("root:"));
+    }
+
+    #[test]
+    fn missing_integration_test_is_a_visible_risk() {
+        let receipt = receipt(
+            fabric::EvaluationDecision::Rejected,
+            vec!["integration_test_missing"],
+        );
+        let (settlement, findings) = project_evaluation_settlement(&receipt);
+        assert_ne!(settlement, Some(TaskSettlement::Accepted));
+        assert!(findings[0].summary.contains("integration_test_missing"));
+        assert!(!findings[0].evidence_refs.is_empty());
+    }
 }

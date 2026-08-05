@@ -129,7 +129,7 @@ gate's guest-local V01 recipe receipt, whose report checksum must match the
 validated report immediately produced by `just acceptance`; a standalone
 report cannot assert that the recipe ran.
 It requires a clean `target/release-acceptance` directory and zero blocked or
-ignored cases. Default time bounds are 30 seconds for readiness, 120 seconds for
+ignored cases. Default time bounds are 60 seconds for readiness, 120 seconds for
 ordinary TUI workflows, and 180 seconds for SubAgent/reconnect workflows.
 Installed-host and failure lanes write under a unique guest-local
 `/var/tmp/aletheon-release-acceptance.*` root. On success, failure, or BLOCKED,

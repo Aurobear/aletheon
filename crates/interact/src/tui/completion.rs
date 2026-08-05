@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use super::registry::{CommandRegistry, CommandSource};
+use super::{file_picker, input_safety};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionCandidate {
@@ -78,7 +79,7 @@ impl CompletionPopup {
                     value: format!("/{}", command.name),
                     label: command.usage.clone(),
                     description: command.description.clone(),
-                    metadata: source,
+                    metadata: format!("{} · {source}", command.category),
                     disabled_reason: (!command.available(turn_active)).then(|| {
                         match command.availability {
                             super::registry::CommandAvailability::IdleOnly => {
@@ -91,6 +92,25 @@ impl CompletionPopup {
                         }
                     }),
                 }
+            })
+            .collect();
+        self.show_candidates(input, candidates);
+    }
+
+    pub fn show_attachments(&mut self, input: &str, workspace: &fabric::WorkspacePolicy) {
+        let candidates = file_picker::find_files(workspace, input)
+            .into_iter()
+            .filter_map(|file| {
+                let value = format!("@{}", file.relative_path);
+                input_safety::resolve_attachment(&value, workspace)
+                    .ok()
+                    .map(|attachment| CompletionCandidate {
+                        value: format!("{value} "),
+                        label: value,
+                        description: format!("{} bytes", attachment.byte_len),
+                        metadata: "workspace attachment".into(),
+                        disabled_reason: None,
+                    })
             })
             .collect();
         self.show_candidates(input, candidates);

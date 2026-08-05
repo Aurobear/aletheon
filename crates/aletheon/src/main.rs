@@ -16,6 +16,7 @@ use fabric::contract::command::{
     command_specs, CommandSpec, CommandSurface, CommandVisibility, TaskKindArg,
 };
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
@@ -24,6 +25,7 @@ mod acp;
 mod extension_cli;
 mod memory_agent;
 mod memory_cli;
+mod review_cli;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
@@ -102,6 +104,20 @@ enum PermissionModeArg {
     Full,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+enum ExecOutputArg {
+    #[default]
+    Text,
+    Json,
+    Jsonl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CompletionShell {
+    Bash,
+    Zsh,
+}
+
 impl PermissionModeArg {
     fn effective(self, full: bool) -> &'static str {
         if full {
@@ -152,9 +168,9 @@ enum Commands {
     },
     /// Non-interactive execution
     Exec {
-        /// The prompt/task to execute
+        /// The prompt/task to execute; reads UTF-8 stdin when omitted
         #[arg(short, long)]
-        prompt: String,
+        prompt: Option<String>,
         /// Model spec
         #[arg(short, long, default_value = "")]
         model: String,
@@ -167,10 +183,28 @@ enum Commands {
         /// Path to config file
         #[arg(short, long)]
         config: Option<PathBuf>,
-        /// Output format: text or json
-        #[arg(long, default_value = "text")]
-        output: String,
+        /// Output protocol
+        #[arg(long, value_enum, default_value = "text")]
+        output: ExecOutputArg,
+        /// Stable caller key. Replays return the durable terminal receipt.
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        /// Cancel the execution after this many seconds.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        timeout_seconds: Option<u64>,
     },
+    /// Run one human-facing governed task, or open its interactive session.
+    Run {
+        /// Task prompt. When omitted, opens the interactive TUI.
+        prompt: Option<String>,
+        /// Resume this session instead of creating a new one.
+        #[arg(long, value_name = "SESSION")]
+        resume: Option<String>,
+    },
+    /// Resume a session, selecting from history when SESSION is omitted.
+    Resume { session: Option<String> },
+    /// Print the generated shell completion script.
+    Completion { shell: CompletionShell },
     /// Print version
     Version,
     /// Restore terminal modes after an interrupted TUI session
@@ -206,6 +240,11 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         sub: MemoryCommand,
+    },
+    /// Inspect or apply a Host-owned change transaction review.
+    Review {
+        #[command(subcommand)]
+        sub: review_cli::ReviewCommand,
     },
 }
 
@@ -416,27 +455,99 @@ async fn main() -> Result<()> {
                 sandbox,
                 config,
                 output,
+                idempotency_key,
+                timeout_seconds,
             }),
             _,
         ) => {
             init_tracing("aletheon::exec");
-            let outcome =
-                executive::host::launcher::run_exec(executive::host::launcher::ExecLaunch {
-                    prompt: prompt.clone(),
-                    model: model.clone(),
-                    max_turns: *max_turns,
-                    sandbox: sandbox.clone(),
-                    workspace: cli.workspace.executive_launch(),
-                    config: config.clone(),
-                    json: output == "json",
-                })
-                .await?;
-            println!("{}", outcome.rendered);
-            if outcome.success {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("exec host failed"))
+            let prompt = match prompt {
+                Some(prompt) if !prompt.trim().is_empty() => prompt.clone(),
+                Some(_) => emit_exec_validation_failure(*output, "exec prompt cannot be empty"),
+                None => match read_exec_stdin() {
+                    Ok(prompt) => prompt,
+                    Err(error) => emit_exec_validation_failure(*output, &error.to_string()),
+                },
+            };
+            let request = executive::host::launcher::ExecLaunch {
+                prompt,
+                model: model.clone(),
+                max_turns: *max_turns,
+                sandbox: sandbox.clone(),
+                workspace: cli.workspace.executive_launch(),
+                config: config.clone(),
+                idempotency_key: idempotency_key.clone(),
+                timeout: timeout_seconds.map(Duration::from_secs),
+            };
+            let outcome = match output {
+                ExecOutputArg::Jsonl => {
+                    executive::host::launcher::run_exec_streaming(
+                        request,
+                        std::sync::Arc::new(
+                            executive::host::launcher::JsonlExecEventWriter::default(),
+                        ),
+                    )
+                    .await?
+                }
+                ExecOutputArg::Json | ExecOutputArg::Text => {
+                    executive::host::launcher::run_exec(request).await?
+                }
+            };
+            match output {
+                ExecOutputArg::Jsonl => {}
+                ExecOutputArg::Json => {
+                    println!("{}", serde_json::to_string_pretty(&outcome.terminal)?);
+                }
+                ExecOutputArg::Text => match &outcome.terminal.event {
+                    fabric::types::exec::ExecEvent::Terminal { output, .. } => println!("{output}"),
+                    _ => unreachable!("exec host outcome is terminal"),
+                },
             }
+            if outcome.exit_code != 0 {
+                std::process::exit(i32::from(outcome.exit_code));
+            }
+            Ok(())
+        }
+        (Some(Commands::Run { prompt, resume }), _) => {
+            let session_id = resume.clone().map(fabric::SessionId);
+            if let Some(prompt) = prompt {
+                interact::host::run_single_message(interact::host::MessageLaunch {
+                    socket: cli.socket.clone(),
+                    workspace: cli.workspace.interact_launch(),
+                    message: prompt.clone(),
+                    required_agent_runtimes: cli.required_agent_runtimes.clone(),
+                    task_kind: cli.task_kind.map(Into::into),
+                    session_id,
+                })
+                .await
+            } else {
+                run_interactive(
+                    &cli,
+                    session_id.map_or(
+                        interact::host::InitialSession::New,
+                        interact::host::InitialSession::Resume,
+                    ),
+                )
+                .await
+            }
+        }
+        (Some(Commands::Resume { session }), _) => {
+            let initial_session = session
+                .clone()
+                .map_or(interact::host::InitialSession::Pick, |session| {
+                    interact::host::InitialSession::Resume(fabric::SessionId(session))
+                });
+            run_interactive(&cli, initial_session).await
+        }
+        (Some(Commands::Completion { shell }), _) => {
+            let script = match shell {
+                CompletionShell::Bash => {
+                    include_str!("../../../scripts/completions/aletheon.bash")
+                }
+                CompletionShell::Zsh => include_str!("../../../scripts/completions/aletheon.zsh"),
+            };
+            print!("{script}");
+            Ok(())
         }
         (Some(Commands::Version), _) => {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
@@ -479,6 +590,10 @@ async fn main() -> Result<()> {
             init_tracing("aletheon::memory");
             memory_cli::run(sub, cli.socket.clone()).await
         }
+        (Some(Commands::Review { sub }), _) => {
+            init_tracing("aletheon::review");
+            review_cli::run(sub, cli.socket.clone()).await
+        }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();
             println!("Terminal restored to normal state.");
@@ -492,36 +607,87 @@ async fn main() -> Result<()> {
                 message: msg.clone(),
                 required_agent_runtimes: cli.required_agent_runtimes.clone(),
                 task_kind: cli.task_kind.map(Into::into),
+                session_id: None,
             })
             .await
         }
         // No subcommand, no -m: TUI mode. The unified binary owns argument
         // parsing, so pass instrumentation through instead of parsing twice.
-        (None, None) => {
-            let config = interact::tui::TestConfig {
-                test_input: cli.test_input,
-                record_frames: cli.record_frames,
-                record_events: cli.record_events,
-                auto_submit: cli.auto_submit,
-                test_timeout: cli.test_timeout,
-            };
-            interact::host::run_tui(
-                interact::host::TuiLaunch {
-                    socket: cli.socket.clone(),
-                    workspace: cli.workspace.interact_launch(),
-                    required_agent_runtimes: cli.required_agent_runtimes.clone(),
-                    task_kind: cli.task_kind.map(Into::into),
-                },
-                config,
-            )
-            .await
-        }
+        (None, None) => run_interactive(&cli, interact::host::InitialSession::New).await,
     }
+}
+
+async fn run_interactive(cli: &Cli, initial_session: interact::host::InitialSession) -> Result<()> {
+    interact::host::run_tui(
+        interact::host::TuiLaunch {
+            socket: cli.socket.clone(),
+            workspace: cli.workspace.interact_launch(),
+            required_agent_runtimes: cli.required_agent_runtimes.clone(),
+            task_kind: cli.task_kind.map(Into::into),
+            initial_session,
+        },
+        interact::tui::TestConfig {
+            test_input: cli.test_input.clone(),
+            record_frames: cli.record_frames.clone(),
+            record_events: cli.record_events.clone(),
+            auto_submit: cli.auto_submit,
+            test_timeout: cli.test_timeout,
+        },
+    )
+    .await
 }
 
 fn parse_cli() -> Cli {
     let matches = canonical_cli_command().get_matches();
     Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
+
+fn read_exec_stdin() -> Result<String> {
+    use std::io::Read;
+
+    const MAX_STDIN_BYTES: u64 = 1024 * 1024;
+    let mut input = String::new();
+    std::io::stdin()
+        .take(MAX_STDIN_BYTES + 1)
+        .read_to_string(&mut input)?;
+    anyhow::ensure!(
+        input.len() as u64 <= MAX_STDIN_BYTES,
+        "exec stdin exceeds the 1 MiB limit"
+    );
+    anyhow::ensure!(!input.trim().is_empty(), "exec prompt cannot be empty");
+    Ok(input)
+}
+
+fn emit_exec_validation_failure(output: ExecOutputArg, message: &str) -> ! {
+    let terminal = fabric::types::exec::ExecEventEnvelope::v1(
+        1,
+        uuid::Uuid::new_v4().to_string(),
+        uuid::Uuid::new_v4().to_string(),
+        fabric::TurnId::new().0.to_string(),
+        None,
+        fabric::OperationId::new(),
+        fabric::types::exec::ExecEvent::Terminal {
+            status: fabric::types::exec::ExecTerminalKind::ValidationFailed,
+            output: message.to_owned(),
+            metrics: fabric::TurnMetrics::default(),
+            error_code: Some("validation_failed".into()),
+        },
+    );
+    match output {
+        ExecOutputArg::Text => println!("{message}"),
+        ExecOutputArg::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&terminal)
+                .expect("exec validation terminal must serialize")
+        ),
+        ExecOutputArg::Jsonl => println!(
+            "{}",
+            serde_json::to_string(&terminal).expect("exec validation terminal must serialize")
+        ),
+    }
+    std::process::exit(i32::from(
+        fabric::types::exec::ExecTerminalKind::ValidationFailed.exit_code(),
+    ));
 }
 
 fn canonical_cli_command() -> clap::Command {
@@ -752,6 +918,33 @@ mod daemon_cli_tests {
 
         let tui = Cli::try_parse_from(["aletheon", "--task-kind", "coding"]).unwrap();
         assert_eq!(tui.task_kind, Some(TaskKindArg::Coding));
+    }
+
+    #[test]
+    fn run_resume_and_completion_are_canonical_top_level_commands() {
+        let run =
+            Cli::try_parse_from(["aletheon", "run", "inspect", "--resume", "session-7"]).unwrap();
+        assert!(matches!(
+            run.command,
+            Some(Commands::Run {
+                prompt: Some(prompt),
+                resume: Some(session),
+            }) if prompt == "inspect" && session == "session-7"
+        ));
+
+        let resume = Cli::try_parse_from(["aletheon", "resume"]).unwrap();
+        assert!(matches!(
+            resume.command,
+            Some(Commands::Resume { session: None })
+        ));
+
+        let completion = Cli::try_parse_from(["aletheon", "completion", "zsh"]).unwrap();
+        assert!(matches!(
+            completion.command,
+            Some(Commands::Completion {
+                shell: CompletionShell::Zsh
+            })
+        ));
     }
 
     #[test]

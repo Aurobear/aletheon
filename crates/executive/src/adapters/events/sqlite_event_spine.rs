@@ -125,7 +125,7 @@ impl SqliteEventSpine {
 
     /// Capture the committed prefix used by bounded startup reconciliation.
     /// Events appended after this watermark belong to the live writer path.
-    pub(crate) fn committed_row_watermark(&self) -> Result<i64> {
+    fn committed_row_watermark(&self) -> Result<u64> {
         self.connection
             .lock()
             .query_row(
@@ -139,12 +139,12 @@ impl SqliteEventSpine {
     /// Read one insertion-ordered page from a previously captured committed
     /// prefix. SQLite row order preserves append order within every event tree,
     /// while allowing reconciliation to remain bounded in memory.
-    pub(crate) fn read_committed_page(
+    fn read_committed_page_inner(
         &self,
-        after_row_id: i64,
-        through_row_id: i64,
+        after_row_id: u64,
+        through_row_id: u64,
         limit: usize,
-    ) -> Result<Vec<(i64, SpineEvent)>> {
+    ) -> Result<Vec<(u64, SpineEvent)>> {
         let limit = limit.clamp(1, 10_000);
         let connection = self.connection.lock();
         let mut statement = connection.prepare(
@@ -152,7 +152,7 @@ impl SqliteEventSpine {
              WHERE rowid>?1 AND rowid<=?2
              ORDER BY rowid ASC LIMIT ?3",
         )?;
-        let rows: Vec<(i64, String)> = statement
+        let rows: Vec<(u64, String)> = statement
             .query_map(params![after_row_id, through_row_id, limit], |row| {
                 Ok((row.get(0)?, row.get(1)?))
             })?
@@ -175,6 +175,19 @@ impl EventSpine for SqliteEventSpine {
             Err(_) => self.rejected.fetch_add(1, Ordering::Relaxed),
         };
         result
+    }
+
+    fn committed_watermark(&self) -> Result<u64> {
+        self.committed_row_watermark()
+    }
+
+    fn read_committed_page(
+        &self,
+        after: u64,
+        through: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, SpineEvent)>> {
+        self.read_committed_page_inner(after, through, limit)
     }
 }
 

@@ -324,9 +324,11 @@ impl ToolRunnerWithGuard {
         sink: &mut fabric::ToolEventSink,
     ) -> GuardedToolExecution {
         let audit_id = fabric::AuditEventId::new();
+        sink.defer_terminal_delivery();
         let result = self
             .execute_tool_inner(tool, input, ctx, turn_id, audit_id, Some(sink))
             .await;
+        sink.settle_deferred_execution(&result).await;
         GuardedToolExecution { result, audit_id }
     }
 

@@ -47,6 +47,13 @@ struct ApplyPatchResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct WriteResponse {
+    bytes_written: u64,
+    bytes_before: u64,
+    existed: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct RpcResponse {
     jsonrpc: String,
     id: serde_json::Value,
@@ -723,17 +730,37 @@ impl corpus::security::StructuredToolSandbox for ExecdSandboxBackend {
             )
             .await
             .map_err(|e| e.to_string())?;
-        let bytes = result
-            .get("bytes_written")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
+        let result: WriteResponse =
+            serde_json::from_value(result).map_err(|error| error.to_string())?;
+        let evidence_path = path
+            .strip_prefix(workspace.cwd())
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned();
         Ok(fabric::ToolResult {
-            content: format!("Wrote {bytes} bytes to {}", path.display()),
+            content: format!("Wrote {} bytes to {}", result.bytes_written, path.display()),
             is_error: false,
             metadata: fabric::ToolResultMeta {
                 execution_time_ms: context.clock.mono_now().0.saturating_sub(started.0),
                 truncated: false,
-                patch_delta: None,
+                patch_delta: Some(fabric::PatchDelta {
+                    applied: vec![fabric::PatchDeltaApplied {
+                        operation: "write".into(),
+                        path: evidence_path.clone(),
+                        hunks_applied: Some(1),
+                        bytes_written: Some(result.bytes_written),
+                        moved_to: None,
+                    }],
+                    files_changed: vec![fabric::PatchDeltaFileChange {
+                        path: evidence_path,
+                        change_type: if result.existed { "modified" } else { "added" }.into(),
+                        hunks_applied: 1,
+                        bytes_before: result.bytes_before,
+                        bytes_after: result.bytes_written,
+                        is_binary: false,
+                    }],
+                    ..Default::default()
+                }),
             },
         })
     }

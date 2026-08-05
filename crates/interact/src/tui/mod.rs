@@ -12,15 +12,18 @@ pub mod activity_detail;
 pub mod approval_dialog;
 pub mod awareness;
 pub mod chat;
+pub mod checkpoint_picker;
 pub mod command;
 pub mod completion;
 pub mod conscious_core;
 pub mod diff_view;
+pub mod file_picker;
 
 pub mod help_overlay;
 pub mod history_search;
 pub mod host_time;
 pub mod input;
+pub mod input_safety;
 pub mod markdown;
 pub mod pager;
 pub mod plan_view;
@@ -30,6 +33,7 @@ pub mod state;
 pub mod status;
 pub mod streaming;
 pub mod subagent_view;
+pub mod task_console;
 pub mod term_compat;
 
 /// Build the local chat envelope. Keeping this in one place prevents the TUI,
@@ -86,7 +90,7 @@ use self::app::lifecycle::run_app;
 use self::app::lifecycle::simple_line_mode;
 use self::chat::ChatWidget;
 use self::completion::CompletionPopup;
-use self::input::CommandHistory;
+use self::input::{CommandHistory, InputStateStore};
 use self::plan_view::PlanViewState;
 use self::state::AppState;
 use self::status::StatusBar;
@@ -129,6 +133,7 @@ pub async fn run_with_workspace_requirements(
         workspace,
         turn_requirements,
         None,
+        crate::host::InitialSession::New,
     )
     .await
 }
@@ -139,6 +144,7 @@ pub async fn run_with_workspace_requirements_and_task_kind(
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
+    initial_session: crate::host::InitialSession,
 ) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
     let clock: Arc<dyn Clock> = Arc::new(self::host_time::ClientClock::new());
@@ -163,6 +169,10 @@ pub async fn run_with_workspace_requirements_and_task_kind(
     if (!atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout))
         && test_config.test_input.is_none()
     {
+        anyhow::ensure!(
+            initial_session == crate::host::InitialSession::New,
+            "session selection requires an interactive terminal; pass `aletheon run PROMPT --resume SESSION` for non-interactive use"
+        );
         return simple_line_mode(
             stream,
             caps,
@@ -193,6 +203,7 @@ pub async fn run_with_workspace_requirements_and_task_kind(
             workspace.clone(),
             turn_requirements.clone(),
             task_kind,
+            initial_session,
         )
         .await
     } else {
@@ -272,6 +283,7 @@ pub async fn run_with_workspace_requirements_and_task_kind(
             workspace,
             turn_requirements,
             task_kind,
+            initial_session,
         )
         .await;
 
@@ -310,22 +322,42 @@ struct App {
     next_request_id: u64,
     /// UI mutations which must happen only after their matching RPC succeeds.
     pending_commands: BTreeMap<u64, PendingCommand>,
+    /// Transport-only sequencing for fork-and-rewind. Recovery authority stays
+    /// in the daemon; the client emits rewind only after a successful fork.
+    deferred_checkpoint_rewind: Option<DeferredCheckpointRewind>,
     /// Non-turn RPCs whose result should stop the command spinner immediately.
     pending_non_turn: std::collections::BTreeSet<u64>,
+    /// Connection-local driver for the daemon-owned Session projection.
+    /// Authoritative content lives in `app_state`; these fields only schedule
+    /// bounded snapshot/page reads.
+    projection_session_id: Option<String>,
+    /// Requested canonical session. This is transport-local selection state;
+    /// it is not a Session projection and must not be rendered as one.
+    projection_target_session_id: Option<String>,
+    projection_request_in_flight: bool,
+    projection_polling: bool,
+    projection_next_poll_at: fabric::MonoTime,
     model_name: String,
     status: StatusBar,
     /// Last Ctrl+C press time (for double-press detection).
     last_ctrl_c: Option<fabric::MonoTime>,
     /// Whether input has CJK characters (affects Enter behavior).
     has_cjk: bool,
+    /// A leading action sigil arrived through paste and remains inert until
+    /// the buffer is cleared or a palette choice is explicitly accepted.
+    input_literal: bool,
     /// Pending submit (delayed for IME composition).
     pending_submit: Option<fabric::MonoTime>,
     /// First render flag.
     first_render: bool,
     /// Pending approval dialog (shown as modal overlay).
     pending_approval: Option<approval_dialog::ApprovalDialog>,
+    /// Local selection cursor into the daemon-owned Activity projection.
+    /// It never owns or mutates activity state.
+    selected_activity: Option<usize>,
     detail: Option<diff_view::DiffView>,
     latest_diff: Option<String>,
+    latest_patch: Option<fabric::PatchDelta>,
     /// Streaming controller for incremental rendering
     stream_ctrl: StreamController,
     /// Current turn's token count
@@ -334,12 +366,21 @@ struct App {
     total_tokens: u32,
     /// Command history
     history: CommandHistory,
+    input_store: InputStateStore,
+    input_dirty: bool,
+    input_persist_at: fabric::MonoTime,
+    history_search: Option<history_search::HistorySearchOverlay>,
     /// Tab completion popup
     completion: CompletionPopup,
     /// Pager overlay (Ctrl+T to open, q/Esc to close)
     pager: Option<pager::PagerOverlay>,
     /// Canonical session list with keyboard navigation and resume action.
     session_picker: Option<session_picker::SessionPicker>,
+    /// Local selection cursor over the daemon-owned checkpoint list.
+    checkpoint_picker: Option<checkpoint_picker::CheckpointPicker>,
+    /// Transaction awaiting a second explicit rollback keypress because the
+    /// Host reports only best-effort mutation coverage.
+    review_risk_confirmation: Option<String>,
     /// Frame counter for spinner animation.
     frame_counter: u64,
     /// Centralized application state (mode, awareness, context).
@@ -372,13 +413,17 @@ impl App {
             ..Default::default()
         };
 
+        let input_store = InputStateStore::for_workspace(&workspace);
+        let (history, draft) = input_store.load();
+        let cursor = draft.len();
+
         Self {
             workspace,
             turn_requirements,
             requested_task_kind: None,
             chat: ChatWidget::new(caps.clone()),
-            input_buf: String::new(),
-            cursor: 0,
+            input_buf: draft,
+            cursor,
             stream,
             read_buf: vec![0u8; 8192],
             running: true,
@@ -388,23 +433,38 @@ impl App {
             caps,
             next_request_id: 1,
             pending_commands: BTreeMap::new(),
+            deferred_checkpoint_rewind: None,
             pending_non_turn: std::collections::BTreeSet::new(),
+            projection_session_id: None,
+            projection_target_session_id: None,
+            projection_request_in_flight: false,
+            projection_polling: false,
+            projection_next_poll_at: fabric::MonoTime(0),
             model_name,
             status,
             last_ctrl_c: None,
             has_cjk: false,
+            input_literal: false,
             pending_submit: None,
             first_render: true,
             pending_approval: None,
+            selected_activity: None,
             detail: None,
             latest_diff: None,
+            latest_patch: None,
             stream_ctrl: StreamController::new(Arc::clone(&clock)),
             turn_tokens: None,
             total_tokens: 0,
-            history: CommandHistory::new(),
+            history,
+            input_store,
+            input_dirty: false,
+            input_persist_at: fabric::MonoTime(0),
+            history_search: None,
             completion: CompletionPopup::new(),
             pager: None,
             session_picker: None,
+            checkpoint_picker: None,
+            review_risk_confirmation: None,
             frame_counter: 0,
             app_state,
             plan_view: PlanViewState::default(),
@@ -413,6 +473,16 @@ impl App {
             registry: registry::CommandRegistry::new(),
             clock,
         }
+    }
+
+    pub(crate) fn persist_input_state(&mut self) {
+        self.input_store.save(&self.history, &self.input_buf);
+        self.input_dirty = false;
+    }
+
+    pub(crate) fn mark_input_dirty(&mut self) {
+        self.input_dirty = true;
+        self.input_persist_at = fabric::MonoTime(self.clock.mono_now().0.saturating_add(500));
     }
 
     fn check_cjk(&mut self) {
@@ -434,9 +504,33 @@ impl App {
 enum PendingCommand {
     InitializeSession,
     InitializeSkills,
-    NewSession { clear_screen: bool },
-    Resume { previous_session_id: Option<String> },
+    NewSession {
+        clear_screen: bool,
+    },
     OpenSessionPicker,
+    OpenCheckpointPicker,
+    CheckpointFork {
+        parent_session_id: String,
+        prompt_index: Option<u64>,
+    },
+    CheckpointRewind {
+        child_session_id: Option<String>,
+    },
+    TransactionReview,
+    TransactionSettlementLatest,
+    ProjectionSnapshot {
+        session_id: String,
+    },
+    ProjectionEvents {
+        session_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeferredCheckpointRewind {
+    parent_session_id: String,
+    child_session_id: String,
+    prompt_index: u64,
 }
 
 #[cfg(test)]

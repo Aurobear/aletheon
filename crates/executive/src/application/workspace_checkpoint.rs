@@ -53,6 +53,7 @@ pub trait CheckpointStore: Send + Sync {
         &self,
         id: CheckpointId,
     ) -> Result<Option<(TurnCheckpoint, Vec<CheckpointFileEntry>)>>;
+    async fn list(&self, session: &str, limit: usize) -> Result<Vec<TurnCheckpoint>>;
     async fn truncate_after(&self, session: &str, prompt_index: u64) -> Result<()>;
     async fn stored_bytes(&self) -> Result<u64>;
     /// Number of persisted Open checkpoints atomically reconciled to Aborted
@@ -145,6 +146,25 @@ impl CheckpointStore for InMemoryCheckpointStore {
             );
         }
         Ok(loaded)
+    }
+
+    async fn list(&self, session: &str, limit: usize) -> Result<Vec<TurnCheckpoint>> {
+        let records = self.records.lock().await;
+        let mut checkpoints = records
+            .iter()
+            .filter(|((record_session, _), _)| record_session == session)
+            .rev()
+            .take(limit)
+            .map(|(_, (checkpoint, files))| {
+                anyhow::ensure!(
+                    checkpoint.verify_integrity(files),
+                    "checkpoint integrity verification failed"
+                );
+                Ok(checkpoint.clone())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        checkpoints.reverse();
+        Ok(checkpoints)
     }
 
     async fn truncate_after(&self, session: &str, prompt_index: u64) -> Result<()> {
@@ -466,6 +486,18 @@ impl WorkspaceCheckpointService {
             .await;
         }
         Ok(())
+    }
+
+    pub async fn list_session_checkpoints(
+        &self,
+        session: &str,
+        limit: usize,
+    ) -> Result<Vec<TurnCheckpoint>> {
+        anyhow::ensure!(
+            (1..=256).contains(&limit),
+            "checkpoint list limit must be 1..=256"
+        );
+        self.store.list(session, limit).await
     }
 
     pub async fn rewind_to(
@@ -1232,7 +1264,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protection_and_restore_failures_do_not_truncate_future_checkpoints() {
+    async fn u_chk_006_partial_restore_failure_preserves_retry_evidence() {
         for (fail_protect, fail_restore, expected) in [
             (true, false, RestoreOutcome::UnprotectedChangesAbort),
             (

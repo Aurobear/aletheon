@@ -125,7 +125,12 @@ impl TurnCheckpoint {
 
     /// Verify persisted checkpoint metadata and snapshot contents.
     pub fn verify_integrity(&self, files: &[CheckpointFileEntry]) -> bool {
-        !self.integrity_digest.is_empty()
+        // `file_count` is rendered in checkpoint projections.  It must agree
+        // with the immutable snapshot material, otherwise a valid digest could
+        // still describe a misleading checkpoint chain after persistence or
+        // recovery.
+        self.fs_domain.file_count == files.len()
+            && !self.integrity_digest.is_empty()
             && self.integrity_digest == self.calculate_integrity_digest(files)
     }
 }
@@ -233,12 +238,29 @@ mod tests {
             path: PathBuf::from("src/lib.rs"),
             content: Some("safe".into()),
         }];
+        checkpoint.fs_domain.file_count = files.len();
         checkpoint.seal_integrity(&files);
         assert!(checkpoint.verify_integrity(&files));
 
         let mut tampered = files;
         tampered[0].content = Some("tampered".into());
         assert!(!checkpoint.verify_integrity(&tampered));
+    }
+
+    #[test]
+    fn u_chk_003_integrity_rejects_file_count_that_disagrees_with_snapshot_material() {
+        let mut checkpoint = ck();
+        let files = vec![CheckpointFileEntry {
+            path: PathBuf::from("src/lib.rs"),
+            content: Some("safe".into()),
+        }];
+        checkpoint.fs_domain.file_count = 2;
+        checkpoint.seal_integrity(&files);
+
+        assert!(
+            !checkpoint.verify_integrity(&files),
+            "a checkpoint projection must not claim more files than its durable snapshot contains"
+        );
     }
 
     #[test]

@@ -236,6 +236,36 @@ impl CheckpointStore for SqliteCheckpointStore {
         Ok(decoded)
     }
 
+    async fn list(&self, session: &str, limit: usize) -> Result<Vec<TurnCheckpoint>> {
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut statement = connection.prepare(
+            "SELECT checkpoint_json, files_json FROM workspace_checkpoints
+             WHERE session_id = ?1 ORDER BY prompt_index DESC LIMIT ?2",
+        )?;
+        let rows = statement
+            .query_map(params![session, limit as u64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut checkpoints = rows
+            .into_iter()
+            .map(|(checkpoint, files)| {
+                Self::decode_verified(&checkpoint, &files).map(|value| value.0)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        anyhow::ensure!(
+            checkpoints
+                .iter()
+                .all(|checkpoint| checkpoint.session_id == session),
+            "checkpoint list row identity mismatch"
+        );
+        checkpoints.reverse();
+        Ok(checkpoints)
+    }
+
     async fn truncate_after(&self, session: &str, prompt_index: u64) -> Result<()> {
         let connection = self
             .connection

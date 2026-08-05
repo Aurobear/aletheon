@@ -10,9 +10,10 @@ use mnemosyne::supplemental::{
     SupplementalRecallHealth,
 };
 use mnemosyne::{
-    CompositeMemoryService, DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryKindLabel,
-    MemoryMetadata, MemoryScopeLabel, MemoryService, RecallRequest, RecallSourceLabel,
-    SupplementalMemoryService,
+    CompositeMemoryService, DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryAuthority,
+    MemoryKind, MemoryKindLabel, MemoryMetadata, MemoryProvenance, MemoryScope, MemoryScopeLabel,
+    MemorySensitivity, MemoryService, RecallItem, RecallRequest, RecallSourceLabel,
+    SupplementalMemoryService, TemporalState,
 };
 use rusqlite::Connection;
 use serde_json::Value;
@@ -72,7 +73,7 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn message_recall_does_not_leak_across_sessions() {
+async fn a_mem_001_message_recall_does_not_leak_across_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = Fixture::open(dir.path()).await;
     for session in ["session-a", "session-b"] {
@@ -116,7 +117,7 @@ async fn message_recall_does_not_leak_across_sessions() {
 }
 
 #[tokio::test]
-async fn approved_core_record_ranks_before_conflicting_local_fact() {
+async fn a_mem_002_approved_core_record_ranks_before_conflicting_local_fact() {
     let dir = tempfile::tempdir().unwrap();
     let facts = FactStore::open(&dir.path().join("facts.db")).unwrap();
     facts
@@ -368,8 +369,42 @@ impl SupplementalMemoryService for OutageSupplemental {
     }
 }
 
+struct ScopedSupplemental {
+    item: RecallItem,
+}
+
+#[async_trait]
+impl SupplementalMemoryService for ScopedSupplemental {
+    fn queue_depth(&self) -> usize {
+        0
+    }
+
+    fn record(
+        &self,
+        _: &ExperienceEvent,
+        _: i64,
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError> {
+        Ok(EnqueueOutcome::AlreadyPresent)
+    }
+
+    async fn recall(&self, _: RecallRequest, _: &CancellationToken) -> SupplementalRecall {
+        SupplementalRecall {
+            items: vec![self.item.clone()],
+            health: SupplementalRecallHealth {
+                degraded: false,
+                error_category: None,
+                queue_depth: 0,
+            },
+        }
+    }
+
+    fn forget(&self, _: ForgetPolicy) -> Result<(), SupplementalMemoryError> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
-async fn supplemental_outage_keeps_local_recall() {
+async fn a_mem_003_supplemental_outage_keeps_local_recall() {
     let dir = tempfile::tempdir().unwrap();
     let facts = FactStore::open(&dir.path().join("facts.db")).unwrap();
     facts
@@ -404,6 +439,66 @@ async fn supplemental_outage_keeps_local_recall() {
         .unwrap();
     assert_eq!(recalled.items.len(), 1);
     assert!(health.lock().unwrap().degraded);
+}
+
+#[tokio::test]
+async fn supplemental_recall_preserves_governed_scope_and_provenance() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = Fixture::open(dir.path()).await;
+    let supplemental = ScopedSupplemental {
+        item: RecallItem {
+            content: "workspace-bound supplemental evidence".into(),
+            kind: MemoryKind::ExternalReference,
+            metadata: MemoryMetadata {
+                record_id: "supplemental:workspace:evidence".into(),
+                provenance: MemoryProvenance {
+                    source: "supplemental".into(),
+                    source_id: "gbrain-workspace:page-1".into(),
+                    principal: None,
+                    source_commit: None,
+                },
+                source_time: Some(DateTime::<Utc>::UNIX_EPOCH),
+                observed_time: DateTime::<Utc>::UNIX_EPOCH,
+                valid_from: Some(DateTime::<Utc>::UNIX_EPOCH),
+                valid_until: None,
+                supersedes: None,
+                superseded_by: None,
+                confidence: 0.8,
+                sensitivity: MemorySensitivity::Internal,
+            },
+            temporal_state: TemporalState::Current,
+            authority: MemoryAuthority::ExternalReference,
+            scope: MemoryScope::Workspace("ws:repo:sha256:workspace-a".into()),
+            score: 1.0,
+            evidence: None,
+        },
+    };
+    let composite = CompositeMemoryService::new(
+        Arc::new(fixture.service),
+        Some(Arc::new(supplemental)),
+        test_clock(),
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_secs(1),
+    );
+
+    let recalled = composite
+        .recall(request("workspace-bound supplemental evidence", 10, 4096))
+        .await
+        .unwrap();
+
+    assert_eq!(recalled.items.len(), 1);
+    assert_eq!(
+        recalled.items[0].scope,
+        MemoryScope::Workspace("ws:repo:sha256:workspace-a".into())
+    );
+    assert_eq!(
+        recalled.items[0].metadata.provenance.source_id,
+        "gbrain-workspace:page-1"
+    );
+    assert_eq!(
+        recalled.items[0].authority,
+        MemoryAuthority::ExternalReference
+    );
 }
 
 #[tokio::test]

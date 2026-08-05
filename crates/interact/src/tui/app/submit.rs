@@ -2,7 +2,7 @@ use std::io;
 use std::io::Write;
 
 use fabric::contract::command::ClientSurface;
-use fabric::protocol::client::ClientRpcRequest;
+use fabric::protocol::client::{ClientRequest, ClientRpcRequest, SnapshotRequest};
 use fabric::ui_event::CollaborationMode;
 use fabric::ui_event::InterruptReason;
 use tokio::io::AsyncWriteExt;
@@ -24,6 +24,22 @@ pub(super) async fn write_request(app: &mut App, request: ClientRpcRequest) -> u
     request_id
 }
 
+pub(super) async fn write_protocol_request(
+    app: &mut App,
+    request: fabric::protocol::client::ClientRequest,
+) -> u64 {
+    let request_id = app.next_request_id;
+    app.next_request_id = app.next_request_id.saturating_add(1);
+    let request = request
+        .to_json_rpc(request_id)
+        .expect("typed Session projection request serializes");
+    let payload = serde_json::to_string(&request).unwrap_or_default();
+    let framed = format!("{payload}\n");
+    let _ = app.stream.write_all(framed.as_bytes()).await;
+    let _ = app.stream.flush().await;
+    request_id
+}
+
 /// Send a typed protocol request whose response is handled by the streaming
 /// response path.
 async fn send_request(app: &mut App, request: ClientRpcRequest) {
@@ -38,8 +54,9 @@ async fn send_request(app: &mut App, request: ClientRpcRequest) {
 }
 
 pub async fn submit_message(app: &mut App, text: String) {
+    let literal_input = std::mem::take(&mut app.input_literal);
     // Check for /commands (but NOT absolute paths like /home/... — those are chat)
-    if looks_like_command(&text) {
+    if !literal_input && looks_like_command(&text) {
         let parsed = app.registry.parse(&text);
         match parsed {
             Some(CommandType::Builtin(BuiltinCommand::Quit)) => {
@@ -139,7 +156,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-                let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                let request_id = write_protocol_request(app, ClientRequest::ReadSessions).await;
                 app.pending_commands
                     .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
                 app.pending_non_turn.insert(request_id);
@@ -151,7 +168,7 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Resume { id })) => {
                 if id.is_empty() {
-                    let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                    let request_id = write_protocol_request(app, ClientRequest::ReadSessions).await;
                     app.pending_commands
                         .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
                     app.pending_non_turn.insert(request_id);
@@ -161,14 +178,21 @@ pub async fn submit_message(app: &mut App, text: String) {
                         .add_text(ChatRole::System, "查询可恢复会话中...".to_string());
                     return;
                 }
-                let request = ClientRpcRequest::resume(id.clone());
-                let request_id = write_request(app, request).await;
+                let request_id = write_protocol_request(
+                    app,
+                    ClientRequest::ReadSnapshot(SnapshotRequest {
+                        session_id: fabric::SessionId(id.clone()),
+                    }),
+                )
+                .await;
                 app.pending_commands.insert(
                     request_id,
-                    super::super::PendingCommand::Resume {
-                        previous_session_id: app.app_state.session_id.clone(),
+                    super::super::PendingCommand::ProjectionSnapshot {
+                        session_id: id.clone(),
                     },
                 );
+                app.projection_target_session_id = Some(id.clone());
+                app.projection_request_in_flight = true;
                 app.chat
                     .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;
@@ -208,6 +232,61 @@ pub async fn submit_message(app: &mut App, text: String) {
                     }),
                 )
                 .await;
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Rewind { prompt_index })) => {
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "当前会话尚未初始化，无法恢复工作区检查点".to_string(),
+                    );
+                    return;
+                };
+                if prompt_index.trim().is_empty() {
+                    let request_id =
+                        write_request(app, ClientRpcRequest::checkpoint_list(session_id, 64)).await;
+                    app.pending_commands.insert(
+                        request_id,
+                        super::super::PendingCommand::OpenCheckpointPicker,
+                    );
+                    app.pending_non_turn.insert(request_id);
+                    app.streaming = true;
+                    app.status.waiting = true;
+                    app.chat
+                        .add_text(ChatRole::System, "查询工作区检查点中…".to_string());
+                    return;
+                }
+                let Ok(prompt_index) = prompt_index.parse::<u64>() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "用法：/rewind <prompt-index>（必须使用 daemon 提供的检查点索引）"
+                            .to_string(),
+                    );
+                    return;
+                };
+                let request_id = write_request(
+                    app,
+                    ClientRpcRequest::WorkspaceRewind(
+                        fabric::protocol::client::WorkspaceRewindParams {
+                            session_id: fabric::SessionId(session_id),
+                            prompt_index,
+                        },
+                    ),
+                )
+                .await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::CheckpointRewind {
+                        child_session_id: None,
+                    },
+                );
+                app.pending_non_turn.insert(request_id);
+                app.streaming = true;
+                app.status.waiting = true;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("请求恢复工作区检查点 {prompt_index}…"),
+                );
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Permissions)) => {
@@ -387,26 +466,14 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Diff)) => {
-                let output = std::process::Command::new("git")
-                    .args(["diff", "--stat"])
-                    .current_dir(app.workspace.cwd())
-                    .output();
-                let message = match output {
-                    Ok(output) if output.status.success() => {
-                        let diff = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        if diff.is_empty() {
-                            "工作区没有未暂存差异".to_string()
-                        } else {
-                            format!("=== Workspace Diff ===\n{diff}")
-                        }
-                    }
-                    Ok(output) => format!(
-                        "无法读取工作区差异：{}",
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    ),
-                    Err(error) => format!("无法执行 git diff：{error}"),
-                };
-                app.chat.add_text(ChatRole::System, message);
+                if let Some(delta) = app.latest_patch.as_ref() {
+                    app.detail = Some(super::super::diff_view::DiffView::from_patch_delta(delta));
+                    return;
+                }
+                app.chat.add_text(
+                    ChatRole::System,
+                    "No authoritative checkpoint diff is available for this turn".to_string(),
+                );
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Mention { path })) => {
@@ -464,7 +531,16 @@ pub async fn submit_message(app: &mut App, text: String) {
     }
 
     // Regular chat message
+    if !literal_input {
+        if let Err(error) = super::super::input_safety::resolve_attachments(&text, &app.workspace) {
+            app.input_buf = text;
+            app.cursor = app.input_buf.len();
+            app.app_state.last_error = Some(format!("attachment rejected: {error}"));
+            return;
+        }
+    }
     app.history.push(text.clone());
+    app.persist_input_state();
     app.chat.add_text(ChatRole::User, text.clone());
     // Assistant entry created lazily on first response delta so it renders
     // after any tool/reflection logs (ordering fix).

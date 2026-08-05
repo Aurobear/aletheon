@@ -216,10 +216,11 @@ impl CompositeMemoryService {
             supplemental.health.error_category,
             supplemental.health.queue_depth,
         );
+        // A supplemental adapter has already bound each item to a governed
+        // scope (for example, an attested workspace binding).  Rewriting it
+        // to the caller's session would turn an untrusted cross-scope result
+        // into apparently session-local evidence and would erase provenance.
         let mut supplemental_items = supplemental.items;
-        for item in &mut supplemental_items {
-            item.scope = crate::MemoryScope::Session(request.session.clone());
-        }
         if let Some(prefilter) = prefilter {
             let predicate = prefilter.to_scope_predicate();
             supplemental_items.retain(|item| predicate.allows(item));

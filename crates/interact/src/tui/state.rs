@@ -82,7 +82,7 @@ pub enum UiItemStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UiItem {
     pub id: String,
     pub sequence: u64,
@@ -145,6 +145,12 @@ pub struct AppState {
     pub items: BTreeMap<String, UiItem>,
     pub approvals: BTreeMap<String, ApprovalSnapshot>,
     pub agents: BTreeMap<String, AgentSnapshot>,
+    /// Daemon-owned Session/Task/Activity projection. These fields are
+    /// replaced atomically by a schema-versioned read snapshot and are never
+    /// inferred from chat text or local widgets.
+    pub projected_session: Option<fabric::SessionRecord>,
+    pub tasks: Vec<fabric::TaskSnapshot>,
+    pub activities: Vec<fabric::ActivitySnapshot>,
     pub last_error: Option<String>,
     /// Semantic terminal projected from the canonical versioned turn stream.
     /// ACP and TUI derive this from the same `ClientEvent`, rather than from
@@ -174,6 +180,9 @@ impl Default for AppState {
             items: BTreeMap::new(),
             approvals: BTreeMap::new(),
             agents: BTreeMap::new(),
+            projected_session: None,
+            tasks: Vec::new(),
+            activities: Vec::new(),
             last_error: None,
             last_terminal_status: None,
             latest_evaluation: None,
