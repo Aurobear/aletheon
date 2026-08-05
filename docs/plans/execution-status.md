@@ -474,6 +474,19 @@ BLOCKER: publication/PR/merge intentionally deferred by owner; installed deploym
 MERGE_SHA: pending_by_owner
 ```
 
+## XF-008
+
+```text
+STATUS: code_complete
+NODE: XF-008
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: The integration architecture lane initially failed because crates/corpus/src/security/runner.rs had grown to 2,151 lines against its governed 2,042-line hotspot limit. The production module was only 1,225 lines; 924 lines were its inline private test module. The test module now lives at crates/corpus/src/security/runner/tests.rs while preserving the same module privacy, names, and tail-test nesting. The production runner is 1,226 lines. The complete architecture suite passes, all 29 focused Runner tests pass, Corpus all-target clippy with -D warnings passes, and workspace formatting and diff checks pass.
+FAILURES: initial architecture gate exited 1 with hotspot budget exceeded; the post-split gate exits 0 with all six hotspot ownership budgets verified.
+BLOCKER: publication/PR/merge intentionally deferred by owner; X12 installed rerun remains pending.
+MERGE_SHA: pending_by_owner
+```
+
 ## X13
 
 ```text
