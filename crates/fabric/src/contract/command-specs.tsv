@@ -63,6 +63,7 @@ tui.profile	tui	-	profile	prof	查询或切换 Agent Profile	信息	/profile [na
 tui.diff	tui	-	diff	-	显示当前工作区差异	信息	/diff	local	always	public	-
 tui.mention	tui	-	mention	-	向输入加入文件引用	信息	/mention <path>	local	always	public	-
 tui.input	tui	-	input	i	打开多行输入	动作	/input	local	always	public	-
+tui.shell	tui	-	shell	!	通过 Host 治理和审批执行 shell command	动作	!<command>	application	idle_only	public	execute_shell
 tui.memory	tui	-	memory	-	查看会话记忆（核心记忆块、近期事实、回忆记录）	信息	/memory	compatibility	always	public	-
 gateway.start	gateway	-	start	-	Start the channel conversation	channel	/start	local	always	public	-
 gateway.chat	gateway	-	chat	-	Submit a prompt to the active session	channel	/chat <PROMPT>	application	always	public	submit_prompt

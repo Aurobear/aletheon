@@ -14,6 +14,7 @@ crates/fabric/src/contract/command.rs	struct	ClientIntent	governed	fabric	alethe
 crates/fabric/src/contract/command.rs	struct	CommandSpec	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	struct	StatusIntent	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
 crates/fabric/src/contract/command.rs	struct	SubmitPromptIntent	governed	fabric	aletheon,interact,gateway,executive	docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md#A2
+crates/fabric/src/contract/command.rs	struct	ExecuteShellIntent	governed	fabric	interact,executive	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#phase-u3输入搜索和-action-palette
 crates/fabric/src/dasein/context.rs	enum	AssertionSource	baseline	-	-	-
 crates/fabric/src/dasein/context.rs	struct	AssertionSnapshot	baseline	-	-	-
 crates/fabric/src/dasein/context.rs	struct	BewandtnisSnapshot	baseline	-	-	-

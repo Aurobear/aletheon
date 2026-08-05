@@ -5,7 +5,8 @@
 //! here rather than constructing daemon business requests directly.
 
 use fabric::contract::command::{
-    ClientCommand, ClientIntent, ClientSurface, StatusIntent, SubmitPromptIntent,
+    ClientCommand, ClientIntent, ClientSurface, ExecuteShellIntent, StatusIntent,
+    SubmitPromptIntent,
 };
 use fabric::permission::HostPermissionMode;
 use fabric::protocol::client::ClientRpcRequest;
@@ -39,6 +40,26 @@ pub(crate) fn submit_prompt(input: PromptIntent<'_>) -> ClientIntent {
             requirements: input.requirements,
             task_kind: input.task_kind,
             permission_mode: input.permission_mode,
+        }),
+    )
+}
+
+pub(crate) fn execute_shell(
+    correlation_id: impl Into<String>,
+    command: impl Into<String>,
+    session_id: Option<SessionId>,
+    workspace: &WorkspacePolicy,
+    permission_mode: HostPermissionMode,
+) -> ClientIntent {
+    ClientIntent::v1(
+        ClientSurface::Tui,
+        local_principal(),
+        correlation_id,
+        ClientCommand::ExecuteShell(ExecuteShellIntent {
+            command: command.into(),
+            session_id,
+            workspace: workspace.clone(),
+            permission_mode,
         }),
     )
 }

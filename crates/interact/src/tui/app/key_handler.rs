@@ -753,6 +753,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
         // Backspace
         KeyCode::Backspace => {
+            app.pending_shell_confirmation = None;
             if app.cursor > 0 {
                 let prev = app.input_buf[..app.cursor]
                     .char_indices()
@@ -768,6 +769,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
         // Delete
         KeyCode::Delete => {
+            app.pending_shell_confirmation = None;
             if app.cursor < app.input_buf.len() {
                 let next = app.input_buf[app.cursor..]
                     .char_indices()
@@ -783,6 +785,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         // Character input (skip control characters from Ctrl+letter)
         KeyCode::Char(c) => {
             if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                app.pending_shell_confirmation = None;
                 app.input_buf.insert(app.cursor, c);
                 app.cursor += c.len_utf8();
                 app.check_cjk();
@@ -854,6 +857,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             app.has_cjk = false;
             app.input_literal = false;
             app.pending_submit = None;
+            app.pending_shell_confirmation = None;
         }
 
         _ => {}

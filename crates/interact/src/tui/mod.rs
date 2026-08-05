@@ -346,6 +346,9 @@ struct App {
     /// A leading action sigil arrived through paste and remains inert until
     /// the buffer is cleared or a palette choice is explicitly accepted.
     input_literal: bool,
+    /// Exact shell text awaiting a second explicit Enter. This is local
+    /// presentation state only; execution authority remains in the Host.
+    pending_shell_confirmation: Option<String>,
     /// Pending submit (delayed for IME composition).
     pending_submit: Option<fabric::MonoTime>,
     /// First render flag.
@@ -445,6 +448,7 @@ impl App {
             last_ctrl_c: None,
             has_cjk: false,
             input_literal: false,
+            pending_shell_confirmation: None,
             pending_submit: None,
             first_render: true,
             pending_approval: None,

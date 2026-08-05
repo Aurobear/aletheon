@@ -424,7 +424,11 @@ fn project_activities(task_id: &str, items: &[ItemRecord]) -> Vec<ActivitySnapsh
                         task_id: task_id.to_owned(),
                         turn_id: item.turn_id,
                         parent_activity_id: None,
-                        kind: ActivityKind::Runtime,
+                        kind: if receipt.capability == "shell" {
+                            ActivityKind::Command
+                        } else {
+                            ActivityKind::Runtime
+                        },
                         label: receipt.capability.clone(),
                         state: match receipt.status {
                             fabric::CapabilityTerminalStatus::Succeeded => ActivityState::Completed,
@@ -509,6 +513,53 @@ fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
             .filter(|item| matches!(item.payload, ItemPayload::ToolResult { .. }))
             .count() as u64,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn u_input_004_shell_receipt_projects_a_terminal_command_activity() {
+        let session_id = SessionId("shell-session".into());
+        let turn_id = fabric::TurnId::new();
+        let item = ItemRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: fabric::ItemId::new(),
+            session_id,
+            turn_id,
+            sequence: 1,
+            created_at_ms: 20,
+            payload: ItemPayload::CapabilityReceipt {
+                receipt: fabric::CapabilityTerminalReceipt {
+                    invocation_id: "shell-call-1".into(),
+                    operation_id: fabric::OperationId::new(),
+                    process_id: fabric::ProcessId::new(),
+                    capability: "shell".into(),
+                    status: fabric::CapabilityTerminalStatus::Succeeded,
+                    started_at: fabric::MonoTime(10),
+                    finished_at: fabric::MonoTime(20),
+                    exit_code: Some(0),
+                    error_class: None,
+                    artifact_ids: vec![],
+                    evidence_ids: vec![],
+                    output_ref: Some("item:shell-output".into()),
+                    truncated: false,
+                    retry_disposition: fabric::CapabilityRetryDisposition::Never,
+                    audit_id: None,
+                },
+            },
+        };
+
+        let activities = project_activities("task", &[item]);
+        assert_eq!(activities.len(), 1);
+        assert_eq!(activities[0].kind, ActivityKind::Command);
+        assert_eq!(activities[0].state, ActivityState::Completed);
+        assert!(activities[0]
+            .receipt_ref
+            .as_deref()
+            .is_some_and(|receipt| receipt.starts_with("item:")));
+    }
 }
 
 async fn materialize_session_creation(
