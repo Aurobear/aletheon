@@ -92,6 +92,15 @@ impl SessionGateway {
         self.canonical_sessions.protocol_snapshot(session_id).await
     }
 
+    pub async fn protocol_read_snapshot(
+        &self,
+        session_id: &fabric::SessionId,
+    ) -> anyhow::Result<fabric::protocol::client::SessionReadSnapshot> {
+        self.canonical_sessions
+            .protocol_read_snapshot(session_id)
+            .await
+    }
+
     pub async fn protocol_events_after(
         &self,
         session_id: &fabric::SessionId,

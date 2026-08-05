@@ -957,6 +957,9 @@ pub enum ClientRequest {
     Initialize(InitializeParams),
     Initialized,
     Snapshot(SnapshotRequest),
+    /// Schema-v1 daemon-owned Session/Task/Activity projection. Kept
+    /// separate from the compatibility UI snapshot during X5c migration.
+    ReadSnapshot(SnapshotRequest),
     Subscribe(EventSubscription),
     Chat(ChatRequest),
     Approval(ApprovalRequest),
@@ -1004,6 +1007,7 @@ impl ClientRequest {
             Self::Initialize(_) => "initialize",
             Self::Initialized => "initialized",
             Self::Snapshot(_) => "session.snapshot",
+            Self::ReadSnapshot(_) => "session.read_snapshot/v1",
             Self::Subscribe(_) => "session.subscribe",
             Self::Chat(_) => "thread.chat",
             Self::Approval(_) => "turn.approval",
