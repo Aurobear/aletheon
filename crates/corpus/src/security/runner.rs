@@ -26,6 +26,59 @@ use fabric::{
     SandboxProfiles,
 };
 
+/// Build the deliberately small environment exposed to sandboxed commands.
+///
+/// Bubblewrap clears the daemon environment to avoid leaking credentials.  A
+/// completely empty environment is not useful either: installed user daemons
+/// must still expose ordinary host toolchains selected through `PATH`, and
+/// rustup needs its read-only home directories to resolve the active compiler.
+/// Keep this list about process/toolchain identity only; provider credentials,
+/// agent secrets, wrapper hooks, and mutation-oriented build variables are not
+/// forwarded.
+fn sandbox_command_environment(
+    trusted_working_dir: String,
+) -> std::collections::BTreeMap<String, String> {
+    sandbox_command_environment_with(trusted_working_dir, |key| std::env::var(key))
+}
+
+fn sandbox_command_environment_with(
+    trusted_working_dir: String,
+    mut read: impl FnMut(&str) -> Result<String, std::env::VarError>,
+) -> std::collections::BTreeMap<String, String> {
+    const PASSTHROUGH: &[&str] = &[
+        "HOME",
+        "PATH",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "LANG",
+        "LC_ALL",
+        "TZ",
+        "TERM",
+    ];
+
+    let mut environment = std::collections::BTreeMap::new();
+    for key in PASSTHROUGH {
+        if let Ok(value) = read(key) {
+            environment.insert((*key).to_owned(), value);
+        }
+    }
+    if let Some(home) = environment.get("HOME").cloned() {
+        environment
+            .entry("CARGO_HOME".to_owned())
+            .or_insert_with(|| format!("{home}/.cargo"));
+        environment
+            .entry("RUSTUP_HOME".to_owned())
+            .or_insert_with(|| format!("{home}/.rustup"));
+    }
+
+    environment.extend([
+        ("GIT_CONFIG_COUNT".to_owned(), "1".to_owned()),
+        ("GIT_CONFIG_KEY_0".to_owned(), "safe.directory".to_owned()),
+        ("GIT_CONFIG_VALUE_0".to_owned(), trusted_working_dir),
+    ]);
+    environment
+}
+
 mod cache_hit;
 
 static SANDBOX_FS_VIOLATION_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -771,11 +824,7 @@ impl ToolRunnerWithGuard {
 
                 let sandbox_config = SandboxConfig {
                     workspace,
-                    environment: std::collections::BTreeMap::from([
-                        ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
-                        ("GIT_CONFIG_KEY_0".to_string(), "safe.directory".to_string()),
-                        ("GIT_CONFIG_VALUE_0".to_string(), trusted_working_dir),
-                    ]),
+                    environment: sandbox_command_environment(trusted_working_dir),
                     policy,
                 };
 
@@ -1153,6 +1202,29 @@ mod tests {
         ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult,
         ToolResultMeta,
     };
+
+    #[test]
+    fn sandbox_environment_exposes_toolchain_identity_without_secrets() {
+        let source = std::collections::BTreeMap::from([
+            ("HOME", "/home/dev"),
+            ("PATH", "/home/dev/.cargo/bin:/usr/bin"),
+            ("DEEPSEEK_API_KEY", "secret"),
+            ("RUSTC_WRAPPER", "/tmp/injector"),
+        ]);
+        let environment = sandbox_command_environment_with("/work".into(), |key| {
+            source
+                .get(key)
+                .map(|value| (*value).to_owned())
+                .ok_or(std::env::VarError::NotPresent)
+        });
+
+        assert_eq!(environment["PATH"], "/home/dev/.cargo/bin:/usr/bin");
+        assert_eq!(environment["CARGO_HOME"], "/home/dev/.cargo");
+        assert_eq!(environment["RUSTUP_HOME"], "/home/dev/.rustup");
+        assert_eq!(environment["GIT_CONFIG_VALUE_0"], "/work");
+        assert!(!environment.contains_key("DEEPSEEK_API_KEY"));
+        assert!(!environment.contains_key("RUSTC_WRAPPER"));
+    }
     use fabric::{PermissionContext, PermissionMode};
     use kernel::chronos::TestClock;
     use std::sync::atomic::{AtomicUsize, Ordering};

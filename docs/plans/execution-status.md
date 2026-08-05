@@ -376,10 +376,10 @@ MERGE_SHA: pending
 STATUS: in_progress
 NODE: X12
 BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
-BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: U-INST-001/002 system deployment and official-socket smoke were reached on the integrated X branch. The first 20-task attempt is invalid acceptance evidence because the installed runtime was redeployed during the run and the harness contradicted canonical ExecEventEnvelope v1 fields. XF-001 owns the harness repair before a stable full rerun.
-FAILURES: Attempt 1 exposed two independent invalidators: canonical terminal objects use status plus nested metrics while the runner read flat stop/metrics, producing terminal_snapshot_missing; the installed daemon was also restarted mid-suite, producing core RPC closed failures. Timed-out tasks remain genuine failures and are not waived.
-BLOCKER: XF-001 must be accepted and the full installed suite rerun without changing binary or daemon generation.
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=2
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: U-INST-001/002 system deployment and official-socket smoke were reached on the integrated X branch. Attempt 1 is invalid because the runtime changed and XF-001 found a canonical terminal parser mismatch. Attempt 2 used the corrected 20-task corpus and parser, but was stopped after its first task produced authoritative evidence for XF-002 rather than spending the remaining suite budget against a broken sandbox environment.
+FAILURES: Attempt 1 exposed canonical terminal parsing and mid-suite restart invalidators. Attempt 2 `api_error_mapping` timed out after the installed auto sandbox cleared PATH/toolchain identity; the model repeatedly searched for cargo/rustc and could not perform its normal build loop. No result from either attempt is counted toward the 16/20 gate.
+BLOCKER: XF-002 must complete installed acceptance, then the full suite must rerun from a new artifact root without changing binary or daemon generation.
 MERGE_SHA: pending
 ```
 
@@ -393,6 +393,19 @@ BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: tests/coding/harness/run.py now consumes canonical ExecEventEnvelope v1 schema_version/type/status/operation_id and nested TurnMetrics. Receipt validation preserves every classified terminal kind and treats provider_unavailable/provider_rejected/validation_failed/output_backpressure as explicit execution failures. Fake-client runner, replay, suite, receipt, workflow, and full static harness tests pass.
 FAILURES: none
 BLOCKER: publication/PR/merge intentionally deferred by owner; X12 rerun remains pending.
+MERGE_SHA: pending_by_owner
+```
+
+## XF-002
+
+```text
+STATUS: in_progress
+NODE: XF-002
+BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: X12 attempt 2 receipt target/coding-x12-corrected-20260805-2052/receipts/api_error_mapping.json records the installed `/usr/bin/aletheon --sandbox auto` timeout and repeated toolchain discovery failures. The repair now constructs an explicit non-secret sandbox environment allowlist, derives read-only cargo/rustup identity from HOME when unset, excludes provider credentials and wrapper injection variables, and gives the installed user service a conventional user-tool PATH. Focused environment and live bubblewrap tests pass.
+FAILURES: installed deployment and auto-sandbox cargo execution have not yet been rerun with the repaired binary.
+BLOCKER: none
 MERGE_SHA: pending_by_owner
 ```
 

@@ -8,6 +8,10 @@ ExecStart=%h/.local/bin/aletheon daemon
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
+# User-mode coding tools are discovered through the user's conventional binary
+# roots. The sandbox forwards this PATH but retains a read-only host root and
+# only grants writes to the active WorkspacePolicy.
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StateDirectory=aletheon
 CacheDirectory=aletheon
 

@@ -454,6 +454,7 @@ X12 发现产品缺陷时创建 `XF-001` 起的节点，并先登记到本文件
 | ID | 发现节点 | 缺陷与根因 | 写入范围 | 退出证据 |
 |---|---|---|---|---|
 | XF-001 | X12 | coding harness 仍读取废弃的 flat `stop`/metrics，因而把 canonical `ExecEventEnvelope` v1 terminal 误判为缺失 | `tests/coding/harness/`、runner/receipt tests、status ledger | canonical v1 terminal fake-client coverage；provider terminal fail-closed；static harness suite |
+| XF-002 | X12 | bubblewrap 使用 `--clearenv`，但 command runner 只恢复 Git safe-directory 字段；安装态 user daemon 因而不能向 sandbox 暴露普通 host toolchain PATH/rustup identity | `crates/corpus/src/security/runner.rs`、`config/aletheon.user.service`、status ledger | 环境 allowlist/secret exclusion tests；bubblewrap process tests；Corpus clippy；system unit/deployment verification；安装态 auto sandbox 内解析并执行 toolchain，同时 workspace 外保持只读 |
 
 ## 9. 节点状态台账（指针）
 
