@@ -28,3 +28,8 @@ U-INPUT-003	X6b	test	crates/interact/src/tui/input_safety.rs
 U-INPUT-006	X6b	test	crates/interact/src/tui/input_safety.rs
 U-INPUT-002	X6b	test	crates/interact/src/tui/input.rs
 U-INPUT-005	X6b	test	crates/interact/src/tui/app/key_handler.rs
+A-CAP-001	X7	test	crates/corpus/src/tools/tools/change_transaction.rs
+A-CAP-002	X7	test	crates/corpus/tests/capability_executor.rs
+A-CAP-003	X7	test	crates/executive/tests/capability_invoker.rs
+A-CAP-004	X7	test	crates/executive/tests/hardware_simulation.rs
+A-CAP-005	X7	test	crates/fabric/src/types/tool_stream.rs
