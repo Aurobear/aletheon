@@ -399,13 +399,13 @@ MERGE_SHA: pending_by_owner
 ## XF-002
 
 ```text
-STATUS: in_progress
+STATUS: code_complete
 NODE: XF-002
 BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: X12 attempt 2 receipt target/coding-x12-corrected-20260805-2052/receipts/api_error_mapping.json records the installed `/usr/bin/aletheon --sandbox auto` timeout and repeated toolchain discovery failures. The repair constructs an explicit non-secret sandbox environment allowlist, derives read-only cargo/rustup identity from HOME when unset, excludes provider credentials and wrapper injection variables, and gives the installed user service a conventional user-tool PATH. First installed probe resolved `/home/aurobear/.cargo/bin/cargo`; its subsequent cargo write exposed the second root cause: configured-profile mount assembly skipped WorkspacePolicy roots without installing their writable binds. The mount repair now preserves those per-turn roots and re-protects metadata afterward.
-FAILURES: first repaired installed probe proved toolchain discovery but failed `cargo check` when the configured profile left the workspace read-only; the mount repair still requires focused validation and redeployment.
-BLOCKER: none
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: X12 attempt 2 receipt target/coding-x12-corrected-20260805-2052/receipts/api_error_mapping.json records the original installed `/usr/bin/aletheon --sandbox auto` timeout. The repair constructs an explicit non-secret sandbox environment allowlist, excludes provider credentials/wrapper injection, gives the installed user service a conventional user-tool PATH, and restores per-turn workspace writable binds under configured profiles before metadata re-protection. Environment tests, 8 bubblewrap tests including live write/deny behavior, Corpus all-target clippy `-D warnings`, systemd boundary checks, docs paths, and formatting pass. `sudo bash scripts/aletheon.sh deploy` passed with release/installed/all-running executable SHA `caf149d3c04d5243e9c7c3d66ccdb4d0923018bf0fd6103683ccfca15cbd6db3`, stable restart counters, Memory Agent smoke, and official-socket real request. Installed artifact `target/xf-002-installed-pass-20260805-212244/exec.json` proves auto sandbox resolved `/home/aurobear/.cargo/bin/cargo`, completed `cargo check`, and denied a write to a pre-existing path outside WorkspacePolicy; host content remained `UNCHANGED`.
+FAILURES: none
+BLOCKER: publication/PR/merge intentionally deferred by owner; X12 full-suite rerun remains pending.
 MERGE_SHA: pending_by_owner
 ```
 
