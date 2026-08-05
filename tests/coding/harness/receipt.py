@@ -420,7 +420,11 @@ def classify_failure(value: Mapping[str, Any]) -> tuple[str, list[str]]:
     ):
         runtime.append("client_reported_failure")
     tool_errors = metrics.get("tool_errors")
-    if isinstance(tool_errors, int) and tool_errors > 0:
+    if (
+        isinstance(tool_errors, int)
+        and tool_errors > 0
+        and not matched_expected_non_success
+    ):
         runtime.append("tool_error_observed")
     if value.get("observed_terminal") != value.get("expected_terminal"):
         runtime.append("unexpected_terminal")

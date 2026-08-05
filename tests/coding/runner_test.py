@@ -85,7 +85,9 @@ payload = {
     "metrics": {
         "iterations": 1,
         "tool_calls_made": 2,
-        "tool_errors": 0 if status != "failed" else 1,
+        "tool_errors": 1
+        if status == "failed" or os.environ.get("FAKE_TOOL_ERROR")
+        else 0,
         "provider_retries": 3,
         "elapsed_ms": 9,
     },
@@ -192,6 +194,25 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(value["metrics"]["provider_retries"], 3)
         self.assertIsNone(value["metrics"]["inference_rounds"])
         self.assertIsNone(value["metrics"]["active_context_tokens"])
+
+    def test_expected_blocked_terminal_allows_the_denial_tool_error(self):
+        value = self.execute(
+            "blocked",
+            self.task(
+                expected="blocked",
+                required=(),
+                acceptance=[
+                    [
+                        sys.executable,
+                        "-c",
+                        "import pathlib,sys;sys.exit(pathlib.Path('src/lib.rs').read_text()!='original\\n')",
+                    ]
+                ],
+            ),
+            FAKE_TOOL_ERROR="1",
+        )
+        self.assertTrue(value["verification"]["passed"])
+        self.assertEqual(value["metrics"]["tool_errors"], 1)
 
     def test_default_binary_matches_the_shared_cargo_agent_target(self):
         self.assertEqual(

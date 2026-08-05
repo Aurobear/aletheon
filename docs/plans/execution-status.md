@@ -448,6 +448,19 @@ BLOCKER: none
 MERGE_SHA: pending_by_owner
 ```
 
+## XF-006
+
+```text
+STATUS: code_complete
+NODE: XF-006
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Retained approval/budget receipts show authoritative expected non-success terminals accompanied by a denial-path tool error, but receipt classification unconditionally added `tool_error_observed`. The classifier now tolerates tool errors only when the observed terminal exactly matches a declared non-verified expectation; completed verification, failed/provider terminals, mismatches, scope, acceptance, resources, and evidence remain fail-closed. A focused blocked/no-mutation fixture with one tool error passes; runner 9/9, replay 9/9, and the complete static harness suite pass; docs paths and diff checks pass.
+FAILURES: none
+BLOCKER: publication/PR/merge intentionally deferred by owner; installed X12 rerun remains pending.
+MERGE_SHA: pending_by_owner
+```
+
 ## X13
 
 ```text
