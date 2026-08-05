@@ -131,7 +131,9 @@ impl ConnectionProtocolState {
         if matches!(self, Self::Ready { negotiated: None })
             && matches!(
                 request,
-                ClientRequest::ReadSnapshot(_) | ClientRequest::Subscribe(_)
+                ClientRequest::ReadSnapshot(_)
+                    | ClientRequest::ReadEvents(_)
+                    | ClientRequest::Subscribe(_)
             )
         {
             return Ok(ProtocolAction::Dispatch);
@@ -250,6 +252,14 @@ mod tests {
             .accept(&ClientRequest::ReadSnapshot(
                 fabric::protocol::client::SnapshotRequest {
                     session_id: session_id.clone(),
+                },
+            ))
+            .is_ok());
+        assert!(state
+            .accept(&ClientRequest::ReadEvents(
+                fabric::protocol::client::EventSubscription {
+                    session_id: fabric::SessionId("session-1".into()),
+                    after: fabric::protocol::client::EventCursor::origin(),
                 },
             ))
             .is_ok());

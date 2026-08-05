@@ -18,6 +18,8 @@ use crate::{
 
 use super::turn_coordinator::{ActiveTurn, ActiveTurnKey};
 
+const SESSION_EVENT_PAGE_LIMIT: usize = 256;
+
 pub struct ResumeResult {
     pub session: SessionRecord,
     pub next_sequence: u64,
@@ -313,12 +315,13 @@ impl SessionService {
         }
         let connection = self.protocol.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement = connection.prepare(
-            "SELECT event_json FROM protocol_events WHERE session_id=?1 AND sequence>?2 ORDER BY sequence",
+            "SELECT event_json FROM protocol_events WHERE session_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3",
         )?;
         let rows = statement
-            .query_map(params![session_id.0, after.sequence], |row| {
-                row.get::<_, String>(0)
-            })?
+            .query_map(
+                params![session_id.0, after.sequence, SESSION_EVENT_PAGE_LIMIT],
+                |row| row.get::<_, String>(0),
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let events = rows
             .into_iter()

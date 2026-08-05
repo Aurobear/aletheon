@@ -960,6 +960,9 @@ pub enum ClientRequest {
     /// Schema-v1 daemon-owned Session/Task/Activity projection. Kept
     /// separate from the compatibility UI snapshot during X5c migration.
     ReadSnapshot(SnapshotRequest),
+    /// One bounded page after an authenticated cursor. Unlike `Subscribe`,
+    /// this request does not create a connection-owned tail task.
+    ReadEvents(EventSubscription),
     Subscribe(EventSubscription),
     Chat(ChatRequest),
     Approval(ApprovalRequest),
@@ -1008,6 +1011,7 @@ impl ClientRequest {
             Self::Initialized => "initialized",
             Self::Snapshot(_) => "session.snapshot",
             Self::ReadSnapshot(_) => "session.read_snapshot/v1",
+            Self::ReadEvents(_) => "session.read_events/v1",
             Self::Subscribe(_) => "session.subscribe",
             Self::Chat(_) => "thread.chat",
             Self::Approval(_) => "turn.approval",

@@ -416,12 +416,26 @@ async fn dispatch_versioned_request(
             Err(error) => protocol_error(request_id, error),
         };
     }
+    if let ClientRequest::ReadEvents(request) = &request {
+        return match handler
+            .protocol_event_page(&request.session_id, &request.after)
+            .await
+        {
+            Ok(page) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": ClientMessage::v1(page),
+            }),
+            Err(error) => protocol_error(request_id, error),
+        };
+    }
     let result: anyhow::Result<ProtocolClientEvent> = match request {
         ClientRequest::Snapshot(request) => handler
             .protocol_snapshot(&request.session_id)
             .await
             .map(ProtocolClientEvent::Snapshot),
         ClientRequest::ReadSnapshot(_) => unreachable!("handled before event dispatch"),
+        ClientRequest::ReadEvents(_) => unreachable!("handled before event dispatch"),
         ClientRequest::Subscribe(subscription) => {
             match handler
                 .protocol_events_after(&subscription.session_id, &subscription.after)

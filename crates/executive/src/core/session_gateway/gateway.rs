@@ -111,6 +111,16 @@ impl SessionGateway {
             .await
     }
 
+    pub async fn protocol_event_page(
+        &self,
+        session_id: &fabric::SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> anyhow::Result<fabric::protocol::client::SessionEventPage> {
+        self.canonical_sessions
+            .protocol_event_page(session_id, after)
+            .await
+    }
+
     /// Create a new SessionGateway.
     pub fn new(
         param_registry: Arc<ParamRegistry>,

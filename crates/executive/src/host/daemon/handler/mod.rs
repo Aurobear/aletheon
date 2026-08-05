@@ -283,6 +283,17 @@ impl RequestHandler {
             .await
     }
 
+    pub(crate) async fn protocol_event_page(
+        &self,
+        session_id: &fabric::SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> anyhow::Result<fabric::protocol::client::SessionEventPage> {
+        self.ports
+            .session_gateway
+            .protocol_event_page(session_id, after)
+            .await
+    }
+
     pub(crate) async fn cleanup_disconnected_connection(
         &self,
         connection_id: &fabric::ConnectionId,
