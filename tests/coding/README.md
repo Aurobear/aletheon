@@ -14,9 +14,10 @@ strict task catalog
 
 - `fixtures/` contains twenty independent miniature repositories; they are not
   workspace crates.
-- `tasks/` contains strict version-1 TOML contracts for twenty versioned scenario
-  categories.
-- `acceptance/` contains overlays copied only after client execution.
+- `tasks/` contains twenty strict version-1 TOML task contracts covering the
+  required scenario distribution.
+- `acceptance/` contains twenty overlays copied only after client execution;
+  every overlay includes a version-1, 100-point evidence rubric.
 - `harness/run.py` executes one task and always attempts to emit a version-2
   receipt.
 - `harness/replay.py` checks receipt integrity, terminal/evidence correlation,
@@ -36,9 +37,10 @@ Run the secret-free contract suite with:
 bash tests/coding/static_test.sh
 ```
 
-It validates all twenty task documents plus runner, receipt, aggregation, and
-workflow contracts. Fixture Cargo commands are always routed through
-`scripts/cargo-agent.sh`; do not invoke Cargo directly.
+It validates all twenty task documents, their hidden acceptance overlays and
+the required 5/5/4/2/2/1/1 scenario distribution, plus runner, receipt,
+aggregation, and workflow contracts. Fixture Cargo commands are always routed
+through `scripts/cargo-agent.sh`; do not invoke Cargo directly.
 
 ## Diagnostic execution
 

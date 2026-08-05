@@ -1,0 +1,13 @@
+schema_version = 1
+id = "child_orphan_reconciliation"
+category = "multifile_change"
+fixture = "child_orphan_reconciliation"
+prompt = "修复 daemon 重启后的 child reconciliation：同 generation 的 running child 保持 running；旧 generation 且有 terminal receipt 的 child 投影 receipt 状态；旧 generation 无 receipt 标记 orphaned。不要修改测试或清单。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

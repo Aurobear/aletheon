@@ -362,11 +362,11 @@ MERGE_SHA: pending
 ```text
 STATUS: code_complete
 NODE: X11
-BASE / BRANCH / PR / GOAL_ID: 6ffa9f85f2d9b4776b26b2781eb62c214a62e67d / auro/docs/20260805-x9c-acceptance / pending / external supervisor active
-BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Expanded tests/coding from 8 hidden acceptance overlays to 20 versioned fixture/task pairs and 20 hidden overlays. Static harness contracts, runner/replay/suite/workflow tests, catalog validation and git diff checks pass; each fixture has an isolated Cargo workspace manifest and lockfile. The intentionally failing baseline behavior remains part of the benchmark and is fixed by the real model during task execution; it is not counted as fixture acceptance.
-FAILURES: full 20-task real-model run is deferred to X12 installed acceptance.
-BLOCKER: dev merge pending; protected branch requires the required checks.
+BASE / BRANCH / PR / GOAL_ID: 6ffa9f85f2d9b4776b26b2781eb62c214a62e67d / auro/test/20260805-x11-rubric-closure / pending / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=2
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: tests/coding now has exactly 20 versioned task/fixture/acceptance/rubric sets. The catalog mechanically enforces the required 5 location/explanation, 5 small bug fix, 4 cross-file, 2 failing-test, 2 review-finding, 1 side-effect-free session resume, and 1 child-orphan reconciliation distribution. Every rubric is schema version 1, totals 100 points, and binds terminal, correctness, scope, and governance evidence. Static harness contracts, runner/replay/suite/workflow tests, exact inventory checks, rubric validation, and git diff checks pass; every fixture has an isolated Cargo workspace manifest and lockfile.
+FAILURES: PR #180 X11 draft had 20 tasks but only 19 acceptance overlays, zero scoring rubrics, no scenario-distribution gate, and no session-resume or orphan-reconciliation task. This repair replaces that incomplete corpus; full 20-task real-model execution remains deferred to X12 installed acceptance.
+BLOCKER: corrective branch is local by owner instruction; dev merge pending.
 MERGE_SHA: pending
 ```
 

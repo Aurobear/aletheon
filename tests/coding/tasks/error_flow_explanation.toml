@@ -1,0 +1,13 @@
+schema_version = 1
+id = "error_flow_explanation"
+category = "diagnosis"
+fixture = "error_flow_explanation"
+prompt = "追踪 parse_port 的错误从 domain 到 CLI 的传播，不要修改源码或测试；创建 REPORT.md，列出定义错误类型、映射退出码和渲染错误的相对路径/符号，并说明零端口的最终退出码。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "src/", "tests/"]
+required_changed_paths = ["REPORT.md"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

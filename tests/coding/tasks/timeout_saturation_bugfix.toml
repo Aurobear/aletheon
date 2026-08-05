@@ -1,0 +1,13 @@
+schema_version = 1
+id = "timeout_saturation_bugfix"
+category = "behavioral_bugfix"
+fixture = "timeout_saturation_bugfix"
+prompt = "修复 deadline_ms 的溢出行为：base + timeout 应饱和到 u64::MAX；保持正常加法语义，不要修改测试或清单。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

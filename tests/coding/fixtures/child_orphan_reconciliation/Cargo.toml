@@ -1,0 +1,6 @@
+[package]
+name = "fixture_child_orphan_reconciliation"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]

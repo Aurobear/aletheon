@@ -1,6 +1,0 @@
-[package]
-name = "fixture_window_bounds"
-version = "0.1.0"
-edition = "2021"
-
-[workspace]

@@ -1,0 +1,1 @@
+#[test] fn report_traces_typed_error(){ let r=include_str!("../REPORT.md"); for s in ["src/domain.rs", "PortError", "src/cli.rs", "exit_code", "render", "2"] { assert!(r.contains(s), "missing {s}"); } }

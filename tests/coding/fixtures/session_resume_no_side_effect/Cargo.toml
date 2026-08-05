@@ -1,0 +1,6 @@
+[package]
+name = "fixture_session_resume_no_side_effect"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]

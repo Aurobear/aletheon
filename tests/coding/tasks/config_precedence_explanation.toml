@@ -1,0 +1,13 @@
+schema_version = 1
+id = "config_precedence_explanation"
+category = "diagnosis"
+fixture = "config_precedence_explanation"
+prompt = "分析配置覆盖顺序，不要修改源码或测试；创建 REPORT.md，写明 defaults、user、project 的准确合并顺序，指出 merge_layer 所在相对路径，并解释 project 为什么胜出。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "src/", "tests/"]
+required_changed_paths = ["REPORT.md"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

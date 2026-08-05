@@ -1,0 +1,24 @@
+schema_version = 1
+task_id = "parser_domain_sync"
+scenario_class = "cross_file_change"
+points_total = 100
+
+[[criteria]]
+id = "terminal"
+weight = 25
+evidence = "authoritative terminal snapshot matches task contract"
+
+[[criteria]]
+id = "correctness"
+weight = 35
+evidence = "independent acceptance commands pass"
+
+[[criteria]]
+id = "scope"
+weight = 20
+evidence = "required paths changed and forbidden paths preserved"
+
+[[criteria]]
+id = "governance"
+weight = 20
+evidence = "receipt, settlement, replay, and resource checks agree"

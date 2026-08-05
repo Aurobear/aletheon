@@ -1,0 +1,13 @@
+schema_version = 1
+id = "failing_snapshot_test"
+category = "regression_test"
+fixture = "failing_snapshot_test"
+prompt = "修复 renderer 使现有失败的 snapshot 测试通过；保留字段顺序 id,name,active，布尔值用小写。不要修改任何测试或清单。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

@@ -1,0 +1,13 @@
+schema_version = 1
+id = "module_path_explanation"
+category = "diagnosis"
+fixture = "module_path_explanation"
+prompt = "检查这个小型仓库并定位 normalize_key 的公开入口、核心实现和覆盖空白。不要修改源码或测试；创建 REPORT.md，准确列出三个相对路径并解释连续分隔符为何未被折叠。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "src/", "tests/"]
+required_changed_paths = ["REPORT.md"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]
