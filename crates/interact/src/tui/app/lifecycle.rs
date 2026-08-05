@@ -121,14 +121,11 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     app.pending_commands
         .insert(skills_id, super::super::PendingCommand::InitializeSkills);
 
-    // If test mode with auto_submit, submit the first line immediately
-    if let Some(ref mut reader) = test_input {
-        if reader.auto_submit {
-            if let Some(line) = reader.next_line() {
-                submit_message(&mut app, line).await;
-            }
-        }
-    }
+    // A scripted prompt must not race session.new/session.read. Until the
+    // canonical projection selects the session, omitting session_id would make
+    // the Host route the prompt onto a different thread.
+    let mut initial_test_submit_pending =
+        test_input.as_ref().is_some_and(|reader| reader.auto_submit);
 
     while app.running {
         if app.input_dirty && app.clock.mono_now().0 >= app.input_persist_at.0 {
@@ -227,7 +224,19 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         drive_session_projection(&mut app).await;
 
         // Check if a turn just completed and we should auto-submit next line
+        let mut submitted_script_line = false;
         if let Some(ref mut reader) = test_input {
+            if initial_test_submit_pending
+                && app.app_state.session_id.is_some()
+                && !app.turn_active
+                && !app.streaming
+            {
+                if let Some(line) = reader.next_line() {
+                    submit_message(&mut app, line).await;
+                    submitted_script_line = true;
+                }
+                initial_test_submit_pending = false;
+            }
             // Use turn_active (set by turn_start, cleared by turn_done) instead
             // of streaming (which is also cleared by process_response and would
             // trigger premature auto-submit before the turn actually completes).
@@ -235,7 +244,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             // event arrives. Treat that transport state as in-flight too, or
             // test mode can consume every scripted line and exit before the
             // daemon has admitted the first turn.
-            if !app.turn_active && !app.streaming {
+            if !submitted_script_line && !app.turn_active && !app.streaming {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
                     ClientTimer.sleep(Duration::from_millis(100)).await;
