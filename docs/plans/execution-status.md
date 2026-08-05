@@ -403,8 +403,8 @@ STATUS: in_progress
 NODE: XF-002
 BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: X12 attempt 2 receipt target/coding-x12-corrected-20260805-2052/receipts/api_error_mapping.json records the installed `/usr/bin/aletheon --sandbox auto` timeout and repeated toolchain discovery failures. The repair now constructs an explicit non-secret sandbox environment allowlist, derives read-only cargo/rustup identity from HOME when unset, excludes provider credentials and wrapper injection variables, and gives the installed user service a conventional user-tool PATH. Focused environment and live bubblewrap tests pass.
-FAILURES: installed deployment and auto-sandbox cargo execution have not yet been rerun with the repaired binary.
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: X12 attempt 2 receipt target/coding-x12-corrected-20260805-2052/receipts/api_error_mapping.json records the installed `/usr/bin/aletheon --sandbox auto` timeout and repeated toolchain discovery failures. The repair constructs an explicit non-secret sandbox environment allowlist, derives read-only cargo/rustup identity from HOME when unset, excludes provider credentials and wrapper injection variables, and gives the installed user service a conventional user-tool PATH. First installed probe resolved `/home/aurobear/.cargo/bin/cargo`; its subsequent cargo write exposed the second root cause: configured-profile mount assembly skipped WorkspacePolicy roots without installing their writable binds. The mount repair now preserves those per-turn roots and re-protects metadata afterward.
+FAILURES: first repaired installed probe proved toolchain discovery but failed `cargo check` when the configured profile left the workspace read-only; the mount repair still requires focused validation and redeployment.
 BLOCKER: none
 MERGE_SHA: pending_by_owner
 ```
