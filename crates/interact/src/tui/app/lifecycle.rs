@@ -231,7 +231,11 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             // Use turn_active (set by turn_start, cleared by turn_done) instead
             // of streaming (which is also cleared by process_response and would
             // trigger premature auto-submit before the turn actually completes).
-            if !app.turn_active {
+            // The first submitted request is streaming before its turn_start
+            // event arrives. Treat that transport state as in-flight too, or
+            // test mode can consume every scripted line and exit before the
+            // daemon has admitted the first turn.
+            if !app.turn_active && !app.streaming {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
                     ClientTimer.sleep(Duration::from_millis(100)).await;
@@ -240,7 +244,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 }
             }
             // All inputs consumed and last turn done
-            if reader.done && !app.turn_active {
+            if reader.done && !app.turn_active && !app.streaming {
                 app.running = false;
             }
         }
