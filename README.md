@@ -256,7 +256,7 @@ execd     ---> platform
 
 ### 6.2 Stable (has code + tests)
 
-These capabilities have implementation and test coverage in the current repository:
+Every `✅ Stable` capability above must keep a concrete code anchor, focused test target, and recovery evidence (restart/replay or equivalent) before release. These capabilities have implementation and test coverage in the current repository:
 
 - **DaemonHost + SystemdHost** — Daemon runs as a systemd service with sd_notify, watchdog, and SIGTERM graceful shutdown.
 - **JSON-RPC API** — Line-delimited JSON-RPC over Unix socket with concurrent connection handling and streaming notifications (TextDelta, ToolCallStart, etc.).

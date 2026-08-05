@@ -9,14 +9,6 @@ pub mod improvement;
 pub mod problem;
 pub mod reflection;
 
-// Compatibility re-exports — remove after migration window (Phase 1 complete).
-pub mod hil_evidence_verifier {
-    pub use crate::evaluation::hil_evidence::HILEvidenceVerifier;
-}
-pub mod outcome_verifier {
-    pub use crate::evaluation::outcome::*;
-}
-
 pub use adapters::{
     EvolutionAction, EvolutionDecision, MetaCognition, MetaCognitionThresholds, SystemState,
 };

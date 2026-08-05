@@ -2,7 +2,7 @@ use fabric::types::embodiment::DeviceId;
 use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
 use fabric::types::outcome_verification::VerificationDecision;
 use fabric::types::world_state::WorldSnapshot;
-use metacog::outcome_verifier;
+use metacog::evaluation::outcome as outcome_verifier;
 
 fn snapshot(payload: serde_json::Value, seq: u64, stale: bool) -> WorldSnapshot {
     WorldSnapshot {
