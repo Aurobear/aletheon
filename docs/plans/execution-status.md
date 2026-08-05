@@ -243,12 +243,12 @@ MERGE_SHA: pending
 ## X7
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X7
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: c06d7558 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: CapabilityTerminalReceipt now binds result.call_id to the host-minted invocation; mismatches become terminal Failed + InvalidRequest evidence instead of successful receipts. Three focused terminal-receipt tests and Fabric clippy pass.
+FAILURES: none; mutation transaction coverage, cancellation propagation, budget exhaustion, hardware permit and full A-CAP-001..005/A-TURN-001 integration remain open; installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
