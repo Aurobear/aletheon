@@ -292,102 +292,126 @@ impl AgentControlService {
             daemon_generation,
             self.clock.wall_now().0,
         )?;
-        let runs = self.repository.list_open(MAX_STARTUP_RECOVERY_ROWS).await?;
-        let mut report = AgentRecoveryReport {
-            open_rows: runs.len(),
-            ..Default::default()
-        };
-        for run in runs {
-            let process_live = self
-                .kernel
-                .inspect_process(run.snapshot.handle.process_id)
-                .await
-                .is_ok();
-            let operation_terminal = self
-                .kernel
-                .inspect_operation(run.snapshot.handle.operation_id)
-                .await
-                .ok()
-                .and_then(|operation| match operation.state {
-                    fabric::OperationState::Succeeded => Some(AgentRunStatus::Succeeded),
-                    fabric::OperationState::Failed => Some(AgentRunStatus::Failed),
-                    fabric::OperationState::Cancelled => Some(AgentRunStatus::Cancelled),
-                    _ => None,
-                });
-            let checkpoint_available = matches!(
-                &run.resumability,
-                fabric::RuntimeResumability::Checkpointed { reference }
-                    if !reference.trim().is_empty()
-            );
-            let observation = AgentRecoveryObservation {
-                process_live,
-                operation_terminal,
-                checkpoint_available,
-            };
-            match coordinator.recover_one(&run, observation).await {
-                Ok(fabric::AgentRecoveryDecision::Interrupt) => {
-                    if self.subagent_settlement {
-                        self.recover_settlement_resources(
-                            &run,
-                            fabric::AgentRecoveryDecision::Interrupt,
-                            daemon_generation,
-                        )
-                        .await?;
-                    }
-                    report.interrupted += 1;
-                }
-                Ok(fabric::AgentRecoveryDecision::Resume) => {
-                    let checkpoint_reference = match &run.resumability {
-                        fabric::RuntimeResumability::Checkpointed { reference } => {
-                            reference.clone()
+        let mut report = AgentRecoveryReport::default();
+        let mut cursor = None;
+        loop {
+            let runs = self
+                .repository
+                .list_open_after(cursor, MAX_STARTUP_RECOVERY_ROWS)
+                .await?;
+            if runs.is_empty() {
+                break;
+            }
+            report.open_rows = report.open_rows.saturating_add(runs.len());
+            cursor = runs
+                .last()
+                .map(|run| (run.snapshot.created_at_ms, run.agent_id()));
+            for run in runs {
+                let process_live = self
+                    .kernel
+                    .inspect_process(run.snapshot.handle.process_id)
+                    .await
+                    .is_ok();
+                let operation_terminal = self
+                    .kernel
+                    .inspect_operation(run.snapshot.handle.operation_id)
+                    .await
+                    .ok()
+                    .and_then(|operation| match operation.state {
+                        fabric::OperationState::Succeeded => Some(AgentRunStatus::Succeeded),
+                        fabric::OperationState::Failed => Some(AgentRunStatus::Failed),
+                        fabric::OperationState::Cancelled => Some(AgentRunStatus::Cancelled),
+                        _ => None,
+                    });
+                let checkpoint_available = matches!(
+                    &run.resumability,
+                    fabric::RuntimeResumability::Checkpointed { reference }
+                        if !reference.trim().is_empty()
+                );
+                let observation = AgentRecoveryObservation {
+                    process_live,
+                    operation_terminal,
+                    checkpoint_available,
+                };
+                match coordinator.recover_one(&run, observation).await {
+                    Ok(fabric::AgentRecoveryDecision::Interrupt) => {
+                        if self.subagent_settlement {
+                            self.recover_settlement_resources(
+                                &run,
+                                fabric::AgentRecoveryDecision::Interrupt,
+                                daemon_generation,
+                            )
+                            .await?;
                         }
-                        fabric::RuntimeResumability::Never => {
-                            unreachable!("resume requires checkpoint")
-                        }
-                    };
-                    match self.runtimes.resolve(&run.snapshot.handle.runtime_id) {
-                        Ok(runtime)
-                            if runtime.resumability() == run.resumability
-                                && runtime
-                                    .resume_from_checkpoint(AgentRecoveryRuntimeInput {
-                                        handle: run.snapshot.handle.clone(),
-                                        request: run.request.clone(),
-                                        checkpoint_reference,
-                                    })
-                                    .await
-                                    .is_ok() =>
-                        {
-                            report.resumed += 1;
-                        }
-                        _ => report.recovery_failed += 1,
+                        report.interrupted += 1;
                     }
-                }
-                Ok(fabric::AgentRecoveryDecision::Finalize) => {
-                    if self.subagent_settlement {
-                        self.recover_settlement_resources(
-                            &run,
-                            fabric::AgentRecoveryDecision::Finalize,
-                            daemon_generation,
-                        )
-                        .await?;
+                    Ok(fabric::AgentRecoveryDecision::Resume) => {
+                        let checkpoint_reference = match &run.resumability {
+                            fabric::RuntimeResumability::Checkpointed { reference } => {
+                                reference.clone()
+                            }
+                            fabric::RuntimeResumability::Never => {
+                                unreachable!("resume requires checkpoint")
+                            }
+                        };
+                        match self.runtimes.resolve(&run.snapshot.handle.runtime_id) {
+                            Ok(runtime)
+                                if runtime.resumability() == run.resumability
+                                    && runtime
+                                        .resume_from_checkpoint(AgentRecoveryRuntimeInput {
+                                            handle: run.snapshot.handle.clone(),
+                                            request: run.request.clone(),
+                                            checkpoint_reference,
+                                        })
+                                        .await
+                                        .is_ok() =>
+                            {
+                                report.resumed += 1;
+                            }
+                            _ => report.recovery_failed += 1,
+                        }
                     }
-                    report.finalized += 1;
+                    Ok(fabric::AgentRecoveryDecision::Finalize) => {
+                        if self.subagent_settlement {
+                            self.recover_settlement_resources(
+                                &run,
+                                fabric::AgentRecoveryDecision::Finalize,
+                                daemon_generation,
+                            )
+                            .await?;
+                        }
+                        report.finalized += 1;
+                    }
+                    _ => report.recovery_failed += 1,
                 }
-                _ => report.recovery_failed += 1,
             }
         }
-        report.unreconciled = self
-            .repository
-            .list_open(MAX_STARTUP_RECOVERY_ROWS)
-            .await?
-            .into_iter()
-            .filter(|run| {
-                !matches!(
-                    run.recovery.as_ref().map(|receipt| receipt.decision),
-                    Some(fabric::AgentRecoveryDecision::Resume)
-                )
-            })
-            .count();
+        let mut cursor = None;
+        loop {
+            let runs = self
+                .repository
+                .list_open_after(cursor, MAX_STARTUP_RECOVERY_ROWS)
+                .await?;
+            if runs.is_empty() {
+                break;
+            }
+            cursor = runs
+                .last()
+                .map(|run| (run.snapshot.created_at_ms, run.agent_id()));
+            report.unreconciled = report.unreconciled.saturating_add(
+                runs.into_iter()
+                    .filter(|run| {
+                        !matches!(
+                            run.recovery.as_ref(),
+                            Some(receipt)
+                                if receipt.daemon_generation == daemon_generation
+                                    && receipt.decision
+                                        == fabric::AgentRecoveryDecision::Resume
+                        )
+                    })
+                    .count(),
+            );
+        }
         Ok(report)
     }
 

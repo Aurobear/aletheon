@@ -80,10 +80,14 @@ impl AgentRecoveryCoordinator {
         run: &AgentRunRecord,
         observation: AgentRecoveryObservation,
     ) -> Result<AgentRecoveryDecision, AgentControlError> {
-        let decision = run.recovery.as_ref().map_or_else(
-            || Self::decide(run, observation),
-            |receipt| receipt.decision,
-        );
+        let decision = run
+            .recovery
+            .as_ref()
+            .filter(|receipt| receipt.daemon_generation == self.daemon_generation)
+            .map_or_else(
+                || Self::decide(run, observation),
+                |receipt| receipt.decision,
+            );
         let idempotency_key = format!(
             "sha256:{:x}",
             Sha256::digest(
@@ -96,7 +100,11 @@ impl AgentRecoveryCoordinator {
                 .as_bytes()
             )
         );
-        if run.recovery.is_none() {
+        if run
+            .recovery
+            .as_ref()
+            .is_none_or(|receipt| receipt.daemon_generation != self.daemon_generation)
+        {
             let receipt = AgentRecoveryReceipt {
                 decision,
                 daemon_generation: self.daemon_generation.clone(),

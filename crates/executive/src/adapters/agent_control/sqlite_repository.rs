@@ -302,6 +302,45 @@ impl AgentRunRepository for SqliteAgentRunRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
     }
 
+    async fn list_open_after(
+        &self,
+        after: Option<(i64, AgentId)>,
+        limit: usize,
+    ) -> Result<Vec<AgentRunRecord>, AgentControlError> {
+        if limit == 0 || limit > MAX_LIST_ITEMS {
+            return Err(AgentControlError::invalid(
+                "Agent recovery page limit is invalid",
+            ));
+        }
+        let connection = self.connection.lock();
+        let (sql, created_at_ms, agent_id) = match after {
+            Some((created_at_ms, agent_id)) => (
+                format!(
+                    "SELECT {RUN_COLUMNS} FROM agent_runs \
+                     WHERE status IN ('queued','running','waiting') \
+                       AND (created_at_ms>?1 OR (created_at_ms=?1 AND agent_id>?2)) \
+                     ORDER BY created_at_ms,agent_id LIMIT ?3"
+                ),
+                created_at_ms,
+                agent_id.0.to_string(),
+            ),
+            None => (
+                format!(
+                    "SELECT {RUN_COLUMNS} FROM agent_runs \
+                     WHERE status IN ('queued','running','waiting') \
+                     ORDER BY created_at_ms,agent_id LIMIT ?3"
+                ),
+                i64::MIN,
+                String::new(),
+            ),
+        };
+        let mut statement = connection.prepare(&sql).map_err(persistence)?;
+        let rows = statement
+            .query_map(params![created_at_ms, agent_id, limit as i64], map_run_row)
+            .map_err(persistence)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
+    }
+
     async fn list_recent(&self, limit: usize) -> Result<Vec<AgentRunRecord>, AgentControlError> {
         if limit == 0 || limit > MAX_LIST_ITEMS {
             return Err(AgentControlError::invalid(
@@ -347,10 +386,12 @@ impl AgentRunRepository for SqliteAgentRunRepository {
             if stored == *receipt {
                 return query_one(&connection, agent);
             }
-            return Err(control_error(
-                AgentControlErrorKind::Conflict,
-                "Agent run already has a different recovery decision",
-            ));
+            if stored.daemon_generation == receipt.daemon_generation {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    "Agent run already has a different recovery decision for this daemon generation",
+                ));
+            }
         }
         let changed = connection
             .execute(

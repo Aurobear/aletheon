@@ -282,3 +282,81 @@ async fn startup_reconciles_open_rows_before_admission_and_never_replays_native_
         AgentRunStatus::Interrupted
     );
 }
+
+#[tokio::test]
+async fn startup_recovery_visits_every_page_and_records_the_current_generation() {
+    let clock = Arc::new(TestClock::new(2_000, 0));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+    let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
+    let mut agents = Vec::new();
+    for _ in 0..1_001 {
+        let run = record(AgentRunStatus::Queued, RuntimeResumability::Never);
+        agents.push(run.agent_id());
+        persist(&repository, &run).await;
+    }
+    let service = AgentControlService::new(
+        kernel,
+        clock,
+        repository.clone(),
+        Arc::new(BoundedAgentAdmission::new(1).unwrap()),
+        Arc::new(AgentRuntimeRegistry::default()),
+        Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap()),
+    );
+
+    let report = service.reconcile_startup("daemon:paged").await.unwrap();
+    assert!(report.ready());
+    assert_eq!(report.open_rows, 1_001);
+    assert_eq!(report.interrupted, 1_001);
+    for agent in agents {
+        let stored = repository.get(agent).await.unwrap().unwrap();
+        assert_eq!(stored.status(), AgentRunStatus::Interrupted);
+        assert_eq!(stored.recovery.unwrap().daemon_generation, "daemon:paged");
+    }
+}
+
+#[tokio::test]
+async fn a_new_daemon_generation_makes_a_fresh_recovery_decision() {
+    let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
+    let run = record(
+        AgentRunStatus::Running,
+        RuntimeResumability::Checkpointed {
+            reference: "checkpoint:first".into(),
+        },
+    );
+    persist(&repository, &run).await;
+    let first = AgentRecoveryCoordinator::new(repository.clone(), "daemon:first", 30).unwrap();
+    assert_eq!(
+        first
+            .recover_one(
+                &run,
+                AgentRecoveryObservation {
+                    process_live: true,
+                    operation_terminal: None,
+                    checkpoint_available: true,
+                },
+            )
+            .await
+            .unwrap(),
+        AgentRecoveryDecision::Resume
+    );
+
+    let after_first = repository.get(run.agent_id()).await.unwrap().unwrap();
+    let second = AgentRecoveryCoordinator::new(repository.clone(), "daemon:second", 40).unwrap();
+    assert_eq!(
+        second
+            .recover_one(
+                &after_first,
+                AgentRecoveryObservation {
+                    process_live: false,
+                    operation_terminal: None,
+                    checkpoint_available: false,
+                },
+            )
+            .await
+            .unwrap(),
+        AgentRecoveryDecision::Interrupt
+    );
+    let stored = repository.get(run.agent_id()).await.unwrap().unwrap();
+    assert_eq!(stored.status(), AgentRunStatus::Interrupted);
+    assert_eq!(stored.recovery.unwrap().daemon_generation, "daemon:second");
+}
