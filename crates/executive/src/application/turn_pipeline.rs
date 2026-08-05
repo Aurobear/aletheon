@@ -1410,6 +1410,25 @@ impl TurnPipeline {
         canonical_items.extend(
             std::mem::take(&mut *completed_inference_items.lock().await),
         );
+        // Capability receipts are collected by the governed invoker for
+        // evaluation, but they are also canonical Session evidence. Persist
+        // them alongside the tool call/result so Activity projections never
+        // have to infer terminal command success from rendered output.
+        let mut completed_receipts = evaluation_capability_receipts.lock().await.clone();
+        completed_receipts.sort_by(|left, right| {
+            left.finished_at
+                .cmp(&right.finished_at)
+                .then_with(|| left.invocation_id.cmp(&right.invocation_id))
+        });
+        for receipt in completed_receipts {
+            let already_recorded = canonical_items.iter().any(|item| {
+                matches!(item, fabric::ItemPayload::CapabilityReceipt { receipt: existing }
+                    if existing.invocation_id == receipt.invocation_id)
+            });
+            if !already_recorded {
+                canonical_items.push(fabric::ItemPayload::CapabilityReceipt { receipt });
+            }
+        }
         info!(len = text.len(), "ReAct loop completed");
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ExecutionFinished)?;
