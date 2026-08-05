@@ -23,7 +23,6 @@ pub struct TaskConsole<'a> {
     pub state: &'a AppState,
     pub caps: &'a TermCaps,
     pub workspace: &'a WorkspacePolicy,
-    pub frame_counter: u64,
 }
 
 impl Widget for TaskConsole<'_> {
@@ -43,14 +42,14 @@ impl Widget for TaskConsole<'_> {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
                 .split(chunks[1]);
-            render_conversation(columns[0], buf, self.state, self.frame_counter, self.caps);
+            render_conversation(columns[0], buf, self.state, self.caps);
             render_activity_panel(columns[1], buf, self.state, self.caps);
         } else {
             let rows = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
                 .split(chunks[1]);
-            render_conversation(rows[0], buf, self.state, self.frame_counter, self.caps);
+            render_conversation(rows[0], buf, self.state, self.caps);
             render_activity_panel(rows[1], buf, self.state, self.caps);
         }
     }
@@ -106,7 +105,10 @@ fn render_task_header(
     }
     if area.height >= 3 {
         lines.push(Line::from(Span::styled(
-            format!(" activity {activity} · context {context}"),
+            format!(
+                " activity {activity} · context {context} · {}",
+                runtime_metrics(task)
+            ),
             Style::default().fg(theme.text_muted),
         )));
     }
@@ -116,13 +118,7 @@ fn render_task_header(
         .render(area, buf);
 }
 
-fn render_conversation(
-    area: Rect,
-    buf: &mut Buffer,
-    state: &AppState,
-    _frame_counter: u64,
-    caps: &TermCaps,
-) {
+fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &TermCaps) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Conversation ");
@@ -196,7 +192,7 @@ fn render_activity_panel(area: Rect, buf: &mut Buffer, state: &AppState, caps: &
 
     let changes = Block::default()
         .borders(Borders::ALL)
-        .title(" Changes / artifacts ");
+        .title(" Changes / diagnostics ");
     let changes_inner = changes.inner(sections[1]);
     changes.render(sections[1], buf);
     let refs = state
@@ -204,17 +200,24 @@ fn render_activity_panel(area: Rect, buf: &mut Buffer, state: &AppState, caps: &
         .iter()
         .flat_map(|activity| activity.artifact_refs.iter())
         .collect::<Vec<_>>();
-    let change_lines = if refs.is_empty() {
-        vec![Line::from(Span::styled(
-            "No changed artifacts recorded",
-            Style::default().fg(theme.text_muted),
-        ))]
-    } else {
+    let mut change_lines = Vec::new();
+    if let Some(error) = state.last_error.as_deref() {
+        change_lines.push(Line::from(Span::styled(
+            format!("ERROR {error}"),
+            Style::default().fg(theme.error),
+        )));
+    }
+    change_lines.extend(
         refs.into_iter()
             .take(changes_inner.height as usize)
-            .map(|reference| Line::from(format!(" {} {reference}", caps.bullet())))
-            .collect()
-    };
+            .map(|reference| Line::from(format!(" {} {reference}", caps.bullet()))),
+    );
+    if change_lines.is_empty() {
+        change_lines.push(Line::from(Span::styled(
+            "No changed artifacts or diagnostics",
+            Style::default().fg(theme.text_muted),
+        )));
+    }
     Paragraph::new(change_lines)
         .wrap(Wrap { trim: true })
         .render(changes_inner, buf);
@@ -243,6 +246,44 @@ fn task_runtime_identity(task: Option<&TaskSnapshot>) -> (&str, &str, String) {
         _ => "unknown".into(),
     };
     (provider, model, context)
+}
+
+fn runtime_metrics(task: Option<&TaskSnapshot>) -> String {
+    let Some(task) = task else {
+        return "budget unknown · cache unknown".into();
+    };
+    let budget = task
+        .budget
+        .as_ref()
+        .map(|value| bounded_value(value, 24))
+        .unwrap_or_else(|| "unknown".into());
+    let Some(facts) = task.runtime_facts.as_ref() else {
+        return format!("budget {budget} · cache unknown");
+    };
+    let cache = match facts.cumulative_usage.cache_telemetry {
+        fabric::CacheTelemetry::Reported => format!(
+            "read {} / write {}",
+            facts
+                .cumulative_usage
+                .cache_read_tokens
+                .map_or_else(|| "unknown".into(), |value| value.to_string()),
+            facts
+                .cumulative_usage
+                .cache_write_tokens
+                .map_or_else(|| "unknown".into(), |value| value.to_string())
+        ),
+        fabric::CacheTelemetry::Unsupported => "unsupported".into(),
+        fabric::CacheTelemetry::Unknown => "unknown".into(),
+    };
+    format!(
+        "budget {budget} · cache {cache} · infer {} · retries {} · tools {}/{}",
+        facts.inference_rounds,
+        facts
+            .provider_retries
+            .map_or_else(|| "unknown".into(), |value| value.to_string()),
+        facts.terminal_tool_results,
+        facts.tool_calls
+    )
 }
 
 fn permission_summary(task: &TaskSnapshot) -> String {
@@ -279,11 +320,28 @@ fn activity_line(activity: &ActivitySnapshot, caps: &TermCaps) -> Line<'static> 
         ActivityState::Failed | ActivityState::Lost => ("failed", caps.theme().error),
         ActivityState::Cancelled => ("cancelled", caps.theme().text_muted),
     };
+    let progress = activity
+        .progress
+        .as_ref()
+        .map(|value| format!(" · {}", bounded_value(value, 32)))
+        .unwrap_or_default();
     Line::from(vec![
         Span::styled(format!(" {} ", caps.bullet()), Style::default().fg(color)),
         Span::styled(format!("{state:9}"), Style::default().fg(color)),
-        Span::raw(activity.label.clone()),
+        Span::raw(format!("{}{progress}", activity.label)),
     ])
+}
+
+fn bounded_value(value: &serde_json::Value, limit: usize) -> String {
+    let rendered = match value {
+        serde_json::Value::String(value) => value.clone(),
+        value => value.to_string(),
+    };
+    if rendered.chars().count() <= limit {
+        rendered
+    } else {
+        format!("{}…", rendered.chars().take(limit).collect::<String>())
+    }
 }
 
 fn task_phase(phase: TaskPhase) -> &'static str {
@@ -316,7 +374,6 @@ mod tests {
             state,
             caps: &caps,
             workspace: &workspace,
-            frame_counter: 0,
         }
         .render(area, &mut buffer);
         buffer
@@ -331,7 +388,7 @@ mod tests {
         let rendered = rendered_text(120, 40, &AppState::default());
         assert!(rendered.contains("Conversation"));
         assert!(rendered.contains("Activity timeline"));
-        assert!(rendered.contains("Changes / artifacts"));
+        assert!(rendered.contains("Changes / diagnostics"));
     }
 
     #[test]
@@ -340,7 +397,7 @@ mod tests {
         assert!(rendered.contains("TASK"));
         assert!(rendered.contains("Conversation"));
         assert!(rendered.contains("Activity timeline"));
-        assert!(rendered.contains("Changes / artifacts"));
+        assert!(rendered.contains("Changes / diagnostics"));
     }
 
     #[test]

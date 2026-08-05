@@ -112,7 +112,6 @@ impl Renderable for HeaderRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let bg = self.caps.color(20, 20, 60);
 
-        let provider = self.state.provider_name.as_deref().unwrap_or("provider —");
         let line = Line::from(vec![
             Span::styled(
                 "  ALETHEON  ",
@@ -121,12 +120,7 @@ impl Renderable for HeaderRenderable<'_> {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(
-                    "{}  ·  route {}  ·  {}",
-                    self.state.mode.display_name(),
-                    self.state.model_name,
-                    provider
-                ),
+                format!("Task Console  ·  mode {}", self.state.mode.display_name()),
                 Style::default().fg(Color::Cyan),
             ),
         ]);
@@ -145,7 +139,6 @@ impl Renderable for HeaderRenderable<'_> {
 /// Renders the canonical task console. Conversation is intentionally
 /// separate from daemon-projected Activity and Changes panels.
 pub struct TaskConsoleRenderable<'a> {
-    pub frame_counter: u64,
     pub caps: &'a TermCaps,
     pub state: &'a AppState,
     pub workspace: &'a fabric::WorkspacePolicy,
@@ -157,7 +150,6 @@ impl Renderable for TaskConsoleRenderable<'_> {
             state: self.state,
             caps: self.caps,
             workspace: self.workspace,
-            frame_counter: self.frame_counter,
         }
         .render(area, buf);
     }

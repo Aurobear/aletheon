@@ -26,7 +26,6 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
     let completion_ref = &app.completion;
     let tool_count = app.chat.active_exec_count();
     let thinking_visible = app.stream_ctrl.is_thinking();
-    let frame_counter = app.frame_counter;
 
     let pager_ref = &app.pager;
     let session_picker_ref = &app.session_picker;
@@ -59,7 +58,6 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
             },
         );
         layout.push_flex(TaskConsoleRenderable {
-            frame_counter,
             caps: caps_ref,
             state: &app.app_state,
             workspace: &app.workspace,
