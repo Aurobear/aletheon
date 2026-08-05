@@ -478,7 +478,9 @@ mod tests {
         let mut tx = transaction(ChangeTransactionPhase::DiffReviewed);
         tx.validation_receipts[0].terminal_status = "failed".into();
         assert_eq!(
-            HostSettlementService.evaluate(&tx, &[finding(true)]).decision,
+            HostSettlementService
+                .evaluate(&tx, &[finding(true)])
+                .decision,
             HostSettlementDecision::RepairRequired
         );
     }
