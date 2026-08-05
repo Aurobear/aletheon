@@ -7,8 +7,8 @@ use executive::application::agent_control::{
 };
 use fabric::{
     AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentProfileId, AgentRecoveryDecision,
-    AgentRecoveryReceipt, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId,
-    OperationId, ProcessId, RuntimeId, RuntimeResumability,
+    AgentRecoveryReceipt, AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest,
+    AgoraSpaceId, AttemptUsage, OperationId, ProcessId, RuntimeId, RuntimeResumability,
 };
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
@@ -281,4 +281,48 @@ async fn startup_reconciles_open_rows_before_admission_and_never_replays_native_
             .status(),
         AgentRunStatus::Interrupted
     );
+}
+
+#[tokio::test]
+async fn host_terminal_receipt_wins_when_kernel_state_is_ambiguous() {
+    let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
+    let run = record(AgentRunStatus::Running, RuntimeResumability::Never);
+    persist(&repository, &run).await;
+    repository
+        .record_terminal_receipt(
+            &executive::application::agent_control::AgentTerminalReceipt {
+                agent_id: run.agent_id(),
+                generation: "daemon:terminal-receipt".into(),
+                status: AgentRunStatus::Succeeded,
+                result: Some(AgentResult {
+                    output: "host-confirmed".into(),
+                    usage: AttemptUsage::default(),
+                    evidence: vec![],
+                    artifacts: vec![],
+                }),
+                recorded_at_ms: 20,
+            },
+        )
+        .await
+        .unwrap();
+
+    let coordinator =
+        AgentRecoveryCoordinator::new(repository.clone(), "daemon:restart", 30).unwrap();
+    assert_eq!(
+        coordinator
+            .recover_one(
+                &run,
+                AgentRecoveryObservation {
+                    process_live: false,
+                    operation_terminal: None,
+                    checkpoint_available: false,
+                },
+            )
+            .await
+            .unwrap(),
+        AgentRecoveryDecision::Finalize
+    );
+    let stored = repository.get(run.agent_id()).await.unwrap().unwrap();
+    assert_eq!(stored.status(), AgentRunStatus::Succeeded);
+    assert_eq!(stored.snapshot.result.unwrap().output, "host-confirmed");
 }

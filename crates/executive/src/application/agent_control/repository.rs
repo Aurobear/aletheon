@@ -20,6 +20,39 @@ pub struct AgentRunRecord {
     pub recovery: Option<AgentRecoveryReceipt>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentTerminalReceipt {
+    pub agent_id: AgentId,
+    pub generation: String,
+    pub status: AgentRunStatus,
+    pub result: Option<AgentResult>,
+    pub recorded_at_ms: i64,
+}
+
+impl AgentTerminalReceipt {
+    pub fn validate(&self) -> Result<(), AgentControlError> {
+        if self.generation.trim().is_empty() {
+            return Err(AgentControlError::invalid(
+                "terminal receipt generation is required",
+            ));
+        }
+        if !self.status.is_terminal() {
+            return Err(AgentControlError::invalid(
+                "terminal receipt status must be terminal",
+            ));
+        }
+        if self.status == AgentRunStatus::Succeeded && self.result.is_none() {
+            return Err(AgentControlError::invalid(
+                "successful terminal receipt requires a result",
+            ));
+        }
+        if let Some(result) = &self.result {
+            result.validate()?;
+        }
+        Ok(())
+    }
+}
+
 impl AgentRunRecord {
     pub fn agent_id(&self) -> AgentId {
         self.snapshot.handle.agent_id
@@ -169,4 +202,19 @@ pub trait AgentRunRepository: Send + Sync {
         delivery_id: uuid::Uuid,
         delivery: AgentMessageDeliveryState,
     ) -> Result<AgentMessageRecord, AgentControlError>;
+
+    /// Persist host-derived terminal state before lifecycle settlement.
+    async fn record_terminal_receipt(
+        &self,
+        _receipt: &AgentTerminalReceipt,
+    ) -> Result<(), AgentControlError> {
+        Ok(())
+    }
+
+    async fn terminal_receipt(
+        &self,
+        _agent: AgentId,
+    ) -> Result<Option<AgentTerminalReceipt>, AgentControlError> {
+        Ok(None)
+    }
 }

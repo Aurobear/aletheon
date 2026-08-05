@@ -80,10 +80,15 @@ impl AgentRecoveryCoordinator {
         run: &AgentRunRecord,
         observation: AgentRecoveryObservation,
     ) -> Result<AgentRecoveryDecision, AgentControlError> {
-        let decision = run.recovery.as_ref().map_or_else(
-            || Self::decide(run, observation),
-            |receipt| receipt.decision,
-        );
+        let terminal_receipt = self.repository.terminal_receipt(run.agent_id()).await?;
+        let decision = if terminal_receipt.is_some() {
+            AgentRecoveryDecision::Finalize
+        } else {
+            run.recovery.as_ref().map_or_else(
+                || Self::decide(run, observation),
+                |receipt| receipt.decision,
+            )
+        };
         let idempotency_key = format!(
             "sha256:{:x}",
             Sha256::digest(
@@ -122,10 +127,17 @@ impl AgentRecoveryCoordinator {
                     .await?;
             }
             AgentRecoveryDecision::Finalize => {
-                let mut terminal = observation.operation_terminal.ok_or_else(|| {
-                    AgentControlError::invalid("finalize recovery lacks terminal Kernel state")
-                })?;
-                if terminal == AgentRunStatus::Succeeded && run.snapshot.result.is_none() {
+                let receipt = terminal_receipt.as_ref();
+                let mut terminal = receipt
+                    .map(|receipt| receipt.status)
+                    .or(observation.operation_terminal)
+                    .ok_or_else(|| {
+                        AgentControlError::invalid("finalize recovery lacks terminal evidence")
+                    })?;
+                let result = receipt
+                    .and_then(|receipt| receipt.result.clone())
+                    .or_else(|| run.snapshot.result.clone());
+                if terminal == AgentRunStatus::Succeeded && result.is_none() {
                     terminal = AgentRunStatus::Failed;
                 }
                 self.repository
@@ -133,7 +145,7 @@ impl AgentRecoveryCoordinator {
                         run.agent_id(),
                         run.status(),
                         terminal,
-                        run.snapshot.result.clone(),
+                        result,
                         (terminal == AgentRunStatus::Failed)
                             .then(|| "Kernel completed without a persisted Agent result".into()),
                         self.recovered_at_ms,

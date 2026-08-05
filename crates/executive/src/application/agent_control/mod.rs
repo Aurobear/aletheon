@@ -72,7 +72,7 @@ pub use recovery::{
 };
 pub use repository::{
     agent_workspace_id, AgentMessageRecord, AgentResourceLease, AgentResourceLeaseKind,
-    AgentRunRecord, AgentRunRepository,
+    AgentRunRecord, AgentRunRepository, AgentTerminalReceipt,
 };
 pub use settlement::{
     recovery_disposition, settle_admission, terminal_with_memory_flush,
@@ -1615,6 +1615,16 @@ async fn run_agent(
         ),
     };
     let settlement_usage = result.as_ref().map(|result| result.usage.clone());
+    let terminal_receipt = AgentTerminalReceipt {
+        agent_id: agent,
+        generation: settlement_generation.clone(),
+        status: next,
+        result: result.clone(),
+        recorded_at_ms: clock.wall_now().0,
+    };
+    if let Err(error) = repository.record_terminal_receipt(&terminal_receipt).await {
+        tracing::error!(agent = ?agent, %error, "failed to persist host terminal receipt");
+    }
     match next {
         AgentRunStatus::Succeeded => {
             let _ = kernel.succeed_operation(operation).await;
@@ -1673,16 +1683,12 @@ async fn run_agent(
                 Some(parent) => live.get(parent).await,
                 None => None,
             };
-            // Both sides are host-minted, spawn-time authority envelopes.  A
-            // live parent is also the notification/cancellation route; no
-            // model-supplied settlement claim participates in this decision.
+            // Both sides are host-minted, spawn-time authority envelopes.
             let parent_authority_covers = parent_run.as_ref().is_some_and(|parent| {
                 parent
                     .reparent_authority()
                     .covers(live_run.reparent_authority())
             });
-            // Static maxima coverage is necessary; the authoritative proof is
-            // the atomic BudgetController transfer receipt below.
             let _parent_budget_bounds_cover = parent_run.as_ref().is_some_and(|parent| {
                 parent
                     .reparent_authority()
