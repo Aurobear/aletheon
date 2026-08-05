@@ -59,27 +59,37 @@ if scenario == "leak":
         stderr=subprocess.DEVNULL,
     )
 
-stop = "completed"
-success = True
+status = "completed"
 operation_id = "op-123"
 exit_code = 0
 if scenario in {"blocked", "budget"}:
-    stop, success = "blocked", False
+    status = "blocked"
 elif scenario == "failed":
-    stop, success, exit_code = "failed", False, 7
+    status, exit_code = "failed", 7
+elif scenario == "provider_unavailable":
+    status, exit_code = "provider_unavailable", 22
 elif scenario == "missing_operation":
     operation_id = ""
 
 payload = {
-    "success": success,
+    "schema_version": 1,
+    "sequence": 2,
+    "session_id": "session-1",
+    "task_id": "task-1",
+    "turn_id": "turn-1",
+    "activity_id": None,
     "operation_id": operation_id,
-    "response": "R" * (70000 if os.environ.get("FAKE_LARGE") else 1),
-    "stop": stop,
-    "iterations": 1,
-    "tool_calls_made": 2,
-    "tool_errors": 0 if stop != "failed" else 1,
-    "provider_retries": 3,
-    "elapsed_ms": 9,
+    "type": "terminal",
+    "status": status,
+    "output": "R" * (70000 if os.environ.get("FAKE_LARGE") else 1),
+    "metrics": {
+        "iterations": 1,
+        "tool_calls_made": 2,
+        "tool_errors": 0 if status != "failed" else 1,
+        "provider_retries": 3,
+        "elapsed_ms": 9,
+    },
+    "error_code": None,
 }
 encoded = json.dumps(payload, sort_keys=True).encode()
 sys.stdout.buffer.write(encoded)
@@ -234,6 +244,7 @@ class RunnerTest(unittest.TestCase):
             "missing_operation": "infrastructure_failure",
             "timeout": "timeout_or_cancellation",
             "false_success": "verification_failure",
+            "provider_unavailable": "execution_failure",
         }
         unchanged = [
             [
@@ -244,7 +255,7 @@ class RunnerTest(unittest.TestCase):
         ]
         for scenario, expected_class in cases.items():
             with self.subTest(scenario=scenario):
-                required = () if scenario in {"blocked", "failed", "malformed", "missing_operation", "timeout"} else ("src/",)
+                required = () if scenario in {"blocked", "failed", "provider_unavailable", "malformed", "missing_operation", "timeout"} else ("src/",)
                 acceptance = unchanged if not required else None
                 value = self.execute(
                     scenario,

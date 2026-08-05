@@ -99,16 +99,41 @@ EXPECTED_TERMINALS = frozenset(
     {"verified", "blocked", "budget_exhausted", "cancelled"}
 )
 OBSERVED_STOPS = frozenset(
-    {"completed", "blocked", "cancelled", "failed", "unavailable"}
+    {
+        "completed",
+        "blocked",
+        "cancelled",
+        "provider_unavailable",
+        "provider_rejected",
+        "validation_failed",
+        "output_backpressure",
+        "failed",
+        "unavailable",
+    }
 )
 OBSERVED_TERMINALS = frozenset(
-    {"verified", "blocked", "budget_exhausted", "cancelled", "failed", "unavailable"}
+    {
+        "verified",
+        "blocked",
+        "budget_exhausted",
+        "cancelled",
+        "provider_unavailable",
+        "provider_rejected",
+        "validation_failed",
+        "output_backpressure",
+        "failed",
+        "unavailable",
+    }
 )
 TERMINAL_STOPS = {
     "verified": frozenset({"completed"}),
     "blocked": frozenset({"blocked"}),
     "budget_exhausted": frozenset({"blocked"}),
     "cancelled": frozenset({"cancelled", "unavailable"}),
+    "provider_unavailable": frozenset({"provider_unavailable"}),
+    "provider_rejected": frozenset({"provider_rejected"}),
+    "validation_failed": frozenset({"validation_failed"}),
+    "output_backpressure": frozenset({"output_backpressure"}),
     "failed": frozenset({"failed"}),
     "unavailable": frozenset({"unavailable"}),
 }
@@ -382,6 +407,13 @@ def classify_failure(value: Mapping[str, Any]) -> tuple[str, list[str]]:
         runtime.append("client_exit_nonzero")
     if value.get("observed_stop") == "failed":
         runtime.append("authoritative_stop_failed")
+    if value.get("observed_stop") in {
+        "provider_unavailable",
+        "provider_rejected",
+        "validation_failed",
+        "output_backpressure",
+    }:
+        runtime.append(f"authoritative_{value['observed_stop']}")
     if (
         value.get("observed_stop") == "completed"
         and execution.get("reported_success") is not True

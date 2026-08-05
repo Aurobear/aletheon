@@ -354,9 +354,28 @@ def _parse_executive(execution: Mapping[str, object]) -> tuple[dict[str, object]
     return (parsed, True) if isinstance(parsed, dict) else ({}, False)
 
 
+EXEC_TERMINAL_STATUSES = {
+    "completed",
+    "blocked",
+    "cancelled",
+    "provider_unavailable",
+    "provider_rejected",
+    "validation_failed",
+    "output_backpressure",
+    "failed",
+}
+
+
 def _observed_stop(executive: Mapping[str, object]) -> str:
-    stop = executive.get("stop")
-    return str(stop) if stop in {"completed", "blocked", "cancelled", "failed"} else "unavailable"
+    if executive.get("schema_version") != 1 or executive.get("type") != "terminal":
+        return "unavailable"
+    status = executive.get("status")
+    return str(status) if status in EXEC_TERMINAL_STATUSES else "unavailable"
+
+
+def _terminal_metrics(executive: Mapping[str, object]) -> Mapping[str, object]:
+    metrics = executive.get("metrics")
+    return metrics if isinstance(metrics, dict) else {}
 
 
 def observed_terminal(
@@ -367,12 +386,13 @@ def observed_terminal(
     if execution["timed_out"]:
         return "cancelled"
     stop = _observed_stop(executive)
+    metrics = _terminal_metrics(executive)
     limit = task.setup.get("exec_max_turns")
     if (
         task.expected_terminal == "budget_exhausted"
         and stop == "blocked"
         and isinstance(limit, int)
-        and executive.get("iterations") == limit
+        and metrics.get("iterations") == limit
     ):
         return "budget_exhausted"
     if stop == "completed":
@@ -394,20 +414,21 @@ def _build_receipt(
     operation_id = executive.get("operation_id")
     operation_id = operation_id if isinstance(operation_id, str) else ""
     stop = _observed_stop(executive)
+    terminal_metrics = _terminal_metrics(executive)
     observed = observed_terminal(task, executive, execution_result)
     execution = _public_command(execution_result)
     execution.update(
         {
             "json_valid": json_valid,
             "terminal_snapshot": stop != "unavailable",
-            "reported_success": executive.get("success")
-            if isinstance(executive.get("success"), bool)
+            "reported_success": stop == "completed"
+            if stop != "unavailable"
             else None,
             "infrastructure_error": execution_result.get("_spawn_error"),
         }
     )
     acceptance = [_public_command(result) for result in acceptance_results]
-    reported_elapsed = _integer_metric(executive.get("elapsed_ms"))
+    reported_elapsed = _integer_metric(terminal_metrics.get("elapsed_ms"))
     evidence: list[dict[str, object]] = []
     if stop != "unavailable":
         evidence.append(
@@ -444,13 +465,17 @@ def _build_receipt(
         "evidence": evidence,
         "resources": resources,
         "metrics": {
-            "iterations": _integer_metric(executive.get("iterations")),
-            "tool_calls": _integer_metric(executive.get("tool_calls_made")),
-            "tool_errors": _integer_metric(executive.get("tool_errors")),
-            "inference_rounds": _integer_metric(executive.get("inference_rounds")),
-            "provider_retries": _integer_metric(executive.get("provider_retries")),
+            "iterations": _integer_metric(terminal_metrics.get("iterations")),
+            "tool_calls": _integer_metric(terminal_metrics.get("tool_calls_made")),
+            "tool_errors": _integer_metric(terminal_metrics.get("tool_errors")),
+            "inference_rounds": _integer_metric(
+                terminal_metrics.get("inference_rounds")
+            ),
+            "provider_retries": _integer_metric(
+                terminal_metrics.get("provider_retries")
+            ),
             "active_context_tokens": _integer_metric(
-                executive.get("active_context_tokens")
+                terminal_metrics.get("active_context_tokens")
             ),
             "elapsed_ms": reported_elapsed
             if reported_elapsed is not None

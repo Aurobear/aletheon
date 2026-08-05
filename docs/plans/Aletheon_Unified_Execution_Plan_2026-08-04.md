@@ -451,6 +451,10 @@ X12 发现产品缺陷时创建 `XF-001` 起的节点，并先登记到本文件
 - XF `accepted` 并合入后，原节点从最新 `origin/dev` 重跑全部退出证据。
 - 不得把多个无关缺陷合并成一个 “misc fixes” PR。
 
+| ID | 发现节点 | 缺陷与根因 | 写入范围 | 退出证据 |
+|---|---|---|---|---|
+| XF-001 | X12 | coding harness 仍读取废弃的 flat `stop`/metrics，因而把 canonical `ExecEventEnvelope` v1 terminal 误判为缺失 | `tests/coding/harness/`、runner/receipt tests、status ledger | canonical v1 terminal fake-client coverage；provider terminal fail-closed；static harness suite |
+
 ## 9. 节点状态台账（指针）
 
 实时状态见 `docs/plans/execution-status.md`。初始状态：
