@@ -142,6 +142,7 @@ pub struct TaskConsoleRenderable<'a> {
     pub caps: &'a TermCaps,
     pub state: &'a AppState,
     pub workspace: &'a fabric::WorkspacePolicy,
+    pub selected_activity: Option<usize>,
 }
 
 impl Renderable for TaskConsoleRenderable<'_> {
@@ -150,6 +151,7 @@ impl Renderable for TaskConsoleRenderable<'_> {
             state: self.state,
             caps: self.caps,
             workspace: self.workspace,
+            selected_activity: self.selected_activity,
         }
         .render(area, buf);
     }

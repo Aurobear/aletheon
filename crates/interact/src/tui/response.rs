@@ -706,6 +706,12 @@ fn apply_projection_effects(app: &mut App, effects: Vec<super::reducer::UiEffect
             }
         }
     }
+    if app
+        .selected_activity
+        .is_some_and(|index| index >= app.app_state.activities.len())
+    {
+        app.selected_activity = app.app_state.activities.len().checked_sub(1);
+    }
 }
 
 fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {

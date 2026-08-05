@@ -16,3 +16,10 @@ U-CLI-003	X4c	test	crates/aletheon/tests/exec_cli.rs
 A-SESSION-001	X5b	test	crates/executive/tests/session_protocol_reconnect.rs
 A-SESSION-002	X5b	test	crates/executive/tests/session_protocol_reconnect.rs
 A-SESSION-003	X5c	test	crates/interact/tests/tui_reducer.rs
+U-TUI-001	X6a	test	crates/interact/src/tui/task_console.rs
+U-TUI-002	X6a	test	crates/interact/src/tui/task_console.rs
+U-TUI-003	X6a	test	crates/interact/src/tui/task_console.rs
+U-TUI-004	X6a	test	crates/interact/src/tui/task_console.rs
+U-TUI-005	X6a	test	crates/interact/src/tui/app/key_handler.rs
+U-TUI-006	X6a	test	crates/interact/src/tui/task_console.rs
+U-TUI-007	X6a	test	crates/interact/src/tui/task_console.rs

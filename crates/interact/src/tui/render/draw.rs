@@ -23,6 +23,7 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
     let has_cjk = app.has_cjk;
     let status_ref = &app.status;
     let pending_approval_ref = &app.pending_approval;
+    let detail_ref = &app.detail;
     let completion_ref = &app.completion;
     let tool_count = app.chat.active_exec_count();
     let thinking_visible = app.stream_ctrl.is_thinking();
@@ -61,6 +62,7 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
             caps: caps_ref,
             state: &app.app_state,
             workspace: &app.workspace,
+            selected_activity: app.selected_activity,
         });
         layout.push_fixed(
             2,
@@ -80,6 +82,16 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
             },
         );
         layout.render(size, f.buffer_mut());
+        if let Some(detail) = detail_ref {
+            let (x, width) = if size.width >= 100 {
+                (size.x + size.width * 55 / 100, size.width * 45 / 100)
+            } else {
+                (size.x, size.width)
+            };
+            let area =
+                ratatui::layout::Rect::new(x, size.y + 1, width, size.height.saturating_sub(4));
+            ratatui::widgets::Widget::render(detail, area, f.buffer_mut());
+        }
         // Completion is an overlay, not part of the input widget's clipping
         // region. Render it last so later siblings cannot erase it.
         let input_area = ratatui::layout::Rect::new(

@@ -221,8 +221,8 @@ STATUS: in_progress
 NODE: X6a
 BASE / BRANCH / PR / GOAL_ID: 05f63446 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Interact now renders a daemon-projected Task console with project/session/task/phase/goal/runtime identity/permission header, authoritative Conversation, Activity timeline, Changes/artifacts panel and keyboard footer; wide and 80x24 responsive frame tests pass; active context is shown only from typed runtime facts, never cumulative usage. Focused TaskConsole tests (3), Interact all-target clippy and diff checks pass.
-FAILURES: none; U-TUI-001..007 full PTY/accessibility/provider-error acceptance, installed deployment, PR/CI/merge and aggregate verification remain open
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Interact now renders a daemon-projected Task console with project/session/task/phase/goal/runtime identity/permission header, authoritative Conversation, Activity timeline, Changes/diagnostics panel and keyboard footer; U-TUI-001..007 focused frame/key tests pass across 80x24, 120x40 and 200x60; provider error and typed runtime/cache metrics are visible without transcript inference. Active context is shown only from typed runtime facts, never cumulative usage. Interact package tests (128), TaskConsole tests (9), all-target clippy and architecture acceptance pass.
+FAILURES: none; full PTY/accessibility/line-mode and installed provider/session evidence, installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
@@ -230,12 +230,12 @@ MERGE_SHA: pending
 ## X6b
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X6b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: pending / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pasted input now passes through a bounded ANSI/OSC/C0/C1 sanitizer before editor insertion; multi-line CJK paste remains inert until explicit Enter/IME handling; @path attachment validation rejects traversal, symlinks, protected paths, out-of-authority paths and oversized files. Focused sanitizer, attachment and paste tests pass.
+FAILURES: none; Action Palette, typed attachment submission, governed ! receipt, durable principal/workspace history and draft recovery remain open, as do installed deployment, PR/CI/merge and aggregate verification
 BLOCKER: none
 MERGE_SHA: pending
 ```

@@ -23,6 +23,7 @@ pub struct TaskConsole<'a> {
     pub state: &'a AppState,
     pub caps: &'a TermCaps,
     pub workspace: &'a WorkspacePolicy,
+    pub selected_activity: Option<usize>,
 }
 
 impl Widget for TaskConsole<'_> {
@@ -43,14 +44,20 @@ impl Widget for TaskConsole<'_> {
                 .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
                 .split(chunks[1]);
             render_conversation(columns[0], buf, self.state, self.caps);
-            render_activity_panel(columns[1], buf, self.state, self.caps);
+            render_activity_panel(
+                columns[1],
+                buf,
+                self.state,
+                self.caps,
+                self.selected_activity,
+            );
         } else {
             let rows = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
                 .split(chunks[1]);
             render_conversation(rows[0], buf, self.state, self.caps);
-            render_activity_panel(rows[1], buf, self.state, self.caps);
+            render_activity_panel(rows[1], buf, self.state, self.caps, self.selected_activity);
         }
     }
 }
@@ -154,7 +161,13 @@ fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &Te
         .render(inner, buf);
 }
 
-fn render_activity_panel(area: Rect, buf: &mut Buffer, state: &AppState, caps: &TermCaps) {
+fn render_activity_panel(
+    area: Rect,
+    buf: &mut Buffer,
+    state: &AppState,
+    caps: &TermCaps,
+    selected_activity: Option<usize>,
+) {
     let timeline_percent = if area.height >= 8 { 68 } else { 55 };
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -170,8 +183,8 @@ fn render_activity_panel(area: Rect, buf: &mut Buffer, state: &AppState, caps: &
         .title(" Activity timeline ");
     let timeline_inner = timeline.inner(sections[0]);
     timeline.render(sections[0], buf);
-    let mut activities = state.activities.iter().collect::<Vec<_>>();
-    activities.sort_by_key(|activity| activity.updated_at);
+    let mut activities = state.activities.iter().enumerate().collect::<Vec<_>>();
+    activities.sort_by_key(|(_, activity)| activity.updated_at);
     let max = timeline_inner.height as usize;
     let mut lines = activities.into_iter().rev().take(max).collect::<Vec<_>>();
     lines.reverse();
@@ -183,7 +196,9 @@ fn render_activity_panel(area: Rect, buf: &mut Buffer, state: &AppState, caps: &
     } else {
         lines
             .into_iter()
-            .map(|activity| activity_line(activity, caps))
+            .map(|(index, activity)| {
+                activity_line(activity, caps, selected_activity == Some(index))
+            })
             .collect()
     };
     Paragraph::new(rendered)
@@ -206,6 +221,15 @@ fn render_activity_panel(area: Rect, buf: &mut Buffer, state: &AppState, caps: &
             format!("ERROR {error}"),
             Style::default().fg(theme.error),
         )));
+    }
+    if let Some(activity) = selected_activity.and_then(|index| state.activities.get(index)) {
+        change_lines.push(Line::from(Span::styled(
+            format!("DETAIL {:?}: {}", activity.kind, activity.label),
+            Style::default().fg(theme.accent),
+        )));
+        if let Some(receipt) = activity.receipt_ref.as_deref() {
+            change_lines.push(Line::from(format!(" receipt {receipt}")));
+        }
     }
     change_lines.extend(
         refs.into_iter()
@@ -311,7 +335,7 @@ fn activity_summary(activities: &[ActivitySnapshot]) -> String {
     }
 }
 
-fn activity_line(activity: &ActivitySnapshot, caps: &TermCaps) -> Line<'static> {
+fn activity_line(activity: &ActivitySnapshot, caps: &TermCaps, selected: bool) -> Line<'static> {
     let (state, color) = match activity.state {
         ActivityState::Queued => ("queued", caps.theme().text_muted),
         ActivityState::Running => ("running", caps.theme().warning),
@@ -325,7 +349,9 @@ fn activity_line(activity: &ActivitySnapshot, caps: &TermCaps) -> Line<'static> 
         .as_ref()
         .map(|value| format!(" · {}", bounded_value(value, 32)))
         .unwrap_or_default();
+    let selection = if selected { ">" } else { " " };
     Line::from(vec![
+        Span::styled(selection, Style::default().fg(caps.theme().accent)),
         Span::styled(format!(" {} ", caps.bullet()), Style::default().fg(color)),
         Span::styled(format!("{state:9}"), Style::default().fg(color)),
         Span::raw(format!("{}{progress}", activity.label)),
@@ -360,9 +386,19 @@ fn short_id(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::state::{UiItem, UiItemStatus};
+
+    fn test_caps() -> TermCaps {
+        TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        }
+    }
 
     fn rendered_text(width: u16, height: u16, state: &AppState) -> String {
-        let caps = TermCaps::detect();
+        let caps = test_caps();
         let workspace = WorkspacePolicy::from_resolved_roots(
             std::env::current_dir().expect("test cwd"),
             Vec::new(),
@@ -374,6 +410,7 @@ mod tests {
             state,
             caps: &caps,
             workspace: &workspace,
+            selected_activity: None,
         }
         .render(area, &mut buffer);
         buffer
@@ -389,6 +426,142 @@ mod tests {
         assert!(rendered.contains("Conversation"));
         assert!(rendered.contains("Activity timeline"));
         assert!(rendered.contains("Changes / diagnostics"));
+    }
+
+    fn projected_state() -> AppState {
+        let mut state = AppState::default();
+        state.items.insert(
+            "user".into(),
+            UiItem {
+                id: "user".into(),
+                sequence: 1,
+                kind: "user".into(),
+                content: "inspect the workspace".into(),
+                status: UiItemStatus::Completed,
+                collapsed: false,
+            },
+        );
+        state.items.insert(
+            "assistant".into(),
+            UiItem {
+                id: "assistant".into(),
+                sequence: 2,
+                kind: "assistant".into(),
+                content: "working from canonical evidence".into(),
+                status: UiItemStatus::Streaming,
+                collapsed: false,
+            },
+        );
+        state.tasks.push(TaskSnapshot {
+            task_id: "task-1234567890".into(),
+            session_id: fabric::SessionId("session-1234567890".into()),
+            goal: Some("inspect repository".into()),
+            phase: TaskPhase::Active,
+            plan_revision: Some(1),
+            steps: vec![],
+            active_turn_id: None,
+            active_runtime_children: vec!["child-1".into()],
+            active_commands: vec!["check".into()],
+            pending_approvals: vec![],
+            budget: Some(serde_json::json!({"remaining": 12})),
+            checkpoint_head: None,
+            settlement: None,
+            runtime_facts: Some(fabric::TaskRuntimeFacts {
+                effective_provider: Some("deepseek".into()),
+                effective_model: Some("deepseek-v4-flash".into()),
+                context_capacity_tokens: Some(1_000_000),
+                active_context_occupancy_tokens: Some(8_000),
+                cumulative_usage: fabric::InferenceUsage::reported(
+                    10_000,
+                    500,
+                    Some(2_000),
+                    Some(8_000),
+                    Some(0),
+                ),
+                inference_rounds: 2,
+                provider_retries: Some(0),
+                tool_calls: 1,
+                terminal_tool_results: 0,
+            }),
+        });
+        state.activities.push(ActivitySnapshot {
+            activity_id: "activity-1".into(),
+            task_id: "task-1234567890".into(),
+            turn_id: fabric::TurnId::new(),
+            parent_activity_id: None,
+            kind: fabric::ActivityKind::Command,
+            label: "cargo check".into(),
+            state: ActivityState::Running,
+            started_at: 1,
+            updated_at: 2,
+            progress: Some(serde_json::json!("42/100 lines")),
+            artifact_refs: vec!["src/lib.rs".into()],
+            receipt_ref: None,
+        });
+        state
+    }
+
+    #[test]
+    fn u_tui_001_task_phase_is_visible_in_the_fixed_header() {
+        let rendered = rendered_text(120, 40, &projected_state());
+        assert!(rendered.contains("active"));
+        assert!(rendered.contains("inspect repository"));
+        assert!(rendered.contains("deepseek-v4-flash"));
+    }
+
+    #[test]
+    fn u_tui_002_long_command_has_incremental_progress() {
+        let rendered = rendered_text(120, 40, &projected_state());
+        assert!(rendered.contains("running"));
+        assert!(rendered.contains("42/100 lines"));
+    }
+
+    #[test]
+    fn u_tui_003_failed_runtime_is_activity_not_conversation_text() {
+        let mut state = projected_state();
+        state.activities[0].kind = fabric::ActivityKind::Runtime;
+        state.activities[0].state = ActivityState::Failed;
+        state.activities[0].label = "sub-agent reviewer".into();
+        let rendered = rendered_text(120, 40, &state);
+        assert!(rendered.contains("failed"));
+        assert!(rendered.contains("sub-agent reviewer"));
+    }
+
+    #[test]
+    fn u_tui_004_supported_terminal_sizes_keep_core_regions() {
+        for (width, height) in [(80, 24), (120, 40), (200, 60)] {
+            let rendered = rendered_text(width, height, &projected_state());
+            assert!(
+                rendered.contains("TASK"),
+                "missing task at {width}x{height}"
+            );
+            assert!(
+                rendered.contains("Conversation"),
+                "missing conversation at {width}x{height}"
+            );
+            assert!(
+                rendered.contains("Activity timeline"),
+                "missing activity at {width}x{height}"
+            );
+        }
+    }
+
+    #[test]
+    fn u_tui_006_ascii_low_colour_console_keeps_core_journey() {
+        let rendered = rendered_text(80, 24, &projected_state());
+        assert!(rendered.contains("TASK"));
+        assert!(rendered.contains("cargo check"));
+        assert!(rendered.contains("src/lib.rs"));
+    }
+
+    #[test]
+    fn u_tui_007_provider_failure_is_not_hidden_by_conversation() {
+        let mut state = projected_state();
+        state.tasks[0].phase = TaskPhase::Failed;
+        state.last_error = Some("provider_rejected_request".into());
+        let rendered = rendered_text(120, 40, &state);
+        assert!(rendered.contains("failed"));
+        assert!(rendered.contains("ERROR provider_rejected_request"));
     }
 
     #[test]

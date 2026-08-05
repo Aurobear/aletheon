@@ -21,6 +21,7 @@ pub mod help_overlay;
 pub mod history_search;
 pub mod host_time;
 pub mod input;
+pub mod input_safety;
 pub mod markdown;
 pub mod pager;
 pub mod plan_view;
@@ -343,6 +344,9 @@ struct App {
     first_render: bool,
     /// Pending approval dialog (shown as modal overlay).
     pending_approval: Option<approval_dialog::ApprovalDialog>,
+    /// Local selection cursor into the daemon-owned Activity projection.
+    /// It never owns or mutates activity state.
+    selected_activity: Option<usize>,
     detail: Option<diff_view::DiffView>,
     latest_diff: Option<String>,
     /// Streaming controller for incremental rendering
@@ -420,6 +424,7 @@ impl App {
             pending_submit: None,
             first_render: true,
             pending_approval: None,
+            selected_activity: None,
             detail: None,
             latest_diff: None,
             stream_ctrl: StreamController::new(Arc::clone(&clock)),

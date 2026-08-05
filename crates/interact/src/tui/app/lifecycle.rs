@@ -186,13 +186,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                         needs_redraw = true;
                     }
                     Event::Paste(text) => {
-                        // Paste: insert at cursor
-                        for ch in text.chars() {
-                            app.input_buf.insert(app.cursor, ch);
-                            app.cursor += ch.len_utf8();
-                        }
-                        app.check_cjk();
-                        super::key_handler::refresh_command_completion(&mut app);
+                        super::key_handler::insert_paste(&mut app, &text);
                         needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {

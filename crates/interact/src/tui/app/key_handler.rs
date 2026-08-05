@@ -20,6 +20,16 @@ pub(crate) fn refresh_command_completion(app: &mut App) {
     }
 }
 
+/// Insert a bracketed-paste payload as inert editor text. Newlines and CJK
+/// codepoints are preserved, and paste never invokes submit by itself.
+pub(crate) fn insert_paste(app: &mut App, text: &str) {
+    let text = super::super::input_safety::sanitize_paste(text);
+    app.input_buf.insert_str(app.cursor, &text);
+    app.cursor += text.len();
+    app.check_cjk();
+    refresh_command_completion(app);
+}
+
 fn accept_selected_completion(app: &mut App) -> bool {
     let Some(selected) = app.completion.selected().map(ToOwned::to_owned) else {
         return false;
@@ -111,6 +121,10 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
     }
     if let Some(detail) = app.detail.as_mut() {
         match key.code {
+            KeyCode::Esc => {
+                app.detail = None;
+                return;
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 detail.scroll_down();
                 return;
@@ -269,35 +283,36 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Alt+Up/Down: navigate the complete tool activity timeline.
+    // Alt+Up/Down: navigate the daemon-projected activity timeline.
     if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Up {
-        app.chat.select_previous_exec();
+        let len = app.app_state.activities.len();
+        app.selected_activity = if len == 0 {
+            None
+        } else {
+            Some(app.selected_activity.unwrap_or(len).saturating_sub(1))
+        };
         return;
     }
     if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Down {
-        app.chat.select_next_exec();
+        let len = app.app_state.activities.len();
+        app.selected_activity = if len == 0 {
+            None
+        } else {
+            Some(
+                app.selected_activity
+                    .map_or(0, |index| index.saturating_add(1).min(len - 1)),
+            )
+        };
         return;
     }
 
-    // Ctrl+B: toggle selected tool card, falling back to the last card.
+    // Ctrl+B: show/hide authoritative activity details, defaulting to the tail.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
-        if app.chat.toggle_selected_exec() {
-            return;
-        }
-        // Iterate entries in reverse, find the last ExecEntry and toggle it
-        let call_id = {
-            let mut found = None;
-            for entry in app.chat.entries.iter().rev() {
-                if let super::super::chat::ChatEntry::Exec(ref ee) = entry {
-                    found = Some(ee.call_id.clone());
-                    break;
-                }
-            }
-            found
+        app.selected_activity = if app.selected_activity.is_some() {
+            None
+        } else {
+            app.app_state.activities.len().checked_sub(1)
         };
-        if let Some(cid) = call_id {
-            app.chat.toggle_exec(&cid);
-        }
         return;
     }
 
@@ -642,5 +657,20 @@ mod tests {
         assert_eq!(app.input_buf, "/memory");
         assert_eq!(app.cursor, app.input_buf.len());
         assert!(!app.completion.visible);
+    }
+
+    #[tokio::test]
+    async fn u_tui_005_cjk_multiline_paste_is_inert_and_submits_once_after_ime_delay() {
+        let mut app = idle_app().await;
+        insert_paste(&mut app, "第一行\n第二行");
+
+        assert_eq!(app.input_buf, "第一行\n第二行");
+        assert_eq!(app.cursor, app.input_buf.len());
+        assert!(app.has_cjk);
+        assert!(app.pending_submit.is_none());
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter)).await;
+        assert!(app.pending_submit.is_some());
+        assert_eq!(app.input_buf, "第一行\n第二行");
     }
 }
