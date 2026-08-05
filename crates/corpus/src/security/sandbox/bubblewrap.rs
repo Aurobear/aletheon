@@ -644,4 +644,54 @@ mod tests {
             .unwrap();
         assert_ne!(blocked.stdout, "DENIED_SECRET");
     }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn configured_profile_allows_only_its_private_temp_root() {
+        let Some(backend) = BubblewrapBackend::probe(Arc::new(TestClock::default())) else {
+            return;
+        };
+        let workspace = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let mut policy = resolved_policy(Vec::new());
+        policy.read_write_roots.push(scratch.path().to_path_buf());
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                workspace.path().to_path_buf(),
+                vec![],
+            )
+            .unwrap(),
+            environment: BTreeMap::from([(
+                "TMPDIR".into(),
+                scratch.path().to_string_lossy().into_owned(),
+            )]),
+            policy: Some(policy),
+        };
+
+        let result = backend
+            .execute(
+                "created=$(mktemp) && printf OK > \"$created\" && printf %s \"$created\"",
+                &config,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        if result.exit_code != 0
+            && result
+                .stderr
+                .to_ascii_lowercase()
+                .contains("operation not permitted")
+        {
+            return;
+        }
+        assert_eq!(
+            result.exit_code, 0,
+            "private temp failed: {}",
+            result.stderr
+        );
+        assert!(result
+            .stdout
+            .starts_with(&scratch.path().to_string_lossy().to_string()));
+        assert_eq!(std::fs::read_to_string(result.stdout).unwrap(), "OK");
+    }
 }

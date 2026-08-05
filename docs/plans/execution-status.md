@@ -435,6 +435,19 @@ BLOCKER: publication/PR/merge intentionally deferred by owner; installed X12 rer
 MERGE_SHA: pending_by_owner
 ```
 
+## XF-005
+
+```text
+STATUS: code_complete
+NODE: XF-005
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Installed artifact `target/xf-005-cargo-diagnostic-20260805-215304/exec.json` proves `cargo test` reaches rustc but fails to create `/tmp/rustc*` because the host `/tmp` is correctly read-only. The repair creates a unique host temporary directory per bash invocation, adds only that path to the resolved sandbox writable roots, exports TMPDIR/TMP/TEMP to it, and retains the TempDir guard through terminal tool execution for automatic cleanup. Environment coverage proves all three variables share the private root and still excludes secrets/wrappers; 9 live bubblewrap tests prove private `mktemp`, configured workspace writes, and deny masking; Corpus all-target clippy `-D warnings`, formatting, docs paths, and diff checks pass.
+FAILURES: installed deployment and real auto-sandbox cargo test remain pending.
+BLOCKER: none
+MERGE_SHA: pending_by_owner
+```
+
 ## X13
 
 ```text

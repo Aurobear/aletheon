@@ -37,12 +37,14 @@ use fabric::{
 /// forwarded.
 fn sandbox_command_environment(
     trusted_working_dir: String,
+    scratch: Option<&std::path::Path>,
 ) -> std::collections::BTreeMap<String, String> {
-    sandbox_command_environment_with(trusted_working_dir, |key| std::env::var(key))
+    sandbox_command_environment_with(trusted_working_dir, scratch, |key| std::env::var(key))
 }
 
 fn sandbox_command_environment_with(
     trusted_working_dir: String,
+    scratch: Option<&std::path::Path>,
     mut read: impl FnMut(&str) -> Result<String, std::env::VarError>,
 ) -> std::collections::BTreeMap<String, String> {
     const PASSTHROUGH: &[&str] = &[
@@ -76,6 +78,14 @@ fn sandbox_command_environment_with(
         ("GIT_CONFIG_KEY_0".to_owned(), "safe.directory".to_owned()),
         ("GIT_CONFIG_VALUE_0".to_owned(), trusted_working_dir),
     ]);
+    if let Some(scratch) = scratch {
+        let scratch = scratch.to_string_lossy().into_owned();
+        environment.extend([
+            ("TMPDIR".to_owned(), scratch.clone()),
+            ("TMP".to_owned(), scratch.clone()),
+            ("TEMP".to_owned(), scratch),
+        ]);
+    }
     environment
 }
 
@@ -822,9 +832,29 @@ impl ToolRunnerWithGuard {
                     }
                 }
 
+                let sandbox_scratch = if tool_name == "bash_exec" {
+                    Some(
+                        tempfile::Builder::new()
+                            .prefix("aletheon-sandbox-")
+                            .tempdir()
+                            .map_err(|error| {
+                                ToolError::ExecutionFailed(format!(
+                                    "could not create private sandbox scratch: {error}"
+                                ))
+                            })?,
+                    )
+                } else {
+                    None
+                };
+                if let (Some(policy), Some(scratch)) = (policy.as_mut(), sandbox_scratch.as_ref()) {
+                    policy.read_write_roots.push(scratch.path().to_path_buf());
+                }
                 let sandbox_config = SandboxConfig {
                     workspace,
-                    environment: sandbox_command_environment(trusted_working_dir),
+                    environment: sandbox_command_environment(
+                        trusted_working_dir,
+                        sandbox_scratch.as_ref().map(tempfile::TempDir::path),
+                    ),
                     policy,
                 };
 
@@ -1211,17 +1241,24 @@ mod tests {
             ("DEEPSEEK_API_KEY", "secret"),
             ("RUSTC_WRAPPER", "/tmp/injector"),
         ]);
-        let environment = sandbox_command_environment_with("/work".into(), |key| {
-            source
-                .get(key)
-                .map(|value| (*value).to_owned())
-                .ok_or(std::env::VarError::NotPresent)
-        });
+        let environment = sandbox_command_environment_with(
+            "/work".into(),
+            Some(std::path::Path::new("/scratch")),
+            |key| {
+                source
+                    .get(key)
+                    .map(|value| (*value).to_owned())
+                    .ok_or(std::env::VarError::NotPresent)
+            },
+        );
 
         assert_eq!(environment["PATH"], "/home/dev/.cargo/bin:/usr/bin");
         assert_eq!(environment["CARGO_HOME"], "/home/dev/.cargo");
         assert_eq!(environment["RUSTUP_HOME"], "/home/dev/.rustup");
         assert_eq!(environment["GIT_CONFIG_VALUE_0"], "/work");
+        assert_eq!(environment["TMPDIR"], "/scratch");
+        assert_eq!(environment["TMP"], "/scratch");
+        assert_eq!(environment["TEMP"], "/scratch");
         assert!(!environment.contains_key("DEEPSEEK_API_KEY"));
         assert!(!environment.contains_key("RUSTC_WRAPPER"));
     }
