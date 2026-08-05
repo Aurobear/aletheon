@@ -321,11 +321,11 @@ MERGE_SHA: pending
 ## X9b
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X9b
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
+BASE / BRANCH / PR / GOAL_ID: 2ad35cd89aa879cdf73867912f7122eddd99037b / auro/feat/20260805-x9b-runtime-reconciliation / #175 / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: host-derived terminal receipts are persisted before lifecycle settlement; startup reconciliation prefers an immutable receipt when Kernel state is ambiguous; duplicate writes are idempotent and conflicting receipts fail closed. Agent recovery integration tests (4), full Executive lib tests (711), Executive Clippy -D warnings, formatting, diff and architecture gates pass locally. Installed deployment and aggregate runtime evidence remain owned by X12; PR #175 pending.
 FAILURES: none
 BLOCKER: none
 MERGE_SHA: pending
