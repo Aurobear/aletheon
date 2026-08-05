@@ -1,0 +1,13 @@
+schema_version = 1
+id = "retry_backoff"
+category = "diagnosis"
+fixture = "retry_backoff"
+prompt = "Align retry backoff with the documented linear schedule and cap it at 1000ms."
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

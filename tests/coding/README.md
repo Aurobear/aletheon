@@ -12,7 +12,7 @@ strict task catalog
   -> sealed deterministic suite report
 ```
 
-- `fixtures/` contains ten independent miniature repositories; they are not
+- `fixtures/` contains twenty independent miniature repositories; they are not
   workspace crates.
 - `tasks/` contains strict version-1 TOML contracts for ten distinct scenario
   categories.
@@ -36,7 +36,7 @@ Run the secret-free contract suite with:
 bash tests/coding/static_test.sh
 ```
 
-It validates all ten task documents plus runner, receipt, aggregation, and
+It validates all twenty task documents plus runner, receipt, aggregation, and
 workflow contracts. Fixture Cargo commands are always routed through
 `scripts/cargo-agent.sh`; do not invoke Cargo directly.
 

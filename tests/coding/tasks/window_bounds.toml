@@ -1,0 +1,13 @@
+schema_version = 1
+id = "window_bounds"
+category = "behavioral_bugfix"
+fixture = "window_bounds"
+prompt = "Return the requested inclusive window without dropping the final element."
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

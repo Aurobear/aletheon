@@ -1,0 +1,13 @@
+schema_version = 1
+id = "error_classification"
+category = "diagnosis"
+fixture = "error_classification"
+prompt = "Classify empty input as invalid rather than transient and keep valid input successful."
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

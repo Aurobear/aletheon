@@ -1,0 +1,13 @@
+schema_version = 1
+id = "csv_fields"
+category = "multifile_change"
+fixture = "csv_fields"
+prompt = "Parse comma-separated fields by trimming whitespace, preserving order, and rejecting empty fields."
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

@@ -19,19 +19,14 @@ from contracts import CATEGORIES, load_catalog
 
 tasks = load_catalog(sorted((root / "tests/coding/tasks").glob("*.toml")), root)
 expected = {
-    "approval_blocked_patch",
-    "budget_exhaustion",
-    "clippy_cleanup",
-    "config_schema_sync",
-    "dirty_workspace_preservation",
-    "rust_bugfix",
-    "rust_diagnosis",
-    "rust_multifile",
-    "rust_regression_test",
-    "rustdoc_contract",
+    "approval_blocked_patch", "budget_exhaustion", "clippy_cleanup",
+    "config_schema_sync", "dirty_workspace_preservation", "rust_bugfix",
+    "rust_diagnosis", "rust_multifile", "rust_regression_test", "rustdoc_contract",
+    "option_default", "retry_backoff", "csv_fields", "saturating_sum", "state_transition",
+    "path_normalize", "error_classification", "window_bounds", "canonical_key", "timeout_default",
 }
 assert {task.id for task in tasks} == expected
-assert len(tasks) == len(CATEGORIES) == 10
+assert len(tasks) == 20
 assert {task.category for task in tasks} == CATEGORIES
 for task in tasks:
     fixture = root / "tests/coding/fixtures" / task.fixture

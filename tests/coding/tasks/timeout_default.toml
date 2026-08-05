@@ -1,0 +1,13 @@
+schema_version = 1
+id = "timeout_default"
+category = "config_schema"
+fixture = "timeout_default"
+prompt = "Use a 30000ms timeout when configured timeout is zero, otherwise preserve the value."
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]
