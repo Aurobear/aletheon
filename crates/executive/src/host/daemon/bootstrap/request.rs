@@ -884,7 +884,7 @@ impl RequestHandler {
             session_approvals,
         };
         let corpus_group = crate::core::CorpusGroup {
-            tools,
+            tools: tools.clone(),
             hook_registry,
         };
         let corpus_executor = Arc::new(corpus::CorpusToolExecutor::new(
@@ -1524,7 +1524,7 @@ impl RequestHandler {
             turn_use_cases,
             evaluation_service,
             turn_svc.workspace_checkpoint,
-            super::services::build_transaction_review_service(&tools, &data_dir)?,
+            super::services::build_transaction_review_service(&tools, &data_dir).await?,
             session_input,
             conscious_registry,
             debug_handler,

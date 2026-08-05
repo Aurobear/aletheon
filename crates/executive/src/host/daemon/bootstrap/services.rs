@@ -38,11 +38,13 @@ impl CorpusChangeTransactionAuthority {
     }
 }
 
-pub(super) fn build_transaction_review_service(
-    tools: &corpus::tools::tools::ToolRegistry,
+pub(super) async fn build_transaction_review_service(
+    tools: &Arc<Mutex<corpus::tools::tools::ToolRegistry>>,
     data_dir: &std::path::Path,
 ) -> anyhow::Result<Arc<crate::application::settlement::TransactionReviewService>> {
     let registry = tools
+        .lock()
+        .await
         .change_transactions()
         .context("built-in tool registry lacks change transaction authority")?;
     Ok(Arc::new(crate::application::settlement::TransactionReviewService::new(

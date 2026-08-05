@@ -213,10 +213,10 @@ impl ToolEventSink {
     where
         E: std::fmt::Display,
     {
-        let terminal = result
-            .as_ref()
-            .map(Clone::clone)
-            .map_err(|error| ToolExecutionError::Failed(error.to_string()));
+        let terminal = match result {
+            Ok(value) => Ok(value.clone()),
+            Err(error) => Err(ToolExecutionError::Failed(error.to_string())),
+        };
         self.settle_deferred_terminal(terminal).await;
     }
 

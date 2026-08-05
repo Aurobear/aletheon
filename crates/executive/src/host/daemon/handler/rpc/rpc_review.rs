@@ -147,6 +147,20 @@ impl RequestHandler {
                 crate::application::settlement::TransactionReviewAction::Rollback
             }
         };
+        // Review findings come from the canonical daemon-owned Session/Task
+        // projection. The client may choose an action, but it cannot omit,
+        // resolve, or forge findings to influence Host settlement.
+        let findings = match self
+            .protocol_read_snapshot(&fabric::SessionId(params.session_id.clone()))
+            .await
+        {
+            Ok(snapshot) => snapshot
+                .tasks
+                .into_iter()
+                .flat_map(|task| task.review_findings)
+                .collect::<Vec<_>>(),
+            Err(error) => return rpc_error(id, SERVICE_ERROR, error.to_string()),
+        };
         match self
             .ports
             .transaction_review
@@ -155,7 +169,7 @@ impl RequestHandler {
                 transaction_id,
                 &params.session_id,
                 settings.workspace.cwd(),
-                &[],
+                &findings,
                 params.risk_acknowledged,
             )
             .await
