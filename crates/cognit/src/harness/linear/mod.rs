@@ -565,7 +565,6 @@ mod tests {
     use fabric::ToolDefinition;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
-
     /// No-op compressor for tests that don't exercise compaction.
     struct NoopCompressor;
     impl CompactorTrait for NoopCompressor {
@@ -584,7 +583,6 @@ mod tests {
             Box::pin(async { Ok(false) })
         }
     }
-
     /// Counts which compaction entry point the harness invoked, to prove the
     /// `compaction_v2` flag routes correctly.
     struct RecordingCompressor {
@@ -627,7 +625,6 @@ mod tests {
             })
         }
     }
-
     #[tokio::test]
     async fn compaction_v2_flag_routes_to_v2_path() {
         let v2 = Arc::new(AtomicUsize::new(0));
@@ -653,7 +650,6 @@ mod tests {
         assert_eq!(v2.load(Ordering::SeqCst), 1, "v2 path should be taken");
         assert_eq!(legacy.load(Ordering::SeqCst), 0, "legacy must not run");
     }
-
     #[tokio::test]
     async fn compaction_uses_legacy_path_when_flag_off() {
         let v2 = Arc::new(AtomicUsize::new(0));
@@ -858,7 +854,33 @@ mod tests {
             _m: &[Message],
             _t: &[ToolDefinition],
         ) -> anyhow::Result<LlmStream> {
-            unimplemented!("not used in test")
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            let chunks = if *n == 1 {
+                vec![
+                    Ok(StreamChunk::ToolUseStart {
+                        id: "call_1".into(),
+                        name: "echo_tool".into(),
+                    }),
+                    Ok(StreamChunk::ToolUseComplete {
+                        id: "call_1".into(),
+                        input: serde_json::json!({"text": "hi"}),
+                    }),
+                    Ok(StreamChunk::Done {
+                        stop_reason: StopReason::ToolUse,
+                    }),
+                ]
+            } else {
+                vec![
+                    Ok(StreamChunk::TextDelta {
+                        text: "done: hi".into(),
+                    }),
+                    Ok(StreamChunk::Done {
+                        stop_reason: StopReason::EndTurn,
+                    }),
+                ]
+            };
+            Ok(Box::pin(futures::stream::iter(chunks)))
         }
 
         fn name(&self) -> &str {
@@ -1689,7 +1711,7 @@ mod tests {
                 &llm,
                 &[],
                 |_id: &str, _name: &str, _input: &serde_json::Value| async {
-                    unreachable!("no tool calls expected")
+                    ("unexpected tool call".into(), true)
                 },
                 || async { Ok(Vec::new()) },
                 &sink,
@@ -1849,7 +1871,7 @@ mod tests {
                 &llm,
                 &[],
                 |_id: &str, _name: &str, _input: &serde_json::Value| async {
-                    unreachable!("model never requested a tool")
+                    ("unexpected tool call".into(), true)
                 },
             )
             .await

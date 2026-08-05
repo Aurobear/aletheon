@@ -20,7 +20,7 @@ use tracing::{debug, warn};
 impl ReActLoop {
     /// Streaming variant of `run()`. Uses `llm.complete_stream()` instead of
     /// `llm.complete()` and emits granular events through `event_sink`.
-    pub async fn run_streaming<L, F, Fut, D, DFut>(
+    pub async fn run_streaming<L, F, Fut, O, D, DFut>(
         &mut self,
         llm: &L,
         tool_defs: &[ToolDefinition],
@@ -31,7 +31,8 @@ impl ReActLoop {
     where
         L: LlmProvider,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
-        Fut: Future<Output = (String, bool)>,
+        Fut: Future<Output = O>,
+        O: Into<ToolResultEvent>,
         D: Fn() -> DFut,
         DFut: Future<Output = anyhow::Result<Vec<String>>>,
     {
@@ -487,7 +488,9 @@ impl ReActLoop {
                     args: input.clone(),
                 });
 
-                let (content, is_error) = execute_tool(id, name, input).await;
+                let tool_result: ToolResultEvent = execute_tool(id, name, input).await.into();
+                let content = tool_result.content.clone();
+                let is_error = tool_result.is_error;
 
                 self.evidence_ledger.record(EvidenceRecord {
                     id: EvidenceId(format!("tool:{id}")),
@@ -537,12 +540,7 @@ impl ReActLoop {
                 event_sink.emit(Event::ToolResult {
                     name: name.clone(),
                     call_id: id.clone(),
-                    result: ToolResultEvent {
-                        content: content.clone(),
-                        is_error,
-                        execution_time_ms: 0,
-                        patch_delta: None,
-                    },
+                    result: tool_result,
                 });
 
                 tool_calls_made += 1;

@@ -36,13 +36,14 @@ pub struct DaemonStreamingTurnContext<F> {
 }
 
 /// Submit one daemon turn through Cognit's authoritative session facade.
-pub async fn submit_streaming_daemon_turn<F, Fut>(
+pub async fn submit_streaming_daemon_turn<F, Fut, O>(
     request: TurnRequest,
     context: DaemonStreamingTurnContext<F>,
 ) -> anyhow::Result<TurnResult>
 where
     F: Fn(&str, &str, &serde_json::Value) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = (String, bool)> + Send + 'static,
+    Fut: Future<Output = O> + Send + 'static,
+    O: Into<cognit::harness::event_sink::ToolResultEvent> + Send + 'static,
 {
     let DaemonStreamingTurnContext {
         config,
@@ -122,10 +123,11 @@ struct DaemonTurnServices<F> {
 }
 
 #[async_trait]
-impl<F, Fut> TurnServices for DaemonTurnServices<F>
+impl<F, Fut, O> TurnServices for DaemonTurnServices<F>
 where
     F: Fn(&str, &str, &serde_json::Value) -> Fut + Send + Sync,
-    Fut: Future<Output = (String, bool)> + Send,
+    Fut: Future<Output = O> + Send,
+    O: Into<cognit::harness::event_sink::ToolResultEvent> + Send,
 {
     async fn recall(&self, _request: RecallRequest) -> anyhow::Result<RecallSet> {
         Ok(RecallSet::default())
@@ -142,14 +144,20 @@ where
     }
 
     async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
-        let (output, is_error) = (self.execute_tool)(&call.call_id, &call.name, &call.input).await;
+        let result: cognit::harness::event_sink::ToolResultEvent =
+            (self.execute_tool)(&call.call_id, &call.name, &call.input)
+                .await
+                .into();
         CapabilityResult {
             call_id: call.call_id,
-            output,
-            is_error,
-            usage: fabric::UsageReport::default(),
+            output: result.content,
+            is_error: result.is_error,
+            usage: fabric::UsageReport {
+                wall_time_ms: result.execution_time_ms,
+                ..Default::default()
+            },
             audit_id: None,
-            patch_delta: None,
+            patch_delta: result.patch_delta,
             served_from_cache: false,
         }
     }

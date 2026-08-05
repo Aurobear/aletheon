@@ -963,7 +963,12 @@ impl CognitiveSession for LinearCognitiveSession {
                 };
                 async move {
                     let result = invoke_with_terminal_receipt(services, call, clock.as_ref()).await;
-                    (result.output, result.is_error)
+                    crate::harness::event_sink::ToolResultEvent {
+                        content: result.output,
+                        is_error: result.is_error,
+                        execution_time_ms: result.usage.wall_time_ms,
+                        patch_delta: result.patch_delta,
+                    }
                 }
             },
             || services.drain_interjections(),

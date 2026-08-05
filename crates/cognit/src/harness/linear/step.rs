@@ -95,7 +95,7 @@ impl ReActLoop {
     /// Non-streaming compatibility adapter over the authoritative event-driven
     /// loop. The provider may still stream internally; this caller simply
     /// collects the terminal event and returns the same outcome.
-    pub async fn run<L, F, Fut>(
+    pub async fn run<L, F, Fut, O>(
         &mut self,
         user_input: &str,
         llm: &L,
@@ -105,7 +105,8 @@ impl ReActLoop {
     where
         L: LlmProvider,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
-        Fut: Future<Output = (String, bool)>,
+        Fut: Future<Output = O>,
+        O: Into<crate::harness::event_sink::ToolResultEvent>,
     {
         let dasein_context = self
             .dasein_ctx_provider

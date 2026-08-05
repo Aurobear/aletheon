@@ -32,6 +32,15 @@ enum InitialRequest {
     Projection(ClientRequest),
 }
 
+fn scripted_followup_ready(
+    initial_submit_pending: bool,
+    submitted_script_line: bool,
+    turn_active: bool,
+    streaming: bool,
+) -> bool {
+    !initial_submit_pending && !submitted_script_line && !turn_active && !streaming
+}
+
 fn initial_session_request(
     initial_session: crate::host::InitialSession,
 ) -> (InitialRequest, super::super::PendingCommand) {
@@ -244,7 +253,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             // event arrives. Treat that transport state as in-flight too, or
             // test mode can consume every scripted line and exit before the
             // daemon has admitted the first turn.
-            if !submitted_script_line && !app.turn_active && !app.streaming {
+            if scripted_followup_ready(
+                initial_test_submit_pending,
+                submitted_script_line,
+                app.turn_active,
+                app.streaming,
+            ) {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
                     ClientTimer.sleep(Duration::from_millis(100)).await;
@@ -698,5 +712,14 @@ mod tests {
             };
             assert_eq!(wire["method"], method);
         }
+    }
+
+    #[test]
+    fn scripted_prompt_waits_for_initial_session_projection() {
+        assert!(!scripted_followup_ready(true, false, false, false));
+        assert!(!scripted_followup_ready(false, true, false, false));
+        assert!(!scripted_followup_ready(false, false, true, false));
+        assert!(!scripted_followup_ready(false, false, false, true));
+        assert!(scripted_followup_ready(false, false, false, false));
     }
 }
