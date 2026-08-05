@@ -234,6 +234,52 @@ pub async fn submit_message(app: &mut App, text: String) {
                 .await;
                 return;
             }
+            Some(CommandType::Builtin(BuiltinCommand::Rewind { prompt_index })) => {
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "当前会话尚未初始化，无法恢复工作区检查点".to_string(),
+                    );
+                    return;
+                };
+                if prompt_index.trim().is_empty() {
+                    let request_id =
+                        write_request(app, ClientRpcRequest::checkpoint_list(session_id, 64)).await;
+                    app.pending_commands.insert(
+                        request_id,
+                        super::super::PendingCommand::OpenCheckpointPicker,
+                    );
+                    app.pending_non_turn.insert(request_id);
+                    app.streaming = true;
+                    app.status.waiting = true;
+                    app.chat
+                        .add_text(ChatRole::System, "查询工作区检查点中…".to_string());
+                    return;
+                }
+                let Ok(prompt_index) = prompt_index.parse::<u64>() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "用法：/rewind <prompt-index>（必须使用 daemon 提供的检查点索引）"
+                            .to_string(),
+                    );
+                    return;
+                };
+                send_request(
+                    app,
+                    ClientRpcRequest::WorkspaceRewind(
+                        fabric::protocol::client::WorkspaceRewindParams {
+                            session_id: fabric::SessionId(session_id),
+                            prompt_index,
+                        },
+                    ),
+                )
+                .await;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("请求恢复工作区检查点 {prompt_index}…"),
+                );
+                return;
+            }
             Some(CommandType::Builtin(BuiltinCommand::Permissions)) => {
                 app.chat.add_text(
                     ChatRole::System,

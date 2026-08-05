@@ -557,6 +557,23 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                     .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
             }
         }
+        (super::PendingCommand::OpenCheckpointPicker, Some(result), None) => {
+            match serde_json::from_value::<fabric::CheckpointListSnapshot>(result.clone()) {
+                Ok(snapshot) => {
+                    match super::checkpoint_picker::CheckpointPicker::from_snapshot(snapshot) {
+                        Ok(picker) => app.checkpoint_picker = Some(picker),
+                        Err(error) => app.chat.add_text(
+                            ChatRole::System,
+                            format!("无法打开工作区检查点列表：{error}"),
+                        ),
+                    }
+                }
+                Err(error) => app.chat.add_text(
+                    ChatRole::System,
+                    format!("无法读取工作区检查点列表：{error}"),
+                ),
+            }
+        }
         (super::PendingCommand::ProjectionSnapshot { session_id }, Some(result), None) => {
             match serde_json::from_value::<
                 fabric::protocol::client::ClientMessage<

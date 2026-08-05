@@ -33,12 +33,13 @@ pub mod security;
 pub mod types;
 
 pub use protocol::client::{
-    ActivityKind, ActivitySnapshot, ActivityState, CheckpointMutationCoverage,
-    CheckpointReviewSettlement, CheckpointReviewSnapshot, CheckpointRollbackAction,
-    ClientEvent as ProtocolClientEvent, ClientMessage, ClientRequest, EventCursor,
-    EventSubscription, SessionEventPage, SessionListSnapshot, SessionReadSnapshot, SnapshotRequest,
-    TaskPhase, TaskRuntimeFacts, TaskSettlement, TaskSnapshot, TaskStepSnapshot, UiSnapshot,
-    CLIENT_PROTOCOL_VERSION, SESSION_READ_MODEL_SCHEMA_VERSION,
+    ActivityKind, ActivitySnapshot, ActivityState, CheckpointListEntry, CheckpointListSnapshot,
+    CheckpointMutationCoverage, CheckpointReviewSettlement, CheckpointReviewSnapshot,
+    CheckpointRollbackAction, ClientEvent as ProtocolClientEvent, ClientMessage, ClientRequest,
+    EventCursor, EventSubscription, SessionEventPage, SessionListSnapshot, SessionReadSnapshot,
+    SnapshotRequest, TaskPhase, TaskRuntimeFacts, TaskSettlement, TaskSnapshot, TaskStepSnapshot,
+    UiSnapshot, CHECKPOINT_LIST_SCHEMA_VERSION, CLIENT_PROTOCOL_VERSION,
+    SESSION_READ_MODEL_SCHEMA_VERSION,
 };
 
 // === Backward-compatible module re-exports ===

@@ -56,6 +56,7 @@ pub enum ClientRpcRequest {
     SessionLoadPrevious(SessionParams),
     ApprovalResponse(ApprovalResponseParams),
     DiffArtifactGet(DiffArtifactGetParams),
+    CheckpointList(CheckpointListParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
     MemorySearch(MemorySearchParams),
@@ -94,6 +95,9 @@ pub enum ClientRpcRequest {
     DebugLogSubscribe(DebugLogSubscribeParams),
     SessionResume(ResumeParams),
     SessionFork(SessionForkParams),
+    /// Restore a host-owned workspace checkpoint identified by logical prompt
+    /// index. Paths and checkpoint blobs are intentionally not client inputs.
+    WorkspaceRewind(WorkspaceRewindParams),
     SessionInterrupt(SessionInterruptParams),
     SessionReplay(SessionReplayParams),
     ExtensionInstall(ExtensionPackagePathRequestV1),
@@ -178,6 +182,13 @@ pub struct SessionForkParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct WorkspaceRewindParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub prompt_index: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SessionInterruptParams {
     #[schemars(with = "String")]
     pub session_id: SessionId,
@@ -253,6 +264,12 @@ pub struct DiffArtifactGetParams {
     pub sha256: String,
     pub offset: u64,
     pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointListParams {
+    pub session_id: String,
+    pub limit: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -551,6 +568,13 @@ impl ClientRpcRequest {
         })
     }
 
+    pub fn checkpoint_list(session_id: impl Into<String>, limit: usize) -> Self {
+        Self::CheckpointList(CheckpointListParams {
+            session_id: session_id.into(),
+            limit,
+        })
+    }
+
     pub fn memory_add(
         content: impl Into<String>,
         scope: impl Into<String>,
@@ -727,6 +751,9 @@ impl ClientRpcRequest {
             Self::DiffArtifactGet(params) => {
                 ("diff_artifact.get", Some(serde_json::to_value(params)?))
             }
+            Self::CheckpointList(params) => {
+                ("checkpoint.list/v1", Some(serde_json::to_value(params)?))
+            }
             Self::MemoryAdd(params) => ("memory.add", Some(serde_json::to_value(params)?)),
             Self::MemoryList(params) => ("memory.list", Some(serde_json::to_value(params)?)),
             Self::MemorySearch(params) => ("memory.search", Some(serde_json::to_value(params)?)),
@@ -775,6 +802,9 @@ impl ClientRpcRequest {
             }
             Self::SessionResume(params) => ("session.resume", Some(serde_json::to_value(params)?)),
             Self::SessionFork(params) => ("session.fork", Some(serde_json::to_value(params)?)),
+            Self::WorkspaceRewind(params) => {
+                ("workspace.rewind", Some(serde_json::to_value(params)?))
+            }
             Self::SessionInterrupt(params) => {
                 ("session.interrupt", Some(serde_json::to_value(params)?))
             }
@@ -1180,6 +1210,24 @@ pub struct CheckpointReviewSnapshot {
     pub recovery_evidence: Vec<String>,
 }
 
+pub const CHECKPOINT_LIST_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointListEntry {
+    pub checkpoint_id: String,
+    pub turn_id: String,
+    pub prompt_index: u64,
+    pub created_at_ms: i64,
+    pub finalized: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointListSnapshot {
+    pub schema_version: u16,
+    pub session_id: String,
+    pub checkpoints: Vec<CheckpointListEntry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TaskStepSnapshot {
     pub step_id: String,
@@ -1558,5 +1606,20 @@ mod request_tests {
             .unwrap();
         assert_eq!(list["method"], "evaluation.list");
         assert_eq!(list["params"]["limit"], 100);
+    }
+
+    #[test]
+    fn workspace_rewind_serializes_only_host_bound_identity() {
+        let request = ClientRpcRequest::WorkspaceRewind(WorkspaceRewindParams {
+            session_id: SessionId("session-a".into()),
+            prompt_index: 7,
+        })
+        .to_json_rpc(Some(12))
+        .unwrap();
+        assert_eq!(request["method"], "workspace.rewind");
+        assert_eq!(request["params"]["session_id"], "session-a");
+        assert_eq!(request["params"]["prompt_index"], 7);
+        assert!(request["params"].get("working_dir").is_none());
+        assert!(request["params"].get("checkpoint_blob").is_none());
     }
 }

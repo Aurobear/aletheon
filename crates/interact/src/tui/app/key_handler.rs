@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
 use super::super::chat::{ChatWidget, Role as ChatRole};
+use super::super::checkpoint_picker::CheckpointPickerAction;
 use super::super::session_picker::SessionPickerAction;
 use super::super::App;
 use super::submit::{submit_message, write_protocol_request, write_request};
@@ -110,6 +111,38 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.projection_request_in_flight = true;
                 app.chat
                     .add_text(ChatRole::System, format!("恢复会话 {session_id}..."));
+            }
+        }
+        return;
+    }
+
+    if let Some(mut picker) = app.checkpoint_picker.take() {
+        match picker.handle_key(key) {
+            CheckpointPickerAction::Continue => app.checkpoint_picker = Some(picker),
+            CheckpointPickerAction::Close => {}
+            CheckpointPickerAction::Rewind(prompt_index) => {
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat
+                        .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+                    return;
+                };
+                let request_id = write_request(
+                    app,
+                    ClientRpcRequest::WorkspaceRewind(
+                        fabric::protocol::client::WorkspaceRewindParams {
+                            session_id: fabric::SessionId(session_id),
+                            prompt_index,
+                        },
+                    ),
+                )
+                .await;
+                app.pending_non_turn.insert(request_id);
+                app.streaming = true;
+                app.status.waiting = true;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("请求恢复工作区检查点 {prompt_index}…"),
+                );
             }
         }
         return;

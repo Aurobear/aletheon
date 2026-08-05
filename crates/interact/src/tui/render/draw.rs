@@ -30,6 +30,7 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
 
     let pager_ref = &app.pager;
     let session_picker_ref = &app.session_picker;
+    let checkpoint_picker_ref = &app.checkpoint_picker;
     let history_search_ref = &app.history_search;
 
     terminal.draw(|f| {
@@ -43,6 +44,12 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
             return;
         }
         if let Some(ref picker) = session_picker_ref {
+            let mut picker_buf = ratatui::buffer::Buffer::empty(size);
+            picker.render(size, &mut picker_buf);
+            f.buffer_mut().merge(&picker_buf);
+            return;
+        }
+        if let Some(ref picker) = checkpoint_picker_ref {
             let mut picker_buf = ratatui::buffer::Buffer::empty(size);
             picker.render(size, &mut picker_buf);
             f.buffer_mut().merge(&picker_buf);

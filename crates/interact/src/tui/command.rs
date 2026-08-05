@@ -15,6 +15,9 @@ pub enum BuiltinCommand {
         id: String,
     },
     Fork,
+    Rewind {
+        prompt_index: String,
+    },
     Compact,
     Model,
     Permissions,
@@ -256,6 +259,15 @@ mod tests {
         assert!(matches!(
             result,
             CommandType::Builtin(BuiltinCommand::Compact)
+        ));
+    }
+
+    #[test]
+    fn test_parse_rewind_requires_host_checkpoint_index_argument() {
+        assert!(matches!(
+            parse_command("/rewind 7"),
+            Some(CommandType::Builtin(BuiltinCommand::Rewind { prompt_index }))
+                if prompt_index == "7"
         ));
     }
 

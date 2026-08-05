@@ -226,6 +226,8 @@ pub(super) struct TurnServices {
     pub approved_apply: Option<Arc<crate::application::approval::ApplyCoordinator>>,
     pub lifecycle_registry: Arc<crate::application::lifecycle_contributors::LifecycleRegistry>,
     pub evaluation_service: Arc<crate::application::evaluation::EvaluationService>,
+    pub workspace_checkpoint:
+        Arc<crate::application::workspace_checkpoint::WorkspaceCheckpointService>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -571,5 +573,6 @@ pub(super) async fn build_turn_services(
         approved_apply,
         lifecycle_registry,
         evaluation_service,
+        workspace_checkpoint,
     })
 }

@@ -273,8 +273,8 @@ STATUS: in_progress
 NODE: X8b
 BASE / BRANCH / PR / GOAL_ID: abc6a5c8 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TUI DiffView now projects canonical PatchDelta file changes, diff preview, mutation coverage, rollback availability and partial/conflicted evidence; j/k file picker and Ctrl+D or /diff open the review surface. CheckpointReviewSnapshot carries the deterministic TurnCheckpointProjection fields without becoming a persistence authority. U-CHK-001/U-CHK-002, U-CHK-005/U-CHK-006 and architecture acceptance pass.
-FAILURES: Accept/Repair/Rollback application actions, /rewind checkpoint picker, fork-only versus fork-and-rewind choice, and installed PTY/deployment evidence remain open
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: TUI DiffView now projects canonical PatchDelta file changes, diff preview, mutation coverage, rollback availability and partial/conflicted evidence; j/k file picker and Ctrl+D or /diff open the review surface. CheckpointReviewSnapshot carries the deterministic TurnCheckpointProjection fields without becoming a persistence authority. Host-verified checkpoint listing is now available through checkpoint.list/v1; /rewind opens a daemon-backed checkpoint picker, and an explicit prompt index uses workspace.rewind without accepting paths or checkpoint blobs. U-CHK-001/U-CHK-002, U-CHK-005/U-CHK-006, protocol/Executive/Interact focused tests and architecture acceptance pass.
+FAILURES: Accept/Repair/Rollback application actions, fork-only versus fork-and-rewind choice, installed PTY/deployment evidence, PR/CI/merge and aggregate runtime verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```

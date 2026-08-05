@@ -1207,6 +1207,7 @@ impl RequestHandler {
         let approved_apply = turn_svc.approved_apply;
         let lifecycle_registry = turn_svc.lifecycle_registry;
         let evaluation_service = turn_svc.evaluation_service;
+        let workspace_checkpoint = turn_svc.workspace_checkpoint;
 
         let _turn_orch_for_telegram = turn_orchestrator.clone();
         let _cancel_for_telegram = cancel_token.clone();
@@ -1523,6 +1524,7 @@ impl RequestHandler {
             workflow_use_cases,
             turn_use_cases,
             evaluation_service,
+            workspace_checkpoint,
             session_input,
             conscious_registry,
             debug_handler,

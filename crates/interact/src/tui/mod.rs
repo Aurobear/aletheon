@@ -12,6 +12,7 @@ pub mod activity_detail;
 pub mod approval_dialog;
 pub mod awareness;
 pub mod chat;
+pub mod checkpoint_picker;
 pub mod command;
 pub mod completion;
 pub mod conscious_core;
@@ -372,6 +373,8 @@ struct App {
     pager: Option<pager::PagerOverlay>,
     /// Canonical session list with keyboard navigation and resume action.
     session_picker: Option<session_picker::SessionPicker>,
+    /// Local selection cursor over the daemon-owned checkpoint list.
+    checkpoint_picker: Option<checkpoint_picker::CheckpointPicker>,
     /// Frame counter for spinner animation.
     frame_counter: u64,
     /// Centralized application state (mode, awareness, context).
@@ -453,6 +456,7 @@ impl App {
             completion: CompletionPopup::new(),
             pager: None,
             session_picker: None,
+            checkpoint_picker: None,
             frame_counter: 0,
             app_state,
             plan_view: PlanViewState::default(),
@@ -494,6 +498,7 @@ enum PendingCommand {
     InitializeSkills,
     NewSession { clear_screen: bool },
     OpenSessionPicker,
+    OpenCheckpointPicker,
     ProjectionSnapshot { session_id: String },
     ProjectionEvents { session_id: String },
 }

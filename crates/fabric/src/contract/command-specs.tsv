@@ -43,6 +43,7 @@ tui.compact	tui	-	compact	cmp	压缩上下文	会话	/compact	compatibility	idle
 tui.sessions	tui	-	sessions	sess	列出历史会话	会话	/sessions	compatibility	always	public	-
 tui.resume	tui	-	resume	-	选择历史会话，或按 ID 恢复	会话	/resume <id>	compatibility	idle_only	public	-
 tui.fork	tui	-	fork	-	从当前会话创建分支	会话	/fork	compatibility	idle_only	public	-
+tui.rewind	tui	-	rewind	-	恢复主机管理的工作区检查点	会话	/rewind <prompt-index>	compatibility	idle_only	public	-
 tui.model	tui	-	model	m	查询或切换模型	会话	/model	compatibility	always	public	-
 tui.permissions	tui	-	permissions	-	查看权限与审批策略	会话	/permissions	local	always	public	-
 tui.context	tui	-	context	ctx	显示当前上下文信息	会话	/context	local	always	public	-

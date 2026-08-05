@@ -222,6 +222,87 @@ impl RequestHandler {
         }
     }
 
+    /// Return a bounded, host-verified checkpoint index for the authenticated
+    /// session. The client receives logical identifiers only; filesystem
+    /// snapshots and workspace paths remain inside the checkpoint service.
+    pub(super) async fn handle_checkpoint_list(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let session_id = request["params"]
+            .get("session_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty());
+        let Some(session_id) = session_id else {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": "session_id is required" }
+            });
+        };
+        let limit = request["params"]
+            .get("limit")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(64) as usize;
+        if !(1..=256).contains(&limit) {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": "limit must be between 1 and 256" }
+            });
+        }
+        let authority_key = crate::application::thread_authority::ThreadAuthorityKey::new(
+            connection.principal_id.clone(),
+            fabric::ThreadId(session_id.to_owned()),
+        );
+        match self.thread_authority.get(&authority_key) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32044, "message": "no host-bound workspace authority for session" }
+                });
+            }
+            Err(error) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32603, "message": error.to_string() }
+                });
+            }
+        }
+        match self
+            .ports
+            .workspace_checkpoint
+            .list_session_checkpoints(session_id, limit)
+            .await
+        {
+            Ok(checkpoints) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "schema_version": fabric::CHECKPOINT_LIST_SCHEMA_VERSION,
+                    "session_id": session_id,
+                    "checkpoints": checkpoints.into_iter().map(|checkpoint| json!({
+                        "checkpoint_id": checkpoint.checkpoint_id.0.to_string(),
+                        "turn_id": checkpoint.turn_id,
+                        "prompt_index": checkpoint.prompt_index,
+                        "created_at_ms": checkpoint.created_at_ms,
+                        "finalized": matches!(checkpoint.finalize_state, fabric::types::workspace_checkpoint::CheckpointFinalizeState::Finalized),
+                    })).collect::<Vec<_>>(),
+                }
+            }),
+            Err(error) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32043, "message": "checkpoint list unavailable", "data": error.to_string() }
+            }),
+        }
+    }
+
     /// Wait for a turn operation to reach a terminal state.
     ///
     /// JSON-RPC params:

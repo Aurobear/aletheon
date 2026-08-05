@@ -355,6 +355,7 @@ crates/fabric/src/protocol/client.rs	struct	DebugParamGetParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	DebugSubscribeParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	DebugTraceStartParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	DiffArtifactGetParams	baseline	-	-	-
+crates/fabric/src/protocol/client.rs	struct	CheckpointListParams	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
 crates/fabric/src/protocol/client.rs	struct	EvaluationGetParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	EvaluationLatestParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	EvaluationListParams	baseline	-	-	-
@@ -375,6 +376,7 @@ crates/fabric/src/protocol/client.rs	struct	NameParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	NumericIdParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	ResumeParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	SessionForkParams	baseline	-	-	-
+crates/fabric/src/protocol/client.rs	struct	WorkspaceRewindParams	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
 crates/fabric/src/protocol/client.rs	struct	SessionInterruptParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	SessionParams	baseline	-	-	-
 crates/fabric/src/protocol/client.rs	struct	SessionReplayParams	baseline	-	-	-
@@ -1040,6 +1042,8 @@ crates/fabric/src/protocol/client.rs	enum	CheckpointMutationCoverage	governed	fa
 crates/fabric/src/protocol/client.rs	enum	CheckpointReviewSettlement	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
 crates/fabric/src/protocol/client.rs	enum	CheckpointRollbackAction	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
 crates/fabric/src/protocol/client.rs	struct	CheckpointReviewSnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
+crates/fabric/src/protocol/client.rs	struct	CheckpointListEntry	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
+crates/fabric/src/protocol/client.rs	struct	CheckpointListSnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.3
 crates/fabric/src/protocol/client.rs	struct	ActivitySnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md#5.2
 crates/fabric/src/protocol/client.rs	struct	SessionEventPage	governed	fabric	executive,interact	docs/plans/Aletheon_Session_Authority_Mapping_2026-08-05.md#5
 crates/fabric/src/protocol/client.rs	struct	SessionListSnapshot	governed	fabric	executive,interact	docs/plans/Aletheon_Session_Authority_Mapping_2026-08-05.md#6

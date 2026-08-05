@@ -179,6 +179,9 @@ impl RequestHandler {
                 self.handle_workspace_rewind(connection, &id, &request)
                     .await
             }
+            "checkpoint.list/v1" if self.grok_hardening.workspace_checkpoint => {
+                self.handle_checkpoint_list(connection, &id, &request).await
+            }
 
             _ => serde_json::json!({
                 "jsonrpc": "2.0",

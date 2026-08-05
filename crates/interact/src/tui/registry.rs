@@ -380,6 +380,9 @@ fn to_builtin(key: &str, args: &str) -> Option<BuiltinCommand> {
         "tui.sessions" => BuiltinCommand::Sessions,
         "tui.resume" => BuiltinCommand::Resume { id: args.into() },
         "tui.fork" => BuiltinCommand::Fork,
+        "tui.rewind" => BuiltinCommand::Rewind {
+            prompt_index: args.into(),
+        },
         "tui.model" => BuiltinCommand::Model,
         "tui.permissions" => BuiltinCommand::Permissions,
         "tui.context" => BuiltinCommand::Context,
