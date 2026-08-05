@@ -30,6 +30,7 @@ pub mod state;
 pub mod status;
 pub mod streaming;
 pub mod subagent_view;
+pub mod task_console;
 pub mod term_compat;
 
 /// Build the local chat envelope. Keeping this in one place prevents the TUI,

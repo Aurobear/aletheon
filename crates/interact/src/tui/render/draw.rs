@@ -3,7 +3,8 @@ use ratatui::Terminal;
 use super::super::test_infra::{buffer_to_text, now_ms, FrameRecorder, FrameSnapshot};
 use super::super::App;
 use super::renderable::{
-    ChatRenderable, HeaderRenderable, InputRenderable, LayoutHelper, Renderable, StatusRenderable,
+    HeaderRenderable, InputRenderable, LayoutHelper, Renderable, StatusRenderable,
+    TaskConsoleRenderable,
 };
 
 /// Draw with optional frame recording — captures the buffer inside the draw closure.
@@ -16,14 +17,12 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
     // completion correct for key events, bracketed paste, IME replacement and
     // test/terminal backends that coalesce input differently.
     super::super::app::key_handler::refresh_command_completion(app);
-    let chat_ref = &app.chat;
     let caps_ref = &app.caps;
     let input_buf = &app.input_buf;
     let cursor = app.cursor;
     let has_cjk = app.has_cjk;
     let status_ref = &app.status;
     let pending_approval_ref = &app.pending_approval;
-    let detail_ref = &app.detail;
     let completion_ref = &app.completion;
     let tool_count = app.chat.active_exec_count();
     let thinking_visible = app.stream_ctrl.is_thinking();
@@ -59,10 +58,11 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
                 state: &app.app_state,
             },
         );
-        layout.push_flex(ChatRenderable {
-            chat: chat_ref,
+        layout.push_flex(TaskConsoleRenderable {
             frame_counter,
             caps: caps_ref,
+            state: &app.app_state,
+            workspace: &app.workspace,
         });
         layout.push_fixed(
             2,
@@ -74,34 +74,14 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
                 completion: completion_ref,
             },
         );
-        layout.push_fixed(1, StatusRenderable { status: status_ref });
+        layout.push_fixed(
+            1,
+            StatusRenderable {
+                status: status_ref,
+                state: &app.app_state,
+            },
+        );
         layout.render(size, f.buffer_mut());
-        if size.width >= 100 {
-            if let Some(entry) = chat_ref.selected_exec() {
-                let area = ratatui::layout::Rect::new(
-                    size.x + size.width * 62 / 100,
-                    size.y + 1,
-                    size.width * 38 / 100,
-                    size.height.saturating_sub(4),
-                );
-                ratatui::widgets::Widget::render(
-                    super::super::activity_detail::ActivityDetail {
-                        entry,
-                        caps: caps_ref,
-                    },
-                    area,
-                    f.buffer_mut(),
-                );
-            } else if let Some(detail) = detail_ref {
-                let area = ratatui::layout::Rect::new(
-                    size.x + size.width * 55 / 100,
-                    size.y + 1,
-                    size.width * 45 / 100,
-                    size.height.saturating_sub(4),
-                );
-                ratatui::widgets::Widget::render(detail, area, f.buffer_mut());
-            }
-        }
         // Completion is an overlay, not part of the input widget's clipping
         // region. Render it last so later siblings cannot erase it.
         let input_area = ratatui::layout::Rect::new(

@@ -1,0 +1,376 @@
+//! Daemon-projected task console.
+//!
+//! Conversation remains a compact transcript, while task progress, diagnostics,
+//! and file/artifact references are rendered from the canonical Session read
+//! projection.  The console deliberately does not reconstruct activity from
+//! tool transcript entries: that would create a second local runtime state.
+
+use ratatui::{
+    buffer::Buffer,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+};
+
+use fabric::protocol::client::{ActivitySnapshot, ActivityState, TaskPhase, TaskSnapshot};
+use fabric::WorkspacePolicy;
+
+use super::{state::AppState, term_compat::TermCaps};
+
+/// The primary work surface for an active Session.
+pub struct TaskConsole<'a> {
+    pub state: &'a AppState,
+    pub caps: &'a TermCaps,
+    pub workspace: &'a WorkspacePolicy,
+    pub frame_counter: u64,
+}
+
+impl Widget for TaskConsole<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.height == 0 || area.width == 0 {
+            return;
+        }
+        let header_height = if area.height >= 8 { 3 } else { 1 };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(header_height), Constraint::Min(1)])
+            .split(area);
+        render_task_header(chunks[0], buf, self.state, self.caps, self.workspace);
+
+        if chunks[1].width >= 110 && chunks[1].height >= 8 {
+            let columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+                .split(chunks[1]);
+            render_conversation(columns[0], buf, self.state, self.frame_counter, self.caps);
+            render_activity_panel(columns[1], buf, self.state, self.caps);
+        } else {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(64), Constraint::Percentage(36)])
+                .split(chunks[1]);
+            render_conversation(rows[0], buf, self.state, self.frame_counter, self.caps);
+            render_activity_panel(rows[1], buf, self.state, self.caps);
+        }
+    }
+}
+
+fn render_task_header(
+    area: Rect,
+    buf: &mut Buffer,
+    state: &AppState,
+    caps: &TermCaps,
+    workspace: &WorkspacePolicy,
+) {
+    let task = active_task(state);
+    let task_id = task
+        .map(|task| short_id(&task.task_id))
+        .unwrap_or("no task");
+    let phase = task.map(|task| task_phase(task.phase)).unwrap_or("idle");
+    let goal = task
+        .and_then(|task| task.goal.as_deref())
+        .unwrap_or("Waiting for daemon task projection");
+    let permission = task
+        .map(permission_summary)
+        .unwrap_or_else(|| "unknown".to_string());
+    let (provider, model, context) = task_runtime_identity(task);
+    let session = state
+        .projected_session
+        .as_ref()
+        .map(|session| short_id(&session.id.0))
+        .unwrap_or("—");
+    let project = workspace
+        .cwd()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("workspace");
+    let activity = activity_summary(&state.activities);
+    let theme = caps.theme();
+
+    let mut lines = vec![Line::from(vec![
+        Span::styled(" TASK ", Style::default().fg(Color::Black).bg(theme.accent)),
+        Span::styled(
+            format!(" project {project} · {task_id} · {phase} "),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(goal, Style::default().fg(theme.text_muted)),
+    ])];
+    if area.height >= 2 {
+        lines.push(Line::from(Span::styled(
+            format!(
+                " session {session} · provider {provider} · model {model} · permission {permission}"
+            ),
+            Style::default().fg(theme.text_muted),
+        )));
+    }
+    if area.height >= 3 {
+        lines.push(Line::from(Span::styled(
+            format!(" activity {activity} · context {context}"),
+            Style::default().fg(theme.text_muted),
+        )));
+    }
+    Paragraph::new(lines)
+        .style(Style::default().bg(theme.bg_panel))
+        .wrap(Wrap { trim: true })
+        .render(area, buf);
+}
+
+fn render_conversation(
+    area: Rect,
+    buf: &mut Buffer,
+    state: &AppState,
+    _frame_counter: u64,
+    caps: &TermCaps,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Conversation ");
+    let inner = block.inner(area);
+    block.render(area, buf);
+    let theme = caps.theme();
+    let mut lines = state
+        .items
+        .values()
+        .filter(|item| matches!(item.kind.as_str(), "user" | "assistant"))
+        .map(|item| {
+            let (prefix, color) = if item.kind == "user" {
+                ("> ", theme.user_icon)
+            } else {
+                ("", theme.text)
+            };
+            Line::from(vec![
+                Span::styled(prefix, Style::default().fg(color)),
+                Span::styled(item.content.clone(), Style::default().fg(color)),
+            ])
+        })
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No projected conversation yet",
+            Style::default().fg(theme.text_muted),
+        )));
+    }
+    let visible = lines.len().saturating_sub(inner.height as usize);
+    let lines = lines.into_iter().skip(visible).collect::<Vec<_>>();
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+fn render_activity_panel(area: Rect, buf: &mut Buffer, state: &AppState, caps: &TermCaps) {
+    let timeline_percent = if area.height >= 8 { 68 } else { 55 };
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(timeline_percent),
+            Constraint::Percentage(100 - timeline_percent),
+        ])
+        .split(area);
+    let theme = caps.theme();
+
+    let timeline = Block::default()
+        .borders(Borders::ALL)
+        .title(" Activity timeline ");
+    let timeline_inner = timeline.inner(sections[0]);
+    timeline.render(sections[0], buf);
+    let mut activities = state.activities.iter().collect::<Vec<_>>();
+    activities.sort_by_key(|activity| activity.updated_at);
+    let max = timeline_inner.height as usize;
+    let mut lines = activities.into_iter().rev().take(max).collect::<Vec<_>>();
+    lines.reverse();
+    let rendered = if lines.is_empty() {
+        vec![Line::from(Span::styled(
+            "No authoritative activity yet",
+            Style::default().fg(theme.text_muted),
+        ))]
+    } else {
+        lines
+            .into_iter()
+            .map(|activity| activity_line(activity, caps))
+            .collect()
+    };
+    Paragraph::new(rendered)
+        .wrap(Wrap { trim: true })
+        .render(timeline_inner, buf);
+
+    let changes = Block::default()
+        .borders(Borders::ALL)
+        .title(" Changes / artifacts ");
+    let changes_inner = changes.inner(sections[1]);
+    changes.render(sections[1], buf);
+    let refs = state
+        .activities
+        .iter()
+        .flat_map(|activity| activity.artifact_refs.iter())
+        .collect::<Vec<_>>();
+    let change_lines = if refs.is_empty() {
+        vec![Line::from(Span::styled(
+            "No changed artifacts recorded",
+            Style::default().fg(theme.text_muted),
+        ))]
+    } else {
+        refs.into_iter()
+            .take(changes_inner.height as usize)
+            .map(|reference| Line::from(format!(" {} {reference}", caps.bullet())))
+            .collect()
+    };
+    Paragraph::new(change_lines)
+        .wrap(Wrap { trim: true })
+        .render(changes_inner, buf);
+}
+
+fn active_task(state: &AppState) -> Option<&TaskSnapshot> {
+    state
+        .tasks
+        .iter()
+        .find(|task| matches!(task.phase, TaskPhase::Active | TaskPhase::Interrupted))
+        .or_else(|| state.tasks.first())
+}
+
+fn task_runtime_identity(task: Option<&TaskSnapshot>) -> (&str, &str, String) {
+    let Some(facts) = task.and_then(|task| task.runtime_facts.as_ref()) else {
+        return ("—", "—", "unknown".into());
+    };
+    let provider = facts.effective_provider.as_deref().unwrap_or("—");
+    let model = facts.effective_model.as_deref().unwrap_or("—");
+    let context = match (
+        facts.active_context_occupancy_tokens,
+        facts.context_capacity_tokens,
+    ) {
+        (Some(used), Some(capacity)) => format!("{used}/{capacity} tokens"),
+        (_, Some(capacity)) => format!("—/{capacity} tokens"),
+        _ => "unknown".into(),
+    };
+    (provider, model, context)
+}
+
+fn permission_summary(task: &TaskSnapshot) -> String {
+    if !task.pending_approvals.is_empty() {
+        format!("approval required ({})", task.pending_approvals.len())
+    } else {
+        "unknown".into()
+    }
+}
+
+fn activity_summary(activities: &[ActivitySnapshot]) -> String {
+    let running = activities
+        .iter()
+        .filter(|activity| {
+            matches!(
+                activity.state,
+                ActivityState::Running | ActivityState::Waiting
+            )
+        })
+        .count();
+    if running > 0 {
+        format!("{running} active")
+    } else {
+        format!("{} recorded", activities.len())
+    }
+}
+
+fn activity_line(activity: &ActivitySnapshot, caps: &TermCaps) -> Line<'static> {
+    let (state, color) = match activity.state {
+        ActivityState::Queued => ("queued", caps.theme().text_muted),
+        ActivityState::Running => ("running", caps.theme().warning),
+        ActivityState::Waiting => ("waiting", caps.theme().warning),
+        ActivityState::Completed => ("done", caps.theme().success),
+        ActivityState::Failed | ActivityState::Lost => ("failed", caps.theme().error),
+        ActivityState::Cancelled => ("cancelled", caps.theme().text_muted),
+    };
+    Line::from(vec![
+        Span::styled(format!(" {} ", caps.bullet()), Style::default().fg(color)),
+        Span::styled(format!("{state:9}"), Style::default().fg(color)),
+        Span::raw(activity.label.clone()),
+    ])
+}
+
+fn task_phase(phase: TaskPhase) -> &'static str {
+    match phase {
+        TaskPhase::Active => "active",
+        TaskPhase::Interrupted => "interrupted",
+        TaskPhase::Completed => "completed",
+        TaskPhase::Failed => "failed",
+    }
+}
+
+fn short_id(value: &str) -> &str {
+    value.get(..12).unwrap_or(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rendered_text(width: u16, height: u16, state: &AppState) -> String {
+        let caps = TermCaps::detect();
+        let workspace = WorkspacePolicy::from_resolved_roots(
+            std::env::current_dir().expect("test cwd"),
+            Vec::new(),
+        )
+        .expect("workspace policy");
+        let area = Rect::new(0, 0, width, height);
+        let mut buffer = Buffer::empty(area);
+        TaskConsole {
+            state,
+            caps: &caps,
+            workspace: &workspace,
+            frame_counter: 0,
+        }
+        .render(area, &mut buffer);
+        buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn wide_console_has_separate_activity_and_changes_panels() {
+        let rendered = rendered_text(120, 40, &AppState::default());
+        assert!(rendered.contains("Conversation"));
+        assert!(rendered.contains("Activity timeline"));
+        assert!(rendered.contains("Changes / artifacts"));
+    }
+
+    #[test]
+    fn narrow_console_preserves_task_header_and_conversation() {
+        let rendered = rendered_text(80, 24, &AppState::default());
+        assert!(rendered.contains("TASK"));
+        assert!(rendered.contains("Conversation"));
+        assert!(rendered.contains("Activity timeline"));
+        assert!(rendered.contains("Changes / artifacts"));
+    }
+
+    #[test]
+    fn runtime_identity_never_uses_cumulative_usage_as_context_occupancy() {
+        let task = TaskSnapshot {
+            task_id: "task".into(),
+            session_id: fabric::SessionId("session".into()),
+            goal: None,
+            phase: TaskPhase::Active,
+            plan_revision: None,
+            steps: vec![],
+            active_turn_id: None,
+            active_runtime_children: vec![],
+            active_commands: vec![],
+            pending_approvals: vec![],
+            budget: None,
+            checkpoint_head: None,
+            settlement: None,
+            runtime_facts: Some(fabric::TaskRuntimeFacts {
+                effective_provider: Some("provider".into()),
+                effective_model: Some("model".into()),
+                context_capacity_tokens: Some(1_000_000),
+                active_context_occupancy_tokens: None,
+                cumulative_usage: fabric::InferenceUsage::default(),
+                inference_rounds: 1,
+                provider_retries: None,
+                tool_calls: 0,
+                terminal_tool_results: 0,
+            }),
+        };
+        assert_eq!(task_runtime_identity(Some(&task)).2, "—/1000000 tokens");
+    }
+}

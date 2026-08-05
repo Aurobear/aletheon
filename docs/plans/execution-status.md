@@ -217,12 +217,12 @@ MERGE_SHA: pending
 ## X6a
 
 ```text
-STATUS: not_started
+STATUS: in_progress
 NODE: X6a
-BASE / BRANCH / PR / GOAL_ID: pending
-BUDGET: pending
-EVIDENCE / VALIDATION / RUNTIME EVIDENCE: pending
-FAILURES: none
+BASE / BRANCH / PR / GOAL_ID: 05f63446 / auro/feat/20260805-x4c-run-exec-wire / deferred_by_owner / external supervisor active
+BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
+EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Interact now renders a daemon-projected Task console with project/session/task/phase/goal/runtime identity/permission header, authoritative Conversation, Activity timeline, Changes/artifacts panel and keyboard footer; wide and 80x24 responsive frame tests pass; active context is shown only from typed runtime facts, never cumulative usage. Focused TaskConsole tests (3), Interact all-target clippy and diff checks pass.
+FAILURES: none; U-TUI-001..007 full PTY/accessibility/provider-error acceptance, installed deployment, PR/CI/merge and aggregate verification remain open
 BLOCKER: none
 MERGE_SHA: pending
 ```
