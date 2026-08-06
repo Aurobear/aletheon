@@ -1,61 +1,80 @@
-# DeepSeek 提示词缓存基准（C5）
+# DeepSeek 缓存与消息优化合同
 
-> 工具：`scripts/bench-deepseek-cache`（真实请求诊断，非产品请求路径）。
-> 方法：对每个场景发 `ROUNDS` 次 chat-completions 请求，读取 provider 返回的
-> `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`（DeepSeek 字段）或
-> `prompt_tokens_details.cached_tokens`（OpenAI 字段）。命中率 = hit / total。
-> 这是 LejuRobot 代理侧 prefix-cache 的真实测量；`model` 需用代理可路由的 id
-> （`deepseek/deepseek-v4-flash`，不带 `[1m]` 窗口后缀）。
+> 状态：C0-C7 已完成并合入 PR #182。
+> 生产路由：LejuRobot OpenAI-compatible proxy；直接访问 DeepSeek 官方端点仅作可选诊断。
+> 基准工具：`scripts/bench-deepseek-cache`（真实请求诊断，非产品请求路径）。
 
-## 结果（2026-08-04，lejurobot 代理 `https://aiapi.lejurobot.com/v1`）
+本文保留缓存优化的长期行为合同、实现锚点和可复现基准。临时任务排序与执行状态留在 Git 历史中。
 
-`bash scripts/bench-deepseek-cache`，`BENCH_MAX_TOKENS=24`，`BENCH_ROUNDS=2`。
-列：`场景  run1(total hit miss output)  run2(...)`。
+## Provider telemetry normalization
+
+Provider cache usage 只能来自 wire usage 字段和 effective `CacheReportingMode`，不能由模型名称推断。
+`openai_usage`（`crates/cognit/src/adapters/inference/openai_provider.rs`）按以下顺序归一化：
+
+1. `Unsupported` 不记录缓存数字；
+2. DeepSeek hit/miss 同时存在时校验守恒后使用；
+3. 只有 DeepSeek hit 且总量已知时计算 miss；
+4. OpenAI `cached_tokens` 映射为 read，剩余为 uncached；
+5. 两种格式同时存在时必须一致，否则返回 typed protocol error；
+6. provider 未返回可解释字段时保持 `Unknown`，不伪造零命中。
+
+累计 provider usage、活动上下文占用、cache usage、inference rounds、retries 与 tool calls 是独立指标，不能互相推导。
+
+## Prompt partition and stable prefix
+
+`PromptRegion`（`crates/executive/src/application/prompt_partition.rs`）把请求分成稳定身份/协议、稳定工具、会话历史、动态上下文和当前输入。稳定区不能包含时间、UUID、operation ID、预算、设备状态、per-turn recall 或 attempt number。
+
+分区与 `InferencePrefixShape` 只提供诊断身份和构造成本观测，不改变发送给 provider 的内容，也不作为本地命中判定。生产请求保持稳定前缀字节序；动态 memory、goal、plan 和当前输入位于其后。
+
+## Generation-keyed recall cache
+
+`mnemosyne::recall_cache` 使用 principal scope、query、filters、embedding model、memory-policy version 和 write generation 组成 key。任何成功写入都会推进 generation，因此旧结果不再匹配；并发 miss 使用 single-flight。缓存故障回退到权威 `MemoryService`，缓存本身不作权限或 authority 决策。
+
+## Read-only tool result cache
+
+`corpus::tools::read_only_cache` 只服务同时满足以下条件的工具：
+
+- tool 显式声明非 `Never` 的 `ToolCachePolicy`；
+- executor 已确认 `PermissionLevel::L0`；
+- key 绑定 tool/version、canonical arguments、workspace 以及 policy 要求的 principal/session/turn scope。
+
+命中仍产生带 `served_from_cache` 的可审计 `CapabilityResult`，且权限/approval gate 先于缓存。缓存失败回退真实只读调用；mutating tool 不能通过配置进入缓存。
+
+## Live provider benchmark
+
+2026-08-04 在 LejuRobot 代理 `https://aiapi.lejurobot.com/v1` 上运行：
+
+```bash
+BENCH_MAX_TOKENS=24 BENCH_ROUNDS=2 \
+  BENCH_MODEL=deepseek/deepseek-v4-flash \
+  bash scripts/bench-deepseek-cache
+```
 
 | 场景 | run1 | run2 | 结论 |
 |---|---|---|---|
-| identical（flash） | 1183 · 0 · 1183 | **1183 · 1152 · 31** | 冷→热 **97.4% 命中**；代理 prefix cache 生效 |
-| last_msg_changed | **1185 · 1152 · 33** | **1185 · 1152 · 33** | 改最后一条 user 消息**保留**缓存前缀（97.2%） |
-| system_char_changed | 1184 · 0 · 1184（首次） | 1184 · 1152 · 32 | 改 system 一个字符 → 前缀从第 0 token 失效，重跑恢复 |
-| tools_reordered | 1227 · 896 · 331 | **1227 · 1152 · 75** | 工具顺序变化 → 部分命中（73%），二次热（94%） |
-| tool_schema_changed | 1199 · 1024 · 175 | **1199 · 1152 · 47** | schema 变化 → 部分命中（85%），二次热（96%） |
-| memory_added | **1199 · 1152 · 47** | **1199 · 1152 · 47** | memory 片段加在 user 消息（前缀之后）→ 前缀保留（96%） |
-| streaming（flash） | **1183 · 1152 · 31** | **1183 · 1152 · 31** | SSE 最终 usage chunk 同样上报命中（97.4%） |
-| identical（pro） | 1104 · 0 · 1104（冷） | **1104 · 1024 · 80** | Pro 同样缓存，热 **92.8%** |
-| streaming（pro） | **1104 · 1024 · 80** | **1104 · 1024 · 80** | Pro streaming 92.8% |
+| identical（flash） | 1183 total / 0 hit / 1183 miss | 1183 / 1152 / 31 | 冷到热 97.4% |
+| last message changed | 1185 / 1152 / 33 | 1185 / 1152 / 33 | 动态尾部保留稳定前缀 |
+| system char changed | 1184 / 0 / 1184 | 1184 / 1152 / 32 | 稳定前缀变化使首次命中失效 |
+| tools reordered | 1227 / 896 / 331 | 1227 / 1152 / 75 | 工具顺序变化破坏部分前缀 |
+| tool schema changed | 1199 / 1024 / 175 | 1199 / 1152 / 47 | schema 变化破坏部分前缀 |
+| memory added | 1199 / 1152 / 47 | 1199 / 1152 / 47 | 动态 memory 不破坏前缀 |
+| streaming（flash） | 1183 / 1152 / 31 | 1183 / 1152 / 31 | SSE 最终 usage 一致 |
+| identical（pro） | 1104 / 0 / 1104 | 1104 / 1024 / 80 | Pro 热命中 92.8% |
+| streaming（pro） | 1104 / 1024 / 80 | 1104 / 1024 / 80 | Pro streaming 一致 |
 
-### 关键结论
+这些数字证明该代理当时的 prefix cache 行为，不是永久 SLA。本地 `InferencePrefixShape` 不决定 provider 命中；identical 热请求仍有 31 miss token，属于 provider 侧 miss/eviction 行为。
 
-1. **稳定前缀是命中的决定性因素**：identical / last_msg_changed / memory_added 都
-   命中 ~97%；改 system 一个字符从第 0 token 全失效（验证 prefix cache "只有相同前缀才能复用"）。
-2. **动态尾部不破坏前缀**：最后 user 消息、追加 memory 片段都落在缓存前缀之后，命中保留。
-3. **工具顺序/schema 变化破坏部分前缀**：命中率降到 73%/85%，二次请求后恢复 ~95%（代理重建缓存）。
-4. **流式与非流式一致**：SSE 最终 usage chunk 上报同样命中率。
-5. **Flash 与 Pro 都命中**：Pro 略低（92.8%），可能是不同路由/通道。
+默认 `[providers.cache] reporting = "auto"` 可解析代理返回的 DeepSeek 字段；需要固定协议时可显式设置 `reporting = "deepseek_chat"`。
 
-## 官方 DeepSeek（`https://api.deepseek.com`）—— 外部阻塞
+## Optional direct DeepSeek diagnostic
 
-当前环境无 `DEEPSEEK_API_KEY`，官方端点未测量。配置了 key 后重复同一命令即可：
+生产验收使用配置中的 LejuRobot 路由。没有 `DEEPSEEK_API_KEY` 不阻塞生产验收；若要比较官方端点，可单独运行：
 
 ```bash
 BENCH_BASE_URL=https://api.deepseek.com/v1 \
-BENCH_API_KEY=$DEEPSEEK_API_KEY \
+BENCH_API_KEY="$DEEPSEEK_API_KEY" \
 BENCH_MODEL=deepseek-chat \
 bash scripts/bench-deepseek-cache
 ```
 
-## 复现
-
-```bash
-set -a; source ~/.config/aletheon/daemon.env; set +a
-BENCH_MODEL=deepseek/deepseek-v4-flash bash scripts/bench-deepseek-cache
-```
-
-## 与本地 shape 的关系
-
-- 本地 `InferencePrefixShape`（`executive::host::daemon::cache_shape`）是**诊断身份**，
-  不决定命中；上面 identical 场景的 31 token miss（1183−1152）是 provider 侧
-  `ProviderMissOrEviction`（冷缓存/逐出/代理行为），不是本地 shape 变化。
-- 上述结果指导默认配置：`[providers.cache] reporting = "auto"`（字段自解释）在代理
-  返回 DeepSeek 字段时已能正确计量；如需显式声明，可对 lejurobot 代理置
-  `reporting = "deepseek_chat"`（见计划 C2）。
+该命令消耗真实 token，结果只能作为 provider 诊断，不能替代 installed runtime、official socket 或真实应用请求的验收。

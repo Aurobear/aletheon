@@ -1,5 +1,5 @@
-//! Bounded read-only tool result cache (Phase C7 of
-//! docs/plans/deepseek-cache-and-message-optimization-plan.md).
+//! Bounded read-only tool result cache (see
+//! docs/testing/deepseek-cache.md#read-only-tool-result-cache).
 //!
 //! The host only consults this cache for tools that (a) explicitly declare a
 //! non-`Never` `ToolCachePolicy` **and** (b) are read-only

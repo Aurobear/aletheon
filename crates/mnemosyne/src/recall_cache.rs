@@ -1,5 +1,5 @@
-//! Bounded, generation-keyed recall cache (Phase C6 of
-//! docs/plans/deepseek-cache-and-message-optimization-plan.md).
+//! Bounded, generation-keyed recall cache (see
+//! docs/testing/deepseek-cache.md#generation-keyed-recall-cache).
 //!
 //! Wraps an authoritative `MemoryService` and caches
 //! `recall` / `recall_with_prefilter` results under a key that includes the

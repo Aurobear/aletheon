@@ -1,10 +1,9 @@
-# Robot 运行时与仿真测试基线（R0）
+# Robot 运行时与仿真验收基线
 
-> 依据：`docs/plans/robot-vla-production-closure-plan.md` Phase R0
-> 基线：`origin/dev@c080b08bf3170dd8a09acdb738a255133abbf11b`（2026-08-05）
-> 证据采样：2026-08-06，Aletheon `9c60ae25775a1c02f1b741a1cfaa1321209b7b88`。
-> 本轮约束：**暂不要求物理实机验证**；历史仿真运行记录只能作为背景，不作为本次 acceptance evidence。
-> R0 状态：`accepted`；本文只关闭版本与证据清单，不代表 R8 安装态运行验收。
+> 架构边界：[runtime authority ADR 的 Robot contracts and safety boundaries](../decisions/adr-runtime-authority-and-contract-governance.md#robot-contracts-and-safety-boundaries)
+> 历史基线：`origin/dev@c080b08bf3170dd8a09acdb738a255133abbf11b`（2026-08-05）。
+> 安装态验收：2026-08-07，R8/X13 MuJoCo 链路 `accepted`，实现由 PR #182 合入。
+> 范围边界：**不包含物理实机验证**；HIL/real 独立 hard-stop/watchdog 证据仍是单独 gate。
 
 ## 1. 外部依赖（本仓库不复制源码）
 
@@ -14,13 +13,14 @@
 |---|---|---|
 | Kuavo bridge | `<robot-host>/<bridge-workspace>`；loopback gRPC endpoint 由部署配置解析 | 本地独立仓库（未配置 `origin`）；package `aletheon-kuavo-bridge` `0.1.0`；commit `1245538771b80f1b742d50f32041b801fba7b104`；tree `b403c574c1abb40772b8651831031eb369804010`；采样时工作树干净 |
 | Bridge protocol（R0/远端旧运行态） | 远端旧 Bridge proto | SHA-256 `4a205a75ac7643d7769fbd7bd52f32faba64b4cdf9d81f6908617da490a7d7ff`；这是历史/负向 preflight 事实，不是当前 candidate digest |
-| Bridge protocol（当前 R6 candidate） | Aletheon proto 与 bridge candidate 同路径 proto | 两份文件逐字节相同；SHA-256 `77e44869ba6a6b3345753f699f9acd403a6c8f4de3383dcd5827b0ba7673e679`；尚未部署到远端 |
-| ROS runtime | `<robot-host>/<ros-workspace>` | 本采样主机无 `/opt/ros`，因此未声称 ROS 运行通过；历史 Ubuntu 20.04/Python 3.8 仅作背景，最终 runtime fact 由 R8 采集 |
+| Bridge protocol（R8 accepted） | Aletheon proto 与 accepted bridge 使用同一 canonical proto | 两份文件逐字节相同；SHA-256 `77e44869ba6a6b3345753f699f9acd403a6c8f4de3383dcd5827b0ba7673e679`；已用于安装态 MuJoCo 验收 |
+| ROS runtime | `<robot-host>/<ros-workspace>` | 早期只读采样时本机无 `/opt/ros`；后续安装态验收已通过受控远端 ROS/MuJoCo 链路，见 §2.9 |
 | MuJoCo scene | `<robot-host>/<sim-workspace>` | sim commit `5fc79a6c48d5d7296763663d71fa52e0ff54d624`；`kuavo_assets` `10.3.0`；scene ID `kuavo-mujoco/default-v40`；`scene.xml` SHA-256 `052b37031446d5bc142eaf9d264711adc5bd57defeb1bc5c0a178fc747e4b25c`；asset tree `5881dc74c7ae3b828dfdb5b94f570f3ede9ccea8`；63 文件排序 manifest SHA-256 `5364678863725a47494cc9c734f20a02b864a5f7d16480bd1f57fe3cdd9e206d` |
+| MuJoCo accepted scene | installed Robot version 53 runtime | scene ID `kuavo-mujoco/biped-s53`；正向、负向与三次连续真实 TUI 验收通过 |
 | 设备标识 | 部署配置中的 `device_id` | example 值为 `kuavo-mujoco-01`；R1 将其纳入 typed resolved config，R8 再记录安装态实际值 |
 | 连接方式 | operator config 管理的受控 tunnel/endpoint | 命令和地址不入库；evidence 只记录 endpoint identity digest |
 
-R0 验收仅表明 bridge、proto 与 scene 已有可重现的版本/digest。“已部署”不是版本证据，上表也不是 ROS 或 R8 已通过的证据。
+R0 行保留 2026-08-05/06 的历史 provenance；当前 installed acceptance 以 §2.9 的同 SHA、official socket、真实 Policy/Bridge/ROS/MuJoCo 和 durable receipt 证据为准。
 
 ### 1.1 证据复现
 
@@ -51,7 +51,7 @@ find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
 | deterministic unit/contract | fabric/cognit/executive 定向测试 | 是 | 状态机、validator、verifier、episode sink、config |
 | in-process robot session | `robot_session_e2e`、`robot_harness_composition` | 是 | Turn→EpisodeReport 链路，无外部依赖 |
 | direct live bridge diagnostic | `robot_bridge_execute_e2e --ignored` | 仅 diagnostic | 需远程 bridge+MuJoCo；**不替代 R8 安装态验收** |
-| installed full runtime | `/usr/bin/aletheon` official socket + 真实 Policy/bridge/MuJoCo | R8 | `externally_blocked`；R2-R7 关闭后的只读 preflight 复核了外部服务缺失；物理实机不是前置 |
+| installed full runtime | `/usr/bin/aletheon` official socket + 真实 Policy/bridge/MuJoCo | 是 | R8/X13 `accepted`；物理实机不是该门的前置，见 §2.9 |
 
 ### 2.1 2026-08-06 只读远端 preflight
 
@@ -99,9 +99,9 @@ remote installed Aletheon                   absent
   远端文件，未重启任何服务。远端当时正在执行 operator 的无关 C++ build，因此没有运行测试或进行
   任何可能争用服务/构建资源的操作。
 
-因此该结果是 R2/R8 的**真实负向 preflight**，不是安装态 acceptance。R2 的本地
-capability/descriptor/schema/timestamp 契约已经 code-complete，但远端仍运行旧实现。后续 operator
-已授权启动仿真和受限动作，结果见下一节；candidate 部署和完整安装态验收仍未执行。
+因此该结果是 R2/R8 的**历史真实负向 preflight**，不是安装态 acceptance。R2 的本地
+capability/descriptor/schema/timestamp 契约当时已经 code-complete，但远端仍运行旧实现。后续 operator
+授权的动作诊断见下一节；其后的 candidate 部署和完整安装态验收已完成，见 §2.9。
 
 ### 2.1.1 2026-08-06 operator 授权的 Version 53 MuJoCo 动作诊断
 
@@ -121,8 +121,8 @@ stream SHA-256 为 `d35b866248ab9d5aad56285ad91a2bb53f8d7938af8d27a6017346ed221f
 解析 envelope、排除 Bridge 自身并在 malformed/master failure 时拒绝动作
 （`aletheon-kuavo-bridge/src/aletheon_kuavo_bridge/providers/kuavo_noetic/skills/move_base_timed.py:104-112,254-281`），
 回归 fixture 位于 `aletheon-kuavo-bridge/tests/unit/test_move_base_timed.py:17-62`；Bridge 全量 pytest
-为 105 passed / 6 skipped，定向 Ruff 通过。该修复尚未部署，故上述成功动作只能算 diagnostic，
-不能算 R6 safety 或 R8 installed acceptance。
+为 105 passed / 6 skipped，定向 Ruff 通过。该修复在这次诊断时尚未部署，故本节的成功动作只能算
+diagnostic；后续 candidate 安装态证据单独记录在 §2.9。
 
 仿真默认 rosbag 记录使 `/root/.ros` 达到约 1.1 TB；在 operator 明确授权后先卸载
 `/nodelet_rosbag`，再清理历史 bag/log/coredump，仅保留当前运行日志。清理后目录约 3.2 MB，根分区
@@ -130,7 +130,7 @@ stream SHA-256 为 `d35b866248ab9d5aad56285ad91a2bb53f8d7938af8d27a6017346ed221f
 
 ### 2.2 R2 candidate 本地跨语言证据与远端复核
 
-R2 candidate 满足计划的启动 gate 要求（spec: `docs/plans/robot-vla-production-closure-plan.md:338-355`）：
+R2 candidate 满足 ADR 保留的 provider-attested 启动 gate：
 
 - Rust provider 在连接阶段只读执行 Health/GetCapabilities/ListSkills，并在注册前校验 device、
   protocol digest、observation schemas、完整 descriptor schema 与非空 allowlist
@@ -153,8 +153,7 @@ R2 candidate 满足计划的启动 gate 要求（spec: `docs/plans/robot-vla-pro
 
 ### 2.3 R3 Perception / FrameRef 本地证据
 
-R3 按计划的 perception/FrameRef contract（spec:
-`docs/plans/robot-vla-production-closure-plan.md:394-444`）达到本地 `code_complete`：
+R3 按 ADR 保留的 perception/FrameRef contract 达到本地 `code_complete`：
 
 ```text
 Bridge observation --Unix wall facts--> Hardware receive anchor --local MonoTime--> WorldState
@@ -181,8 +180,7 @@ visual frame metadata，且真实 Policy 未运行，所以本节不声称 deplo
 
 ### 2.4 R4 Policy Gateway 本地协议证据
 
-R4 按真实 Policy gateway contract（spec:
-`docs/plans/robot-vla-production-closure-plan.md:479-517`）达到本地 `code_complete`：
+R4 按真实 Policy gateway contract 达到本地 `code_complete`：
 
 ```text
 natural-language goal + fresh typed snapshots + FrameRefs + exact allowlist
@@ -219,8 +217,7 @@ runtime；远端 Policy 未运行，因此不声明 direct-live 或 R8 acceptanc
 
 ### 2.5 R5 受控 replan/recovery 本地证据
 
-R5 按有限状态恢复要求（spec:
-`docs/plans/robot-vla-production-closure-plan.md:559-589`）达到本地 `code_complete`：
+R5 按有限状态恢复要求达到本地 `code_complete`：
 
 ```text
 failed attempt -> typed failure + durable attempt summary
@@ -250,8 +247,7 @@ same validated request         typed ReplanContext -> Policy
 
 ### 2.6 R6 实机安全 capability 本地证据
 
-R6 的本地关闭范围对应 safety capability 与验收条件（spec:
-`docs/plans/robot-vla-production-closure-plan.md:619-652`）：
+R6 的本地关闭范围对应 ADR 保留的 safety capability 与验收条件：
 
 ```text
 provider-owned environment + safety manifest
@@ -293,8 +289,7 @@ Kernel 72/72；Executive profile 11/11、approval/bounds 4/4 与 pin/receipt tes
 ### 2.7 R7 Episode artifact/report 本地证据
 
 R7 对应 artifact manifest、外部引用、attempt/sequence、settlement、crash recovery、immutable
-promotion 与 retention tombstone（spec:
-`docs/plans/robot-vla-production-closure-plan.md:683-708`）：
+promotion 与 retention tombstone：
 
 ```text
 ordered attempts + external evidence refs
@@ -387,15 +382,47 @@ paths、before/after/verified sequence 和 terminal verification；它以 `mode=
 Aletheon/Policy/Bridge/ROS/MuJoCo，也不检查 daemon executable digest 和 systemd restart counter。
 公共入口 `aletheon.sh acceptance robot-r8` 会先执行 system-installed provenance、稳定性、Memory
 Agent 和 official-socket gate，再运行只读 report/SQLite 检查器
-（`scripts/lib/aletheon/acceptance.sh:10-16`、`scripts/lib/aletheon/runtime_gate.sh:46-193`）。即使这些
-本地 fixture 全部通过，没有实际正向/负向 Robot 任务 evidence 时也不能把 R8 从
-`externally_blocked` 提升为 accepted。
+（`scripts/lib/aletheon/acceptance.sh:10-16`、`scripts/lib/aletheon/runtime_gate.sh:46-193`）。这些
+本地 fixture 只能证明检查器行为；任何新的安装态验收仍必须同时提供实际正向/负向 Robot task evidence。
+
+### 2.9 2026-08-07 R8/X13 安装态 MuJoCo 验收
+
+PR #182 合入前，installed release、`/usr/bin/aletheon`、machine core、user daemon 与 Memory Agent
+的 SHA-256 均为 `038986c29aaf37680d0a8ce0702235bbf50c13b4df8aac9dd73be80730007b1a`；systemd restart
+counter 稳定，official user socket 的真实 LLM 请求通过。该 digest 是当次验收 provenance，不表示
+后续版本应继续使用同一二进制。
+
+真实链路如下：
+
+```text
+/usr/bin/aletheon -> official user socket -> installed daemon
+  -> RobotCognitiveSession -> aletheon-vla-lejurobot/deepseek-v4-flash
+  -> Kernel/Hardware -> Bridge 77e44869... -> ROS -> kuavo-mujoco/biped-s53
+  -> stable verifier -> immutable EpisodeReport / SQLite receipt
+```
+
+- Policy protocol `1.0`，Bridge protocol digest 为
+  `77e44869ba6a6b3345753f699f9acd403a6c8f4de3383dcd5827b0ba7673e679`；
+- 三次连续真实 TUI stance run 都执行唯一 operation-bound `kuavo.stance {}`，对所有 base-twist
+  path 连续稳定验证 3000 ms，并 settle `completed`；
+- 受控正向 `kuavo.move_base_timed` 产生 ground-truth displacement、完成验证、回到零速并 settle
+  `completed`；
+- unsafe/unavailable 负向请求由 Policy 返回 typed `SafetyFallback`，Host 记录
+  `proposal_rejected`，执行 attempt 数为 0，terminal `safe_stop` 成功，settlement 为 `failed`；
+- `scripts/libexec/aletheon/robot_r8_evidence.py` 逐项核对 request/attempt/operation、sequence、stable
+  window、provenance、artifact 和 safe-stop 与 SQLite；正向和负向 receipt 均为
+  `REPORT_EVIDENCE_PASS`，daemon restart 后再次读取仍一致。
+
+当次汇总和 immutable reports 位于
+`target/r8-x13-installed-20260806-174928/x13-current-sha-20260807-003254/`。该目录是本地保留的
+验收 artifact，不是运行时 authority。R8/X13 的 accepted 结论仅覆盖 MuJoCo；物理 HIL/real 仍受
+ADR 的独立安全 gate 约束。
 
 ## 3. 测试 artifact 目录与清理
 
 - 单测/集成测试使用临时目录（tempfile），测试结束删除。
 - live bridge diagnostic 的 rosbag/frame/log 落到 operator config 指定的 artifact root，只保留 digest/引用，不内联进 session/event/数据库。
-- 计划目标是成功 evidence 30 天、失败 artifact 90 天并保留 tombstone；R7 已实现可重试的删除/tombstone/report projection 生命周期，但未验证 robot artifact 的定时 job、生效配置或 30/90 天安装态执行，因此不得把该期限描述为当前已生效策略。
+- 保留策略目标是成功 evidence 30 天、失败 artifact 90 天并保留 tombstone；R7 已实现可重试的删除/tombstone/report projection 生命周期，但未验证 robot artifact 的定时 job、生效配置或 30/90 天安装态执行，因此不得把该期限描述为当前已生效策略。
 
 ## 4. 本轮"已完成"能力 → 证据锚点（必须能追到类型/测试）
 
@@ -414,8 +441,8 @@ Agent 和 official-socket gate，再运行只读 report/SQLite 检查器
 | Mnemosyne promotion | `robot_episode_promotion`（`SettledEpisodeReport::can_promote()` integrity gate） |
 | Real bridge execute E2E | `executive/tests/robot_bridge_execute_e2e.rs`（`#[ignore]`；历史 diagnostic 报告通过，非本轮 acceptance） |
 
-## 5. 明确不在本轮验收
+## 5. 尚未验收的独立范围
 
-- 真实 Policy/VLA gateway（R4 无真实 gateway → `code_complete`）。
-- 物理实机（独立 R6/HIL gate，不是 R8 MuJoCo 关闭条件）。
-- 官方安装态全链路（R8：release/`/usr/bin/aletheon` 与所有运行中 Aletheon daemon executable SHA 一致 + official socket 真实 Policy/Bridge/MuJoCo）。
+- 物理实机/HIL：独立 R6 gate，必须在真实设备上证明 pinned serial/manifest/limits、local
+  watchdog/ownership、independent hard stop 与 emergency-stop；MuJoCo R8/X13 不能替代。
+- robot artifact 的 30/90 天定时 retention job 与实际部署策略尚未完成安装态时间跨度验证。
