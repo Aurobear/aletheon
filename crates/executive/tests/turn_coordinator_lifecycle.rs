@@ -138,13 +138,25 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
             },
         )
         .unwrap();
-    assert_eq!(events.len(), items.len() + 1);
+    assert_eq!(events.len(), items.len() + 2);
     assert_eq!(
         events[0].schema.0,
         fabric::SchemaId::EVENT_SESSION_CREATED_V1
     );
-    assert_eq!(events[0].position.sequence, fabric::TreeSequence(1));
-    assert_eq!(events[5].position.sequence, fabric::TreeSequence(6));
+    assert_eq!(
+        events[1].schema.0,
+        fabric::SchemaId::EVENT_SESSION_PRINCIPAL_BOUND_V1
+    );
+    assert!(events
+        .iter()
+        .skip(2)
+        .all(|event| event.schema.0 == fabric::SchemaId::TURN_EVENT_V1));
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(
+            event.position.sequence,
+            fabric::TreeSequence(index as u64 + 1)
+        );
+    }
 }
 
 #[tokio::test]
