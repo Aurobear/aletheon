@@ -375,7 +375,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: X12
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / pending (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 REQUIREMENT: installed system provenance/restart/official-socket/20-task >=16 gate (`docs/plans/Aletheon_Unified_Execution_Plan_2026-08-04.md:125,325-326`; `docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md:835-837`)
 EVIDENCE:
@@ -399,7 +399,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-001
-BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: tests/coding/harness/run.py now consumes canonical ExecEventEnvelope v1 schema_version/type/status/operation_id and nested TurnMetrics. Receipt validation preserves every classified terminal kind and treats provider_unavailable/provider_rejected/validation_failed/output_backpressure as explicit execution failures. Fake-client runner, replay, suite, receipt, workflow, and full static harness tests pass.
 FAILURES: none
@@ -412,7 +412,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-002
-BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: 9546dbb0715536adf4cb9ce1361afc65a4578869 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: X12 attempt 2 receipt target/coding-x12-corrected-20260805-2052/receipts/api_error_mapping.json records the original installed `/usr/bin/aletheon --sandbox auto` timeout. The repair constructs an explicit non-secret sandbox environment allowlist, excludes provider credentials/wrapper injection, gives the installed user service a conventional user-tool PATH, and restores per-turn workspace writable binds under configured profiles before metadata re-protection. Environment tests, 8 bubblewrap tests including live write/deny behavior, Corpus all-target clippy `-D warnings`, systemd boundary checks, docs paths, and formatting pass. `sudo bash scripts/aletheon.sh deploy` passed with release/installed/all-running executable SHA `caf149d3c04d5243e9c7c3d66ccdb4d0923018bf0fd6103683ccfca15cbd6db3`, stable restart counters, Memory Agent smoke, and official-socket real request. Installed artifact `target/xf-002-installed-pass-20260805-212244/exec.json` proves auto sandbox resolved `/home/aurobear/.cargo/bin/cargo`, completed `cargo check`, and denied a write to a pre-existing path outside WorkspacePolicy; host content remained `UNCHANGED`.
 FAILURES: none
@@ -425,7 +425,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-003
-BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: The retained installed rust_bugfix receipt from the concurrent X12 diagnostic run shows `src/lib.rs` plus the complete `target/` tree in `workspace.changed_files`. The task requires only `src/`, so ordinary in-workspace Cargo validation becomes a false policy_scope_failure even when the source repair is correctly scoped. The harness now adds `/target/` to each temporary repository's private `.git/info/exclude` before the fixture baseline commit; no fixture source or production policy is specialized. A focused regression proves `src/lib.rs` remains visible while a synthetic `target/debug/artifact` is excluded. Runner tests 8/8 and the full static harness suite pass; docs paths and diff checks pass.
 FAILURES: none
@@ -438,7 +438,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-004
-BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Retained installed coding diagnostics recorded repeated `apply_patch` errors. The model used the standard outer `*** Begin Patch` form with `*** Update File:` headers and bare `@@` hunks, while the parser accepted only unprefixed operation headers plus Aletheon-specific `>>>` fences. The repair accepts common update/add markers, multiple file operations in one outer document, `*** Move to:`, and inferred bare-hunk counts while retaining bounded complete-context matching and canonical path validation. Platform structured-patch tests 5/5 and all-target clippy `-D warnings` pass; canonical fenced and unified-diff formats remain covered.
 FAILURES: none
@@ -451,7 +451,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-005
-BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Installed artifact `target/xf-005-cargo-diagnostic-20260805-215304/exec.json` proves `cargo test` reaches rustc but fails to create `/tmp/rustc*` because the host `/tmp` is correctly read-only. The repair creates a unique host temporary directory per bash invocation, adds only that path to the resolved sandbox writable roots, exports TMPDIR/TMP/TEMP to it, and retains the TempDir guard through terminal tool execution for automatic cleanup. Environment coverage proves all three variables share the private root and still excludes secrets/wrappers; 9 live bubblewrap tests prove private `mktemp`, configured workspace writes, and deny masking; Corpus all-target clippy `-D warnings`, formatting, docs paths, and diff checks pass.
 FAILURES: none; final installed coding tasks executed the real sandboxed Cargo validation path and the catalog reported zero resource leaks
@@ -464,7 +464,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-006
-BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Retained approval/budget receipts show authoritative expected non-success terminals accompanied by a denial-path tool error, but receipt classification unconditionally added `tool_error_observed`. The classifier now tolerates tool errors only when the observed terminal exactly matches a declared non-verified expectation; completed verification, failed/provider terminals, mismatches, scope, acceptance, resources, and evidence remain fail-closed. A focused blocked/no-mutation fixture with one tool error passes; runner 9/9, replay 9/9, and the complete static harness suite pass; docs paths and diff checks pass.
 FAILURES: none
@@ -477,7 +477,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-007
-BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: X12 attempts 1 and 3 each recorded different `/usr/bin/aletheon` digests and core-RPC closure after another checkout deployed mid-suite. The deploy command now holds an exclusive runtime-mutation flock for its complete build/install/restart/verify transaction. A suite using exactly `/usr/bin/aletheon` holds the matching shared flock for its complete catalog; debug/custom binaries do not participate. ALETHEON_RUNTIME_LOCK_FILE provides an isolated test override. Suite tests 6/6 prove the installed shared lease blocks a nonblocking exclusive contender and a custom binary creates no lock. Full static harness, runtime-generation static contract, sudo user-context contract, shell syntax, docs paths, and diff checks pass.
 FAILURES: none
@@ -490,7 +490,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-008
-BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: The integration architecture lane initially failed because crates/corpus/src/security/runner.rs had grown to 2,151 lines against its governed 2,042-line hotspot limit. The production module was only 1,225 lines; 924 lines were its inline private test module. The test module now lives at crates/corpus/src/security/runner/tests.rs while preserving the same module privacy, names, and tail-test nesting. The production runner is 1,226 lines. The complete architecture suite passes, all 29 focused Runner tests pass, Corpus all-target clippy with -D warnings passes, and workspace formatting and diff checks pass.
 FAILURES: initial architecture gate exited 1 with hotspot budget exceeded; the post-split gate exits 0 with all six hotspot ownership budgets verified.
@@ -503,7 +503,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-009
-BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Installed artifact target/x12-xf005-installed-probe-20260805-225057/rust_bugfix.json used binary SHA 4b0a695cd9c29ad253e1b77113f0b844b51db6ba4f0573e241554cf57e5db606 with stable daemon generations. It changed only src/lib.rs to the correct boundary implementation and its second sandboxed cargo test succeeded. The run nevertheless reached 300 seconds without a terminal envelope; stderr records the enforced cognitive completion gate still missing RequiredAction::AcceptChange. Production registry/profile contracts intentionally keep change_accept Host-only, so the model cannot satisfy that obligation. Cognit now requires only the exact version-bound diff review and required validation before emitting its candidate; acceptance/repair remains a subsequent Host-owned action. Four focused change-transaction tests, the full-loop exact-closure regression, Cognit all-target clippy with -D warnings, formatting, documentation paths, and the complete architecture suite pass.
 FAILURES: none; the earlier timeout is retained as pre-fix evidence, while the final installed catalog reached authoritative terminal receipts for its version-bound code-change tasks
@@ -516,7 +516,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-010
-BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / deferred_by_owner / external supervisor active
+BASE / BRANCH / PR / GOAL_ID: adf35191b1a5391b147d00f3cef42dc7c9134b37 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / external supervisor active
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Immediately after installed deployment, the monitor health RPC reached /run/user/1000/aletheon/aletheon.sock and reported daemon readiness=ready, yet returned systemd.active=false. The authoritative host command reported aletheon.service active with NRestarts=0. /proc evidence shows the installed MCP monitor process has HOME/USER but no XDG_RUNTIME_DIR or DBUS_SESSION_BUS_ADDRESS, so its inherited systemctl --user probe targets no usable user manager. Monitor health and diagnose now derive missing XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS from the numeric UID in the authoritative user socket while preserving explicit operator values. Focused health/diagnose tests pass 27/27; the complete monitor suite passes 88/88; Python compilation, documentation paths, and diff checks pass.
 FAILURES: none; the pre-fix monitor contradiction is retained as diagnostic evidence, and the deployed post-suite verifier observed the authoritative active/stable units through the official runtime
@@ -529,7 +529,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-011
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a / auro/acceptance/20260805-x12-mainline / deferred_by_owner / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: `EventSourcedSessionStore` is now the only production `SessionAppendStore`; `CanonicalSessionStore` exposes only read and private materializer capabilities. Principal binding, Host Task projection and startup Turn recovery are ordered EventSpine facts; replay updates the SQLite read model, generation-safe recovery emits a typed terminal fact, and terminal snapshots clear live children/commands/approvals and mark unfinished activities lost. Session schema v5 and database migration v6 are registered. Fabric Session contract 3/3, Session recovery 2/2, reconnect/replay 8/8, Canonical recovery 9/9, U-RESUME 2/2, Executive check, architecture, formatting and diff checks pass locally.
 FAILURES: the initial Session contract run detected that the checked-in v5 schema predated the recovery variant; regeneration from the exporter fixed the mismatch and the rerun passed 3/3.
@@ -542,7 +542,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-012
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a / auro/acceptance/20260805-x12-mainline / deferred_by_owner / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: Agent settlement/reparent/recovery control evidence now uses `aletheon.event.agent_settlement/v1`, not the public Session `turn.event/v1` ItemRecord schema. Focused coverage proves the schema separation and U-RESUME-005 proves stale-generation rejection writes a durable typed audit event. Executive check, U-RESUME tests, architecture, formatting and diff checks pass locally.
 FAILURES: none
@@ -555,7 +555,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-013
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a / auro/acceptance/20260805-x12-mainline / deferred_by_owner / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: U-TUI-002 now folds multiple streaming chunks and observes the real `cancel` request while the app remains active pending acknowledgement. U-TUI-006 disables every theme color under `NO_COLOR` and exercises prompt, session list, resume, help and quit through text-only keyboard/line mode. README Stable rows now name separate production, E2E and recovery anchors; A-DELETE-002 verifies every path, executable E2E coverage, recovery semantics and removal of obsolete authority claims. Interact all-target check, U-TUI 7/7, Metacog deletion 2/2, architecture, formatting and diff checks pass locally.
 FAILURES: none
@@ -568,7 +568,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: XF-014
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a / auro/acceptance/20260805-x12-mainline / deferred_by_owner / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: token/cost/deadline unbounded_by_owner; max_attempts=3; attempt=1
 REQUIREMENT: recovered tool errors stay separately counted while typed provider/runtime failures and failed Host gates fail closed (`docs/plans/Aletheon_Unified_Execution_Plan_2026-08-04.md:469`)
 EVIDENCE / VALIDATION / RUNTIME EVIDENCE: `tests/coding/harness/receipt.py` no longer treats the aggregate diagnostic `tool_errors` counter as an independent terminal authority; authoritative terminal, independent acceptance, workspace policy, resource cleanup and correlated evidence remain separate gates. Python runner/replay/suite regression tests pass 29/29. The installed final-SHA catalog at `target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/x12-gate-fix-deploy-230003/final-20-task-235033/suite.json` records tool errors separately (average 0.2) while achieving 19/20; the single acceptance failure remains fail-closed and is not reclassified as success.
@@ -582,7 +582,7 @@ MERGE_SHA: pending_by_owner
 ```text
 STATUS: accepted
 NODE: X13
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 REQUIREMENT: Robot reuses Task/Activity/Receipt, completes MuJoCo, and projects safety denial as blocked; physical hardware is excluded (`docs/plans/Aletheon_Unified_Execution_Plan_2026-08-04.md:126,293-296`; `docs/plans/Aletheon_Architecture_Stabilization_and_Convergence_Plan_2026-08-04.md:857-875`; `docs/plans/Aletheon_User_Experience_and_Engineering_Workflow_Plan_2026-08-04.md:839-859`)
 EVIDENCE:
@@ -616,7 +616,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: R0
-BASE / BRANCH / PR / GOAL_ID: c080b08bf3170dd8a09acdb738a255133abbf11b / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: c080b08bf3170dd8a09acdb738a255133abbf11b / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 EVIDENCE:
   - docs/testing/robot-runtime.md (tracked since 9e4c4ad3cd7d5adf6e3b5d329de732c7c475d011)
@@ -640,7 +640,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: R1
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / pending (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 EVIDENCE:
   - typed RobotIntegrationConfig/RobotPolicyConfig/RobotPerceptionConfig and resolved build facts
@@ -663,7 +663,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: R2
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 EVIDENCE:
   - Policy connect runs Health + GetCapabilities before exposure and keeps PolicyCapabilitySnapshot
@@ -692,7 +692,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: R3
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 EVIDENCE:
   - Cognit owns the abstract RobotPerceptionPort and Plan consumes non-empty validated observations (`crates/cognit/src/harness/robot/mod.rs:32-40`, `crates/cognit/src/harness/robot/mod.rs:269-347`)
@@ -717,7 +717,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: R4
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 EVIDENCE:
   - Policy protobuf now carries bounded typed snapshots alongside goal/device/visual refs/allowlist/protocol (`crates/cognit/proto/aletheon/policy/gateway/v1/policy.proto:23-59`)
@@ -741,7 +741,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: R5
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 EVIDENCE: typed failure/history (`crates/fabric/src/types/robot_failure.rs:8-69`), finite ReplanContext and separate budget transitions (`crates/cognit/src/harness/robot/state.rs:52-123`), typed Policy prior-attempt wire (`crates/cognit/proto/aletheon/policy/gateway/v1/policy.proto:23-62`), validated replan/loop detector/recovery/safe-stop settlement (`crates/cognit/src/harness/robot/mod.rs:372-490,646-877`), and cancellation/report mapping (`crates/cognit/src/harness/robot/session.rs:144-231`) implement spec:docs/plans/robot-vla-production-closure-plan.md:559-589
 VALIDATION / RUNTIME EVIDENCE: Cognit R5 recovery 5/5, gRPC Policy 5/5, state 9/9, perception 5/5, proposal outcome 1/1; Executive robot session E2E 3/3; Fabric failure serde 1/1 and EpisodeReport 3/3; Fabric/Cognit/Executive all-target checks plus fmt/architecture/diff passed. The installed negative lane additionally proves a typed `proposal_rejected` history, zero unsafe attempts, bounded transition to SafeStop, failed settlement, terminal `safe_stop succeeded`, and durable restart reconstruction (`target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/negative-final-report.json`)
@@ -755,7 +755,7 @@ MERGE_SHA: pending
 ```text
 STATUS: code_complete
 NODE: R6
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 EVIDENCE:
   - provider-attested simulation/HIL/real and the complete safety manifest fail closed by environment (`crates/fabric/src/types/embodiment.rs:17-167`, `crates/hardware/src/grpc/provider.rs:504-568`)
@@ -781,7 +781,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: R7
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 EVIDENCE:
   - the report contract carries complete external artifact manifests, explicit legacy-metadata incompleteness, before/after/verified sequences, ordered attempt/operation identity, verification paths, typed settlement, model/bridge/scene/descriptor provenance and an integrity-checked immutable settled receipt (`crates/fabric/src/types/episode_report.rs:37-78,87-325,335-428,439-720`)
@@ -804,7 +804,7 @@ MERGE_SHA: pending
 ```text
 STATUS: accepted
 NODE: R8
-BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / none (local only) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
+BASE / BRANCH / PR / GOAL_ID: 9c60ae25775a1c02f1b741a1cfaa1321209b7b88 / auro/acceptance/20260805-x12-mainline / #182 (target dev) / 019fd228-80c6-7bd0-8ea7-15481e8738d1
 BUDGET: goal mode; no explicit token budget
 REQUIREMENT: full installed `/usr/bin/aletheon` -> official socket -> installed daemon -> RobotCognitiveSession -> real Policy -> Kernel/Hardware -> candidate Bridge -> ROS/MuJoCo -> stable verifier -> durable report, including safe-stop negative and restart reconstruction (`docs/plans/robot-vla-production-closure-plan.md:763-793,928-941`)
 EVIDENCE:
