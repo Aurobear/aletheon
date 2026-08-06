@@ -80,7 +80,7 @@ impl SafetyCapabilityManifest {
     /// Return stable capability names missing from the selected deployment gate.
     /// Simulation still requires the independent liveness/ownership/safe-stop
     /// boundary. HIL and real execution require the complete manifest.
-    pub fn missing_for(self: &Self, environment: ExecutionEnvironment) -> Vec<&'static str> {
+    pub fn missing_for(&self, environment: ExecutionEnvironment) -> Vec<&'static str> {
         let mut missing = Vec::new();
         for (name, supported) in [
             ("watchdog", self.watchdog),
