@@ -5,7 +5,7 @@ use std::sync::Arc;
 use fabric::types::embodiment::{DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult};
 
 use crate::{
-    AuthorizedSkillRequest, EmbodimentProvider, MonotonicClock, OperationId, ProviderError,
+    AuthorizedSkillRequest, DeviceOperationId, EmbodimentProvider, MonotonicClock, ProviderError,
     ProviderRegistry, SkillProgressSink, ValidatedSkillCommand,
 };
 
@@ -76,7 +76,7 @@ impl Broker {
     pub async fn cancel(
         &self,
         device: &DeviceId,
-        operation: &OperationId,
+        operation: &DeviceOperationId,
     ) -> Result<(), BrokerError> {
         self.provider(device)?
             .cancel(device, operation)
@@ -200,7 +200,7 @@ mod tests {
         async fn cancel(
             &self,
             device: &DeviceId,
-            _operation: &OperationId,
+            _operation: &DeviceOperationId,
         ) -> Result<CancelAck, ProviderError> {
             Ok(CancelAck {
                 device: device.clone(),
@@ -254,7 +254,7 @@ mod tests {
         let mutations: Vec<Box<dyn Fn(&mut AuthorizedSkillRequest)>> = vec![
             Box::new(|a| a.permit.revoked = true),
             Box::new(|a| a.permit.device = DeviceId("other".into())),
-            Box::new(|a| a.lease.operation = OperationId("other".into())),
+            Box::new(|a| a.lease.operation = DeviceOperationId("other".into())),
             Box::new(|a| a.permit.principal = crate::PrincipalId("other".into())),
             Box::new(|a| a.permit.scope.clear()),
             Box::new(|a| a.permit.expires_at = crate::MonotonicInstant(0)),

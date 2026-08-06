@@ -71,7 +71,7 @@ pub trait EmbodimentProvider: Send + Sync {
     async fn cancel(
         &self,
         device: &DeviceId,
-        operation: &crate::OperationId,
+        operation: &crate::DeviceOperationId,
     ) -> Result<CancelAck, ProviderError>;
     async fn safe_stop(&self, device: &DeviceId) -> Result<StopReceipt, ProviderError>;
 }
@@ -79,7 +79,7 @@ pub trait EmbodimentProvider: Send + Sync {
 #[cfg(test)]
 pub(crate) fn authorized_fixture(request: SkillRequest) -> AuthorizedSkillRequest {
     let device = request.device.clone();
-    let operation = crate::OperationId(fabric::OperationId::new().0.to_string());
+    let operation = crate::DeviceOperationId(fabric::OperationId::new().0.to_string());
     let principal = crate::PrincipalId("test-principal".into());
     let scope = std::collections::BTreeSet::from([request.skill.0.clone()]);
     AuthorizedSkillRequest {

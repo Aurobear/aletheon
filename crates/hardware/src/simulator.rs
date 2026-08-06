@@ -2,7 +2,7 @@
 
 use crate::{
     CommandDecision, CommandReceipt, CommandSequence, ControlLease, ControlPermit, DeviceClass,
-    DeviceId, DeviceManifest, DeviceNamespace, DeviceProvider, MonotonicClock, OperationId,
+    DeviceId, DeviceManifest, DeviceNamespace, DeviceOperationId, DeviceProvider, MonotonicClock,
     RejectionReason, SafetyState, TelemetryEnvelope, TypedCommand, ValidatedCommand,
 };
 use std::collections::BTreeSet;
@@ -74,7 +74,7 @@ impl SimulatedDevice {
             let _ = self.safe_stop();
         }
     }
-    pub fn telemetry(&mut self, operation: Option<OperationId>) -> TelemetryEnvelope {
+    pub fn telemetry(&mut self, operation: Option<DeviceOperationId>) -> TelemetryEnvelope {
         self.telemetry_sequence = self.telemetry_sequence.saturating_add(1);
         TelemetryEnvelope {
             device: self.manifest.id.clone(),
@@ -390,7 +390,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
     async fn cancel(
         &self,
         device: &fabric::types::embodiment::DeviceId,
-        _operation: &crate::OperationId,
+        _operation: &crate::DeviceOperationId,
     ) -> Result<crate::CancelAck, crate::ProviderError> {
         let mut guard = self.inner.lock().await;
         if guard.manifest.id != *device {
@@ -557,7 +557,7 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
     async fn cancel(
         &self,
         device: &fabric::types::embodiment::DeviceId,
-        _operation: &crate::OperationId,
+        _operation: &crate::DeviceOperationId,
     ) -> Result<crate::CancelAck, crate::ProviderError> {
         if self.id != *device {
             return Err(crate::ProviderError::Rejected("device mismatch".into()));
@@ -648,7 +648,7 @@ mod tests {
     ) {
         let clock = Arc::new(ManualClock::new(10));
         let mut robot = SimulatedDevice::mobile_robot("bot", clock.clone());
-        let operation = OperationId("op".into());
+        let operation = DeviceOperationId("op".into());
         let principal = PrincipalId("alice".into());
         robot
             .grant_lease(ControlLease {
@@ -724,7 +724,7 @@ mod tests {
     fn mismatched_authority_and_schema_are_exhaustively_rejected() {
         let (_, mut r, p, c) = setup();
         let mut value = p.clone();
-        value.operation = OperationId("other".into());
+        value.operation = DeviceOperationId("other".into());
         assert_eq!(
             r.execute(&c, Some(&value)).decision,
             CommandDecision::Rejected(RejectionReason::PermitOperationMismatch)
@@ -794,7 +794,7 @@ mod tests {
         let (clock, mut r, _, _) = setup();
         let a = r.telemetry(None);
         clock.advance_by(1);
-        let b = r.telemetry(Some(OperationId("op".into())));
+        let b = r.telemetry(Some(DeviceOperationId("op".into())));
         assert!(b.sequence > a.sequence);
         assert!(b.source_time > a.source_time);
         assert!(clock.advance_to(1).is_err());
@@ -843,7 +843,7 @@ mod embodiment_tests {
             parameters: serde_json::json!({"x": 2.0, "y": 3.0}),
         };
         let mut authorized = authorized_fixture(request);
-        authorized.permit.operation = OperationId(fabric::OperationId::new().0.to_string());
+        authorized.permit.operation = DeviceOperationId(fabric::OperationId::new().0.to_string());
         let result = provider
             .execute_skill(
                 crate::ValidatedSkillCommand(&authorized),
@@ -859,7 +859,7 @@ mod embodiment_tests {
         let clock = Arc::new(ManualClock::new(0));
         let provider = SimulatedEmbodiment::mobile_robot("bot", clock);
         let acknowledgement = provider
-            .cancel(&DeviceId("bot".into()), &OperationId("op".into()))
+            .cancel(&DeviceId("bot".into()), &DeviceOperationId("op".into()))
             .await
             .unwrap();
         assert_eq!(acknowledgement.device, DeviceId("bot".into()));

@@ -20,7 +20,7 @@ use super::embodiment_progress::{BoundedProgressSink, EmbodimentProgressPort};
 #[derive(Clone)]
 pub struct ActiveEmbodimentOperation {
     pub device: fabric::types::embodiment::DeviceId,
-    pub hardware_operation: hardware::OperationId,
+    pub hardware_operation: hardware::DeviceOperationId,
     pub cancel: CancellationToken,
 }
 
@@ -68,7 +68,7 @@ impl ToolExecutor for EmbodimentCapabilityExecutor {
         let Some(lease_id) = permit.lease else {
             return capability_error(call_id, "admission omitted hardware lease".into());
         };
-        let operation = hardware::OperationId(request.call.operation_id.0.to_string());
+        let operation = hardware::DeviceOperationId(request.call.operation_id.0.to_string());
         let principal = hardware::PrincipalId(request.authority.principal.0.clone());
         let scope: std::collections::BTreeSet<String> =
             permit.granted_scope.allowed_paths.iter().cloned().collect();

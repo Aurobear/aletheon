@@ -776,7 +776,7 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
     async fn cancel(
         &self,
         device: &DeviceId,
-        operation: &crate::OperationId,
+        operation: &crate::DeviceOperationId,
     ) -> Result<CancelAck, ProviderError> {
         let resp = self
             .client
