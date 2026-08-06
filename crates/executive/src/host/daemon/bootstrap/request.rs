@@ -805,20 +805,14 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
-        // Child/runtime Agents (including Memory semantic proposals) are never
-        // an embodiment control surface. Keep their cognitive runtime linear
-        // even when the operator selects Robot for the top-level user task.
-        let linear_cognitive_sessions: Arc<
-            dyn crate::application::harness_factory::CognitiveSessionFactory,
-        > = production_cognitive_session_factory(
+        // Child/runtime Agents are not embodiment controls and always use Linear cognition.
+        let linear_cognitive_sessions = production_cognitive_session_factory(
             &runtime_config_snapshot,
             clock.clone(),
             recall_memory.clone(),
             dasein_handle.clone(),
         );
-        let cognitive_sessions: Arc<
-            dyn crate::application::harness_factory::CognitiveSessionFactory,
-        > = match runtime_config_snapshot.harness_kind {
+        let cognitive_sessions = match runtime_config_snapshot.harness_kind {
             cognit::harness::HarnessKind::Linear => linear_cognitive_sessions.clone(),
             cognit::harness::HarnessKind::Robot => {
                 let robot = config.robot.as_ref().context("Robot config is missing")?;
