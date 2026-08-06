@@ -240,9 +240,9 @@ same validated request         typed ReplanContext -> Policy
   `crates/cognit/src/harness/robot/state.rs:98-123`）；
 - provider disconnect、unsafe/unknown evidence、budget exhaustion 和 cancellation 都进入 safe-stop + failed
   settlement；safe-stop/settlement failure 追加到 ordered failure history，不覆盖 primary cause
-  （`crates/cognit/src/harness/robot/mod.rs:450-490,621-877`）；
+  （`crates/cognit/src/harness/robot/mod.rs` 中的 `route_replan_or_stop`、`safe_stop_and_close` 与 `step`）；
 - Robot session 从 durable sink 重建 ordered attempt list；pre-cancelled turn 也返回 typed failed EpisodeReport，
-  不丢弃恢复证据（`crates/cognit/src/harness/robot/session.rs:66-140,144-231`）。
+  不丢弃恢复证据（`crates/cognit/src/harness/robot/session.rs` 中的 `build_report` 与 `run_turn`）。
 
 本地证据：R5 recovery 5/5、Policy gRPC 5/5、state machine 9/9、Executive robot-session E2E
 3/3、Fabric failure/report 1/3；Fabric/Cognit/Executive all-target、architecture、format、diff checks
@@ -282,7 +282,7 @@ physical/local estop -----------------------------> direct stop callback
   消失不等待 Agent/LLM。驱动 movement handler 对 compiled/deployment/reviewed 三层最小限制执行 reject，
   不 clamp（bridge `watchdog.py:44-190`、`move_base_timed.py:18-112`）；
 - local emergency-stop latch 直接调用 device callback，不经过 gRPC、Policy 或 LLM（bridge
-  `safety.py:78-107`、`tests/fault_injection/test_safety.py:129-140`）。
+  `safety.py:78-107`、`aletheon-kuavo-bridge/tests/fault_injection/test_safety.py:129-140`）。
 
 本地证据：Bridge pytest 101 passed/6 skipped；Fabric embodiment 7/7；Hardware 72 passed/3 ignored；
 Kernel 72/72；Executive profile 11/11、approval/bounds 4/4 与 pin/receipt tests；Cognit validator
@@ -311,13 +311,14 @@ ordered attempts + external evidence refs
 - `EpisodeReport` 保存 model/bridge/scene/descriptor provenance、每次 attempt 的 operation ID 与
   before/after/verified sequence 以及 verifier 实际读取的 predicate paths；`EpisodeSettlement` 是 report 与 `TurnStop` 的同一权威，
   `SettledEpisodeReport` 以 SHA-256 绑定不可变 receipt
-  （`crates/fabric/src/types/episode_report.rs:37-78,335-428,439-720`）；
+  （`crates/fabric/src/types/episode_report.rs` 中的 `EpisodeSettlement`、`AttemptRecord`、`EpisodeReport` 与
+  `SettledEpisodeReport`）；
 - frame 转换为完整 manifest；旧 provider 只有 URI 时显式标记 metadata incomplete，不伪造
   digest/size/producer/time range，并拒绝大小写变体的 inline/data URI
   （`crates/fabric/src/types/episode_report.rs:87-325`）；
 - session 从 SQLite 重建全部重试 evidence，然后按 persist→audit→promotion 消费同一不可变
   receipt；失败 episode 保留 evidence 但不进入成功经验
-  （`crates/cognit/src/harness/robot/session.rs:84-180,224-258`、
+  （`crates/cognit/src/harness/robot/session.rs` 中的 `build_report` 与 `run_turn`、
   `crates/executive/src/application/robot_episode_promotion.rs:24-50`）；
 - fresh SQLite schema 仅保存有界的 expected/result/verification JSON 和 sequence，大 artifact 只保存
   manifest/reference；report 与 tombstone 表有 immutable trigger
@@ -337,7 +338,7 @@ installed/runtime acceptance。
 R8 的 safe-stop 证据不再由 failed/cancelled settlement 推断。状态机在 safe-stop executor
 返回后记录 `SafeStopReceipt` 的 attempt、typed trigger 与 succeeded/failed outcome；report
 验证 outcome 与 `SafeStopFailure` 历史一致，audit 只消费该 typed fact
-（`crates/fabric/src/types/episode_report.rs:68-84,458,567-588`、
+（`crates/fabric/src/types/episode_report.rs` 中的 `SafeStopReceipt` 与 `EpisodeReport::validate`、
 `crates/cognit/src/harness/robot/mod.rs:493-511`、
 `crates/executive/src/application/robot_audit.rs:77-103`）。Fabric contract、Cognit recovery 和
 Executive cancellation session 已覆盖成功/失败 safe-stop receipt；这仍不是远端真实 safe-stop 证据。
