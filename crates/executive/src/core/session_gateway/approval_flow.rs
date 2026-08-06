@@ -74,6 +74,9 @@ impl SessionGateway {
                             fabric::ItemPayload::ContextProjection { .. } => "context_projection",
                             fabric::ItemPayload::SystemNotice { .. } => "system_notice",
                             fabric::ItemPayload::CapabilityReceipt { .. } => "capability_receipt",
+                            fabric::ItemPayload::RobotEpisodeReceipt { .. } => {
+                                "robot_episode_receipt"
+                            }
                             fabric::ItemPayload::EvaluationReceiptRef { .. } => {
                                 "evaluation_receipt_ref"
                             }
@@ -81,6 +84,8 @@ impl SessionGateway {
                                 "model_context_projection"
                             }
                             fabric::ItemPayload::InferenceReceipt { .. } => "inference_receipt",
+                            fabric::ItemPayload::TaskProjection { .. } => "task_projection",
+                            fabric::ItemPayload::TurnRecovery { .. } => "turn_recovery",
                         };
                         if event_type.is_some_and(|expected| expected != event_type_str) {
                             return None;

@@ -10,9 +10,10 @@ use async_trait::async_trait;
 
 use executive::application::turn_coordinator::TurnExecution;
 use executive::application::turn_policy::TurnPolicy;
+use executive::runtime::session::projection_store::SessionProjectionStore;
 use fabric::{
-    ItemPayload, OperationKind, OperationState, SessionAppendStore, SessionId, TurnMetrics,
-    TurnRequest, TurnResult, TurnStop,
+    ItemPayload, OperationKind, OperationState, PrincipalId, SessionId, SessionReadStore,
+    TurnMetrics, TurnRequest, TurnResult, TurnStop,
 };
 use support::test_aletheon_builder::TestAletheonBuilder;
 
@@ -21,7 +22,7 @@ struct TerminalFailingStore {
 }
 
 #[async_trait]
-impl fabric::SessionAppendStore for TerminalFailingStore {
+impl SessionProjectionStore for TerminalFailingStore {
     async fn create(&self, session: fabric::SessionRecord) -> anyhow::Result<()> {
         self.inner.create(session).await
     }
@@ -50,6 +51,17 @@ impl fabric::SessionAppendStore for TerminalFailingStore {
         self.inner.fork(parent, through_sequence, child).await
     }
 
+    async fn bind_principal(
+        &self,
+        session: &SessionId,
+        principal: &PrincipalId,
+    ) -> anyhow::Result<()> {
+        self.inner.bind_principal(session, principal).await
+    }
+}
+
+#[async_trait]
+impl SessionReadStore for TerminalFailingStore {
     async fn load_session(
         &self,
         session: &SessionId,
@@ -135,7 +147,7 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
     let kernel = Arc::new(::kernel::KernelRuntime::with_clock(
         clock as Arc<dyn fabric::Clock>,
     ));
-    let store: Arc<dyn SessionAppendStore> = Arc::new(TerminalFailingStore {
+    let projection_store: Arc<dyn SessionProjectionStore> = Arc::new(TerminalFailingStore {
         inner: executive::runtime::session::canonical_store::CanonicalSessionStore::open(
             ":memory:",
         )
@@ -148,10 +160,11 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
     };
     let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
         kernel.clone(),
-        store.clone(),
+        projection_store,
         spine,
         hardening,
     );
+    let store = coordinator.store();
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await

@@ -99,8 +99,9 @@ where
             batch_planner,
         )
         .await?;
+    let runtime_events = event_sink.runtime_sink();
     Ok(session
-        .run_streaming_turn(request, &services, &fabric::NoopTurnEventSink, &event_sink)
+        .run_streaming_turn(request, &services, &runtime_events, &event_sink)
         .await?)
 }
 

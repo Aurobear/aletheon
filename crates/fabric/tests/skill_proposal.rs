@@ -1,5 +1,6 @@
 use fabric::types::embodiment::{DeviceId, SkillId};
 use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use fabric::types::frame::FrameRef;
 use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
 
 fn make_valid_proposal() -> SkillProposal {
@@ -7,6 +8,7 @@ fn make_valid_proposal() -> SkillProposal {
         skill: SkillId("wave".into()),
         device: DeviceId("bot".into()),
         parameters: serde_json::json!({"amplitude": 0.5}),
+        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "mode".into(),
@@ -17,11 +19,12 @@ fn make_valid_proposal() -> SkillProposal {
             timeout_ms: 5000,
         },
         confidence: 0.95,
-        frame_refs: vec!["artifact://sha256:abc".into()],
+        frame_refs: vec![frame(1)],
         provenance: PolicyProvenance {
             provider: "openvla-v1".into(),
             model: "openvla-7b".into(),
             version: "1.0".into(),
+            protocol_version: "1.0".into(),
             digest: "sha256:def456".into(),
         },
     }
@@ -48,10 +51,34 @@ fn negative_confidence_rejected() {
 }
 
 #[test]
+fn non_finite_confidence_rejected() {
+    let mut p = make_valid_proposal();
+    p.confidence = f32::NAN;
+    assert!(p.validate().is_err());
+    p.confidence = f32::INFINITY;
+    assert!(p.validate().is_err());
+}
+
+#[test]
 fn too_many_frame_refs_rejected() {
     let mut p = make_valid_proposal();
-    p.frame_refs = (0..5).map(|i| format!("artifact://sha256:{i}")).collect();
+    p.frame_refs = (0..5).map(frame).collect();
     assert!(p.validate().is_err());
+}
+
+fn frame(id: u64) -> FrameRef {
+    let digest = format!("{id:064x}");
+    FrameRef {
+        uri: format!("artifact://sha256/{digest}"),
+        sha256: digest,
+        mime_type: "image/jpeg".into(),
+        width: 1,
+        height: 1,
+        byte_len: 1,
+        source_time_ms: 1,
+        camera_id: "camera".into(),
+        frame_id: id,
+    }
 }
 
 #[test]
@@ -59,6 +86,21 @@ fn empty_provenance_digest_rejected() {
     let mut p = make_valid_proposal();
     p.provenance.digest = "".into();
     assert!(p.validate().is_err());
+}
+
+#[test]
+fn every_provenance_fact_is_required() {
+    for field in ["provider", "model", "version", "protocol_version"] {
+        let mut proposal = make_valid_proposal();
+        match field {
+            "provider" => proposal.provenance.provider.clear(),
+            "model" => proposal.provenance.model.clear(),
+            "version" => proposal.provenance.version.clear(),
+            "protocol_version" => proposal.provenance.protocol_version.clear(),
+            _ => unreachable!(),
+        }
+        assert!(proposal.validate().is_err(), "field {field}");
+    }
 }
 
 #[test]

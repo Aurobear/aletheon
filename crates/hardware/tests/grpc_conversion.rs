@@ -108,12 +108,29 @@ fn evidence_refs_are_collected() {
 #[test]
 fn timestamp_mapping_is_non_negative() {
     let wo = wire::Observation {
-        source_unix_ms: -100, // negative wire timestamp → clamped to 0
-        received_unix_ms: 50,
+        source_unix_ms: 999_000,
+        received_unix_ms: 999_500,
+        valid_until_unix_ms: 1_000_500,
         ..Default::default()
     };
-    let obs = convert::to_observation(&wo).unwrap();
-    assert_eq!(obs.source_time.0, 0);
+    let obs = convert::to_observation(&wo, fabric::MonoTime(10_000), 1_000_000).unwrap();
+    assert_eq!(obs.source_time.0, 9_000);
+    assert_eq!(obs.received_at.0, 9_500);
+    assert_eq!(obs.valid_until.unwrap().0 .0, 10_500);
+    assert_eq!(obs.source_unix_ms, 999_000);
+}
+
+#[test]
+fn provider_stale_verdict_becomes_an_expired_local_deadline() {
+    let now = fabric::MonoTime(10_000);
+    let wo = wire::Observation {
+        stale: true,
+        confidence: 0.9,
+        ..Default::default()
+    };
+    let obs = convert::to_observation(&wo, now, 1_000_000).unwrap();
+    assert!(obs.valid_until.unwrap().is_expired_at(now));
+    assert_eq!(obs.confidence, 0.9);
 }
 
 #[test]
@@ -122,8 +139,46 @@ fn missing_frame_ref_is_none() {
         frame_ref: String::new(),
         ..Default::default()
     };
-    let obs = convert::to_observation(&wo).unwrap();
-    assert_eq!(obs.frame_ref, None);
+    let obs = convert::to_observation(&wo, fabric::MonoTime(10), 100).unwrap();
+    assert_eq!(obs.reference_frame, None);
+    assert_eq!(obs.frame, None);
+}
+
+#[test]
+fn visual_frame_metadata_maps_without_confusing_coordinate_frames() {
+    let digest = "a".repeat(64);
+    let wo = wire::Observation {
+        schema: "camera.rgb".into(),
+        schema_version: 1,
+        source: "front-camera".into(),
+        sequence: 7,
+        source_unix_ms: 999_000,
+        received_unix_ms: 999_010,
+        frame_ref: format!("artifact://sha256/{digest}"),
+        confidence: 0.9,
+        payload: Some(convert::json_to_struct(&serde_json::json!({
+            "frame_sha256": digest,
+            "frame_mime_type": "image/jpeg",
+            "frame_width": 640,
+            "frame_height": 480,
+            "frame_byte_len": 32000,
+            "labels": ["robot"]
+        }))),
+        ..Default::default()
+    };
+    let obs = convert::to_observation(&wo, fabric::MonoTime(10_000), 1_000_000).unwrap();
+    let frame = obs.frame.expect("typed frame");
+    assert_eq!(frame.frame_id, 7);
+    assert_eq!(frame.byte_len, 32_000);
+    assert_eq!(obs.reference_frame, None);
+
+    let coordinate = wire::Observation {
+        frame_ref: "map".into(),
+        ..Default::default()
+    };
+    let obs = convert::to_observation(&coordinate, fabric::MonoTime(10), 100).unwrap();
+    assert_eq!(obs.reference_frame.as_deref(), Some("map"));
+    assert_eq!(obs.frame, None);
 }
 
 #[test]

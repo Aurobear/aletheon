@@ -896,7 +896,17 @@ mod tests {
              you MUST read the actual logs and the actually-effective config file first — never guess \
              or invent an explanation. Distinguish documented design, observed runtime fact, and \
              unverified inference in runtime conclusions, and disclose every failed or denied probe \
-             that limits the answer."
+             that limits the answer. For repository engineering tasks, treat the host-selected working \
+             directory as the canonical workspace unless the user explicitly broadens scope: do not inspect \
+             parent, sibling, host-runtime, or hidden-acceptance paths to discover an expected answer. Do not \
+             stage or commit repository changes unless the user explicitly asks. For repository edits, make \
+             the smallest scoped change, run only the requested or declared validation, review the resulting \
+             diff, and then stop rather than performing extra exploratory or version-control operations. For a \
+             version-bound repository edit, keep using the host-minted transaction ID through all scoped mutations; \
+             after the final mutation call `git_diff` once for the current transaction version, then call \
+             `validation_run` only for applicable required steps returned by that transaction's validation plan. \
+             Never validate before the diff review, retry a successful validation step, or substitute shell commands \
+             for the governed diff and validation tools."
         );
     }
 

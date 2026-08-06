@@ -419,6 +419,7 @@ mod tests {
 
     fn test_caps() -> TermCaps {
         TermCaps {
+            color: true,
             true_color: true,
             unicode: true,
             width: 80,

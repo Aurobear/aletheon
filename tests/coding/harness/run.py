@@ -220,8 +220,8 @@ def apply_setup(task: BenchmarkTask, workspace: pathlib.Path) -> str | None:
     return digest(_git(workspace, "diff", "--binary", "HEAD", "--", dirty_path))
 
 
-def changed_paths(workspace: pathlib.Path) -> list[str]:
-    tracked = _git(workspace, "diff", "--name-only", "-z", "HEAD").split(b"\0")
+def changed_paths(workspace: pathlib.Path, baseline: str = "HEAD") -> list[str]:
+    tracked = _git(workspace, "diff", "--name-only", "-z", baseline).split(b"\0")
     untracked = _git(
         workspace, "ls-files", "--others", "--exclude-standard", "-z"
     ).split(b"\0")
@@ -244,9 +244,10 @@ def _workspace_evidence(
     task: BenchmarkTask,
     workspace: pathlib.Path,
     base_tree_digest: str,
+    base_commit: str,
     dirty_patch_digest: str | None,
 ) -> dict[str, object]:
-    changed = changed_paths(workspace)
+    changed = changed_paths(workspace, base_commit)
     untracked = _git(
         workspace, "ls-files", "--others", "--exclude-standard", "-z"
     ).split(b"\0")
@@ -259,12 +260,12 @@ def _workspace_evidence(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    diff_bytes = _git(workspace, "diff", "--binary", "HEAD", "--")
+    diff_bytes = _git(workspace, "diff", "--binary", base_commit, "--")
     diff_text = diff_bytes.decode("utf-8", errors="replace")
 
     forbidden_unchanged = all(
         subprocess.run(
-            ["git", "diff", "--quiet", "HEAD", "--", declared],
+            ["git", "diff", "--quiet", base_commit, "--", declared],
             cwd=workspace,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -285,15 +286,23 @@ def _workspace_evidence(
     current_dirty = None
     if isinstance(dirty_path, str):
         current_dirty = digest(
-            _git(workspace, "diff", "--binary", "HEAD", "--", dirty_path)
+            _git(workspace, "diff", "--binary", base_commit, "--", dirty_path)
         )
+    head_unchanged = (
+        _git(workspace, "rev-parse", "HEAD").decode("ascii").strip() == base_commit
+    )
     return {
         "base_tree_digest": base_tree_digest,
         "diff": diff_text,
         "diff_digest": digest(diff_bytes),
         "changed_files": changed,
         "forbidden_paths_unchanged": forbidden_unchanged,
-        "required_scope_satisfied": required_covered and allowed_scope,
+        # A model-authored commit must not hide changes from the benchmark's
+        # diff-based evidence. Treat moving HEAD as a scope violation while
+        # retaining the complete diff against the host-minted base commit.
+        "required_scope_satisfied": (
+            required_covered and allowed_scope and head_unchanged
+        ),
         "dirty_patch_digest": dirty_patch_digest,
         "dirty_patch_preserved": current_dirty == dirty_patch_digest,
     }
@@ -333,6 +342,20 @@ def default_binary(environ: Mapping[str, str]) -> pathlib.Path:
                 / ".cache/aletheon-cargo"
             )
     return pathlib.Path(cache_root) / "target/debug/aletheon"
+
+
+def execution_prompt(task: BenchmarkTask) -> str:
+    """Bind real-model work to the public fixture contract and workspace."""
+    return "\n\n".join(
+        (
+            task.prompt,
+            """[host_execution_constraints]
+- The host-selected working directory is the complete and canonical task workspace. Do not inspect, read, or write parent, sibling, host-runtime, or hidden-acceptance paths.
+- Do not stage or commit changes and do not move Git HEAD. The host records the uncommitted workspace diff as evidence.
+- Do not create external scratch projects or destructive cleanup commands. If validation is useful, run at most one relevant non-destructive validation inside the task workspace.
+- After the smallest requested change, optional validation, and diff review, stop. The host runs the declared acceptance commands separately.""",
+        )
+    )
 
 
 def _check_resources(
@@ -522,6 +545,7 @@ def run_task(
         fixture = root / "tests/coding/fixtures" / task.fixture
         shutil.copytree(fixture, workspace)
         base_tree_digest = _initialize_workspace(workspace)
+        base_commit = _git(workspace, "rev-parse", "HEAD").decode("ascii").strip()
         dirty_patch_digest = apply_setup(task, workspace)
 
         home = temporary_root / "home"
@@ -540,6 +564,11 @@ def run_task(
                 "HOME": str(home),
                 "XDG_RUNTIME_DIR": str(runtime_dir),
                 "XDG_CONFIG_HOME": str(config),
+                # Installed corpus acceptance is intentionally stricter than a
+                # diagnostic developer run: it must not be able to inspect the
+                # host checkout or hidden acceptance overlays outside workspace.
+                "ALETHEON__GROK_HARDENING__SANDBOX_PROFILES": "true",
+                "ALETHEON__SANDBOX_PROFILES__DEFAULT_PROFILE": "strict",
             }
         )
         command = [
@@ -548,7 +577,7 @@ def run_task(
             str(workspace),
             "exec",
             "--prompt",
-            task.prompt,
+            execution_prompt(task),
             "--sandbox",
             sandbox,
             "--output",
@@ -574,7 +603,7 @@ def run_task(
         executive, json_valid = _parse_executive(execution_result)
 
         workspace_evidence = _workspace_evidence(
-            task, workspace, base_tree_digest, dirty_patch_digest
+            task, workspace, base_tree_digest, base_commit, dirty_patch_digest
         )
         _overlay_hidden_acceptance(task, workspace, root)
         acceptance_results: list[Mapping[str, object]] = []

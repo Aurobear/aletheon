@@ -65,8 +65,8 @@ Operations:
   secrets {init|audit}          Initialize or audit production credentials
   database check DATABASE...    Run read-only SQLite quick checks
   verify [TARGET]               Run deployed-state or specialized verification
-  acceptance {architecture|release|extension}
-                                Run architecture or release acceptance
+  acceptance {architecture|release|extension|robot-r8}
+                                Run architecture, release, or installed Robot R8 acceptance
   test {unit|operations|deployment|architecture|all}
                                 Run a focused test suite
   closure {install|run|status}  Manage the scheduled Pi-memory closure

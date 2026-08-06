@@ -293,9 +293,48 @@ pub struct CanonicalTurnEventSink {
     sender: fabric::ipc::TurnEventSender,
 }
 
+/// Projection for the runtime-level [`TurnEvent`] channel. Cognitive streaming
+/// and runtime receipts are intentionally separate producers even though both
+/// share the bounded Fabric turn stream: a Robot episode receipt must never be
+/// disguised as model text or a generic diagnostic event.
+pub struct CanonicalRuntimeTurnEventSink {
+    sender: fabric::ipc::TurnEventSender,
+}
+
 impl CanonicalTurnEventSink {
     pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
         Self { sender }
+    }
+
+    pub fn runtime_sink(&self) -> CanonicalRuntimeTurnEventSink {
+        CanonicalRuntimeTurnEventSink::new(self.sender.clone())
+    }
+}
+
+impl CanonicalRuntimeTurnEventSink {
+    pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
+        Self { sender }
+    }
+}
+
+#[async_trait]
+impl TurnEventSink for CanonicalRuntimeTurnEventSink {
+    async fn emit(&self, event: TurnEvent) {
+        let projected = match event {
+            TurnEvent::RobotEpisodeSettled { receipt } => {
+                Some(fabric::ipc::TurnEventV1::RobotEpisodeSettled { receipt })
+            }
+            // Started/Finished are represented by the cognitive stream's
+            // lifecycle events. Embodiment progress retains its dedicated
+            // provider/spine schema and is not coerced into a Session receipt.
+            TurnEvent::Started { .. }
+            | TurnEvent::Finished { .. }
+            | TurnEvent::ToolCall { .. }
+            | TurnEvent::EmbodimentProgress { .. } => None,
+        };
+        if let Some(projected) = projected {
+            let _ = self.sender.send(&projected);
+        }
     }
 }
 
@@ -509,7 +548,7 @@ impl LinearCognitiveSession {
         let track_evaluation_obligations = evaluation
             .is_some_and(|contract| contract.mode == fabric::EvaluationMode::Enforce)
             || requirements.is_empty();
-        let mut required_actions = requirements
+        let required_actions = requirements
             .iter()
             .cloned()
             .map(|requirement| match requirement {
@@ -554,20 +593,6 @@ impl LinearCognitiveSession {
                                 "eligible"
                             }
                         ),
-                    });
-                }
-                if evidence.kind
-                    == fabric::types::metacognition_evidence::EvidenceKind::VerificationResult
-                    && !required_actions.iter().any(|action| {
-                        matches!(
-                            action,
-                            RequiredAction::InvokeTool { tool_name }
-                                if tool_name == "validation_run"
-                        )
-                    })
-                {
-                    required_actions.push(RequiredAction::InvokeTool {
-                        tool_name: "validation_run".into(),
                     });
                 }
             }
@@ -630,7 +655,7 @@ fn render_turn_contract(
                 == fabric::types::metacognition_evidence::EvidenceKind::VerificationResult
             {
                 lines.push(
-                    "- Invoke `validation_run` and observe its authoritative terminal result; a pending command is not completion evidence."
+                    "- For a code change, finish the scoped mutation, call `git_diff` with the current host-minted transaction ID, then invoke `validation_run` with the same transaction ID and an exact required step from the returned validation plan. Observe its authoritative terminal result; never validate before diff review, and a pending command is not completion evidence."
                         .into(),
                 );
             }

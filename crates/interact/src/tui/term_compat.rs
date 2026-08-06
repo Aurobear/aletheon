@@ -25,7 +25,25 @@ pub struct Theme {
 
 impl Theme {
     pub fn dark(caps: &TermCaps) -> Self {
-        if caps.true_color {
+        if !caps.color {
+            Self {
+                accent: Color::Reset,
+                text: Color::Reset,
+                text_muted: Color::Reset,
+                background: Color::Reset,
+                bg_panel: Color::Reset,
+                bg_user: Color::Reset,
+                border: Color::Reset,
+                border_active: Color::Reset,
+                error: Color::Reset,
+                warning: Color::Reset,
+                success: Color::Reset,
+                user_icon: Color::Reset,
+                assistant_icon: Color::Reset,
+                system_icon: Color::Reset,
+                code_bg: Color::Reset,
+            }
+        } else if caps.true_color {
             Self {
                 accent: Color::Rgb(217, 119, 87), // warm copper
                 text: Color::Rgb(230, 230, 230),
@@ -68,6 +86,8 @@ impl Theme {
 /// Terminal capabilities detected from environment.
 #[derive(Debug, Clone)]
 pub struct TermCaps {
+    /// Whether any color styling is allowed. `NO_COLOR` disables it.
+    pub color: bool,
     /// Supports 24-bit true color (Color::Rgb).
     pub true_color: bool,
     /// Supports Unicode characters (emoji, box drawing, braille).
@@ -83,11 +103,13 @@ pub struct TermCaps {
 impl TermCaps {
     /// Detect terminal capabilities from environment variables.
     pub fn detect() -> Self {
-        let true_color = detect_true_color();
+        let color = std::env::var_os("NO_COLOR").is_none();
+        let true_color = color && detect_true_color();
         let unicode = detect_unicode();
         let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
 
         Self {
+            color,
             true_color,
             unicode,
             width,
@@ -102,7 +124,9 @@ impl TermCaps {
 
     /// Get a color, falling back to nearest ANSI color if true color unsupported.
     pub fn color(&self, r: u8, g: u8, b: u8) -> Color {
-        if self.true_color {
+        if !self.color {
+            Color::Reset
+        } else if self.true_color {
             Color::Rgb(r, g, b)
         } else {
             rgb_to_ansi(r, g, b)
@@ -333,6 +357,7 @@ mod tests {
     #[test]
     fn test_term_caps_ascii_fallback() {
         let caps = TermCaps {
+            color: true,
             true_color: false,
             unicode: false,
             width: 80,

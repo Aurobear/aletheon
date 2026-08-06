@@ -113,8 +113,9 @@ pub fn production_cognitive_session_factory(
     dasein: std::sync::Arc<dyn fabric::dasein::DaseinOps>,
 ) -> std::sync::Arc<dyn CognitiveSessionFactory> {
     tracing::info!(
-        harness = selected_harness_kind(config.harness_kind),
-        "cognitive harness selected from config"
+        harness = "linear",
+        configured_harness = selected_harness_kind(config.harness_kind),
+        "linear cognitive session factory composed"
     );
     std::sync::Arc::new(
         LinearCognitiveSessionFactory::new(harness_config_from_executive(config), clock)

@@ -162,6 +162,55 @@ impl CognitiveTurnState {
             self.outstanding.push(Obligation::RequiredAction(action));
         }
     }
+
+    /// Replace version-bound obligations for one change transaction with the
+    /// latest applied workspace version.
+    ///
+    /// A transaction may contain several scoped writes. Once a later write is
+    /// applied, review or validation of an earlier workspace version is both
+    /// stale and impossible: the transaction registry only exposes its current
+    /// version. Keeping every intermediate version as an outstanding action
+    /// would therefore make deterministic completion unattainable and pressure
+    /// the model into invalid `git_diff` calls for historical versions.
+    pub fn require_current_change_version(
+        &mut self,
+        transaction_id: &str,
+        workspace_version: &str,
+        requires_validation: bool,
+    ) {
+        let belongs_to_transaction = |action: &RequiredAction| match action {
+            RequiredAction::ReviewChange {
+                transaction_id: id, ..
+            }
+            | RequiredAction::ValidateChange {
+                transaction_id: id, ..
+            }
+            | RequiredAction::AcceptChange {
+                transaction_id: id, ..
+            } => id == transaction_id,
+            _ => false,
+        };
+        self.contract
+            .required_actions
+            .retain(|action| !belongs_to_transaction(action));
+        self.outstanding.retain(|obligation| {
+            !matches!(
+                obligation,
+                Obligation::RequiredAction(action) if belongs_to_transaction(action)
+            )
+        });
+
+        self.require_action(RequiredAction::ReviewChange {
+            transaction_id: transaction_id.to_owned(),
+            workspace_version: workspace_version.to_owned(),
+        });
+        if requires_validation {
+            self.require_action(RequiredAction::ValidateChange {
+                transaction_id: transaction_id.to_owned(),
+                workspace_version: workspace_version.to_owned(),
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -208,5 +257,45 @@ mod tests {
         let encoded = serde_json::to_string(&state).unwrap();
         let decoded: CognitiveTurnState = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, state);
+    }
+
+    #[test]
+    fn newer_change_version_supersedes_stale_transaction_obligations() {
+        let mut state = CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "change two files".into(),
+            task_kind: CognitiveTaskKind::CodeChange,
+            required_actions: Vec::new(),
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        });
+        state.require_current_change_version("tx", "v1", true);
+        state.require_current_change_version("other", "o1", false);
+        state.require_current_change_version("tx", "v2", true);
+
+        assert!(!state.outstanding.iter().any(|obligation| matches!(
+            obligation,
+            Obligation::RequiredAction(
+                RequiredAction::ReviewChange { transaction_id, workspace_version }
+                | RequiredAction::ValidateChange { transaction_id, workspace_version }
+            ) if transaction_id == "tx" && workspace_version == "v1"
+        )));
+        assert!(state.outstanding.contains(&Obligation::RequiredAction(
+            RequiredAction::ReviewChange {
+                transaction_id: "tx".into(),
+                workspace_version: "v2".into(),
+            }
+        )));
+        assert!(state.outstanding.contains(&Obligation::RequiredAction(
+            RequiredAction::ValidateChange {
+                transaction_id: "tx".into(),
+                workspace_version: "v2".into(),
+            }
+        )));
+        assert!(state.outstanding.contains(&Obligation::RequiredAction(
+            RequiredAction::ReviewChange {
+                transaction_id: "other".into(),
+                workspace_version: "o1".into(),
+            }
+        )));
     }
 }

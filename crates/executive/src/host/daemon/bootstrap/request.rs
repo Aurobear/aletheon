@@ -770,13 +770,12 @@ impl RequestHandler {
             clock.clone(),
             durable_budget,
         ));
-        // Robot progress is projected via a deferred sink bound to the session
-        // event spine once it exists (the embodiment port is built earlier).
         let (embodiment_port, progress_sink) = super::robot::build_robot_embodiment_port(
             clock.clone(),
             kernel.admission(),
             &data_dir,
             &config.embodiment_provider,
+            config.robot.as_ref(),
         )
         .await?;
         tools
@@ -806,16 +805,23 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
+        // Child/runtime Agents (including Memory semantic proposals) are never
+        // an embodiment control surface. Keep their cognitive runtime linear
+        // even when the operator selects Robot for the top-level user task.
+        let linear_cognitive_sessions: Arc<
+            dyn crate::application::harness_factory::CognitiveSessionFactory,
+        > = production_cognitive_session_factory(
+            &runtime_config_snapshot,
+            clock.clone(),
+            recall_memory.clone(),
+            dasein_handle.clone(),
+        );
         let cognitive_sessions: Arc<
             dyn crate::application::harness_factory::CognitiveSessionFactory,
         > = match runtime_config_snapshot.harness_kind {
-            cognit::harness::HarnessKind::Linear => production_cognitive_session_factory(
-                &runtime_config_snapshot,
-                clock.clone(),
-                recall_memory.clone(),
-                dasein_handle.clone(),
-            ),
+            cognit::harness::HarnessKind::Linear => linear_cognitive_sessions.clone(),
             cognit::harness::HarnessKind::Robot => {
+                let robot = config.robot.as_ref().context("Robot config is missing")?;
                 let promoter = Some(Arc::new(
                     crate::application::robot_episode_promotion::MnemosyneEpisodePromoter::new(
                         fact_use_cases.clone(),
@@ -824,6 +830,7 @@ impl RequestHandler {
                     as Arc<dyn cognit::harness::robot::EpisodePromotionPort>);
                 super::robot::build_robot_cognitive_session_factory(
                     &config.embodiment_provider,
+                    robot,
                     embodiment_port.clone(),
                     clock.clone(),
                     &data_dir,
@@ -973,7 +980,7 @@ impl RequestHandler {
             .await?;
             let native = Arc::new(crate::adapters::runtime::NativeCognitRuntime::new(
                 crate::adapters::runtime::NativeCognitRuntimeResources {
-                    sessions: domains.cognition(),
+                    sessions: linear_cognitive_sessions.clone(),
                     capabilities: capability_service.clone(),
                     profiles: composition.profiles.clone(),
                     clock: clock.clone(),

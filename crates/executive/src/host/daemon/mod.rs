@@ -73,6 +73,8 @@ pub struct DaemonConfig {
     pub integrations: crate::composition::config::ResolvedIntegrations,
     /// Embodiment provider selection (Simulator or gRPC gateway).
     pub embodiment_provider: crate::composition::config::EmbodimentProviderConfig,
+    /// Fully validated Robot settings. `None` for a Linear harness.
+    pub robot: Option<crate::composition::config::ResolvedRobotIntegrationConfig>,
 }
 
 pub fn parse_conscious_arbitration_mode(

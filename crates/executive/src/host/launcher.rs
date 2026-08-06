@@ -302,7 +302,9 @@ impl TurnEventSink for ExecTurnEventWriter {
                 let activity_id = uuid::Uuid::new_v4().to_string();
                 self.envelope(Some(activity_id), ExecEvent::ActivityStarted { name })
             }
-            TurnEvent::Finished { .. } | TurnEvent::EmbodimentProgress { .. } => return,
+            TurnEvent::Finished { .. }
+            | TurnEvent::EmbodimentProgress { .. }
+            | TurnEvent::RobotEpisodeSettled { .. } => return,
         };
         self.emit_bounded(envelope).await;
     }

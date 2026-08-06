@@ -3,12 +3,13 @@ use fabric::types::frame::FrameRef;
 #[test]
 fn valid_frame_passes_validation() {
     let f = FrameRef {
-        uri: "artifact://sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+        uri: "artifact://sha256/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
             .into(),
         sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".into(),
         mime_type: "image/jpeg".into(),
         width: 640,
         height: 480,
+        byte_len: 32_000,
         source_time_ms: 1000,
         camera_id: "cam0".into(),
         frame_id: 1,
@@ -19,11 +20,13 @@ fn valid_frame_passes_validation() {
 #[test]
 fn png_is_allowed() {
     let f = FrameRef {
-        uri: "artifact://sha256:aaaa".into(),
+        uri: "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .into(),
         sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
         mime_type: "image/png".into(),
         width: 1,
         height: 1,
+        byte_len: 64,
         source_time_ms: 0,
         camera_id: "c".into(),
         frame_id: 0,
@@ -79,11 +82,13 @@ fn bad_sha256_rejected() {
 
 fn valid_frame() -> FrameRef {
     FrameRef {
-        uri: "artifact://sha256:a".into(),
+        uri: "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .into(),
         sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
         mime_type: "image/jpeg".into(),
         width: 640,
         height: 480,
+        byte_len: 32_000,
         source_time_ms: 1000,
         camera_id: "c".into(),
         frame_id: 0,

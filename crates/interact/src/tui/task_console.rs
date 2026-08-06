@@ -74,6 +74,10 @@ fn render_task_header(
         .map(|task| short_id(&task.task_id))
         .unwrap_or("no task");
     let phase = task.map(|task| task_phase(task.phase)).unwrap_or("idle");
+    let settlement = task
+        .and_then(|task| task.settlement)
+        .map(task_settlement)
+        .unwrap_or("open");
     let goal = task
         .and_then(|task| task.goal.as_deref())
         .unwrap_or("Waiting for daemon task projection");
@@ -94,10 +98,15 @@ fn render_task_header(
     let activity = activity_summary(&state.activities);
     let theme = caps.theme();
 
+    let task_badge = if caps.color {
+        Style::default().fg(Color::Black).bg(theme.accent)
+    } else {
+        Style::default()
+    };
     let mut lines = vec![Line::from(vec![
-        Span::styled(" TASK ", Style::default().fg(Color::Black).bg(theme.accent)),
+        Span::styled(" TASK ", task_badge),
         Span::styled(
-            format!(" project {project} · {task_id} · {phase} "),
+            format!(" project {project} · {task_id} · {phase} · {settlement} "),
             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(goal, Style::default().fg(theme.text_muted)),
@@ -210,10 +219,12 @@ fn render_activity_panel(
         .title(" Changes / diagnostics ");
     let changes_inner = changes.inner(sections[1]);
     changes.render(sections[1], buf);
+    let mut seen_refs = std::collections::HashSet::new();
     let refs = state
         .activities
         .iter()
         .flat_map(|activity| activity.artifact_refs.iter())
+        .filter(|reference| seen_refs.insert(reference.as_str()))
         .collect::<Vec<_>>();
     let mut change_lines = Vec::new();
     if let Some(error) = state.last_error.as_deref() {
@@ -258,6 +269,27 @@ fn render_activity_panel(
                 ))
             }));
         }
+    }
+    if let Some(summary) = robot_summary(&state.activities) {
+        change_lines.push(Line::from(Span::styled(
+            format!(
+                "ROBOT {} · {} · {}",
+                summary.device, summary.scene, summary.settlement
+            ),
+            Style::default().fg(if summary.settlement == "blocked" {
+                theme.error
+            } else {
+                theme.accent
+            }),
+        )));
+        change_lines.push(Line::from(format!(
+            " bridge {} · attempts {}",
+            summary.bridge_digest, summary.attempt_count
+        )));
+        change_lines.push(Line::from(format!(
+            " report {} · evidence {} ref(s)",
+            summary.report_sha256, summary.evidence_count
+        )));
     }
     if let Some(activity) = selected_activity.and_then(|index| state.activities.get(index)) {
         change_lines.push(Line::from(Span::styled(
@@ -378,6 +410,7 @@ fn activity_line(activity: &ActivitySnapshot, caps: &TermCaps, selected: bool) -
         ActivityState::Running => ("running", caps.theme().warning),
         ActivityState::Waiting => ("waiting", caps.theme().warning),
         ActivityState::Completed => ("done", caps.theme().success),
+        ActivityState::Blocked => ("blocked", caps.theme().error),
         ActivityState::Failed | ActivityState::Lost => ("failed", caps.theme().error),
         ActivityState::Cancelled => ("cancelled", caps.theme().text_muted),
     };
@@ -412,8 +445,60 @@ fn task_phase(phase: TaskPhase) -> &'static str {
         TaskPhase::Active => "active",
         TaskPhase::Interrupted => "interrupted",
         TaskPhase::Completed => "completed",
+        TaskPhase::Blocked => "blocked",
         TaskPhase::Failed => "failed",
     }
+}
+
+fn task_settlement(settlement: fabric::TaskSettlement) -> &'static str {
+    match settlement {
+        fabric::TaskSettlement::Accepted => "accepted",
+        fabric::TaskSettlement::RepairRequired => "repair-required",
+        fabric::TaskSettlement::Blocked => "blocked",
+        fabric::TaskSettlement::Cancelled => "cancelled",
+        fabric::TaskSettlement::RolledBack => "rolled-back",
+        fabric::TaskSettlement::Failed => "failed",
+    }
+}
+
+struct RobotSummary<'a> {
+    device: &'a str,
+    scene: &'a str,
+    settlement: &'a str,
+    bridge_digest: &'a str,
+    report_sha256: &'a str,
+    attempt_count: u64,
+    evidence_count: usize,
+}
+
+fn robot_summary(activities: &[ActivitySnapshot]) -> Option<RobotSummary<'_>> {
+    let progress = activities
+        .iter()
+        .rev()
+        .find(|activity| {
+            activity.kind == fabric::ActivityKind::Robot
+                && activity
+                    .progress
+                    .as_ref()
+                    .and_then(|progress| progress.get("stage"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("settle")
+        })?
+        .progress
+        .as_ref()?;
+    Some(RobotSummary {
+        device: progress.get("device")?.as_str()?,
+        scene: progress.get("scene")?.as_str()?,
+        settlement: progress.get("settlement")?.as_str()?,
+        bridge_digest: progress.get("bridge_digest")?.as_str()?,
+        report_sha256: progress.get("report_sha256")?.as_str()?,
+        attempt_count: progress.get("attempt_count")?.as_u64()?,
+        evidence_count: progress
+            .get("evidence_refs")?
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default(),
+    })
 }
 
 fn short_id(value: &str) -> &str {
@@ -427,6 +512,7 @@ mod tests {
 
     fn test_caps() -> TermCaps {
         TermCaps {
+            color: true,
             true_color: false,
             unicode: false,
             width: 80,
@@ -549,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn u_tui_002_long_command_has_incremental_progress() {
+    fn long_command_progress_is_rendered_from_authoritative_activity() {
         let rendered = rendered_text(120, 40, &projected_state());
         assert!(rendered.contains("running"));
         assert!(rendered.contains("42/100 lines"));
@@ -586,11 +672,35 @@ mod tests {
     }
 
     #[test]
-    fn u_tui_006_ascii_low_colour_console_keeps_core_journey() {
-        let rendered = rendered_text(80, 24, &projected_state());
+    fn no_color_ascii_console_keeps_core_journey() {
+        let mut caps = test_caps();
+        caps.color = false;
+        let workspace = WorkspacePolicy::from_resolved_roots(
+            std::env::current_dir().expect("test cwd"),
+            Vec::new(),
+        )
+        .expect("workspace policy");
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        TaskConsole {
+            state: &projected_state(),
+            caps: &caps,
+            workspace: &workspace,
+            selected_activity: None,
+        }
+        .render(area, &mut buffer);
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
         assert!(rendered.contains("TASK"));
         assert!(rendered.contains("cargo check"));
         assert!(rendered.contains("src/lib.rs"));
+        assert!(buffer
+            .content
+            .iter()
+            .all(|cell| { cell.fg == Color::Reset && cell.bg == Color::Reset }));
     }
 
     #[test]
@@ -601,6 +711,99 @@ mod tests {
         let rendered = rendered_text(120, 40, &state);
         assert!(rendered.contains("failed"));
         assert!(rendered.contains("ERROR provider_rejected_request"));
+    }
+
+    #[test]
+    fn u_robot_002_goal_action_verification_and_report_are_traceable() {
+        let mut state = AppState::default();
+        state.tasks.push(TaskSnapshot {
+            task_id: "robot-task".into(),
+            session_id: fabric::SessionId("robot-session".into()),
+            goal: Some("让 kuavo-mujoco-01 站稳三秒".into()),
+            phase: TaskPhase::Blocked,
+            plan_revision: None,
+            steps: vec![],
+            active_turn_id: None,
+            active_runtime_children: vec![],
+            active_commands: vec![],
+            pending_approvals: vec![],
+            budget: None,
+            checkpoint_head: None,
+            checkpoint_review: None,
+            settlement: Some(fabric::TaskSettlement::Blocked),
+            review_findings: vec![],
+            runtime_facts: None,
+        });
+        let turn_id = fabric::TurnId::new();
+        let stages = [
+            ("Observe kuavo-mujoco-01 · biped-s53", "observe"),
+            ("Plan governed VLA proposal", "plan"),
+            ("Authorize hardware.command · attempt 1", "authorize"),
+            ("Execute semantic skill · 1 attempt(s)", "execute"),
+            ("Verify not_run · 3000ms", "verify"),
+            ("Settle blocked · EpisodeReport", "settle"),
+        ];
+        for (index, (label, stage)) in stages.into_iter().enumerate() {
+            let settle = stage == "settle";
+            state.activities.push(ActivitySnapshot {
+                activity_id: format!("robot:{index:02}-{stage}"),
+                task_id: "robot-task".into(),
+                turn_id,
+                parent_activity_id: (index > 0)
+                    .then(|| format!("robot:{:02}-{}", index - 1, stages[index - 1].1)),
+                kind: fabric::ActivityKind::Robot,
+                label: label.into(),
+                state: if index < 2 {
+                    ActivityState::Completed
+                } else {
+                    ActivityState::Blocked
+                },
+                started_at: 1_000,
+                updated_at: 1_000 + index as u64,
+                progress: Some(if settle {
+                    serde_json::json!({
+                        "stage": "settle",
+                        "settlement": "blocked",
+                        "device": "kuavo-mujoco-01",
+                        "scene": "kuavo-mujoco/biped-s53",
+                        "bridge_digest": "sha256:77e44869ba6a",
+                        "report_sha256": "b307c5be1363fcb8",
+                        "attempt_count": 1,
+                        "evidence_refs": ["artifact://sha256/evidence"]
+                    })
+                } else {
+                    serde_json::json!({"stage": stage})
+                }),
+                artifact_refs: (stage == "observe" || settle)
+                    .then(|| vec!["artifact://sha256/evidence".into()])
+                    .unwrap_or_default(),
+                receipt_ref: Some("robot-episode:episode:sha256:b307c5be1363fcb8".into()),
+            });
+        }
+
+        let rendered = rendered_text(200, 60, &state);
+        for label in [
+            "Observe kuavo-mujoco-01",
+            "Plan governed VLA proposal",
+            "Authorize hardware.command",
+            "Execute semantic skill",
+            "Verify not_run",
+            "Settle blocked",
+        ] {
+            assert!(rendered.contains(label), "missing Robot stage: {label}");
+        }
+        assert!(rendered.contains("blocked"));
+        assert!(rendered.contains("ROBOT kuavo-mujoco-01"));
+        assert!(rendered.contains("kuavo-mujoco/biped-s53"));
+        assert!(rendered.contains("bridge sha256:77e44869ba6a"));
+        assert!(rendered.contains("attempts 1"));
+        assert!(rendered.contains("report b307c5be1363fcb8"));
+        assert!(rendered.contains("evidence 1 ref(s)"));
+        assert_eq!(
+            rendered.matches("artifact://sha256/evidence").count(),
+            1,
+            "the same content-addressed Robot evidence must render only once"
+        );
     }
 
     #[test]

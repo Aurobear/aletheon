@@ -6,6 +6,7 @@ crates/executive/src/application/deterministic_outcome_verifier.rs	application	e
 crates/executive/src/application/embodied_execution_adapter.rs	application	executive	application port adaptation for embodiment execution
 crates/executive/src/application/robot_episode_promotion.rs	application	executive	governed settled episode promotion
 crates/executive/src/application/robot_harness_composition.rs	composition	executive	robot harness composition boundary
+crates/executive/src/application/robot_perception.rs	application	executive	bounded Robot perception cache and policy adapter
 crates/executive/src/host/daemon/bootstrap/robot.rs	host	executive	robot daemon bootstrap integration
 crates/executive/src/adapters/agent_control/mod.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/agent_control/sqlite_repository.rs	adapter	executive	concrete infrastructure integration
@@ -66,6 +67,7 @@ crates/executive/src/adapters/session/observability/mod.rs	adapter	executive	con
 crates/executive/src/adapters/session/observability/reasoning_logger.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/session/observability/tool_tracker.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/session/prompt_queue_sqlite.rs	adapter	executive	concrete infrastructure integration
+crates/executive/src/adapters/session/projection_store.rs	adapter	executive	private Session materialized read-model port
 crates/executive/src/adapters/session/store.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/application/admin_service.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent/harness.rs	application	executive	use-case orchestration and ports
@@ -87,6 +89,7 @@ crates/executive/src/application/agent_control/mod.rs	application	executive	use-
 crates/executive/src/application/agent_control/recovery.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/repository.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/settlement.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/agent_control/settlement/tests/audit_tests.rs	application	executive	settlement audit contract tests
 crates/executive/src/application/approval/apply_coordinator.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/approval/mod.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/approval/repository.rs	application	executive	use-case orchestration and ports
@@ -127,6 +130,7 @@ crates/executive/src/application/dasein_workspace_adapter.rs	application	executi
 crates/executive/src/application/durable_write.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/embodied_recovery.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/embodiment_authority.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/embodiment_approval.rs	application	executive	request-bound high-risk robot approval boundary
 crates/executive/src/application/embodiment_progress.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/embodiment_service.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/event_projection.rs	application	executive	use-case orchestration and ports
@@ -224,6 +228,7 @@ crates/executive/src/composition/config/memory_policy.rs	composition	executive	c
 crates/executive/src/composition/config/mod.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/provenance.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/provider.rs	composition	executive	configuration and dependency construction
+crates/executive/src/composition/config/robot.rs	composition	executive	Robot and Policy typed configuration composition
 crates/executive/src/composition/config/schema.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/supplemental_memory.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/exec_corpus.rs	composition	executive	validated runtime composition

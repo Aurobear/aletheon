@@ -32,6 +32,83 @@ enum InitialRequest {
     Projection(ClientRequest),
 }
 
+enum LineModeAction {
+    Request(InitialRequest),
+    Display(String),
+    Quit,
+}
+
+fn resolve_line_mode_input(
+    trimmed: &str,
+    registry: &CommandRegistry,
+    workspace: &fabric::WorkspacePolicy,
+    turn_requirements: &[fabric::TurnRequirement],
+    task_kind: Option<fabric::TaskKind>,
+) -> LineModeAction {
+    if !looks_like_command(trimmed) {
+        return LineModeAction::Request(InitialRequest::Legacy(crate::intent::rpc(
+            crate::intent::submit_prompt(crate::intent::PromptIntent {
+                surface: fabric::contract::command::ClientSurface::Tui,
+                correlation_id: format!("line:{}", uuid::Uuid::new_v4()),
+                content: trimmed,
+                session_id: None,
+                workspace,
+                requirements: turn_requirements.to_vec(),
+                task_kind,
+                permission_mode: crate::host::permission_mode_from_environment(),
+            }),
+        )));
+    }
+    match registry.parse(trimmed) {
+        Some(CommandType::Builtin(BuiltinCommand::Quit)) => LineModeAction::Quit,
+        Some(CommandType::Builtin(BuiltinCommand::Help)) => {
+            LineModeAction::Display(registry.help_text())
+        }
+        Some(CommandType::Builtin(BuiltinCommand::Clear)) => {
+            LineModeAction::Request(InitialRequest::Legacy(ClientRpcRequest::Clear))
+        }
+        Some(CommandType::Builtin(BuiltinCommand::Status)) => LineModeAction::Request(
+            InitialRequest::Legacy(crate::intent::rpc(crate::intent::status(
+                fabric::contract::command::ClientSurface::Tui,
+                format!("line-status:{}", uuid::Uuid::new_v4()),
+                None,
+            ))),
+        ),
+        Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
+            LineModeAction::Request(InitialRequest::Projection(ClientRequest::ReadSessions))
+        }
+        Some(CommandType::Builtin(BuiltinCommand::Resume { id })) if !id.is_empty() => {
+            LineModeAction::Request(InitialRequest::Projection(ClientRequest::ReadSnapshot(
+                SnapshotRequest {
+                    session_id: fabric::SessionId(id),
+                },
+            )))
+        }
+        Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
+            LineModeAction::Request(InitialRequest::Legacy(ClientRpcRequest::Compact))
+        }
+        Some(CommandType::Builtin(BuiltinCommand::Model)) => {
+            LineModeAction::Request(InitialRequest::Legacy(ClientRpcRequest::ModelList))
+        }
+        Some(CommandType::Skill { name, args }) => LineModeAction::Request(InitialRequest::Legacy(
+            ClientRpcRequest::skill_invoke(name, args, workspace),
+        )),
+        Some(CommandType::Unknown {
+            name, suggestions, ..
+        }) => LineModeAction::Display(if suggestions.is_empty() {
+            format!("Unknown command: /{name}")
+        } else {
+            format!(
+                "Unknown command: /{name}. Did you mean {}?",
+                suggestions.join(", ")
+            )
+        }),
+        Some(CommandType::Builtin(_)) | None => {
+            LineModeAction::Display(format!("Command is unavailable in line mode: {trimmed}"))
+        }
+    }
+}
+
 fn scripted_followup_ready(
     initial_submit_pending: bool,
     submitted_script_line: bool,
@@ -65,6 +142,24 @@ fn initial_session_request(
             super::super::PendingCommand::OpenSessionPicker,
         ),
     }
+}
+
+fn startup_requests(
+    initial_session: crate::host::InitialSession,
+) -> Vec<(InitialRequest, super::super::PendingCommand)> {
+    let initial = initial_session_request(initial_session);
+    // The TUI still uses legacy mutation commands while it migrates its reads
+    // to the typed Session projection. Establish the daemon's legacy protocol
+    // state before issuing a versioned read; otherwise `aletheon resume ID`
+    // sends ReadSnapshot on a new connection and the daemon correctly rejects
+    // it as uninitialised.
+    vec![
+        (
+            InitialRequest::Legacy(ClientRpcRequest::SkillsList),
+            super::super::PendingCommand::InitializeSkills,
+        ),
+        initial,
+    ]
 }
 
 pub async fn run_app<B: ratatui::backend::Backend>(
@@ -114,21 +209,21 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     // registry retains its last valid catalog if a later refresh fails.
     // The top-level CLI chooses whether this terminal owns a fresh session,
     // resumes an explicit session, or opens the daemon-backed history picker.
-    let (initial_request, initial_pending) = initial_session_request(initial_session);
-    let init_id = match initial_request {
-        InitialRequest::Legacy(request) => super::submit::write_request(&mut app, request).await,
-        InitialRequest::Projection(request) => {
-            super::submit::write_protocol_request(&mut app, request).await
+    for (request, pending) in startup_requests(initial_session) {
+        let request_id = match request {
+            InitialRequest::Legacy(request) => {
+                super::submit::write_request(&mut app, request).await
+            }
+            InitialRequest::Projection(request) => {
+                super::submit::write_protocol_request(&mut app, request).await
+            }
+        };
+        if let super::super::PendingCommand::ProjectionSnapshot { session_id } = &pending {
+            app.projection_target_session_id = Some(session_id.clone());
+            app.projection_request_in_flight = true;
         }
-    };
-    if let super::super::PendingCommand::ProjectionSnapshot { session_id } = &initial_pending {
-        app.projection_target_session_id = Some(session_id.clone());
-        app.projection_request_in_flight = true;
+        app.pending_commands.insert(request_id, pending);
     }
-    app.pending_commands.insert(init_id, initial_pending);
-    let skills_id = super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
-    app.pending_commands
-        .insert(skills_id, super::super::PendingCommand::InitializeSkills);
 
     // A scripted prompt must not race session.new/session.read. Until the
     // canonical projection selects the session, omitting session_id would make
@@ -397,71 +492,19 @@ pub async fn simple_line_mode(
         // Resolve slash syntax through the same catalog as the full TUI. The
         // line adapter only projects typed commands it can render safely; it
         // never forwards unknown command text to the model as a chat prompt.
-        let request = if looks_like_command(trimmed) {
-            match registry.parse(trimmed) {
-                Some(CommandType::Builtin(BuiltinCommand::Quit)) => break,
-                Some(CommandType::Builtin(BuiltinCommand::Help)) => {
-                    println!("{}", registry.help_text());
-                    continue;
-                }
-                Some(CommandType::Builtin(BuiltinCommand::Clear)) => {
-                    InitialRequest::Legacy(ClientRpcRequest::Clear)
-                }
-                Some(CommandType::Builtin(BuiltinCommand::Status)) => {
-                    InitialRequest::Legacy(crate::intent::rpc(crate::intent::status(
-                        fabric::contract::command::ClientSurface::Tui,
-                        format!("line-status:{}", uuid::Uuid::new_v4()),
-                        None,
-                    )))
-                }
-                Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-                    InitialRequest::Projection(ClientRequest::ReadSessions)
-                }
-                Some(CommandType::Builtin(BuiltinCommand::Resume { id })) if !id.is_empty() => {
-                    InitialRequest::Projection(ClientRequest::ReadSnapshot(SnapshotRequest {
-                        session_id: fabric::SessionId(id),
-                    }))
-                }
-                Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
-                    InitialRequest::Legacy(ClientRpcRequest::Compact)
-                }
-                Some(CommandType::Builtin(BuiltinCommand::Model)) => {
-                    InitialRequest::Legacy(ClientRpcRequest::ModelList)
-                }
-                Some(CommandType::Skill { name, args }) => {
-                    InitialRequest::Legacy(ClientRpcRequest::skill_invoke(name, args, &workspace))
-                }
-                Some(CommandType::Unknown {
-                    name, suggestions, ..
-                }) => {
-                    if suggestions.is_empty() {
-                        println!("Unknown command: /{name}");
-                    } else {
-                        println!(
-                            "Unknown command: /{name}. Did you mean {}?",
-                            suggestions.join(", ")
-                        );
-                    }
-                    continue;
-                }
-                Some(CommandType::Builtin(_)) | None => {
-                    println!("Command is unavailable in line mode: {trimmed}");
-                    continue;
-                }
+        let request = match resolve_line_mode_input(
+            trimmed,
+            &registry,
+            &workspace,
+            &turn_requirements,
+            task_kind,
+        ) {
+            LineModeAction::Request(request) => request,
+            LineModeAction::Display(message) => {
+                println!("{message}");
+                continue;
             }
-        } else {
-            InitialRequest::Legacy(crate::intent::rpc(crate::intent::submit_prompt(
-                crate::intent::PromptIntent {
-                    surface: fabric::contract::command::ClientSurface::Tui,
-                    correlation_id: format!("line:{}", uuid::Uuid::new_v4()),
-                    content: trimmed,
-                    session_id: None,
-                    workspace: &workspace,
-                    requirements: turn_requirements.clone(),
-                    task_kind,
-                    permission_mode: crate::host::permission_mode_from_environment(),
-                },
-            )))
+            LineModeAction::Quit => break,
         };
         let msg = match request {
             InitialRequest::Legacy(request) => request.to_json_rpc(Some(1))?,
@@ -691,6 +734,18 @@ fn evaluation_receipt_from_protocol_message(
 mod tests {
     use super::*;
 
+    fn line_method(action: LineModeAction) -> Option<String> {
+        let request = match action {
+            LineModeAction::Request(request) => request,
+            LineModeAction::Display(_) | LineModeAction::Quit => return None,
+        };
+        let wire = match request {
+            InitialRequest::Legacy(request) => request.to_json_rpc(Some(1)).unwrap(),
+            InitialRequest::Projection(request) => request.to_json_rpc(1).unwrap(),
+        };
+        wire["method"].as_str().map(str::to_owned)
+    }
+
     #[test]
     fn initial_session_selection_uses_typed_session_requests() {
         let cases = [
@@ -715,11 +770,91 @@ mod tests {
     }
 
     #[test]
+    fn startup_establishes_legacy_protocol_before_projection_reads() {
+        for selection in [
+            crate::host::InitialSession::Resume(fabric::SessionId("session-7".into())),
+            crate::host::InitialSession::Pick,
+        ] {
+            let requests = startup_requests(selection);
+            assert!(matches!(
+                &requests[0],
+                (
+                    InitialRequest::Legacy(ClientRpcRequest::SkillsList),
+                    crate::tui::PendingCommand::InitializeSkills
+                )
+            ));
+            assert!(matches!(requests[1].0, InitialRequest::Projection(_)));
+        }
+    }
+
+    #[test]
     fn scripted_prompt_waits_for_initial_session_projection() {
         assert!(!scripted_followup_ready(true, false, false, false));
         assert!(!scripted_followup_ready(false, true, false, false));
         assert!(!scripted_followup_ready(false, false, true, false));
         assert!(!scripted_followup_ready(false, false, false, true));
         assert!(scripted_followup_ready(false, false, false, false));
+    }
+
+    #[test]
+    fn u_tui_006_no_color_keyboard_and_text_line_mode_cover_the_core_journey() {
+        let caps = TermCaps {
+            color: false,
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let theme = caps.theme();
+        assert!([
+            theme.accent,
+            theme.text,
+            theme.text_muted,
+            theme.background,
+            theme.error,
+            theme.warning,
+            theme.success,
+        ]
+        .iter()
+        .all(|color| *color == ratatui::style::Color::Reset));
+
+        let registry = CommandRegistry::new();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let resolve = |input| resolve_line_mode_input(input, &registry, &workspace, &[], None);
+        assert_eq!(
+            line_method(resolve("inspect the workspace")),
+            Some("client.intent".into())
+        );
+        assert_eq!(
+            line_method(resolve("/sessions")),
+            Some("session.read_sessions/v1".into())
+        );
+        assert_eq!(
+            line_method(resolve("/resume session-7")),
+            Some("session.read_snapshot/v1".into())
+        );
+        assert!(matches!(resolve("/quit"), LineModeAction::Quit));
+        let LineModeAction::Display(help) = resolve("/help") else {
+            panic!("line-mode help must remain text")
+        };
+        assert!(help.contains("/sessions"));
+        assert!(!help.contains('\u{1b}'));
+
+        let text_snapshot = format_read_snapshot(&fabric::protocol::client::SessionReadSnapshot {
+            schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
+            session: fabric::SessionRecord {
+                schema_version: fabric::SESSION_SCHEMA_VERSION,
+                id: fabric::SessionId("session-7".into()),
+                parent: None,
+                created_at_ms: 1,
+                status: fabric::SessionStatus::Active,
+            },
+            through: fabric::protocol::client::EventCursor::origin(),
+            items: Vec::new(),
+            tasks: Vec::new(),
+            activities: Vec::new(),
+        });
+        assert_eq!(text_snapshot, "Session session-7 (0 durable items)");
     }
 }

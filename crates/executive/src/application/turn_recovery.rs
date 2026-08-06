@@ -11,33 +11,23 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
-use async_trait::async_trait;
-use fabric::{ItemPayload, ItemRecord, SessionAppendStore, SessionId, TurnId};
+use fabric::{
+    AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionId, TurnId,
+    TurnRecoveryClassification, SESSION_SCHEMA_VERSION,
+};
 use serde::Serialize;
+use uuid::Uuid;
 
 use crate::composition::config::GrokHardeningConfig;
 
 /// Classification of an incomplete turn discovered at startup.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum RecoveryClassification {
     Interrupted,
     Failed,
 }
 
-/// Minimal durable mutation port used by startup recovery. Implementations
-/// must persist both the recovered turn terminal state and the owning
-/// session's aggregate status before returning success.
-#[async_trait]
-pub trait TurnRecoveryStore: SessionAppendStore {
-    async fn list_session_ids(&self) -> Result<Vec<SessionId>>;
-
-    async fn mark_recovered_turn(
-        &self,
-        session_id: &SessionId,
-        turn_id: TurnId,
-        classification: RecoveryClassification,
-    ) -> Result<()>;
-}
+const RECOVERY_ITEM_NAMESPACE: Uuid = Uuid::from_u128(0x9ed55ac0_bae8_4f4c_8c92_5b5bf45646d5);
 
 /// A single turn discovered during the recovery scan.
 #[derive(Debug, Clone, Serialize)]
@@ -105,7 +95,7 @@ impl TurnRecoveryReport {
 /// no terminal item. Gate: only runs when `grok_hardening.compaction_v2`
 /// is enabled.
 pub async fn scan_incomplete_turns(
-    store: &dyn TurnRecoveryStore,
+    store: &dyn SessionAppendStore,
     grok_hardening: &GrokHardeningConfig,
 ) -> Result<TurnRecoveryReport> {
     if !grok_hardening.compaction_v2 {
@@ -128,10 +118,23 @@ pub async fn scan_incomplete_turns(
         }
         let incomplete = classify_incomplete_turns(&items);
         report.turns_scanned += count_turns(&items);
+        let mut next_sequence = items.last().map_or(1, |item| item.sequence + 1);
+        let mut next_created_at_ms = items
+            .last()
+            .map_or(0, |item| item.created_at_ms.saturating_add(1));
         for turn in incomplete {
-            store
-                .mark_recovered_turn(session_id, turn.turn_id, turn.classification.clone())
-                .await?;
+            let item = recovery_item(
+                session_id,
+                turn.turn_id,
+                turn.classification,
+                next_sequence,
+                next_created_at_ms,
+            );
+            match store.append(session_id, next_sequence, item).await? {
+                AppendOutcome::Appended | AppendOutcome::AlreadyPresent => {}
+            }
+            next_sequence = next_sequence.saturating_add(1);
+            next_created_at_ms = next_created_at_ms.saturating_add(1);
             report.incomplete_turns.push(RecoveredTurn {
                 session_id: session_id.0.clone(),
                 turn_id: turn.turn_id.0.to_string(),
@@ -142,6 +145,32 @@ pub async fn scan_incomplete_turns(
     }
 
     Ok(report)
+}
+
+fn recovery_item(
+    session_id: &SessionId,
+    turn_id: TurnId,
+    classification: RecoveryClassification,
+    sequence: u64,
+    created_at_ms: u64,
+) -> ItemRecord {
+    let classification = match classification {
+        RecoveryClassification::Interrupted => TurnRecoveryClassification::Interrupted,
+        RecoveryClassification::Failed => TurnRecoveryClassification::Failed,
+    };
+    let id = ItemId(Uuid::new_v5(
+        &RECOVERY_ITEM_NAMESPACE,
+        format!("{}:{}:{classification:?}", session_id.0, turn_id.0).as_bytes(),
+    ));
+    ItemRecord {
+        schema_version: SESSION_SCHEMA_VERSION,
+        id,
+        session_id: session_id.clone(),
+        turn_id,
+        sequence,
+        created_at_ms,
+        payload: ItemPayload::TurnRecovery { classification },
+    }
 }
 
 fn count_turns(items: &[ItemRecord]) -> usize {
@@ -205,7 +234,10 @@ fn has_terminal_item(items: &[&ItemRecord]) -> bool {
     items.iter().any(|i| {
         matches!(
             i.payload,
-            ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. }
+            ItemPayload::AssistantMessage { .. }
+                | ItemPayload::SystemNotice { .. }
+                | ItemPayload::RobotEpisodeReceipt { .. }
+                | ItemPayload::TurnRecovery { .. }
         )
     })
 }

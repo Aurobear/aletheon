@@ -672,6 +672,7 @@ mod secure_shell_tests {
         let mut app = App::new(
             stream,
             TermCaps {
+                color: true,
                 true_color: false,
                 unicode: false,
                 width: 80,

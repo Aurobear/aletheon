@@ -578,6 +578,51 @@ impl ReActLoop {
                     content: bounded_content,
                     is_error,
                 });
+                if let Some(outcome) = authoritative_policy_block(&content, is_error) {
+                    // A host policy denial is an authoritative terminal boundary,
+                    // not model feedback that may be worked around. Close every
+                    // remaining tool-use block without dispatching it so provider
+                    // history remains structurally valid, then settle the turn as
+                    // blocked without another inference request.
+                    for (pending_id, pending_name, _) in ordered_calls.iter().skip(tool_index + 1) {
+                        let skipped =
+                            "Tool call skipped: an earlier call was blocked by host policy";
+                        tool_result_blocks.push(ContentBlock::ToolResult {
+                            tool_use_id: pending_id.clone(),
+                            content: skipped.to_string(),
+                            is_error: true,
+                        });
+                        event_sink.emit(Event::ToolResult {
+                            name: pending_name.clone(),
+                            call_id: pending_id.clone(),
+                            result: ToolResultEvent {
+                                content: skipped.to_string(),
+                                is_error: true,
+                                execution_time_ms: 0,
+                                patch_delta: None,
+                            },
+                        });
+                    }
+                    self.messages.push(Message {
+                        role: Role::User,
+                        content: tool_result_blocks,
+                    });
+                    event_sink.emit(Event::TurnDone {
+                        result: Ok(outcome.clone()),
+                    });
+                    return Ok((
+                        outcome,
+                        TurnMetrics {
+                            tool_calls_made,
+                            tool_errors,
+                            provider_retries,
+                            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
+                            iterations: self.iteration,
+                            completed_normally: false,
+                            stop: fabric::TurnStop::Blocked,
+                        },
+                    ));
+                }
                 // Defer reflection: collect flag, will inject after all tool results
                 if should_reflect {
                     let ctx = crate::harness::linear::reflection::ReflectionContext {
@@ -769,6 +814,23 @@ impl ReActLoop {
             stop: fabric::TurnStop::Blocked,
         };
         Ok((fallback, metrics))
+    }
+}
+
+fn authoritative_policy_block(content: &str, is_error: bool) -> Option<String> {
+    if !is_error {
+        return None;
+    }
+    let normalized = content
+        .trim()
+        .strip_prefix("[ERROR] ")
+        .unwrap_or_else(|| content.trim());
+    if normalized.starts_with("Policy denied:") || normalized.starts_with("Escalate to human:") {
+        Some(format!(
+            "Tool execution blocked by host policy: {normalized}"
+        ))
+    } else {
+        None
     }
 }
 
@@ -970,16 +1032,11 @@ impl ReActLoop {
                 }
                 if let Some(state) = self.cognitive_state.as_mut() {
                     state.phase = CognitiveWorkPhase::Execute;
-                    state.require_action(RequiredAction::ReviewChange {
-                        transaction_id: transaction_id.clone(),
-                        workspace_version: workspace_version.clone(),
-                    });
-                    if requires_validation {
-                        state.require_action(RequiredAction::ValidateChange {
-                            transaction_id: transaction_id.clone(),
-                            workspace_version: workspace_version.clone(),
-                        });
-                    }
+                    state.require_current_change_version(
+                        &transaction_id,
+                        &workspace_version,
+                        requires_validation,
+                    );
                     // The model must produce review and validation evidence,
                     // but cannot settle its own mutation. Acceptance/repair is
                     // a later Host review action and is intentionally absent
@@ -1152,7 +1209,7 @@ fn clarification_question(content: &str) -> Option<String> {
 mod change_transaction_tests {
     use super::*;
     use crate::adapters::inference::provider::LlmProvider;
-    use crate::core::{ProgressAuditor, ProgressDecision};
+    use crate::core::{Obligation, ProgressAuditor, ProgressDecision};
     use crate::harness::linear::{CompactorTrait, HarnessConfig};
     use fabric::message::Message;
     use std::pin::Pin;
@@ -1190,7 +1247,13 @@ mod change_transaction_tests {
                 loop_state.cognitive_state.as_ref().unwrap(),
                 &loop_state.evidence_ledger
             ),
-            ProgressDecision::Continue { ref missing } if missing.len() == 2
+            ProgressDecision::Continue { ref missing }
+                if missing == &vec![Obligation::RequiredAction(
+                    RequiredAction::ReviewChange {
+                        transaction_id: "tx".into(),
+                        workspace_version: "v1".into(),
+                    }
+                )]
         ));
 
         loop_state.observe_change_transaction(
@@ -1272,8 +1335,40 @@ mod change_transaction_tests {
                 loop_state.cognitive_state.as_ref().unwrap(),
                 &loop_state.evidence_ledger
             ),
-            ProgressDecision::Continue { ref missing } if missing.len() == 2
+            ProgressDecision::Continue { ref missing }
+                if missing == &vec![Obligation::RequiredAction(
+                    RequiredAction::ReviewChange {
+                        transaction_id: "tx".into(),
+                        workspace_version: "v2".into(),
+                    }
+                )]
         ));
+    }
+
+    #[test]
+    fn host_policy_denial_is_a_typed_terminal_boundary() {
+        assert_eq!(
+            authoritative_policy_block("Policy denied: workspace is read-only", true),
+            Some(
+                "Tool execution blocked by host policy: Policy denied: workspace is read-only"
+                    .into()
+            )
+        );
+        assert_eq!(
+            authoritative_policy_block("[ERROR] Escalate to human: approval required", true),
+            Some(
+                "Tool execution blocked by host policy: Escalate to human: approval required"
+                    .into()
+            )
+        );
+        assert_eq!(
+            authoritative_policy_block("Policy denied: diagnostic text", false),
+            None
+        );
+        assert_eq!(
+            authoritative_policy_block("ordinary tool failure", true),
+            None
+        );
     }
 
     #[test]

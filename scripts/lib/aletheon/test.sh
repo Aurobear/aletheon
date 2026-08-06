@@ -15,6 +15,7 @@ cmd_test() {
       _run_test_script suites/operations/cli_static_test.sh
       _run_test_script suites/operations/cli_test.sh
       _run_test_script suites/operations/installed_runtime_gate_test.sh
+      python3 "$ALETHEON_ROOT/scripts/tests/test_robot_r8_evidence.py"
       _run_test_script suites/operations/completion_test.sh
       _run_test_script suites/operations/extension_runtime_test.sh
       ;;

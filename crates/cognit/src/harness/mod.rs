@@ -19,9 +19,9 @@ pub use config::HarnessConfig;
 pub use linear as react_loop; // backward-compat: ReActLoop is the linear harness
 pub use linear::{BatchPlanner, CompactorTrait, ReActLoop};
 pub use session::{
-    CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError, CognitErrorKind,
-    CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies, CognitiveStreamEvent,
-    CognitiveStreamSink, LinearCognitiveSession,
+    CanonicalRuntimeTurnEventSink, CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError,
+    CognitErrorKind, CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies,
+    CognitiveStreamEvent, CognitiveStreamSink, LinearCognitiveSession,
 };
 
 /// Selects which concrete harness implementation `build_harness` constructs.

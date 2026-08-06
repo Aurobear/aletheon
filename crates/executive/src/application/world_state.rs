@@ -10,6 +10,8 @@ use fabric::types::world_state::{WorldSnapshot, WorldStatePort, ANY_SCHEMA};
 use fabric::{Clock, MonoDeadline, MonoTime};
 use tokio::sync::Notify;
 
+use super::robot_perception::EmbodimentPerceptionStore;
+
 /// Per-device cached state entry.
 ///
 /// A device can expose several observation schemas (e.g. `base_pose`,
@@ -76,7 +78,7 @@ impl WorldStatePort for EmbodimentWorldState {
     async fn latest(&self, device: &DeviceId, schema: &str) -> Option<WorldSnapshot> {
         let devices = self.devices.read().ok()?;
         let entry = devices.get(device)?;
-        if schema == ANY_SCHEMA {
+        let snapshot = if schema == ANY_SCHEMA {
             entry
                 .latest
                 .values()
@@ -88,7 +90,26 @@ impl WorldStatePort for EmbodimentWorldState {
                 .cloned()
         } else {
             entry.latest.get(schema).cloned()
-        }
+        }?;
+        Some(refresh_staleness(snapshot, self.clock.mono_now()))
+    }
+
+    async fn latest_all(&self, device: &DeviceId) -> Vec<WorldSnapshot> {
+        let Ok(devices) = self.devices.read() else {
+            return Vec::new();
+        };
+        let Some(entry) = devices.get(device) else {
+            return Vec::new();
+        };
+        let now = self.clock.mono_now();
+        let mut snapshots = entry
+            .latest
+            .values()
+            .cloned()
+            .map(|snapshot| refresh_staleness(snapshot, now))
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.schema.cmp(&right.schema));
+        snapshots
     }
 
     async fn observe_until(
@@ -115,7 +136,7 @@ impl WorldStatePort for EmbodimentWorldState {
                     };
                     if let Some(snap) = candidates.into_iter().find(|s| s.sequence > after_sequence)
                     {
-                        return Some(snap);
+                        return Some(refresh_staleness(snap, self.clock.mono_now()));
                     }
                 }
             }
@@ -135,6 +156,13 @@ impl WorldStatePort for EmbodimentWorldState {
     }
 }
 
+fn refresh_staleness(mut snapshot: WorldSnapshot, now: MonoTime) -> WorldSnapshot {
+    snapshot.stale |= snapshot
+        .valid_until
+        .is_some_and(|deadline| deadline.is_expired_at(now));
+    snapshot
+}
+
 /// Convert an embodied observation into a normalized world snapshot.
 ///
 /// A snapshot is marked `stale` when it is past its validity window or carries
@@ -151,12 +179,33 @@ pub fn observation_to_snapshot(
         .map(|deadline| deadline.is_expired_at(now))
         .unwrap_or(false)
         || obs.confidence <= 0.0;
+    let payload = obs.frame.as_ref().map_or_else(
+        || obs.payload.clone(),
+        |frame| {
+            // A visual observation contributes only bounded metadata to world
+            // state. Arbitrary payload fields (including image/base64 bytes)
+            // never enter the Policy snapshot/session/report path.
+            serde_json::json!({
+                "frame_uri": frame.uri,
+                "frame_sha256": frame.sha256,
+                "camera_id": frame.camera_id,
+                "frame_id": frame.frame_id,
+            })
+        },
+    );
     WorldSnapshot {
         device: device.clone(),
         schema: obs.schema.clone(),
+        schema_version: obs.schema_version,
         sequence: obs.sequence,
-        payload: obs.payload.clone(),
-        observed_at: obs.source_time,
+        payload,
+        // Freshness is a Host decision at the provider boundary. Device/source
+        // clocks may be simulated, paused or simply unsynchronised; using them
+        // here made continuously received observations appear minutes old. The
+        // original source timestamps remain on EmbodiedObservation for audit,
+        // while the normalized world snapshot uses the mapped receipt time.
+        observed_at: obs.received_at,
+        valid_until: obs.valid_until,
         stale,
     }
 }
@@ -171,6 +220,7 @@ pub struct WorldStatePump {
     executor: Arc<dyn EmbodimentExecutionPort>,
     clock: Arc<dyn Clock>,
     poll_interval: std::time::Duration,
+    perception: Option<Arc<EmbodimentPerceptionStore>>,
 }
 
 impl WorldStatePump {
@@ -185,7 +235,13 @@ impl WorldStatePump {
             executor,
             clock,
             poll_interval,
+            perception: None,
         }
+    }
+
+    pub fn with_perception(mut self, perception: Arc<EmbodimentPerceptionStore>) -> Self {
+        self.perception = Some(perception);
+        self
     }
 
     /// Ingest the device's current observations in one pass.
@@ -194,6 +250,17 @@ impl WorldStatePump {
             Ok(observations) => {
                 let now = self.clock.mono_now();
                 for observation in observations {
+                    if let Some(perception) = &self.perception {
+                        if let Err(reason) = perception.ingest_observation(device, &observation) {
+                            tracing::warn!(
+                                device = %device.0,
+                                schema = %observation.schema,
+                                sequence = observation.sequence,
+                                %reason,
+                                "perception pump rejected visual observation"
+                            );
+                        }
+                    }
                     let snapshot = observation_to_snapshot(device, &observation, now);
                     if let Err(reason) = self.world.ingest(device.clone(), snapshot) {
                         tracing::debug!(
@@ -244,9 +311,11 @@ mod tests {
         WorldSnapshot {
             device: DeviceId(device.into()),
             schema: "test".into(),
+            schema_version: 1,
             sequence: seq,
             payload: serde_json::json!({"x": x}),
             observed_at: MonoTime(seq),
+            valid_until: None,
             stale: false,
         }
     }
@@ -260,9 +329,11 @@ mod tests {
         WorldSnapshot {
             device: DeviceId(device.into()),
             schema: schema.into(),
+            schema_version: 1,
             sequence: seq,
             payload,
             observed_at: MonoTime(seq),
+            valid_until: None,
             stale: false,
         }
     }
@@ -364,6 +435,22 @@ mod tests {
 
         // ANY_SCHEMA returns the freshest across schemas.
         assert_eq!(ws.latest(&dev, ANY_SCHEMA).await.unwrap().sequence, 101);
+
+        // Planning obtains every schema in deterministic order rather than
+        // depending on which independent stream published last.
+        let all = ws.latest_all(&dev).await;
+        assert_eq!(
+            all.iter()
+                .map(|snapshot| snapshot.schema.as_str())
+                .collect::<Vec<_>>(),
+            vec!["base_pose", "base_twist", "ground_truth_pose"]
+        );
+        assert_eq!(
+            all.iter()
+                .map(|snapshot| snapshot.sequence)
+                .collect::<Vec<_>>(),
+            vec![101, 100, 5]
+        );
     }
 
     #[tokio::test]
@@ -399,9 +486,12 @@ mod tests {
             sequence: seq,
             source_time: MonoTime(seq),
             received_at: MonoTime(seq),
+            source_unix_ms: seq as i64,
+            received_unix_ms: seq as i64,
             valid_until: Some(MonoDeadline::after(MonoTime(0), valid_until_ms)),
             confidence,
-            frame_ref: None,
+            reference_frame: None,
+            frame: None,
             payload: serde_json::json!({"mode": "stance"}),
             evidence: vec![],
         }
@@ -422,6 +512,44 @@ mod tests {
         assert!(expired.stale);
         let low_confidence = observation_to_snapshot(&device, &observation(3, 5_000, 0.0), now);
         assert!(low_confidence.stale);
+    }
+
+    #[test]
+    fn observation_to_snapshot_uses_host_receipt_time_for_freshness() {
+        let device = DeviceId("bot".into());
+        let mut input = observation(1, 6_000, 1.0);
+        input.source_time = MonoTime(100);
+        input.received_at = MonoTime(4_900);
+        let snapshot = observation_to_snapshot(&device, &input, MonoTime(5_000));
+        assert_eq!(snapshot.observed_at, MonoTime(4_900));
+        assert!(!snapshot.stale);
+    }
+
+    #[test]
+    fn visual_snapshot_contains_only_bounded_frame_metadata() {
+        let digest = "a".repeat(64);
+        let mut visual = observation(1, 5_000, 1.0);
+        visual.schema = "camera.rgb".into();
+        visual.frame = Some(fabric::types::frame::FrameRef {
+            uri: format!("artifact://sha256/{digest}"),
+            sha256: digest,
+            mime_type: "image/jpeg".into(),
+            width: 640,
+            height: 480,
+            byte_len: 32_000,
+            source_time_ms: 1,
+            camera_id: "front".into(),
+            frame_id: 1,
+        });
+        visual.payload = serde_json::json!({
+            "image": "data:image/jpeg;base64,FORBIDDEN",
+            "summary": "safe metadata"
+        });
+        let snapshot = observation_to_snapshot(&DeviceId("bot".into()), &visual, MonoTime(2));
+        let encoded = serde_json::to_string(&snapshot).unwrap();
+        assert!(!encoded.contains("base64"));
+        assert!(!encoded.contains("FORBIDDEN"));
+        assert!(encoded.contains("frame_sha256"));
     }
 
     struct FakeExecutor {

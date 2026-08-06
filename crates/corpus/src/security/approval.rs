@@ -73,7 +73,7 @@ impl ApprovalGate for AutoDenyGate {
     }
 }
 
-/// Approval gate that prompts on the controlling terminal (stdin/stdout).
+/// Approval gate that prompts on the controlling terminal (stdin/stderr).
 ///
 /// Used by the single-process `aletheon-exec` path. Reads one line:
 /// `y` = Approve, `a` = ApproveForSession, anything else (incl. EOF) = Deny (fail-safe).
@@ -84,15 +84,18 @@ impl ApprovalGate for TerminalApprovalGate {
     async fn request(&self, req: &ApprovalRequest) -> ApprovalDecision {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-        let mut stdout = tokio::io::stdout();
+        // stdout is a machine protocol for `aletheon exec --output json/jsonl`.
+        // Human approval UI must therefore use stderr even when the same gate is
+        // composed for interactive text output.
+        let mut stderr = tokio::io::stderr();
         let prompt = format!(
             "\n\u{26a0}  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
             req.risk_level, req.tool, req.action_summary,
         );
-        if stdout.write_all(prompt.as_bytes()).await.is_err() {
+        if stderr.write_all(prompt.as_bytes()).await.is_err() {
             return ApprovalDecision::Deny;
         }
-        let _ = stdout.flush().await;
+        let _ = stderr.flush().await;
 
         let mut line = String::new();
         let mut reader = BufReader::new(tokio::io::stdin());

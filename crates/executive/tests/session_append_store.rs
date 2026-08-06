@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use executive::runtime::events::{DefaultEventProjectionSet, SqliteEventSpine};
 use executive::runtime::session::canonical_store::{project_messages, CanonicalSessionStore};
 use fabric::*;
 
@@ -29,7 +32,11 @@ async fn append_is_transactional_idempotent_and_restart_durable() {
     let path = dir.path().join("sessions.db");
     let session_id = SessionId("s1".into());
     let turn = TurnId::new();
-    let store = CanonicalSessionStore::open(&path).unwrap();
+    let store = executive::testing::turn_coordinator::compose_session_store(
+        Arc::new(CanonicalSessionStore::open(&path).unwrap()),
+        Arc::new(SqliteEventSpine::open(dir.path().join("events.db")).unwrap()),
+        Arc::new(DefaultEventProjectionSet::in_memory()),
+    );
     store.create(session("s1", None)).await.unwrap();
     let first = item(
         "s1",
@@ -89,7 +96,9 @@ async fn append_is_transactional_idempotent_and_restart_durable() {
 
 #[tokio::test]
 async fn fork_copies_bounded_history_with_new_item_identity() {
-    let store = CanonicalSessionStore::open(":memory:").unwrap();
+    let store = executive::testing::turn_coordinator::compose_in_memory_session_store(Arc::new(
+        CanonicalSessionStore::open(":memory:").unwrap(),
+    ));
     let parent = SessionId("parent".into());
     let turn = TurnId::new();
     store.create(session("parent", None)).await.unwrap();

@@ -3,5 +3,6 @@
 pub mod store;
 
 pub use store::{
-    ArtifactMetadata, ArtifactRecord, ArtifactScanStatus, ArtifactStore, ArtifactWriter,
+    ArtifactMetadata, ArtifactRecord, ArtifactScanStatus, ArtifactStore, ArtifactTombstone,
+    ArtifactWriter,
 };

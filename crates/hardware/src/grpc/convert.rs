@@ -96,32 +96,134 @@ pub fn to_skill_descriptor(sd: &wire::SkillDescriptor) -> Result<domain::SkillDe
 
 // ── Observation ──────────────────────────────────────────────────────────────
 
-pub fn to_observation(obs: &wire::Observation) -> Result<domain::EmbodiedObservation, String> {
+pub fn to_observation(
+    obs: &wire::Observation,
+    local_mono_now: fabric::MonoTime,
+    local_unix_now_ms: i64,
+) -> Result<domain::EmbodiedObservation, String> {
+    let payload = struct_to_json(&obs.payload);
+    let frame = frame_from_wire(obs, &payload)?;
     Ok(domain::EmbodiedObservation {
         schema: obs.schema.clone(),
         schema_version: obs.schema_version as u16,
         source: obs.source.clone(),
         sequence: obs.sequence,
-        source_time: fabric::MonoTime(obs.source_unix_ms.max(0) as u64),
-        received_at: fabric::MonoTime(obs.received_unix_ms.max(0) as u64),
-        valid_until: if obs.valid_until_unix_ms > 0 {
-            let delta = (obs.valid_until_unix_ms - obs.received_unix_ms).max(0) as u64;
-            Some(fabric::MonoDeadline::after(
-                fabric::MonoTime(obs.received_unix_ms.max(0) as u64),
-                delta,
-            ))
+        source_time: unix_to_mono(obs.source_unix_ms, local_unix_now_ms, local_mono_now),
+        received_at: unix_to_mono(obs.received_unix_ms, local_unix_now_ms, local_mono_now),
+        source_unix_ms: obs.source_unix_ms.max(0),
+        received_unix_ms: obs.received_unix_ms.max(0),
+        // A provider-owned stale verdict must survive the wire conversion even
+        // when that provider does not publish an absolute validity deadline.
+        // Mapping it to an already-expired local monotonic deadline preserves
+        // the confidence value and prevents downstream world-state consumers
+        // from accidentally treating a stale sample as fresh.
+        valid_until: if obs.stale {
+            Some(fabric::MonoDeadline(local_mono_now))
+        } else if obs.valid_until_unix_ms > 0 {
+            Some(fabric::MonoDeadline(unix_deadline_to_mono(
+                obs.valid_until_unix_ms,
+                local_unix_now_ms,
+                local_mono_now,
+            )))
         } else {
             None
         },
         confidence: obs.confidence,
-        frame_ref: if obs.frame_ref.is_empty() {
+        reference_frame: if obs.frame_ref.is_empty() || frame.is_some() {
             None
         } else {
             Some(obs.frame_ref.clone())
         },
-        payload: struct_to_json(&obs.payload),
+        frame,
+        payload,
         evidence: obs.evidence.iter().map(to_evidence_ref).collect(),
     })
+}
+
+fn unix_deadline_to_mono(
+    unix_ms: i64,
+    anchor_unix_ms: i64,
+    anchor_mono: fabric::MonoTime,
+) -> fabric::MonoTime {
+    if unix_ms >= anchor_unix_ms {
+        return fabric::MonoTime(
+            anchor_mono
+                .0
+                .saturating_add(unix_ms.saturating_sub(anchor_unix_ms) as u64),
+        );
+    }
+    unix_to_mono(unix_ms, anchor_unix_ms, anchor_mono)
+}
+
+fn unix_to_mono(
+    unix_ms: i64,
+    anchor_unix_ms: i64,
+    anchor_mono: fabric::MonoTime,
+) -> fabric::MonoTime {
+    if unix_ms <= 0 || unix_ms >= anchor_unix_ms {
+        return anchor_mono;
+    }
+    fabric::MonoTime(
+        anchor_mono
+            .0
+            .saturating_sub(anchor_unix_ms.saturating_sub(unix_ms) as u64),
+    )
+}
+
+/// A visual observation uses the existing wire `frame_ref` as a URI only when
+/// the payload carries the complete typed metadata. Otherwise `frame_ref`
+/// remains a coordinate/reference-frame string for backward compatibility.
+fn frame_from_wire(
+    obs: &wire::Observation,
+    payload: &serde_json::Value,
+) -> Result<Option<fabric::types::frame::FrameRef>, String> {
+    let Some(sha256) = payload.get("frame_sha256") else {
+        return Ok(None);
+    };
+    if obs.frame_ref.is_empty() {
+        return Err("visual observation is missing frame_ref URI".into());
+    }
+    let string = |key: &str| {
+        payload
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("visual observation is missing string {key}"))
+    };
+    let unsigned = |key: &str| {
+        payload
+            .get(key)
+            .and_then(|value| {
+                value.as_u64().or_else(|| {
+                    value.as_f64().and_then(|number| {
+                        (number.is_finite()
+                            && number >= 0.0
+                            && number.fract() == 0.0
+                            && number <= u64::MAX as f64)
+                            .then_some(number as u64)
+                    })
+                })
+            })
+            .ok_or_else(|| format!("visual observation is missing integer {key}"))
+    };
+    let frame = fabric::types::frame::FrameRef {
+        uri: obs.frame_ref.clone(),
+        sha256: sha256
+            .as_str()
+            .ok_or_else(|| "frame_sha256 must be a string".to_string())?
+            .to_owned(),
+        mime_type: string("frame_mime_type")?,
+        width: u32::try_from(unsigned("frame_width")?)
+            .map_err(|_| "frame_width exceeds u32".to_string())?,
+        height: u32::try_from(unsigned("frame_height")?)
+            .map_err(|_| "frame_height exceeds u32".to_string())?,
+        byte_len: unsigned("frame_byte_len")?,
+        source_time_ms: obs.source_unix_ms,
+        camera_id: obs.source.clone(),
+        frame_id: obs.sequence,
+    };
+    frame.validate()?;
+    Ok(Some(frame))
 }
 
 // ── Struct → JSON ───────────────────────────────────────────────────────────

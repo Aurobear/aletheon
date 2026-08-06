@@ -178,7 +178,10 @@ impl TurnEngine for DaemonTurnEngine {
                 stop: match status {
                     TurnEngineStatus::Cancelled => fabric::TurnStop::Cancelled,
                     TurnEngineStatus::Completed => fabric::TurnStop::Completed,
-                    _ => fabric::TurnStop::Failed,
+                    TurnEngineStatus::Blocked => fabric::TurnStop::Blocked,
+                    TurnEngineStatus::BudgetExhausted | TurnEngineStatus::DeadlineExceeded => {
+                        fabric::TurnStop::Failed
+                    }
                 },
                 metrics: metrics.clone(),
             },

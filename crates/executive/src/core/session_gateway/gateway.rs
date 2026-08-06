@@ -348,12 +348,12 @@ mod tests {
         .await
         .unwrap();
         let canonical_sessions = Arc::new(SessionService::new(
-            Arc::new(
+            crate::composition::turn_coordinator::compose_in_memory_session_store(Arc::new(
                 crate::adapters::session::canonical_store::CanonicalSessionStore::open(
                     tmp.path().join("sessions.db"),
                 )
                 .unwrap(),
-            ),
+            )),
             Arc::new(Mutex::new(std::collections::HashMap::new())),
         ));
         canonical_sessions

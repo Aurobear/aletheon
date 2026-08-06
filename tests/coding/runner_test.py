@@ -38,7 +38,7 @@ import json, os, pathlib, subprocess, sys, time
 
 scenario = os.environ["FAKE_SCENARIO"]
 workspace = pathlib.Path(sys.argv[sys.argv.index("--cd") + 1])
-if scenario in {"completed", "dirty", "cargo", "leak"}:
+if scenario in {"completed", "dirty", "cargo", "leak", "commit"}:
     (workspace / "src/lib.rs").write_text("fixed\n")
 elif scenario == "false_success":
     (workspace / "src/lib.rs").write_text("wrong\n")
@@ -47,6 +47,16 @@ elif scenario == "scope":
 elif scenario == "timeout":
     time.sleep(5)
     raise SystemExit(0)
+
+if scenario == "commit":
+    subprocess.run(["git", "add", "src/lib.rs"], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-qm", "model commit"], cwd=workspace, check=True)
+
+if os.environ.get("FAKE_ENV_FILE"):
+    pathlib.Path(os.environ["FAKE_ENV_FILE"]).write_text(json.dumps({
+        "sandbox_profiles": os.environ.get("ALETHEON__GROK_HARDENING__SANDBOX_PROFILES"),
+        "default_profile": os.environ.get("ALETHEON__SANDBOX_PROFILES__DEFAULT_PROFILE"),
+    }, sort_keys=True))
 
 if scenario == "malformed":
     sys.stdout.write("{not-json")
@@ -214,6 +224,16 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(value["verification"]["passed"])
         self.assertEqual(value["metrics"]["tool_errors"], 1)
 
+    def test_verified_terminal_keeps_recovered_tool_errors_diagnostic(self):
+        value = self.execute(
+            "completed",
+            self.task(),
+            FAKE_TOOL_ERROR="1",
+        )
+        self.assertTrue(value["verification"]["passed"])
+        self.assertEqual(value["failure"], {"class": "none", "reasons": []})
+        self.assertEqual(value["metrics"]["tool_errors"], 1)
+
     def test_default_binary_matches_the_shared_cargo_agent_target(self):
         self.assertEqual(
             runner.default_binary({"HOME": "/tmp/test-home"}),
@@ -224,6 +244,25 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(
             runner.default_binary({"CARGO_TARGET_DIR": "/tmp/custom-target"}),
             pathlib.Path("/tmp/custom-target/debug/aletheon"),
+        )
+
+    def test_execution_prompt_binds_workspace_and_preserves_public_task(self):
+        task = runner.load_task(self.task(), self.root)
+        prompt = runner.execution_prompt(task)
+        self.assertTrue(prompt.startswith(task.prompt))
+        self.assertIn("canonical task workspace", prompt)
+        self.assertIn("Do not stage or commit", prompt)
+        self.assertIn("host runs the declared acceptance commands", prompt)
+
+    def test_installed_corpus_forces_the_strict_workspace_profile(self):
+        observed = self.root / "strict-env.json"
+        value = self.execute(
+            "completed", self.task(), FAKE_ENV_FILE=str(observed)
+        )
+        self.assertTrue(value["verification"]["passed"])
+        self.assertEqual(
+            json.loads(observed.read_text()),
+            {"default_profile": "strict", "sandbox_profiles": "true"},
         )
 
     def test_workspace_evidence_excludes_rust_build_artifacts(self):
@@ -337,6 +376,15 @@ class RunnerTest(unittest.TestCase):
         scope = self.execute("scope", self.task())
         self.assertEqual(scope["failure"]["class"], "policy_scope_failure")
         self.assertIn("outside.txt", scope["workspace"]["changed_files"])
+
+    def test_model_commit_cannot_hide_workspace_changes(self):
+        value = self.execute("commit", self.task())
+        self.assertEqual(value["failure"]["class"], "policy_scope_failure")
+        self.assertEqual(
+            value["failure"]["reasons"], ["required_scope_not_satisfied"]
+        )
+        self.assertIn("src/lib.rs", value["workspace"]["changed_files"])
+        self.assertIn("+fixed", value["workspace"]["diff"])
 
     def test_cargo_is_wrapped_and_remaining_process_group_is_reaped(self):
         wrapper_log = self.root / "wrapper.log"

@@ -5,7 +5,7 @@ use executive::application::turn_coordinator::{cancelled_result, ActiveTurnKey, 
 use executive::application::turn_policy::TurnPolicy;
 use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
-use fabric::{SessionAppendStore, SessionId, TurnRequest};
+use fabric::{SessionId, TurnRequest};
 use kernel::KernelRuntime;
 
 fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
@@ -29,17 +29,17 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
         .spawn_process(fabric::SpawnSpec::default())
         .await
         .unwrap();
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
+    let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
     let coordinator = Arc::new(
         executive::testing::turn_coordinator::compose_with_event_spine(
             kernel,
-            store.clone(),
+            read_store,
             event_spine.clone(),
             executive::composition::config::GrokHardeningConfig::default(),
         ),
     );
+    let store = coordinator.store();
     coordinator
         .submit_with(
             request("base", process.id),

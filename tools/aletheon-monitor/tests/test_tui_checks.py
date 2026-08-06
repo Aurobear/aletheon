@@ -40,6 +40,12 @@ def test_dup_render_ignores_repeated_section_templates_across_blank_lines():
     assert check_dup_render(frame, min_block=3) == []
 
 
+def test_dup_render_ignores_repeated_empty_ratatui_split_rows():
+    empty = "│                                  ││                         │"
+    frame = "\n".join(["content", empty, empty, empty, "footer"])
+    assert check_dup_render(frame, min_block=3) == []
+
+
 import os
 from src.tui_checks import (
     check_raw_markdown,

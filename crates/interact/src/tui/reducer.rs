@@ -334,6 +334,16 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
             format!("{}: {:?}", receipt.capability, receipt.status),
             true,
         ),
+        ItemPayload::RobotEpisodeReceipt { receipt } => (
+            "robot_episode_receipt".into(),
+            format!(
+                "{}: {} ({})",
+                receipt.report().episode_id,
+                receipt.report().settlement.as_str(),
+                receipt.report_sha256()
+            ),
+            true,
+        ),
         ItemPayload::EvaluationReceiptRef { receipt } => (
             "evaluation_receipt".into(),
             format_evaluation_receipt_ref(receipt),
@@ -352,6 +362,16 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
         ItemPayload::InferenceReceipt { receipt } => (
             "inference_receipt".into(),
             format!("{}: {:?}", receipt.inference_id, receipt.status),
+            true,
+        ),
+        ItemPayload::TaskProjection { .. } => (
+            "task_projection".into(),
+            "Host Task projection updated".into(),
+            true,
+        ),
+        ItemPayload::TurnRecovery { classification } => (
+            "turn_recovery".into(),
+            format!("Turn recovery settled: {classification:?}"),
             true,
         ),
         ItemPayload::ContextProjection { space, .. } => ("context".into(), space.clone(), true),

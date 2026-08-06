@@ -903,6 +903,15 @@
       },
       "type": "object"
     },
+    "ExecutionEnvironment": {
+      "description": "Provider-attested execution environment. The value comes from the device\nprovider capability handshake; operator configuration may only state the\nenvironment it expects and cannot upgrade this fact.",
+      "enum": [
+        "simulation",
+        "hil",
+        "real"
+      ],
+      "type": "string"
+    },
     "GoalRuntimeConfig": {
       "additionalProperties": false,
       "description": "Provider/model routing for durable Goal worker attempts.",
@@ -1253,6 +1262,18 @@
             "gmail_ingress_policy_file": null,
             "redirect_uri": null
           }
+        },
+        "robot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RobotIntegrationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Robot/Policy settings. Required only when the Robot harness is selected."
         },
         "search": {
           "$ref": "#/$defs/SearchIntegrationConfig",
@@ -2381,6 +2402,238 @@
       },
       "type": "object"
     },
+    "RobotDeploymentGateConfig": {
+      "additionalProperties": false,
+      "description": "Operator-reviewed deployment facts. The serial and digests are compared to\nthe provider-attested startup snapshot before the provider is registered.",
+      "properties": {
+        "device_serial": {
+          "default": "",
+          "type": "string"
+        },
+        "evidence_digest": {
+          "default": "",
+          "description": "Required only for a real deployment and expected to identify reviewed\nHIL/real acceptance evidence.",
+          "type": "string"
+        },
+        "evidence_expiry_unix_ms": {
+          "default": 0,
+          "description": "Unix milliseconds. Required and checked at bootstrap for real devices.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "limits_digest": {
+          "default": "",
+          "type": "string"
+        },
+        "safety_manifest_digest": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RobotIntegrationConfig": {
+      "additionalProperties": false,
+      "description": "Operator-owned Robot harness configuration. It is optional for a Linear\nharness and mandatory when `agent.harness_kind = \"robot\"`.",
+      "properties": {
+        "deployment_gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RobotDeploymentGateConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pinned device and reviewed evidence for HIL/real deployments. Simulation\nmust omit this section; HIL and real must provide it."
+        },
+        "execution_environment": {
+          "$ref": "#/$defs/ExecutionEnvironment",
+          "default": "simulation",
+          "description": "Deployment gate expected from the provider-owned capability handshake.\nThis value never upgrades the Bridge's attested environment."
+        },
+        "max_replans": {
+          "default": 1,
+          "description": "Bounded replan count consumed by `RobotHarness`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 1,
+          "description": "Bounded retry count consumed by `RobotHarness`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "perception": {
+          "$ref": "#/$defs/RobotPerceptionConfig",
+          "default": {
+            "allowed_uri_prefixes": [
+              "artifact://sha256/"
+            ],
+            "max_cached_frames_per_device": 64,
+            "max_devices": 16,
+            "max_frame_age_ms": 2000,
+            "max_frames": 4,
+            "max_total_bytes": 16777216,
+            "poll_interval_ms": 250,
+            "required_by_skill": {}
+          },
+          "description": "Perception polling and world-state bounds."
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RobotPolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A Robot harness must name a real Policy gateway explicitly."
+        },
+        "required_observation_schemas": {
+          "default": [
+            {
+              "schema": "base_pose",
+              "schema_version": 1
+            },
+            {
+              "schema": "base_twist",
+              "schema_version": 1
+            }
+          ],
+          "description": "Observation schemas the Bridge must advertise before Robot startup.",
+          "items": {
+            "$ref": "#/$defs/RobotObservationSchemaConfig"
+          },
+          "type": "array"
+        },
+        "scene_version": {
+          "default": "",
+          "description": "Scene identity recorded on every episode (for example\n`kuavo-mujoco/default-v40`).",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RobotObservationSchemaConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema",
+        "schema_version"
+      ],
+      "type": "object"
+    },
+    "RobotPerceptionConfig": {
+      "additionalProperties": false,
+      "description": "World-state polling settings used by the Robot composition root.",
+      "properties": {
+        "allowed_uri_prefixes": {
+          "default": [
+            "artifact://sha256/"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_cached_frames_per_device": {
+          "default": 64,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_devices": {
+          "default": 16,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_frame_age_ms": {
+          "default": 2000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_frames": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_total_bytes": {
+          "default": 16777216,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "poll_interval_ms": {
+          "default": 250,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "required_by_skill": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/RobotObservationSchemaConfig"
+            },
+            "type": "array"
+          },
+          "default": {},
+          "description": "Skills absent from this map may run without perception. Listed skills\nfail closed unless every schema/version requirement has a selected frame.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "RobotPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Policy gateway settings. Milliseconds remain wire/config values; resolution\nconverts them into checked, bounded `Duration`s before bootstrap.",
+      "properties": {
+        "connect_timeout_ms": {
+          "default": 5000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "endpoint": {
+          "default": "",
+          "type": "string"
+        },
+        "max_proposals": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "protocol_version": {
+          "default": "",
+          "type": "string"
+        },
+        "request_timeout_ms": {
+          "default": 30000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "RoleRuntimeConfig": {
       "additionalProperties": false,
       "description": "One cognitive role mapped to a stable runtime and strict model alias/spec.",
@@ -2985,6 +3238,7 @@
           "gmail_ingress_policy_file": null,
           "redirect_uri": null
         },
+        "robot": null,
         "search": {
           "api_key": null,
           "api_url": null,

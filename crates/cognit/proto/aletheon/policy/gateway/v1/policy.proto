@@ -29,6 +29,36 @@ message ProposeRequest {
   string frame_summary = 6;
   float frame_confidence = 7;
   repeated string allowed_skill_ids = 8;
+  // Fresh, bounded host observations. Visual bytes are never embedded here;
+  // visual evidence travels through frame_uris above.
+  repeated WorldSnapshotWire snapshots = 9;
+  ReplanContextWire replan_context = 10;
+}
+
+message WorldSnapshotWire {
+  string device_id = 1;
+  string schema = 2;
+  uint32 schema_version = 3;
+  uint64 sequence = 4;
+  google.protobuf.Struct payload = 5;
+}
+
+message ReplanContextWire {
+  string failure_class = 1;
+  repeated AttemptSummaryWire completed_attempts = 2;
+  uint32 retries_remaining = 3;
+  uint32 replans_remaining = 4;
+}
+
+message AttemptSummaryWire {
+  uint32 attempt = 1;
+  string skill_id = 2;
+  string parameters_digest = 3;
+  string snapshot_schema = 4;
+  uint32 snapshot_schema_version = 5;
+  uint64 snapshot_sequence = 6;
+  string failure_class = 7;
+  string operation_id = 8;
 }
 
 message SkillProposalWire {
@@ -41,6 +71,9 @@ message SkillProposalWire {
   string model = 7;
   string version = 8;
   string digest = 9;
+  // "direct" or "safety_fallback". Omission/unknown values fail closed in
+  // the Host adapter rather than silently treating a fallback as goal success.
+  string goal_alignment = 10;
 }
 
 message ProposeResponse {

@@ -50,5 +50,6 @@ help=$(bash scripts/aletheon.sh help)
 for command in backup restore upgrade cleanup secrets database verify acceptance test completion; do
   grep -q "$command" <<<"$help"
 done
+grep -Fq 'robot-r8' <<<"$help"
 
 echo 'script public surface: pass'

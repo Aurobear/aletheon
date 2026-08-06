@@ -300,6 +300,10 @@ impl SchemaId {
     pub const EVENT_AGENT_CAPABILITY_ATTENUATED_V1: &'static str =
         "aletheon.event.agent_capability_attenuated/v1";
     pub const EVENT_AGENT_PROGRESS_V1: &'static str = "aletheon.event.agent_progress/v1";
+    /// Agent settlement/reparent/recovery evidence. This is intentionally
+    /// separate from the public Session turn-item schema: settlement payloads
+    /// are control-plane facts, not `ItemRecord`s.
+    pub const EVENT_AGENT_SETTLEMENT_V1: &'static str = "aletheon.event.agent_settlement/v1";
     pub const EVENT_AGENT_STOPPED_V1: &'static str = "aletheon.event.agent_stopped/v1";
     pub const EVENT_AGENT_FAILED_V1: &'static str = "aletheon.event.agent_failed/v1";
     pub const EVENT_SCHEDULED_TASK_FIRED_V1: &'static str =
@@ -319,6 +323,8 @@ impl SchemaId {
     pub const EVENT_AGENT_SPAWNED_V1: &'static str = "aletheon.event.agent_spawned/v1";
     pub const EVENT_SESSION_CREATED_V1: &'static str = "aletheon.event.session_created/v1";
     pub const EVENT_SESSION_FORKED_V1: &'static str = "aletheon.event.session_forked/v1";
+    pub const EVENT_SESSION_PRINCIPAL_BOUND_V1: &'static str =
+        "aletheon.event.session_principal_bound/v1";
     pub const EVENT_MEMORY_CANDIDATE_V1: &'static str = "aletheon.event.memory_candidate/v1";
     pub const EVENT_AGORA_BROADCAST_V1: &'static str = "aletheon.event.agora_broadcast/v1";
     pub const EVENT_RUNTIME_RESTART_V1: &'static str = "aletheon.event.runtime_restart/v1";

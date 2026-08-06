@@ -5,8 +5,8 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 use anyhow::{bail, Result};
 use fabric::{
     AppendOutcome, ContentBlock, ItemId, ItemPayload, ItemRecord, Message, PrincipalId, Role,
-    SessionAppendStore, SessionFork, SessionId, SessionRecord, SessionStatus, TurnId,
-    LOCAL_OWNER_PRINCIPAL, SESSION_SCHEMA_VERSION,
+    SessionAppendStore, SessionFork, SessionId, SessionRecord, SessionStatus, TaskProjectionFact,
+    TurnId, LOCAL_OWNER_PRINCIPAL, SESSION_SCHEMA_VERSION,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use tokio::sync::Mutex;
@@ -508,6 +508,44 @@ impl SessionService {
         .await
     }
 
+    /// Persist Host-authored Task projection inputs in the canonical Session
+    /// history. The item participates in the same expected-sequence and
+    /// idempotency rules as every other durable Session fact.
+    pub async fn persist_task_projection_fact(
+        &self,
+        session_id: &SessionId,
+        turn_id: TurnId,
+        item_id: ItemId,
+        fact: TaskProjectionFact,
+    ) -> Result<AppendOutcome> {
+        if fact.schema_version != fabric::TASK_PROJECTION_FACT_SCHEMA_VERSION {
+            bail!(
+                "unsupported task projection fact schema version {}",
+                fact.schema_version
+            );
+        }
+        let items = self.items(session_id).await?;
+        let sequence = items.last().map_or(1, |item| item.sequence + 1);
+        let created_at_ms = items
+            .last()
+            .map_or(0, |item| item.created_at_ms.saturating_add(1));
+        self.store
+            .append(
+                session_id,
+                sequence,
+                ItemRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: item_id,
+                    session_id: session_id.clone(),
+                    turn_id,
+                    sequence,
+                    created_at_ms,
+                    payload: ItemPayload::TaskProjection { fact },
+                },
+            )
+            .await
+    }
+
     /// Ensure a legacy session has a canonical Session/Turn/Item projection.
     ///
     /// Import is intentionally append-only: an existing canonical history is
@@ -670,6 +708,13 @@ fn legacy_message_payloads(message: &Message) -> Vec<ItemPayload> {
 mod tests {
     use super::*;
 
+    fn test_store() -> Arc<dyn SessionAppendStore> {
+        crate::composition::turn_coordinator::compose_in_memory_session_store(Arc::new(
+            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
+                .unwrap(),
+        ))
+    }
+
     #[test]
     fn session_visibility_is_principal_scoped_and_legacy_local_only() {
         let owner = PrincipalId("local-uid:1000".into());
@@ -694,10 +739,7 @@ mod tests {
 
     #[tokio::test]
     async fn lifecycle_context_fragment_is_bounded_and_durable() {
-        let store: Arc<dyn SessionAppendStore> = Arc::new(
-            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
-                .unwrap(),
-        );
+        let store = test_store();
         let session_id = SessionId("context-session".into());
         store
             .create(SessionRecord {
@@ -729,11 +771,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protocol_picker_and_snapshot_enforce_durable_principal_ownership() {
-        let store: Arc<dyn SessionAppendStore> = Arc::new(
-            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
-                .unwrap(),
-        );
+    async fn u_resume_006_protocol_picker_and_snapshot_enforce_durable_principal_ownership() {
+        let store = test_store();
         let first = SessionId("shared-thread".into());
         let second = SessionId("other-thread".into());
         for id in [&first, &second] {
@@ -768,10 +807,7 @@ mod tests {
 
     #[tokio::test]
     async fn historical_fork_boundary_uses_last_item_in_checkpoint_turn() {
-        let store: Arc<dyn SessionAppendStore> = Arc::new(
-            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
-                .unwrap(),
-        );
+        let store = test_store();
         let session_id = SessionId("fork-boundary-session".into());
         store
             .create(SessionRecord {

@@ -45,21 +45,57 @@ fn a_delete_002_readme_stable_capabilities_have_code_tests_and_recovery_evidence
         .split("### 6.2 Stable")
         .next()
         .expect("capability matrix");
+    let mut stable_rows = 0;
     for line in matrix.lines().filter(|line| line.contains("✅ Stable")) {
         let columns: Vec<_> = line.split('|').map(str::trim).collect();
-        assert_eq!(columns.len(), 6, "malformed stable capability row: {line}");
+        assert_eq!(columns.len(), 7, "malformed stable capability row: {line}");
+        stable_rows += 1;
+        for (column, label) in [(3, "production code"), (4, "E2E"), (5, "recovery")] {
+            let anchor = columns[column].trim_matches('`');
+            assert!(
+                !anchor.is_empty() && anchor != "—",
+                "missing {label} anchor: {line}"
+            );
+            assert!(
+                root.join(anchor).is_file(),
+                "{label} anchor is not a file: {anchor}"
+            );
+        }
+        let e2e = fs::read_to_string(root.join(columns[4].trim_matches('`')))
+            .expect("stable E2E evidence");
         assert!(
-            !columns[3].is_empty() && columns[3] != "—",
-            "missing code anchor: {line}"
+            e2e.contains("#[test]") || e2e.contains("#[tokio::test]"),
+            "E2E anchor contains no executable test: {line}"
         );
+        let recovery = fs::read_to_string(root.join(columns[5].trim_matches('`')))
+            .expect("stable recovery evidence")
+            .to_ascii_lowercase();
         assert!(
-            !columns[4].is_empty() && columns[4] != "—",
-            "missing test anchor: {line}"
+            [
+                "restart",
+                "recover",
+                "replay",
+                "reconnect",
+                "idempot",
+                "stale",
+                "cooldown",
+                "fail_closed",
+                "private_scratch",
+            ]
+            .iter()
+            .any(|term| recovery.contains(term)),
+            "recovery anchor lacks restart/replay/equivalent evidence: {line}"
         );
     }
+    assert_eq!(
+        stable_rows, 13,
+        "Stable capability inventory changed without evidence review"
+    );
     let stable = readme
         .split("### 6.2 Stable")
         .nth(1)
         .expect("stable section");
-    assert!(stable.contains("recovery evidence"));
+    assert!(stable.contains("EventSourcedSessionStore"));
+    assert!(!stable.contains("HashMap-based session registry"));
+    assert!(!stable.contains("adapters/session/store.rs"));
 }

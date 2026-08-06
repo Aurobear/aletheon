@@ -73,16 +73,17 @@ impl TestAletheonBuilder {
     pub async fn build(self) -> TestAletheon {
         let clock = self.clock.unwrap_or_else(|| Arc::new(TestClock::default()));
         let kernel = Arc::new(KernelRuntime::with_clock(clock.clone() as Arc<dyn Clock>));
-        let store: Arc<dyn SessionAppendStore> =
+        let read_store =
             Arc::new(CanonicalSessionStore::open(":memory:").expect("in-memory session store"));
         let event_spine =
             Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine"));
         let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
             kernel.clone(),
-            store.clone(),
+            read_store,
             event_spine.clone(),
             executive::composition::config::GrokHardeningConfig::default(),
         );
+        let store = coordinator.store();
         let cognitive_sessions = Arc::new(LinearCognitiveSessionFactory::new(
             cognit::HarnessConfig::default(),
             clock.clone() as Arc<dyn Clock>,

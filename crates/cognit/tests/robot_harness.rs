@@ -46,6 +46,7 @@ fn retry_path_with_remaining_retries() {
     let mut s = RobotState::Verify;
     s = s.next(&VerificationSignal::Retryable {
         remaining_retries: 1,
+        remaining_replans: 1,
     });
     assert_eq!(s, RobotState::Retry);
     s = s.next(&VerificationSignal::Matched);
@@ -57,19 +58,20 @@ fn retry_exhausted_goes_to_replan() {
     let mut s = RobotState::Verify;
     s = s.next(&VerificationSignal::Retryable {
         remaining_retries: 0,
+        remaining_replans: 1,
     });
     assert_eq!(s, RobotState::Replan);
     s = s.next(&VerificationSignal::Matched);
-    assert_eq!(s, RobotState::Plan);
+    assert_eq!(s, RobotState::Authorize);
 }
 
 #[test]
-fn replan_exhausted_goes_to_recover() {
+fn replan_exhausted_goes_to_safe_stop() {
     let mut s = RobotState::Verify;
     s = s.next(&VerificationSignal::Replannable {
         remaining_replans: 0,
     });
-    assert_eq!(s, RobotState::Recover);
+    assert_eq!(s, RobotState::SafeStop);
 }
 
 #[test]
@@ -82,19 +84,18 @@ fn unsafe_always_goes_to_safe_stop() {
 }
 
 #[test]
-fn unknown_with_retries_goes_to_retry() {
+fn unknown_goes_directly_to_safe_stop() {
     let mut s = RobotState::Verify;
-    s = s.next(&VerificationSignal::Unknown {
-        remaining_retries: 1,
-    });
-    assert_eq!(s, RobotState::Retry);
+    s = s.next(&VerificationSignal::Unknown);
+    assert_eq!(s, RobotState::SafeStop);
 }
 
 #[test]
-fn unknown_exhausted_goes_to_safe_stop() {
+fn retry_and_replan_exhausted_goes_to_safe_stop() {
     let mut s = RobotState::Verify;
-    s = s.next(&VerificationSignal::Unknown {
+    s = s.next(&VerificationSignal::Retryable {
         remaining_retries: 0,
+        remaining_replans: 0,
     });
     assert_eq!(s, RobotState::SafeStop);
 }

@@ -47,13 +47,14 @@ impl DeterministicOutcomeVerifier {
     fn report(
         &self,
         decision: VerificationDecision,
+        observed_paths: Vec<String>,
         reasons: Vec<String>,
         after: Option<&WorldSnapshot>,
     ) -> VerificationReport {
         VerificationReport {
             decision,
             evaluated_sequence: after.map(|snap| snap.sequence).unwrap_or(0),
-            observed_paths: vec![],
+            observed_paths,
             reasons,
             evidence: vec![],
         }
@@ -108,6 +109,30 @@ fn collect_first_segments(predicate: &OutcomePredicate, out: &mut BTreeSet<Strin
     }
 }
 
+/// Collect every dot-path actually evaluated for a predicate tree. A sorted set
+/// keeps the report deterministic when a composite predicate repeats a path.
+fn predicate_paths(predicate: &OutcomePredicate) -> Vec<String> {
+    fn collect(predicate: &OutcomePredicate, out: &mut BTreeSet<String>) {
+        match predicate {
+            OutcomePredicate::Equals { path, .. }
+            | OutcomePredicate::NotEquals { path, .. }
+            | OutcomePredicate::Range { path, .. }
+            | OutcomePredicate::Change { path, .. } => {
+                out.insert(path.clone());
+            }
+            OutcomePredicate::All { predicates } | OutcomePredicate::Any { predicates } => {
+                for child in predicates {
+                    collect(child, out);
+                }
+            }
+        }
+    }
+
+    let mut paths = BTreeSet::new();
+    collect(predicate, &mut paths);
+    paths.into_iter().collect()
+}
+
 /// Nest a snapshot's payload under its schema so schema-qualified predicate
 /// paths (e.g. `base_twist.linear_velocity.x`) resolve against it. `ANY_SCHEMA`
 /// worlds use unqualified paths and are passed through untouched.
@@ -153,12 +178,14 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
                 .unwrap_or(0)
         };
         let before_wrapped = before.map(|snap| wrap_snapshot(snap, &schema));
+        let expected_paths = predicate_paths(&expected.predicate);
 
         // Wait for post-execution observations and evaluate a CONTINUOUS stable
         // window: `stable_window_ms` of elapsed observation time with the
         // predicate holding on every sample. Any mismatch resets the window.
         let mut window_started_at: Option<u64> = None;
         let mut last_sequence = after_sequence;
+        let mut evaluated_expected = false;
         loop {
             let now = self.clock.mono_now();
             if deadline.is_expired_at(now) {
@@ -178,6 +205,7 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
             {
                 return self.report(
                     VerificationDecision::Unknown,
+                    vec![],
                     vec!["after observation stale or older than freshness window".into()],
                     Some(&snapshot),
                 );
@@ -188,6 +216,7 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
                 if evaluate_predicate(predicate, &snapshot.payload, None) {
                     return self.report(
                         VerificationDecision::Unsafe,
+                        predicate_paths(predicate),
                         vec!["unsafe predicate matched after execution".into()],
                         Some(&snapshot),
                     );
@@ -195,6 +224,7 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
             }
 
             let snapshot_wrapped = wrap_snapshot(&snapshot, &schema);
+            evaluated_expected = true;
             match evaluate_expected(expected, &snapshot_wrapped, before_wrapped.as_ref(), now) {
                 OutcomeMatch::Match => {
                     let window_start = *window_started_at.get_or_insert(snapshot.observed_at.0);
@@ -203,6 +233,7 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
                     {
                         return self.report(
                             VerificationDecision::Matched,
+                            expected_paths,
                             vec!["expected outcome matched within the stable window".into()],
                             Some(&snapshot),
                         );
@@ -214,6 +245,7 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
                 OutcomeMatch::Stale => {
                     return self.report(
                         VerificationDecision::Unknown,
+                        expected_paths,
                         vec!["observation became stale during the stable window".into()],
                         Some(&snapshot),
                     );
@@ -231,6 +263,11 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
         };
         self.report(
             decision,
+            if evaluated_expected {
+                expected_paths
+            } else {
+                vec![]
+            },
             vec!["stable window not satisfied before timeout".into()],
             None,
         )
@@ -266,9 +303,11 @@ mod tests {
         WorldSnapshot {
             device: DeviceId("bot".into()),
             schema: schema.into(),
+            schema_version: 1,
             sequence: seq,
             payload,
             observed_at: MonoTime(observed_at),
+            valid_until: None,
             stale,
         }
     }
@@ -386,6 +425,7 @@ mod tests {
             .verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1)
             .await;
         assert_eq!(report.decision, VerificationDecision::Unsafe);
+        assert_eq!(report.observed_paths, ["fall_detected"]);
     }
 
     #[tokio::test]
@@ -402,6 +442,7 @@ mod tests {
             .await;
         assert_eq!(report.decision, VerificationDecision::Matched);
         assert_eq!(report.evaluated_sequence, 3);
+        assert_eq!(report.observed_paths, ["mode"]);
     }
 
     #[tokio::test]

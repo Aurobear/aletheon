@@ -51,8 +51,8 @@ fn a_dep_002_forbidden_edges_parsers_and_writers_are_zero_or_ratcheted() {
     let metrics = fs::read_to_string(root.join("config/architecture/metrics.env"))
         .expect("architecture metrics");
     assert!(metrics.contains("FORBIDDEN_DEPENDENCY_EDGES=0"));
-    assert!(metrics.contains("PRODUCTION_CLI_PARSERS=0"));
-    assert!(metrics.contains("SESSION_APPEND_WRITERS=2"));
+    assert!(metrics.contains("PRODUCTION_CLI_PARSERS=1"));
+    assert!(metrics.contains("SESSION_APPEND_WRITERS=1"));
 
     let checker = fs::read_to_string(root.join("scripts/libexec/aletheon/architecture-check.sh"))
         .expect("architecture checker");

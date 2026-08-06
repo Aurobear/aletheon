@@ -2,18 +2,38 @@ use cognit::harness::robot::proposal_validator::validate_proposal;
 use fabric::types::embodiment::{DeviceId, RiskClass, SkillDescriptor, SkillId};
 use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
 use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
+use fabric::types::world_state::WorldSnapshot;
+use fabric::MonoTime;
 
 fn allowed_skills() -> Vec<SkillDescriptor> {
     vec![SkillDescriptor {
         skill: SkillId("kuavo.stance".into()),
         device: DeviceId("bot".into()),
         summary: "stance".into(),
-        input_schema: serde_json::json!({"type": "object", "required": []}),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        }),
         risk: RiskClass::Low,
         timeout_ms: 10000,
         cancellable: false,
-        preconditions: vec![],
-        success_criteria: vec![],
+        preconditions: vec!["ready".into()],
+        success_criteria: vec!["stable".into()],
+    }]
+}
+
+fn snapshots() -> Vec<WorldSnapshot> {
+    vec![WorldSnapshot {
+        device: DeviceId("bot".into()),
+        schema: "robot.state".into(),
+        schema_version: 1,
+        sequence: 1,
+        payload: serde_json::json!({"mode": "idle", "x": 0}),
+        observed_at: MonoTime(1),
+        valid_until: None,
+        stale: false,
     }]
 }
 
@@ -23,6 +43,7 @@ fn integration_valid_proposal_passes() {
         skill: SkillId("kuavo.stance".into()),
         device: DeviceId("bot".into()),
         parameters: serde_json::json!({}),
+        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "mode".into(),
@@ -38,10 +59,13 @@ fn integration_valid_proposal_passes() {
             provider: "vla".into(),
             model: "m".into(),
             version: "1".into(),
+            protocol_version: "1.0".into(),
             digest: "abc".into(),
         },
     };
-    assert!(validate_proposal(&p, &allowed_skills(), 1000, 5000).is_ok());
+    assert!(
+        validate_proposal(&p, &DeviceId("bot".into()), &allowed_skills(), &snapshots()).is_ok()
+    );
 }
 
 #[test]
@@ -50,6 +74,7 @@ fn integration_unknown_skill_fails() {
         skill: SkillId("unknown".into()),
         device: DeviceId("bot".into()),
         parameters: serde_json::json!({}),
+        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "x".into(),
@@ -65,8 +90,11 @@ fn integration_unknown_skill_fails() {
             provider: "v".into(),
             model: "m".into(),
             version: "1".into(),
+            protocol_version: "1.0".into(),
             digest: "d".into(),
         },
     };
-    assert!(validate_proposal(&p, &allowed_skills(), 0, 0).is_err());
+    assert!(
+        validate_proposal(&p, &DeviceId("bot".into()), &allowed_skills(), &snapshots()).is_err()
+    );
 }

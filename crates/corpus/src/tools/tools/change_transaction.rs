@@ -1100,7 +1100,7 @@ impl Tool for TransactionalGitDiffTool {
         "git_diff"
     }
     fn description(&self) -> &str {
-        "Review the complete baseline-to-current diff for a version-bound Git or bounded-tree change transaction and preserve it as an artifact."
+        "After the final scoped mutation, review the complete baseline-to-current diff for the current version of a host-minted Git or bounded-tree change transaction and preserve it as an artifact. Intermediate versions are superseded; use the current transaction_id once before validation."
     }
     fn input_schema(&self) -> serde_json::Value {
         json!({"type":"object","properties":{"transaction_id":{"type":"string"},"path":{"type":"string"}},"required":["transaction_id"]})

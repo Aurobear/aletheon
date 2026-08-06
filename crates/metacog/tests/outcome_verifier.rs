@@ -8,9 +8,11 @@ fn snapshot(payload: serde_json::Value, seq: u64, stale: bool) -> WorldSnapshot 
     WorldSnapshot {
         device: DeviceId("bot".into()),
         schema: "test".into(),
+        schema_version: 1,
         sequence: seq,
         payload,
         observed_at: fabric::MonoTime(seq),
+        valid_until: None,
         stale,
     }
 }

@@ -4,9 +4,54 @@
 #   2. Bridge:   cd ../aletheon-kuavo-bridge && python -m aletheon_kuavo_bridge --config config/bridge.kuavo.yaml
 #   3. Aletheon: aletheond --config config/aletheon.kuavo-mujoco.toml
 
+[agent]
+harness_kind = "robot"
+
 [integrations.embodiment]
 kind = "grpc"
 device_id = "kuavo-mujoco-01"
 endpoint = "http://127.0.0.1:50051"
 connect_timeout_ms = 5000
 request_timeout_ms = 10000
+
+[integrations.robot]
+scene_version = "kuavo-mujoco/default-v40"
+# Must match the provider-owned Bridge capability (`simulation`, `hil`, or
+# `real`). Editing this expectation cannot promote a simulation provider.
+execution_environment = "simulation"
+max_retries = 1
+max_replans = 1
+required_observation_schemas = [
+  { schema = "base_pose", schema_version = 1 },
+  { schema = "base_twist", schema_version = 1 },
+]
+
+# HIL/real profiles must add a separate, reviewed deployment gate. The values
+# are pins learned from the provider-attested startup snapshot; simulation must
+# omit this table. Real additionally requires evidence_digest, a future expiry,
+# and a non-loopback TLS embodiment endpoint.
+# [integrations.robot.deployment_gate]
+# device_serial = "REPLACE_WITH_DEVICE_SERIAL"
+# safety_manifest_digest = "REPLACE_WITH_64_HEX_SHA256"
+# limits_digest = "REPLACE_WITH_64_HEX_SHA256"
+# evidence_digest = "REPLACE_WITH_64_HEX_SHA256" # real only
+# evidence_expiry_unix_ms = 0                    # real only
+
+[integrations.robot.policy]
+endpoint = "http://127.0.0.1:50052"
+protocol_version = "1.0"
+connect_timeout_ms = 5000
+request_timeout_ms = 30000
+max_proposals = 4
+
+[integrations.robot.perception]
+poll_interval_ms = 250
+max_devices = 16
+max_frame_age_ms = 2000
+max_frames = 4
+max_total_bytes = 16777216
+max_cached_frames_per_device = 64
+allowed_uri_prefixes = ["artifact://sha256/"]
+# Add a typed entry only for skills that require visual input, for example:
+# [integrations.robot.perception.required_by_skill]
+# "kuavo.visual_inspect" = [{ schema = "camera.rgb", schema_version = 1 }]

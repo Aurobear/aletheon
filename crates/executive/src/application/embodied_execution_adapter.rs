@@ -2,15 +2,15 @@
 //! hardware) to the cognit RobotHarness `EmbodiedExecutionPort`.
 //!
 //! The two ports differ: fabric carries `SkillDispatchError` and cancels by
-//! `OperationId`; the cognit harness port is error-string based and cancels by
+//! `OperationId`; the cognit harness port preserves typed dispatch failures and cancels by
 //! `DeviceId`. The adapter tracks the latest executed operation so a device-level
 //! cancel can be forwarded to the fabric operation-level cancel.
 
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use cognit::harness::robot::EmbodiedExecutionPort;
-use fabric::types::embodiment::{DeviceId, SkillRequest, SkillResult};
+use cognit::harness::robot::{EmbodiedExecutionPort, RobotExecutionError};
+use fabric::types::embodiment::{DeviceId, SkillDispatchError, SkillRequest, SkillResult};
 use fabric::OperationId;
 
 pub struct EmbodiedExecutionAdapter {
@@ -27,34 +27,41 @@ impl EmbodiedExecutionAdapter {
     }
 }
 
+fn map_dispatch_error(error: SkillDispatchError) -> RobotExecutionError {
+    match error {
+        SkillDispatchError::NoProvider(reason) => RobotExecutionError::ProviderDisconnected(reason),
+        SkillDispatchError::Rejected(reason) => RobotExecutionError::Rejected(reason),
+    }
+}
+
 #[async_trait]
 impl EmbodiedExecutionPort for EmbodiedExecutionAdapter {
-    async fn execute(&self, request: SkillRequest) -> Result<SkillResult, String> {
+    async fn execute(&self, request: SkillRequest) -> Result<SkillResult, RobotExecutionError> {
         let result = self
             .inner
             .execute_skill(request)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(map_dispatch_error)?;
         *self.last_operation.lock().unwrap() = Some(result.operation_id);
         Ok(result)
     }
 
-    async fn cancel(&self, _device: &DeviceId) -> Result<(), String> {
+    async fn cancel(&self, _device: &DeviceId) -> Result<(), RobotExecutionError> {
         let operation = *self.last_operation.lock().unwrap();
         if let Some(operation) = operation {
             self.inner
                 .cancel(&operation)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(map_dispatch_error)?;
         }
         Ok(())
     }
 
-    async fn safe_stop(&self, device: &DeviceId) -> Result<(), String> {
+    async fn safe_stop(&self, device: &DeviceId) -> Result<(), RobotExecutionError> {
         self.inner
             .safe_stop(device)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(map_dispatch_error)
     }
 }
 

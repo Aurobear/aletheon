@@ -371,14 +371,15 @@ pub(super) async fn build_turn_services(
     if let Some(parent) = session_db.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let canonical_store =
+    let canonical_store = Arc::new(
         crate::adapters::session::canonical_store::CanonicalSessionStore::open(&session_db)
-            .with_context(|| format!("open durable Session read model {}", session_db.display()))?;
+            .with_context(|| format!("open durable Session read model {}", session_db.display()))?,
+    );
     let session_recovery =
         crate::adapters::session::event_sourced_store::reconcile_committed_session_events(
             canonical_event_spine.as_ref(),
             event_projections.as_ref(),
-            &canonical_store,
+            canonical_store.as_ref(),
         )
         .await
         .context("reconcile committed Session events during daemon startup")?;
@@ -388,10 +389,17 @@ pub(super) async fn build_turn_services(
         "Session event-spine recovery completed before turn admission"
     );
 
-    let turn_recovery_report =
-        crate::application::turn_recovery::scan_incomplete_turns(&canonical_store, &grok_hardening)
-            .await
-            .context("incomplete-turn recovery scan during daemon startup")?;
+    let session_store = crate::composition::turn_coordinator::compose_session_store(
+        canonical_store,
+        canonical_event_spine.clone(),
+        event_projections.clone(),
+    );
+    let turn_recovery_report = crate::application::turn_recovery::scan_incomplete_turns(
+        session_store.as_ref(),
+        &grok_hardening,
+    )
+    .await
+    .context("incomplete-turn recovery scan during daemon startup")?;
     crate::application::turn_recovery::persist_recovery_health(data_dir, &turn_recovery_report)
         .context("persist turn recovery health")?;
     if !turn_recovery_report.incomplete_turns.is_empty() {
@@ -469,11 +477,9 @@ pub(super) async fn build_turn_services(
         capability_rollups.clone(),
     )?;
     let coordinator = Arc::new(
-        crate::composition::turn_coordinator::compose_turn_coordinator(
+        crate::application::turn_coordinator::TurnCoordinator::from_components(
             kernel.clone(),
-            Arc::new(canonical_store),
-            canonical_event_spine.clone(),
-            event_projections.clone(),
+            session_store,
             grok_hardening.clone(),
         )
         .with_backpressure(config.backpressure.clone())

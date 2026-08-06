@@ -450,9 +450,11 @@ mod tests {
         WorldSnapshot {
             device: crate::types::embodiment::DeviceId("bot".into()),
             schema: "robot.state/v1".into(),
+            schema_version: 1,
             sequence: seq,
             payload,
             observed_at: MonoTime(observed_at),
+            valid_until: None,
             stale,
         }
     }

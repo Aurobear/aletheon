@@ -12,11 +12,13 @@ use fabric::{
     AppendOutcome, EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity,
     EventPayload, EventSpine, EventTreeId, EventVisibility, ItemId, ItemPayload, ItemRecord,
     MessageId, NamespaceId, PrincipalId, SchemaId, SessionAppendStore, SessionForkedEvent,
-    SessionId, SessionRecord, SpineEvent, UnsequencedEvent, SESSION_SCHEMA_VERSION,
+    SessionId, SessionPrincipalBoundEvent, SessionReadStore, SessionRecord, SpineEvent,
+    UnsequencedEvent, SESSION_SCHEMA_VERSION,
 };
 use uuid::Uuid;
 
 use crate::adapters::events::session_projection::SessionProjection;
+use crate::adapters::session::projection_store::SessionProjectionStore;
 use crate::application::event_projection::EventProjectionSink;
 
 const SESSION_EVENT_NAMESPACE: Uuid = Uuid::from_u128(0x01b2f7f1_0d98_441a_a30e_4f637b27be55);
@@ -35,7 +37,7 @@ pub struct SessionEventReconcileReport {
 pub async fn reconcile_committed_session_events(
     event_spine: &dyn EventSpine,
     event_projections: &dyn EventProjectionSink,
-    read_model: &dyn SessionAppendStore,
+    read_model: &dyn SessionProjectionStore,
 ) -> Result<SessionEventReconcileReport> {
     let through_row_id = event_spine.committed_watermark()?;
     let mut after_row_id = 0;
@@ -66,7 +68,7 @@ pub async fn reconcile_committed_session_events(
 }
 
 pub struct EventSourcedSessionStore {
-    read_model: Arc<dyn SessionAppendStore>,
+    read_model: Arc<dyn SessionProjectionStore>,
     event_spine: Arc<dyn EventSpine>,
     event_projections: Arc<dyn EventProjectionSink>,
     writer: tokio::sync::Mutex<()>,
@@ -74,7 +76,7 @@ pub struct EventSourcedSessionStore {
 
 impl EventSourcedSessionStore {
     pub fn new(
-        read_model: Arc<dyn SessionAppendStore>,
+        read_model: Arc<dyn SessionProjectionStore>,
         event_spine: Arc<dyn EventSpine>,
         event_projections: Arc<dyn EventProjectionSink>,
     ) -> Self {
@@ -137,10 +139,36 @@ impl EventSourcedSessionStore {
             ItemPayload::ContextProjection { .. }
             | ItemPayload::SystemNotice { .. }
             | ItemPayload::CapabilityReceipt { .. }
+            | ItemPayload::RobotEpisodeReceipt { .. }
             | ItemPayload::EvaluationReceiptRef { .. }
             | ItemPayload::ModelContextProjection { .. }
-            | ItemPayload::InferenceReceipt { .. } => EventVisibility::Control,
+            | ItemPayload::InferenceReceipt { .. }
+            | ItemPayload::TaskProjection { .. }
+            | ItemPayload::TurnRecovery { .. } => EventVisibility::Control,
         }
+    }
+}
+
+#[async_trait]
+impl SessionReadStore for EventSourcedSessionStore {
+    async fn load_session(&self, session: &SessionId) -> Result<Option<SessionRecord>> {
+        self.read_model.load_session(session).await
+    }
+
+    async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>> {
+        self.read_model.load_items(session, after).await
+    }
+
+    async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
+        self.read_model.list_sessions(limit).await
+    }
+
+    async fn list_session_ids(&self) -> Result<Vec<SessionId>> {
+        self.read_model.list_session_ids().await
+    }
+
+    async fn principal_for(&self, session: &SessionId) -> Result<Option<PrincipalId>> {
+        self.read_model.principal_for(session).await
     }
 }
 
@@ -192,6 +220,7 @@ fn is_session_materialization_event(event: &SpineEvent) -> bool {
             event.schema.0.as_str(),
             SchemaId::EVENT_SESSION_CREATED_V1
                 | SchemaId::EVENT_SESSION_FORKED_V1
+                | SchemaId::EVENT_SESSION_PRINCIPAL_BOUND_V1
                 | SchemaId::TURN_EVENT_V1
         )
 }
@@ -229,6 +258,13 @@ impl SessionAppendStore for EventSourcedSessionStore {
             || item.sequence != expected_sequence
         {
             bail!("Session item does not match append contract");
+        }
+        if matches!(
+            &item.payload,
+            ItemPayload::TaskProjection { fact }
+                if fact.schema_version != fabric::TASK_PROJECTION_FACT_SCHEMA_VERSION
+        ) {
+            bail!("unsupported Task projection fact schema version");
         }
         let _guard = self.writer.lock().await;
         let items = self.read_model.load_items(session, None).await?;
@@ -315,23 +351,28 @@ impl SessionAppendStore for EventSourcedSessionStore {
         Ok(())
     }
 
-    async fn load_session(&self, session: &SessionId) -> Result<Option<SessionRecord>> {
-        self.read_model.load_session(session).await
-    }
-
-    async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>> {
-        self.read_model.load_items(session, after).await
-    }
-
-    async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
-        self.read_model.list_sessions(limit).await
-    }
-
     async fn bind_principal(&self, session: &SessionId, principal: &PrincipalId) -> Result<()> {
-        self.read_model.bind_principal(session, principal).await
-    }
-
-    async fn principal_for(&self, session: &SessionId) -> Result<Option<PrincipalId>> {
-        self.read_model.principal_for(session).await
+        let _guard = self.writer.lock().await;
+        if self.read_model.load_session(session).await?.is_none() {
+            bail!("Session does not exist");
+        }
+        if let Some(owner) = self.read_model.principal_for(session).await? {
+            if owner != *principal {
+                bail!("session is already owned by another principal");
+            }
+        }
+        let binding = SessionPrincipalBoundEvent {
+            session_id: session.clone(),
+            principal: principal.clone(),
+        };
+        self.append_and_materialize(Self::event(
+            SchemaId::EVENT_SESSION_PRINCIPAL_BOUND_V1,
+            session,
+            &format!("session-principal:{}:{}", session.0, principal.0),
+            EventVisibility::Control,
+            serde_json::to_value(binding)?,
+        ))
+        .await?;
+        Ok(())
     }
 }

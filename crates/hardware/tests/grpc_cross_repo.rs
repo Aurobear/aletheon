@@ -8,14 +8,17 @@
 //! ```
 //!
 //! The read-only checks validate the GetCapabilities handshake, the skill
-//! manifest, and fresh monotonic observations. The execute/verify path is
+//! manifest, per-schema sequence monotonicity, and explicit Unix/monotonic time
+//! separation. The execute/verify path is
 //! covered in CI by the `SimulatedKuavo` in-process tests.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
 use fabric::types::embodiment::{DeviceId, EmbodiedObservation};
-use hardware::grpc::provider::{GrpcEmbodimentProvider, GrpcProviderConfig};
+use hardware::grpc::provider::{
+    GrpcEmbodimentProvider, GrpcProviderConfig, ObservationSchemaRequirement,
+};
 use hardware::EmbodimentProvider;
 
 const BRIDGE_ENDPOINT: &str = "http://127.0.0.1:50051";
@@ -24,6 +27,17 @@ const DEVICE_ID: &str = "kuavo-mujoco-01";
 async fn connect() -> GrpcEmbodimentProvider {
     GrpcEmbodimentProvider::connect(GrpcProviderConfig {
         endpoint: BRIDGE_ENDPOINT.into(),
+        required_device_id: Some(DEVICE_ID.into()),
+        required_observation_schemas: vec![
+            ObservationSchemaRequirement {
+                schema: "base_pose".into(),
+                schema_version: 1,
+            },
+            ObservationSchemaRequirement {
+                schema: "base_twist".into(),
+                schema_version: 1,
+            },
+        ],
         ..Default::default()
     })
     .await
@@ -84,6 +98,14 @@ async fn bridge_observation_is_fresh_and_monotonic() {
     let mut per_schema: HashMap<String, Vec<u64>> = HashMap::new();
     for sample in &samples {
         for observation in sample {
+            assert!(
+                observation.received_unix_ms > 1_000_000_000_000,
+                "bridge receive timestamp must be Unix milliseconds"
+            );
+            assert!(
+                observation.received_unix_ms >= observation.source_unix_ms,
+                "receive time must not precede source time"
+            );
             per_schema
                 .entry(observation.schema.clone())
                 .or_default()

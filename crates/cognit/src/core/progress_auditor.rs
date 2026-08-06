@@ -65,13 +65,13 @@ impl ProgressDecision {
                         transaction_id,
                         workspace_version,
                     }) => format!(
-                        "- review diff for change transaction `{transaction_id}` at workspace version `{workspace_version}`"
+                        "- call `git_diff` with transaction_id `{transaction_id}` to review its current workspace version `{workspace_version}`; do not reconstruct an intermediate diff with shell commands"
                     ),
                     Obligation::RequiredAction(RequiredAction::ValidateChange {
                         transaction_id,
                         workspace_version,
                     }) => format!(
-                        "- run focused validation for change transaction `{transaction_id}` at workspace version `{workspace_version}`"
+                        "- call `validation_run` for the required validation-plan step(s) of transaction `{transaction_id}` at reviewed workspace version `{workspace_version}`"
                     ),
                     Obligation::RequiredAction(RequiredAction::AcceptChange {
                         transaction_id,
@@ -143,6 +143,26 @@ impl ProgressAuditor {
         if !waiting.is_empty() {
             return ProgressDecision::WaitingForTerminalEvidence {
                 operations: waiting,
+            };
+        }
+
+        // A governed validation is version-bound and the transaction registry
+        // rejects it until the current diff has been reviewed. Surface those
+        // prerequisite actions first instead of telling the model to invoke a
+        // validation that cannot yet succeed.
+        let change_reviews = unresolved
+            .iter()
+            .filter(|obligation| {
+                matches!(
+                    obligation,
+                    Obligation::RequiredAction(RequiredAction::ReviewChange { .. })
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !change_reviews.is_empty() {
+            return ProgressDecision::Continue {
+                missing: change_reviews,
             };
         }
 
@@ -299,5 +319,43 @@ mod tests {
             ProgressAuditor.audit(&state, &ledger),
             ProgressDecision::Complete
         );
+    }
+
+    #[test]
+    fn change_review_is_reported_before_validation() {
+        let state = CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "change code".into(),
+            task_kind: CognitiveTaskKind::CodeChange,
+            required_actions: vec![
+                RequiredAction::ReviewChange {
+                    transaction_id: "tx".into(),
+                    workspace_version: "v1".into(),
+                },
+                RequiredAction::ValidateChange {
+                    transaction_id: "tx".into(),
+                    workspace_version: "v1".into(),
+                },
+            ],
+            deliverables: Vec::new(),
+            validation_requirements: vec![ValidationRequirement {
+                id: "verification".into(),
+                description: "terminal validation".into(),
+            }],
+        });
+
+        assert!(matches!(
+            ProgressAuditor.audit(&state, &EvidenceLedger::default()),
+            ProgressDecision::Continue { missing }
+                if missing == vec![Obligation::RequiredAction(RequiredAction::ReviewChange {
+                    transaction_id: "tx".into(),
+                    workspace_version: "v1".into(),
+                })]
+        ));
+        let recovery = ProgressAuditor
+            .audit(&state, &EvidenceLedger::default())
+            .recovery_message()
+            .expect("missing review has recovery guidance");
+        assert!(recovery.contains("call `git_diff`"));
+        assert!(!recovery.contains("call `validation_run`"));
     }
 }

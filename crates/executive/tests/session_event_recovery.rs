@@ -1,4 +1,5 @@
-use executive::application::turn_recovery::{RecoveryClassification, TurnRecoveryStore};
+use std::sync::Arc;
+
 use executive::runtime::events::{DefaultEventProjectionSet, SqliteEventSpine};
 use executive::runtime::session::{
     canonical_store::CanonicalSessionStore, event_sourced_store::reconcile_committed_session_events,
@@ -6,7 +7,7 @@ use executive::runtime::session::{
 use fabric::{
     EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity, EventPayload,
     EventSpine, EventTreeId, EventVisibility, ItemId, ItemPayload, ItemRecord, MessageId,
-    NamespaceId, SchemaId, SessionAppendStore, SessionId, SessionRecord, SessionStatus, TurnId,
+    NamespaceId, SchemaId, SessionId, SessionReadStore, SessionRecord, SessionStatus, TurnId,
     UnsequencedEvent, SESSION_SCHEMA_VERSION,
 };
 use tempfile::tempdir;
@@ -94,14 +95,15 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
             .unwrap();
     }
 
-    let spine = SqliteEventSpine::open(&event_path).unwrap();
-    let projections = DefaultEventProjectionSet::open(&projection_path).unwrap();
-    let store = CanonicalSessionStore::open(&session_path).unwrap();
+    let spine = Arc::new(SqliteEventSpine::open(&event_path).unwrap());
+    let projections = Arc::new(DefaultEventProjectionSet::open(&projection_path).unwrap());
+    let store = Arc::new(CanonicalSessionStore::open(&session_path).unwrap());
     assert!(store.load_session(&session_id).await.unwrap().is_none());
 
-    let first = reconcile_committed_session_events(&spine, &projections, &store)
-        .await
-        .unwrap();
+    let first =
+        reconcile_committed_session_events(spine.as_ref(), projections.as_ref(), store.as_ref())
+            .await
+            .unwrap();
     assert_eq!(first.scanned, 2);
     assert_eq!(first.materialized, 2);
     assert_eq!(
@@ -113,14 +115,20 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
         vec![item]
     );
 
-    store
-        .mark_recovered_turn(
-            &session_id,
-            fabric::TurnId::new(),
-            RecoveryClassification::Interrupted,
-        )
-        .await
-        .unwrap();
+    let authority = executive::composition::turn_coordinator::compose_session_store(
+        store.clone(),
+        spine.clone(),
+        projections.clone(),
+    );
+    let mut hardening = executive::composition::config::GrokHardeningConfig::default();
+    hardening.compaction_v2 = true;
+    let recovery = executive::application::turn_recovery::scan_incomplete_turns(
+        authority.as_ref(),
+        &hardening,
+    )
+    .await
+    .unwrap();
+    assert_eq!(recovery.incomplete_turns.len(), 1);
     assert_eq!(
         store
             .load_session(&session_id)
@@ -133,6 +141,7 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
 
     // A later restart replays the same committed prefix without duplicating
     // items or rejecting already-advanced projection checkpoints.
+    drop(authority);
     drop(store);
     drop(projections);
     drop(spine);
@@ -142,8 +151,8 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
     let second = reconcile_committed_session_events(&spine, &projections, &store)
         .await
         .unwrap();
-    assert_eq!(second.scanned, 2);
-    assert_eq!(store.load_items(&session_id, None).await.unwrap().len(), 1);
+    assert_eq!(second.scanned, 3);
+    assert_eq!(store.load_items(&session_id, None).await.unwrap().len(), 2);
     assert_eq!(
         store
             .load_session(&session_id)
