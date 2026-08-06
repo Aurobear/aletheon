@@ -9,8 +9,7 @@ use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::TurnService;
 use fabric::{
-    ItemPayload, OperationState, SessionAppendStore, SessionId, TurnMetrics, TurnRequest,
-    TurnResult, TurnStop,
+    ItemPayload, OperationState, SessionId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
 };
 use kernel::KernelRuntime;
 
@@ -44,15 +43,15 @@ fn policy_contains_all_mode_differences() {
 #[tokio::test]
 async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
     let kernel = Arc::new(KernelRuntime::new());
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
+    let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
     let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
         kernel.clone(),
-        store.clone(),
+        read_store,
         event_spine.clone(),
         executive::composition::config::GrokHardeningConfig::default(),
     );
+    let store = coordinator.store();
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await
@@ -139,24 +138,35 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
             },
         )
         .unwrap();
-    assert_eq!(events.len(), items.len() + 1);
+    assert_eq!(events.len(), items.len() + 2);
     assert_eq!(
         events[0].schema.0,
         fabric::SchemaId::EVENT_SESSION_CREATED_V1
     );
-    assert_eq!(events[0].position.sequence, fabric::TreeSequence(1));
-    assert_eq!(events[5].position.sequence, fabric::TreeSequence(6));
+    assert_eq!(
+        events[1].schema.0,
+        fabric::SchemaId::EVENT_SESSION_PRINCIPAL_BOUND_V1
+    );
+    assert!(events
+        .iter()
+        .skip(2)
+        .all(|event| event.schema.0 == fabric::SchemaId::TURN_EVENT_V1));
+    for (index, event) in events.iter().enumerate() {
+        assert_eq!(
+            event.position.sequence,
+            fabric::TreeSequence(index as u64 + 1)
+        );
+    }
 }
 
 #[tokio::test]
 async fn failure_is_terminal_and_remains_replayable() {
     let kernel = Arc::new(KernelRuntime::new());
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
         kernel.clone(),
-        store.clone(),
+        Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
     );
+    let store = coordinator.store();
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await
@@ -181,12 +191,10 @@ async fn failure_is_terminal_and_remains_replayable() {
 #[tokio::test]
 async fn compatibility_cancel_reaches_active_turn_for_principal() {
     let kernel = Arc::new(KernelRuntime::new());
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = Arc::new(
         executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
             kernel.clone(),
-            store,
+            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         ),
     );
     let process = kernel
@@ -299,12 +307,10 @@ async fn daemon_then_exec_restart_projects_prior_canonical_context() {
     let captures = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     for policy in [TurnPolicy::daemon(), TurnPolicy::exec()] {
         let kernel = Arc::new(KernelRuntime::new());
-        let store: Arc<dyn SessionAppendStore> =
-            Arc::new(CanonicalSessionStore::open(&db).unwrap());
         let coordinator = Arc::new(
             executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
                 kernel.clone(),
-                store,
+                Arc::new(CanonicalSessionStore::open(&db).unwrap()),
             ),
         );
         let process = kernel

@@ -753,6 +753,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
         // Backspace
         KeyCode::Backspace => {
+            app.pending_shell_confirmation = None;
             if app.cursor > 0 {
                 let prev = app.input_buf[..app.cursor]
                     .char_indices()
@@ -768,6 +769,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
         // Delete
         KeyCode::Delete => {
+            app.pending_shell_confirmation = None;
             if app.cursor < app.input_buf.len() {
                 let next = app.input_buf[app.cursor..]
                     .char_indices()
@@ -783,6 +785,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         // Character input (skip control characters from Ctrl+letter)
         KeyCode::Char(c) => {
             if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                app.pending_shell_confirmation = None;
                 app.input_buf.insert(app.cursor, c);
                 app.cursor += c.len_utf8();
                 app.check_cjk();
@@ -854,6 +857,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             app.has_cjk = false;
             app.input_literal = false;
             app.pending_submit = None;
+            app.pending_shell_confirmation = None;
         }
 
         _ => {}
@@ -867,14 +871,16 @@ mod tests {
     use crate::tui::term_compat::TermCaps;
     use crate::tui::App;
     use std::sync::Arc;
+    use tokio::io::{AsyncBufReadExt, BufReader};
 
-    async fn streaming_app() -> App {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+    async fn streaming_app_with_peer() -> (App, tokio::net::UnixStream) {
+        let (stream, peer) = tokio::net::UnixStream::pair().unwrap();
         let workspace =
             fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
         let mut app = App::new(
             stream,
             TermCaps {
+                color: true,
                 true_color: false,
                 unicode: false,
                 width: 80,
@@ -886,7 +892,11 @@ mod tests {
             Vec::new(),
         );
         app.streaming = true;
-        app
+        (app, peer)
+    }
+
+    async fn streaming_app() -> App {
+        streaming_app_with_peer().await.0
     }
 
     async fn idle_app() -> App {
@@ -955,13 +965,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn first_ctrl_c_requests_cancel_without_exiting_streaming_turn() {
-        let mut app = streaming_app().await;
+    async fn u_tui_002_long_command_streams_incrementally_and_first_ctrl_c_requests_cancel() {
+        let (mut app, peer) = streaming_app_with_peer().await;
+        for (sequence, delta) in [(1, "first line\n"), (2, "second line\n")] {
+            crate::tui::reducer::reduce(
+                &mut app.app_state,
+                crate::tui::reducer::UiAction::Item(fabric::protocol::client::ItemEvent {
+                    cursor: fabric::protocol::client::EventCursor {
+                        sequence,
+                        event_id: Some(format!("progress-{sequence}")),
+                    },
+                    item_id: "five-minute-command".into(),
+                    phase: fabric::protocol::client::ItemPhase::Streaming,
+                    delta: Some(delta.into()),
+                    item: None,
+                    error: None,
+                }),
+            );
+        }
+        assert_eq!(
+            app.app_state.items["five-minute-command"].content,
+            "first line\nsecond line\n"
+        );
 
         handle_key(&mut app, ctrl_c()).await;
 
         assert!(app.running);
         assert!(app.last_ctrl_c.is_some());
+        let mut line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            BufReader::new(peer).read_line(&mut line),
+        )
+        .await
+        .expect("cancel request timeout")
+        .expect("cancel request read");
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "cancel");
     }
 
     #[tokio::test]

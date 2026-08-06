@@ -38,7 +38,7 @@ import json, os, pathlib, subprocess, sys, time
 
 scenario = os.environ["FAKE_SCENARIO"]
 workspace = pathlib.Path(sys.argv[sys.argv.index("--cd") + 1])
-if scenario in {"completed", "dirty", "cargo", "leak"}:
+if scenario in {"completed", "dirty", "cargo", "leak", "commit"}:
     (workspace / "src/lib.rs").write_text("fixed\n")
 elif scenario == "false_success":
     (workspace / "src/lib.rs").write_text("wrong\n")
@@ -47,6 +47,16 @@ elif scenario == "scope":
 elif scenario == "timeout":
     time.sleep(5)
     raise SystemExit(0)
+
+if scenario == "commit":
+    subprocess.run(["git", "add", "src/lib.rs"], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-qm", "model commit"], cwd=workspace, check=True)
+
+if os.environ.get("FAKE_ENV_FILE"):
+    pathlib.Path(os.environ["FAKE_ENV_FILE"]).write_text(json.dumps({
+        "sandbox_profiles": os.environ.get("ALETHEON__GROK_HARDENING__SANDBOX_PROFILES"),
+        "default_profile": os.environ.get("ALETHEON__SANDBOX_PROFILES__DEFAULT_PROFILE"),
+    }, sort_keys=True))
 
 if scenario == "malformed":
     sys.stdout.write("{not-json")
@@ -59,27 +69,39 @@ if scenario == "leak":
         stderr=subprocess.DEVNULL,
     )
 
-stop = "completed"
-success = True
+status = "completed"
 operation_id = "op-123"
 exit_code = 0
 if scenario in {"blocked", "budget"}:
-    stop, success = "blocked", False
+    status = "blocked"
 elif scenario == "failed":
-    stop, success, exit_code = "failed", False, 7
+    status, exit_code = "failed", 7
+elif scenario == "provider_unavailable":
+    status, exit_code = "provider_unavailable", 22
 elif scenario == "missing_operation":
     operation_id = ""
 
 payload = {
-    "success": success,
+    "schema_version": 1,
+    "sequence": 2,
+    "session_id": "session-1",
+    "task_id": "task-1",
+    "turn_id": "turn-1",
+    "activity_id": None,
     "operation_id": operation_id,
-    "response": "R" * (70000 if os.environ.get("FAKE_LARGE") else 1),
-    "stop": stop,
-    "iterations": 1,
-    "tool_calls_made": 2,
-    "tool_errors": 0 if stop != "failed" else 1,
-    "provider_retries": 3,
-    "elapsed_ms": 9,
+    "type": "terminal",
+    "status": status,
+    "output": "R" * (70000 if os.environ.get("FAKE_LARGE") else 1),
+    "metrics": {
+        "iterations": 1,
+        "tool_calls_made": 2,
+        "tool_errors": 1
+        if status == "failed" or os.environ.get("FAKE_TOOL_ERROR")
+        else 0,
+        "provider_retries": 3,
+        "elapsed_ms": 9,
+    },
+    "error_code": None,
 }
 encoded = json.dumps(payload, sort_keys=True).encode()
 sys.stdout.buffer.write(encoded)
@@ -167,33 +189,6 @@ class RunnerTest(unittest.TestCase):
         )
         return value
 
-    def test_installed_terminal_envelope_normalizes_to_runner_contract(self):
-        execution = {
-            "_stdout_bytes": json.dumps(
-                {
-                    "schema_version": 1,
-                    "type": "terminal",
-                    "status": "completed",
-                    "operation_id": "op-installed",
-                    "metrics": {
-                        "iterations": 2,
-                        "tool_calls_made": 3,
-                        "tool_errors": 0,
-                        "provider_retries": 1,
-                        "elapsed_ms": 42,
-                        "completed_normally": True,
-                    },
-                }
-            ).encode()
-        }
-        parsed, valid = runner._parse_executive(execution)
-        self.assertTrue(valid)
-        self.assertEqual(parsed["stop"], "completed")
-        self.assertTrue(parsed["success"])
-        self.assertEqual(parsed["iterations"], 2)
-        self.assertEqual(parsed["tool_calls_made"], 3)
-        self.assertEqual(parsed["provider_retries"], 1)
-
     def test_completed_receipt_bounds_output_and_preserves_full_digests(self):
         value = self.execute("completed", self.task(), FAKE_LARGE="1")
         execution = value["execution"]
@@ -210,6 +205,35 @@ class RunnerTest(unittest.TestCase):
         self.assertIsNone(value["metrics"]["inference_rounds"])
         self.assertIsNone(value["metrics"]["active_context_tokens"])
 
+    def test_expected_blocked_terminal_allows_the_denial_tool_error(self):
+        value = self.execute(
+            "blocked",
+            self.task(
+                expected="blocked",
+                required=(),
+                acceptance=[
+                    [
+                        sys.executable,
+                        "-c",
+                        "import pathlib,sys;sys.exit(pathlib.Path('src/lib.rs').read_text()!='original\\n')",
+                    ]
+                ],
+            ),
+            FAKE_TOOL_ERROR="1",
+        )
+        self.assertTrue(value["verification"]["passed"])
+        self.assertEqual(value["metrics"]["tool_errors"], 1)
+
+    def test_verified_terminal_keeps_recovered_tool_errors_diagnostic(self):
+        value = self.execute(
+            "completed",
+            self.task(),
+            FAKE_TOOL_ERROR="1",
+        )
+        self.assertTrue(value["verification"]["passed"])
+        self.assertEqual(value["failure"], {"class": "none", "reasons": []})
+        self.assertEqual(value["metrics"]["tool_errors"], 1)
+
     def test_default_binary_matches_the_shared_cargo_agent_target(self):
         self.assertEqual(
             runner.default_binary({"HOME": "/tmp/test-home"}),
@@ -221,6 +245,37 @@ class RunnerTest(unittest.TestCase):
             runner.default_binary({"CARGO_TARGET_DIR": "/tmp/custom-target"}),
             pathlib.Path("/tmp/custom-target/debug/aletheon"),
         )
+
+    def test_execution_prompt_binds_workspace_and_preserves_public_task(self):
+        task = runner.load_task(self.task(), self.root)
+        prompt = runner.execution_prompt(task)
+        self.assertTrue(prompt.startswith(task.prompt))
+        self.assertIn("canonical task workspace", prompt)
+        self.assertIn("Do not stage or commit", prompt)
+        self.assertIn("host runs the declared acceptance commands", prompt)
+
+    def test_installed_corpus_forces_the_strict_workspace_profile(self):
+        observed = self.root / "strict-env.json"
+        value = self.execute(
+            "completed", self.task(), FAKE_ENV_FILE=str(observed)
+        )
+        self.assertTrue(value["verification"]["passed"])
+        self.assertEqual(
+            json.loads(observed.read_text()),
+            {"default_profile": "strict", "sandbox_profiles": "true"},
+        )
+
+    def test_workspace_evidence_excludes_rust_build_artifacts(self):
+        workspace = self.root / "target-exclusion"
+        (workspace / "src").mkdir(parents=True)
+        (workspace / "src/lib.rs").write_text("original\n")
+        runner._initialize_workspace(workspace)
+
+        (workspace / "src/lib.rs").write_text("fixed\n")
+        (workspace / "target/debug").mkdir(parents=True)
+        (workspace / "target/debug/artifact").write_text("binary\n")
+
+        self.assertEqual(runner.changed_paths(workspace), ["src/lib.rs"])
 
     def test_caller_interrupt_reaps_the_active_process_group(self):
         child_pid_file = self.root / "active-child.pid"
@@ -261,6 +316,7 @@ class RunnerTest(unittest.TestCase):
             "missing_operation": "infrastructure_failure",
             "timeout": "timeout_or_cancellation",
             "false_success": "verification_failure",
+            "provider_unavailable": "execution_failure",
         }
         unchanged = [
             [
@@ -271,7 +327,7 @@ class RunnerTest(unittest.TestCase):
         ]
         for scenario, expected_class in cases.items():
             with self.subTest(scenario=scenario):
-                required = () if scenario in {"blocked", "failed", "malformed", "missing_operation", "timeout"} else ("src/",)
+                required = () if scenario in {"blocked", "failed", "provider_unavailable", "malformed", "missing_operation", "timeout"} else ("src/",)
                 acceptance = unchanged if not required else None
                 value = self.execute(
                     scenario,
@@ -320,6 +376,15 @@ class RunnerTest(unittest.TestCase):
         scope = self.execute("scope", self.task())
         self.assertEqual(scope["failure"]["class"], "policy_scope_failure")
         self.assertIn("outside.txt", scope["workspace"]["changed_files"])
+
+    def test_model_commit_cannot_hide_workspace_changes(self):
+        value = self.execute("commit", self.task())
+        self.assertEqual(value["failure"]["class"], "policy_scope_failure")
+        self.assertEqual(
+            value["failure"]["reasons"], ["required_scope_not_satisfied"]
+        )
+        self.assertIn("src/lib.rs", value["workspace"]["changed_files"])
+        self.assertIn("+fixed", value["workspace"]["diff"])
 
     def test_cargo_is_wrapped_and_remaining_process_group_is_reaped(self):
         wrapper_log = self.root / "wrapper.log"

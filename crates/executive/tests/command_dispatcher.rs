@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use executive::application::{CommandDispatcher, CommandOutput, CommandUseCases};
 use fabric::contract::command::{
-    ClientCommand, ClientIntent, ClientSurface, CommandId, SubmitPromptIntent,
+    ClientCommand, ClientIntent, ClientSurface, CommandId, ExecuteShellIntent, SubmitPromptIntent,
 };
 use fabric::permission::HostPermissionMode;
 use fabric::{PrincipalId, WorkspacePolicy};
@@ -26,6 +26,17 @@ impl CommandUseCases for RecordingUseCases {
         })
     }
 
+    async fn execute_shell(
+        &self,
+        intent: &ClientIntent,
+        _shell: &ExecuteShellIntent,
+    ) -> anyhow::Result<CommandOutput> {
+        self.calls.lock().unwrap().push(CommandId::ExecuteShell);
+        Ok(CommandOutput::PromptAccepted {
+            correlation_id: intent.correlation_id.clone(),
+        })
+    }
+
     async fn status(
         &self,
         _intent: &ClientIntent,
@@ -37,6 +48,30 @@ impl CommandUseCases for RecordingUseCases {
             summary: "ready".into(),
         })
     }
+}
+
+#[tokio::test]
+async fn u_input_004_shell_sigil_dispatches_a_typed_host_command_intent() {
+    let use_cases = Arc::new(RecordingUseCases::default());
+    let dispatcher = CommandDispatcher::new(use_cases.clone());
+    let intent = ClientIntent::v1(
+        ClientSurface::Tui,
+        PrincipalId("owner".into()),
+        "shell:1",
+        ClientCommand::ExecuteShell(ExecuteShellIntent {
+            command: "printf governed".into(),
+            session_id: None,
+            workspace: WorkspacePolicy::from_resolved_roots("/tmp/project".into(), vec![]).unwrap(),
+            permission_mode: HostPermissionMode::Safe,
+        }),
+    );
+
+    let output = dispatcher.dispatch(intent).await.unwrap();
+    assert!(matches!(output, CommandOutput::PromptAccepted { .. }));
+    assert_eq!(
+        *use_cases.calls.lock().unwrap(),
+        vec![CommandId::ExecuteShell]
+    );
 }
 
 fn prompt_intent(surface: ClientSurface) -> ClientIntent {

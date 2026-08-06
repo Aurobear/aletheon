@@ -299,6 +299,30 @@ impl CommandUseCases for DaemonChannelTurnExecutor {
         })
     }
 
+    async fn execute_shell(
+        &self,
+        intent: &ClientIntent,
+        shell: &fabric::contract::command::ExecuteShellIntent,
+    ) -> anyhow::Result<CommandOutput> {
+        self.submit_prompt(
+            intent,
+            &SubmitPromptIntent {
+                content: format!(
+                    "Execute the following user-requested shell command exactly through the `exec_command` capability and report its terminal result:\n{}",
+                    shell.command
+                ),
+                session_id: shell.session_id.clone(),
+                workspace: shell.workspace.clone(),
+                requirements: vec![fabric::TurnRequirement::InvokeCapability {
+                    name: "exec_command".into(),
+                }],
+                task_kind: None,
+                permission_mode: shell.permission_mode,
+            },
+        )
+        .await
+    }
+
     async fn status(
         &self,
         _intent: &ClientIntent,

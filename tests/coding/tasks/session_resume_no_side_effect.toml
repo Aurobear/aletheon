@@ -1,0 +1,13 @@
+schema_version = 1
+id = "session_resume_no_side_effect"
+category = "behavioral_bugfix"
+fixture = "session_resume_no_side_effect"
+prompt = "修复 session resume：重放已完成 command receipt 时不得再次调用 executor；未知 command 才执行一次。保持分层并不要修改测试或清单。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

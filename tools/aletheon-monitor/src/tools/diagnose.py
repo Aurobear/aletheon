@@ -14,6 +14,7 @@ import unicodedata
 from . import analyze as analyze_mod
 from . import logs as logs_mod
 from . import tui as tui_tools
+from .health import systemd_user_environment
 
 
 def _audit_path() -> str:
@@ -529,26 +530,33 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     if any(not item["passed"] for item in assertions):
         verdict = "fail"
 
-    async def command(*args: str) -> str:
+    async def command(*args: str, env: dict[str, str] | None = None) -> str:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args, cwd=cwd, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT)
+                stderr=asyncio.subprocess.STDOUT, env=env)
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
             return out.decode("utf-8", "replace").strip()
         except (OSError, asyncio.TimeoutError):
             return ""
 
+    socket_path = getattr(
+        client,
+        "socket_path",
+        f"/run/user/{os.getuid()}/aletheon/aletheon.sock",
+    )
+    user_manager_env = systemd_user_environment(socket_path)
     preflight = {
         "working_dir": cwd,
         "git_commit": await command("git", "rev-parse", "HEAD"),
         "git_toplevel": await command("git", "rev-parse", "--show-toplevel"),
         "binary": await command("aletheon", "version"),
         "service_active": await command(
-            "systemctl", "--user", "is-active", "aletheon.service"),
+            "systemctl", "--user", "is-active", "aletheon.service",
+            env=user_manager_env),
         "service_started": await command(
             "systemctl", "--user", "show", "aletheon.service",
-            "-p", "ActiveEnterTimestamp"),
+            "-p", "ActiveEnterTimestamp", env=user_manager_env),
     }
 
     return {

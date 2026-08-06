@@ -1,14 +1,14 @@
 //! Mnemosyne promotion trigger for settled robot episodes.
 //!
-//! Distills a `Matched` + settled episode into the governed fact store. The
-//! promotion gate (`EpisodeReport::can_promote`) lives on the report itself;
-//! this port is only ever invoked with a promotable report.
+//! Distills a `Matched` + settled episode into the governed fact store. Both
+//! the receipt digest and promotion gate are re-checked at this boundary;
+//! callers cannot turn a failed episode into successful experience.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use cognit::harness::robot::EpisodePromotionPort;
-use fabric::types::episode_report::EpisodeReport;
+use fabric::types::episode_report::SettledEpisodeReport;
 
 /// Production promoter backed by Mnemosyne's governed `FactUseCases`.
 pub struct MnemosyneEpisodePromoter {
@@ -23,7 +23,15 @@ impl MnemosyneEpisodePromoter {
 
 #[async_trait]
 impl EpisodePromotionPort for MnemosyneEpisodePromoter {
-    async fn promote(&self, report: &EpisodeReport) -> Result<(), String> {
+    async fn promote(&self, settled: &SettledEpisodeReport) -> Result<(), String> {
+        let can_promote = settled.can_promote()?;
+        let report = settled.report();
+        if !can_promote {
+            return Err(format!(
+                "episode {} is not completed with matched verification",
+                report.episode_id
+            ));
+        }
         let summary = format!(
             "robot episode {} succeeded: '{}' on {} in {} attempt(s), final decision {:?}",
             report.episode_id,
@@ -49,7 +57,10 @@ impl EpisodePromotionPort for MnemosyneEpisodePromoter {
 mod tests {
     use super::*;
     use fabric::types::embodiment::{DeviceId, EvidenceRef};
-    use fabric::types::episode_report::{build_report, AttemptRecord};
+    use fabric::types::episode_report::{
+        build_report, AttemptRecord, EpisodeArtifactManifest, EpisodeSettlement,
+        SettledEpisodeReport,
+    };
     use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
     use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};
     use std::sync::Mutex;
@@ -102,7 +113,7 @@ mod tests {
         }
     }
 
-    fn promotable_report() -> EpisodeReport {
+    fn report_with_settlement(settlement: EpisodeSettlement) -> SettledEpisodeReport {
         let expected = ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "mode".into(),
@@ -122,27 +133,57 @@ mod tests {
                 uri: "artifact://sha256/rosbag".into(),
             }],
         };
-        build_report(fabric::types::episode_report::EpisodeReportInput {
+        let report = build_report(fabric::types::episode_report::EpisodeReportInput {
             episode_id: "ep-1".into(),
             goal: "stand".into(),
             device: DeviceId("kuavo-mujoco-01".into()),
             sim_scene_version: "mujoco-v1".into(),
             aletheon_commit: "abc123".into(),
             bridge_protocol_digest: "sha256:proto".into(),
-            before_sequence: Some(1),
-            after_sequence: Some(2),
-            settlement: "completed".into(),
+            skill_descriptor_digest: "sha256:skills".into(),
+            policy_provenance: Some(fabric::types::skill_proposal::PolicyProvenance {
+                provider: "local-policy-gateway".into(),
+                model: "openvla-7b".into(),
+                version: "2026-08".into(),
+                protocol_version: "1.0".into(),
+                digest: "sha256:model".into(),
+            }),
+            failures: vec![],
+            safe_stop: (settlement != fabric::types::episode_report::EpisodeSettlement::Completed)
+                .then_some(fabric::types::episode_report::SafeStopReceipt {
+                    attempted_after_attempt: 1,
+                    trigger: None,
+                    outcome: fabric::types::episode_report::SafeStopOutcome::Succeeded,
+                }),
+            selected_frames: vec![],
+            settlement,
             attempts: vec![AttemptRecord::from_verification(
                 1,
                 "attempt:ep-1:1".into(),
                 None,
+                Some(fabric::types::embodiment::SkillRequest {
+                    skill: fabric::types::embodiment::SkillId("kuavo.stance".into()),
+                    device: fabric::types::embodiment::DeviceId("kuavo-mujoco-01".into()),
+                    parameters: serde_json::json!({}),
+                }),
                 expected,
                 Some("succeeded".into()),
                 Some(&verification),
                 None,
+                Some(1),
+                Some(2),
             )],
-            artifacts: vec![],
-        })
+            artifacts: verification
+                .evidence
+                .iter()
+                .map(EpisodeArtifactManifest::from_legacy_evidence)
+                .collect(),
+        });
+        SettledEpisodeReport::new(report, 1_000).unwrap()
+    }
+
+    fn promotable_report() -> SettledEpisodeReport {
+        report_with_settlement(EpisodeSettlement::Completed)
     }
 
     #[tokio::test]
@@ -151,7 +192,7 @@ mod tests {
         let promoter = MnemosyneEpisodePromoter::new(facts.clone());
 
         let report = promotable_report();
-        assert!(report.can_promote(), "fixture must be promotable");
+        assert!(report.report().can_promote(), "fixture must be promotable");
         promoter.promote(&report).await.expect("promote succeeds");
 
         let requests = facts.requests.lock().unwrap();
@@ -163,5 +204,33 @@ mod tests {
         assert!(requests[0].content.contains("kuavo-mujoco-01"));
         assert_eq!(requests[0].scope, "global");
         assert!(requests[0].tags.contains("robot-episode"));
+    }
+
+    #[tokio::test]
+    async fn failed_episode_is_rejected_without_writing_a_fact() {
+        let facts = Arc::new(RecordingFacts::default());
+        let promoter = MnemosyneEpisodePromoter::new(facts.clone());
+        let failed = report_with_settlement(EpisodeSettlement::Failed);
+
+        assert!(!failed.can_promote().unwrap());
+        assert_eq!(
+            failed.report().artifacts.len(),
+            1,
+            "failed evidence is retained"
+        );
+        assert!(promoter.promote(&failed).await.is_err());
+        assert!(facts.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn tampered_receipt_is_rejected_before_fact_write() {
+        let facts = Arc::new(RecordingFacts::default());
+        let promoter = MnemosyneEpisodePromoter::new(facts.clone());
+        let mut value = serde_json::to_value(promotable_report()).unwrap();
+        value["report_sha256"] = serde_json::json!("invalid");
+        let tampered: SettledEpisodeReport = serde_json::from_value(value).unwrap();
+
+        assert!(promoter.promote(&tampered).await.is_err());
+        assert!(facts.requests.lock().unwrap().is_empty());
     }
 }

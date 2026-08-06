@@ -74,17 +74,18 @@ impl DaemonTurnTestBuilder {
     pub(crate) async fn build(self) -> DaemonTurnTestHarness {
         let clock = Arc::new(TestClock::default());
         let kernel = Arc::new(KernelRuntime::with_clock(clock as Arc<dyn Clock>));
-        let store: Arc<dyn SessionAppendStore> =
+        let read_store =
             Arc::new(CanonicalSessionStore::open(":memory:").expect("test session store"));
         let spine = Arc::new(SqliteEventSpine::open(":memory:").expect("test event spine"));
         let coordinator = Arc::new(
             crate::composition::turn_coordinator::compose_with_event_spine(
                 kernel.clone(),
-                store.clone(),
+                read_store,
                 spine,
                 crate::composition::config::GrokHardeningConfig::default(),
             ),
         );
+        let store = coordinator.store();
         let session_service = Arc::new(SessionService::new(
             store.clone(),
             Arc::new(Mutex::new(Default::default())),

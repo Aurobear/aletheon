@@ -1,0 +1,13 @@
+schema_version = 1
+id = "parser_domain_sync"
+category = "multifile_change"
+fixture = "parser_domain_sync"
+prompt = "跨 parser/domain/formatter 实现优先级：仅接受 low、normal、high（忽略 ASCII 大小写和两端空白），domain 使用枚举，Display 输出规范小写。不要修改测试或清单。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

@@ -9,8 +9,8 @@ use executive::host::legacy_session::{
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::runtime::session::store::SessionStore;
 use fabric::{
-    Clock, ContentBlock, InferenceUsage, LlmProvider, LlmResponse, LlmStream, Message,
-    SessionAppendStore, SessionId, StopReason, ToolDefinition,
+    Clock, ContentBlock, InferenceUsage, LlmProvider, LlmResponse, LlmStream, Message, SessionId,
+    StopReason, ToolDefinition,
 };
 use kernel::chronos::TestClock;
 use tokio::sync::Mutex;
@@ -90,8 +90,9 @@ async fn service_with_history(
         initial_id.clone(),
         Arc::new(Mutex::new(manager)),
     )])));
-    let canonical_store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(temp.path().join("canonical.db")).unwrap());
+    let canonical_store = executive::testing::turn_coordinator::compose_in_memory_session_store(
+        Arc::new(CanonicalSessionStore::open(temp.path().join("canonical.db")).unwrap()),
+    );
     let active = Arc::new(Mutex::new(HashMap::new()));
     let canonical = Arc::new(SessionService::new(canonical_store, active));
     let service = LegacySessionService::new(LegacySessionResources {

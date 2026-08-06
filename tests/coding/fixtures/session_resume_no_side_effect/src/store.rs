@@ -1,0 +1,1 @@
+use std::collections::HashSet; #[derive(Default)] pub struct ReceiptStore{done:HashSet<String>} impl ReceiptStore{pub fn mark(&mut self,id:&str){self.done.insert(id.into());} pub fn contains(&self,id:&str)->bool{self.done.contains(id)}}

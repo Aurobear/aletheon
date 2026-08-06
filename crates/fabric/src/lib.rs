@@ -20,6 +20,7 @@
 
 // === Module declarations ===
 
+mod adapters;
 pub mod contract;
 pub mod dasein;
 pub mod events;
@@ -310,8 +311,10 @@ pub use types::sandbox::{
 pub use types::sandbox_glob::expand_deny_globs;
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
-    SessionForkedEvent, SessionNotification, SessionProtocolV2, SessionProtocolV3,
-    SessionProtocolV4, SessionRecord, SessionStatus, TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
+    SessionForkedEvent, SessionNotification, SessionPrincipalBoundEvent, SessionProtocolV2,
+    SessionProtocolV3, SessionProtocolV4, SessionProtocolV5, SessionReadStore, SessionRecord,
+    SessionStatus, TaskProjectionFact, TurnId, TurnRecord, TurnRecoveryClassification,
+    SESSION_SCHEMA_VERSION, TASK_PROJECTION_FACT_SCHEMA_VERSION,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,

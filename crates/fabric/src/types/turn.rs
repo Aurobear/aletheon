@@ -91,6 +91,13 @@ pub enum TurnEvent {
         fraction: f32,
         note: String,
     },
+    /// Immutable robot terminal receipt emitted only after the domain episode
+    /// sink has accepted it. Executive projects this typed receipt into the
+    /// canonical Session/Task/Activity read model; clients never parse the
+    /// rendered assistant JSON to recover robot authority facts.
+    RobotEpisodeSettled {
+        receipt: Box<crate::types::episode_report::SettledEpisodeReport>,
+    },
 }
 
 #[cfg(test)]

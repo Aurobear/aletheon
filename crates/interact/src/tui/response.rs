@@ -1276,6 +1276,7 @@ mod tests {
     async fn startup_skill_catalog_updates_registry_without_rendering_chat() {
         let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
+            color: true,
             true_color: false,
             unicode: false,
             width: 80,
@@ -1320,6 +1321,7 @@ mod tests {
         let mut app = App::new(
             stream,
             TermCaps {
+                color: true,
                 true_color: false,
                 unicode: false,
                 width: 80,
@@ -1360,6 +1362,7 @@ mod tests {
     async fn fork_and_rewind_waits_for_authoritative_fork_response() {
         let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
+            color: true,
             true_color: false,
             unicode: false,
             width: 80,
@@ -1408,6 +1411,7 @@ mod tests {
     async fn error_event_releases_the_active_turn() {
         let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
+            color: true,
             true_color: false,
             unicode: false,
             width: 80,
@@ -1443,6 +1447,7 @@ mod tests {
     async fn terminal_text_snapshot_replaces_an_incomplete_stream() {
         let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
+            color: true,
             true_color: false,
             unicode: false,
             width: 80,
@@ -1486,6 +1491,7 @@ mod tests {
     async fn patch_progress_is_materialized_immediately_in_chat() {
         let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
+            color: true,
             true_color: false,
             unicode: false,
             width: 80,
@@ -1523,6 +1529,7 @@ mod tests {
     async fn governed_tool_progress_reaches_tui_and_keeps_one_terminal() {
         let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
+            color: true,
             true_color: false,
             unicode: false,
             width: 80,

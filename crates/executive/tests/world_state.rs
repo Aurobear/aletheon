@@ -13,9 +13,11 @@ fn snapshot(device: &str, seq: u64, x: f64) -> WorldSnapshot {
     WorldSnapshot {
         device: DeviceId(device.into()),
         schema: "test".into(),
+        schema_version: 1,
         sequence: seq,
         payload: serde_json::json!({"x": x}),
         observed_at: MonoTime(seq),
+        valid_until: None,
         stale: false,
     }
 }
@@ -64,4 +66,19 @@ async fn observe_until_uses_injected_kernel_clock_for_expiry() {
     .await
     .expect("expired deadline must not wait");
     assert!(observed.is_none());
+}
+
+#[tokio::test]
+async fn cached_snapshot_becomes_stale_when_provider_deadline_expires() {
+    let clock = Arc::new(TestClock::new(0, 100));
+    let ws = EmbodimentWorldState::new(5, clock.clone());
+    let device = DeviceId("freshness-device".into());
+    let mut sample = snapshot("freshness-device", 1, 1.0);
+    sample.observed_at = MonoTime(100);
+    sample.valid_until = Some(MonoDeadline(MonoTime(110)));
+    ws.ingest(device.clone(), sample).unwrap();
+    assert!(!ws.latest(&device, ANY_SCHEMA).await.unwrap().stale);
+
+    clock.advance(11);
+    assert!(ws.latest(&device, ANY_SCHEMA).await.unwrap().stale);
 }

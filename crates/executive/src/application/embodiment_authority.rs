@@ -14,6 +14,7 @@ use hardware::{
 use kernel::capability::ToolExecutor;
 use tokio_util::sync::CancellationToken;
 
+use super::embodiment_approval::EmbodimentCapabilityInput;
 use super::embodiment_progress::{BoundedProgressSink, EmbodimentProgressPort};
 
 #[derive(Clone)]
@@ -56,14 +57,14 @@ impl ToolExecutor for EmbodimentCapabilityExecutor {
         permit: &ExecutionPermit,
     ) -> CapabilityResult {
         let call_id = request.call.call_id.clone();
-        let skill_request = match serde_json::from_value::<fabric::types::embodiment::SkillRequest>(
-            request.call.input.clone(),
-        ) {
-            Ok(request) => request,
-            Err(error) => {
-                return capability_error(call_id, format!("invalid skill request: {error}"))
-            }
-        };
+        let capability_input =
+            match serde_json::from_value::<EmbodimentCapabilityInput>(request.call.input.clone()) {
+                Ok(input) => input,
+                Err(error) => {
+                    return capability_error(call_id, format!("invalid skill request: {error}"))
+                }
+            };
+        let skill_request = capability_input.request;
         let Some(lease_id) = permit.lease else {
             return capability_error(call_id, "admission omitted hardware lease".into());
         };

@@ -2,18 +2,26 @@ use std::{collections::HashSet, sync::Arc};
 
 use executive::{
     application::session_service::SessionService,
-    runtime::session::canonical_store::CanonicalSessionStore,
+    runtime::{
+        events::{DefaultEventProjectionSet, SqliteEventSpine},
+        session::{
+            canonical_store::CanonicalSessionStore,
+            event_sourced_store::reconcile_committed_session_events,
+        },
+    },
 };
 use fabric::{
-    protocol::client::{ClientEvent, EventCursor, ItemPhase},
+    protocol::client::{ActivityState, ClientEvent, EventCursor, ItemPhase},
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionId, SessionRecord,
-    SessionStatus, TurnId, SESSION_READ_MODEL_SCHEMA_VERSION, SESSION_SCHEMA_VERSION,
+    SessionStatus, TaskProjectionFact, TurnId, SESSION_READ_MODEL_SCHEMA_VERSION,
+    SESSION_SCHEMA_VERSION,
 };
 use tokio::sync::Mutex;
 
 async fn fixture() -> (Arc<dyn SessionAppendStore>, SessionService, SessionId) {
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
+    let store = executive::testing::turn_coordinator::compose_in_memory_session_store(Arc::new(
+        CanonicalSessionStore::open(":memory:").unwrap(),
+    ));
     let session_id = SessionId("daemon-protocol-reconnect".into());
     store
         .create(SessionRecord {
@@ -35,6 +43,16 @@ async fn append(
     sequence: u64,
     payload: ItemPayload,
 ) {
+    append_for_turn(store, session_id, TurnId::new(), sequence, payload).await;
+}
+
+async fn append_for_turn(
+    store: &dyn SessionAppendStore,
+    session_id: &SessionId,
+    turn_id: TurnId,
+    sequence: u64,
+    payload: ItemPayload,
+) {
     assert_eq!(
         store
             .append(
@@ -44,7 +62,7 @@ async fn append(
                     schema_version: SESSION_SCHEMA_VERSION,
                     id: ItemId::new(),
                     session_id: session_id.clone(),
-                    turn_id: TurnId::new(),
+                    turn_id,
                     sequence,
                     created_at_ms: sequence,
                     payload,
@@ -177,8 +195,9 @@ async fn live_and_durable_item_phases_share_one_reconnect_cursor() {
     let temp = tempfile::tempdir().unwrap();
     let canonical_path = temp.path().join("sessions.db");
     let journal_path = temp.path().join("protocol.db");
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap());
+    let store = executive::testing::turn_coordinator::compose_in_memory_session_store(Arc::new(
+        CanonicalSessionStore::open(&canonical_path).unwrap(),
+    ));
     let session_id = SessionId("live-reconnect".into());
     store
         .create(SessionRecord {
@@ -276,8 +295,9 @@ async fn live_and_durable_item_phases_share_one_reconnect_cursor() {
 async fn a_session_001_interruption_at_each_item_boundary_replays_the_same_task_snapshot() {
     let temp = tempfile::tempdir().unwrap();
     let canonical_path = temp.path().join("sessions.db");
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap());
+    let store = executive::testing::turn_coordinator::compose_in_memory_session_store(Arc::new(
+        CanonicalSessionStore::open(&canonical_path).unwrap(),
+    ));
     let session_id = SessionId("a-session-001".into());
     store
         .create(SessionRecord {
@@ -355,8 +375,9 @@ async fn a_session_001_interruption_at_each_item_boundary_replays_the_same_task_
         .protocol_read_snapshot(&session_id)
         .await
         .unwrap();
-        let replayed_store: Arc<dyn SessionAppendStore> =
-            Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap());
+        let replayed_store = executive::testing::turn_coordinator::compose_in_memory_session_store(
+            Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap()),
+        );
         let after = SessionService::with_protocol_journal(
             replayed_store,
             Arc::new(Mutex::new(Default::default())),
@@ -464,4 +485,255 @@ async fn a_session_002_duplicate_item_and_event_keys_do_not_duplicate_task_or_ac
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn u_resume_001_daemon_restart_preserves_goal_plan_budget_and_checkpoint() {
+    let temp = tempfile::tempdir().unwrap();
+    let event_path = temp.path().join("events.db");
+    let read_model = Arc::new(CanonicalSessionStore::open(temp.path().join("live.db")).unwrap());
+    let spine = Arc::new(SqliteEventSpine::open(&event_path).unwrap());
+    let projections = Arc::new(DefaultEventProjectionSet::in_memory());
+    let store = executive::testing::turn_coordinator::compose_session_store(
+        read_model.clone(),
+        spine.clone(),
+        projections.clone(),
+    );
+    let session_id = SessionId("u-resume-001".into());
+    store
+        .create(SessionRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: session_id.clone(),
+            parent: None,
+            created_at_ms: 1,
+            status: SessionStatus::Active,
+        })
+        .await
+        .unwrap();
+    let turn_id = TurnId::new();
+    append(
+        store.as_ref(),
+        &session_id,
+        1,
+        ItemPayload::UserMessage {
+            content: "stabilize architecture".into(),
+        },
+    )
+    .await;
+    let service = SessionService::new(store.clone(), Arc::new(Mutex::new(Default::default())));
+    let projection_item_id = ItemId::new();
+    assert_eq!(
+        service
+            .persist_task_projection_fact(
+                &session_id,
+                turn_id,
+                projection_item_id,
+                TaskProjectionFact {
+                    plan_revision: Some(7),
+                    budget: Some(serde_json::json!({"remaining_tokens": 4096})),
+                    checkpoint_head: Some("checkpoint:abc123".into()),
+                    ..TaskProjectionFact::default()
+                },
+            )
+            .await
+            .unwrap(),
+        AppendOutcome::Appended
+    );
+    let before = service
+        .protocol_read_snapshot(&session_id)
+        .await
+        .unwrap()
+        .tasks;
+    drop(service);
+    drop(store);
+    drop(read_model);
+    drop(projections);
+    drop(spine);
+
+    // Rebuild a fresh materialized store from the authoritative journal. This
+    // models losing all process-local and derived read-model state at restart.
+    let reopened_spine = Arc::new(SqliteEventSpine::open(&event_path).unwrap());
+    let reopened_projections = Arc::new(DefaultEventProjectionSet::in_memory());
+    let reopened_read =
+        Arc::new(CanonicalSessionStore::open(temp.path().join("replayed.db")).unwrap());
+    let report = reconcile_committed_session_events(
+        reopened_spine.as_ref(),
+        reopened_projections.as_ref(),
+        reopened_read.as_ref(),
+    )
+    .await
+    .unwrap();
+    // Session creation, two items, and the durable local-principal binding
+    // emitted while reading the authenticated snapshot are all replayed.
+    assert_eq!(report.materialized, 4);
+    let reopened_store = executive::testing::turn_coordinator::compose_session_store(
+        reopened_read,
+        reopened_spine,
+        reopened_projections,
+    );
+    let after = SessionService::new(reopened_store, Arc::new(Mutex::new(Default::default())))
+        .protocol_read_snapshot(&session_id)
+        .await
+        .unwrap()
+        .tasks;
+
+    assert_eq!(before, after);
+    assert_eq!(after[0].goal.as_deref(), Some("stabilize architecture"));
+    assert_eq!(after[0].plan_revision, Some(7));
+    assert_eq!(
+        after[0].budget,
+        Some(serde_json::json!({"remaining_tokens": 4096}))
+    );
+    assert_eq!(
+        after[0].checkpoint_head.as_deref(),
+        Some("checkpoint:abc123")
+    );
+}
+
+#[tokio::test]
+async fn u_resume_002_restart_recovery_marks_unsettled_commands_lost() {
+    let read_model = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
+    let store = executive::testing::turn_coordinator::compose_in_memory_session_store(read_model);
+    let session_id = SessionId("u-resume-002".into());
+    store
+        .create(SessionRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: session_id.clone(),
+            parent: None,
+            created_at_ms: 1,
+            status: SessionStatus::Active,
+        })
+        .await
+        .unwrap();
+    let turn_id = TurnId::new();
+    append_for_turn(
+        store.as_ref(),
+        &session_id,
+        turn_id,
+        1,
+        ItemPayload::UserMessage {
+            content: "run a long command".into(),
+        },
+    )
+    .await;
+    append_for_turn(
+        store.as_ref(),
+        &session_id,
+        turn_id,
+        2,
+        ItemPayload::ToolCall {
+            call_id: "lost-command".into(),
+            name: "exec_command".into(),
+            input: serde_json::json!({"cmd":"sleep 300"}),
+        },
+    )
+    .await;
+    append_for_turn(
+        store.as_ref(),
+        &session_id,
+        turn_id,
+        3,
+        ItemPayload::TaskProjection {
+            fact: TaskProjectionFact {
+                active_commands: vec!["lost-command".into()],
+                active_runtime_children: vec!["lost-child".into()],
+                pending_approvals: vec!["lost-approval".into()],
+                ..TaskProjectionFact::default()
+            },
+        },
+    )
+    .await;
+
+    let mut hardening = executive::composition::config::GrokHardeningConfig::default();
+    hardening.compaction_v2 = true;
+    let recovery =
+        executive::application::turn_recovery::scan_incomplete_turns(store.as_ref(), &hardening)
+            .await
+            .unwrap();
+    assert_eq!(recovery.incomplete_turns.len(), 1);
+
+    let snapshot = SessionService::new(store, Arc::new(Mutex::new(Default::default())))
+        .protocol_read_snapshot(&session_id)
+        .await
+        .unwrap();
+    assert!(snapshot.tasks[0].active_commands.is_empty());
+    assert!(snapshot.tasks[0].active_runtime_children.is_empty());
+    assert!(snapshot.tasks[0].pending_approvals.is_empty());
+    assert!(snapshot.tasks[0].active_turn_id.is_none());
+    assert_eq!(snapshot.tasks[0].phase, fabric::TaskPhase::Failed);
+    assert_eq!(snapshot.activities.len(), 1);
+    assert_eq!(snapshot.activities[0].state, ActivityState::Lost);
+}
+
+#[tokio::test]
+async fn u_resume_004_duplicate_patch_item_is_not_applied_twice_after_store_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let event_path = temp.path().join("events.db");
+    let session_path = temp.path().join("sessions.db");
+    let read_model = Arc::new(CanonicalSessionStore::open(&session_path).unwrap());
+    let spine = Arc::new(SqliteEventSpine::open(&event_path).unwrap());
+    let projections = Arc::new(DefaultEventProjectionSet::in_memory());
+    let store = executive::testing::turn_coordinator::compose_session_store(
+        read_model.clone(),
+        spine.clone(),
+        projections.clone(),
+    );
+    let session_id = SessionId("u-resume-004".into());
+    store
+        .create(SessionRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: session_id.clone(),
+            parent: None,
+            created_at_ms: 1,
+            status: SessionStatus::Active,
+        })
+        .await
+        .unwrap();
+    let patch_item = ItemRecord {
+        schema_version: SESSION_SCHEMA_VERSION,
+        id: ItemId::new(),
+        session_id: session_id.clone(),
+        turn_id: TurnId::new(),
+        sequence: 1,
+        created_at_ms: 2,
+        payload: ItemPayload::ToolCall {
+            call_id: "patch-once".into(),
+            name: "apply_patch".into(),
+            input: serde_json::json!({"patch":"authoritative mutation"}),
+        },
+    };
+    assert_eq!(
+        append_record(store.as_ref(), patch_item.clone()).await,
+        AppendOutcome::Appended
+    );
+    drop(store);
+    drop(read_model);
+    drop(projections);
+    drop(spine);
+
+    let reopened_read = Arc::new(CanonicalSessionStore::open(&session_path).unwrap());
+    let reopened_spine = Arc::new(SqliteEventSpine::open(&event_path).unwrap());
+    let reopened_projections = Arc::new(DefaultEventProjectionSet::in_memory());
+    reconcile_committed_session_events(
+        reopened_spine.as_ref(),
+        reopened_projections.as_ref(),
+        reopened_read.as_ref(),
+    )
+    .await
+    .unwrap();
+    let reopened_store = executive::testing::turn_coordinator::compose_session_store(
+        reopened_read,
+        reopened_spine,
+        reopened_projections,
+    );
+    assert_eq!(
+        append_record(reopened_store.as_ref(), patch_item).await,
+        AppendOutcome::AlreadyPresent
+    );
+    let snapshot = SessionService::new(reopened_store, Arc::new(Mutex::new(Default::default())))
+        .protocol_read_snapshot(&session_id)
+        .await
+        .unwrap();
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(snapshot.activities.len(), 1);
 }

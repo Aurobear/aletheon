@@ -169,14 +169,43 @@ pub fn parse_structured_patch(input: &str) -> Result<StructuredPatch, String> {
         let block_end = block_start + end_pos;
         let block_content = &rest[block_start..block_end].trim();
 
-        let operation = parse_patch_block(block_content)?;
-        operations.push(operation);
+        operations.extend(parse_patch_document(block_content)?);
 
         rest = &rest[block_end + END_MARKER.len()..];
         rest = rest.trim();
     }
 
     Ok(StructuredPatch { operations })
+}
+
+fn parse_patch_document(block: &str) -> Result<Vec<PatchOperation>, String> {
+    let lines = block.lines().collect::<Vec<_>>();
+    let starts = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let header = line.trim().strip_prefix("*** ")?;
+            ["Add File:", "Delete File:", "Update File:", "Append File:"]
+                .iter()
+                .any(|prefix| header.starts_with(prefix))
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if starts.is_empty() {
+        return parse_patch_block(block).map(|operation| vec![operation]);
+    }
+    if starts[0] != 0 {
+        return Err("unexpected content before first patch operation".to_string());
+    }
+
+    starts
+        .iter()
+        .enumerate()
+        .map(|(position, start)| {
+            let end = starts.get(position + 1).copied().unwrap_or(lines.len());
+            parse_patch_block(&lines[*start..end].join("\n"))
+        })
+        .collect()
 }
 
 /// Parse a single patch block (text between markers, without the markers).
@@ -187,6 +216,9 @@ fn parse_patch_block(block: &str) -> Result<PatchOperation, String> {
     }
 
     let first_line = lines[0].trim();
+    // Accept the common model-produced `*** Update File:` spelling inside a
+    // `*** Begin Patch` block as well as the canonical unprefixed form.
+    let first_line = first_line.strip_prefix("*** ").unwrap_or(first_line);
 
     if let Some(rest) = first_line.strip_prefix("Delete File:") {
         let path = rest.trim().to_string();
@@ -223,8 +255,20 @@ fn extract_fenced_content(block: &str, op_name: &str) -> Result<String, String> 
     let fence_positions: Vec<usize> = block.match_indices(FENCE).map(|(i, _)| i).collect();
 
     if fence_positions.len() < 2 {
+        // Standard model patches commonly use `+line` content without the
+        // structured-patch fences. Preserve that syntax for Add/Append while
+        // rejecting an actually empty operation.
+        let content = block
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.strip_prefix('+'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !content.is_empty() {
+            return Ok(content);
+        }
         return Err(format!(
-            "{op_name} operation missing content fences ('>>>'): expected at least two fence markers"
+            "{op_name} operation missing content fences ('>>>') or '+' content"
         ));
     }
 
@@ -251,6 +295,7 @@ fn parse_update_block(block: &str) -> Result<(Option<String>, Vec<PatchHunk>), S
     // Search for "Move to:" line after the first line, before "Hunk:" or fences
     for (_idx, line) in lines.iter().enumerate().skip(1) {
         let trimmed = line.trim();
+        let trimmed = trimmed.strip_prefix("*** ").unwrap_or(trimmed);
         if let Some(rest) = trimmed.strip_prefix("Move to:") {
             let mv = rest.trim().to_string();
             validate_path(&mv)?;
@@ -262,24 +307,25 @@ fn parse_update_block(block: &str) -> Result<(Option<String>, Vec<PatchHunk>), S
         }
     }
 
-    // Find fence markers for hunk content
+    // Find fence markers for hunk content. Also accept the ordinary model
+    // patch form where hunk text follows the `@@` header directly.
     let fence_positions: Vec<usize> = block.match_indices(FENCE).map(|(i, _)| i).collect();
+    let hunk_text = if fence_positions.len() >= 2 {
+        let start = fence_positions[0] + FENCE.len();
+        let end = fence_positions[fence_positions.len() - 1];
+        block[start..end]
+            .trim_start_matches('\n')
+            .trim_end_matches('\n')
+            .to_string()
+    } else {
+        let start = lines
+            .iter()
+            .position(|line| line.trim_start().starts_with("@@"))
+            .ok_or_else(|| "UpdateFile operation has no '@@' hunk header".to_string())?;
+        lines[start..].join("\n")
+    };
 
-    if fence_positions.len() < 2 {
-        return Err(
-            "UpdateFile operation missing hunk content fences ('>>>'): expected fence markers around hunk content"
-                .to_string(),
-        );
-    }
-
-    let start = fence_positions[0] + FENCE.len();
-    let end = fence_positions[fence_positions.len() - 1];
-
-    let hunk_text = block[start..end]
-        .trim_start_matches('\n')
-        .trim_end_matches('\n');
-
-    let hunks = parse_hunks(hunk_text)?;
+    let hunks = parse_hunks(&hunk_text)?;
 
     Ok((move_to, hunks))
 }
@@ -290,64 +336,85 @@ fn parse_hunks(hunk_text: &str) -> Result<Vec<PatchHunk>, String> {
     let mut current_hunk: Option<(u64, u64, u64, u64, Vec<String>)> = None;
 
     for line in hunk_text.lines() {
-        if line.starts_with("@@ ") {
-            // Flush previous hunk
+        if line.starts_with("@@") {
             if let Some((old_start, old_count, new_start, new_count, lines)) = current_hunk.take() {
-                hunks.push(PatchHunk {
-                    old_start,
-                    old_count,
-                    new_start,
-                    new_count,
-                    content: lines.join("\n"),
-                });
+                hunks.push(finalize_hunk(
+                    old_start, old_count, new_start, new_count, lines,
+                ));
             }
-            // Parse the hunk header: @@ -old_start,old_count +new_start,new_count @@
             current_hunk = Some(parse_hunk_header(line)?);
         } else if let Some((_, _, _, _, ref mut content_lines)) = current_hunk {
             content_lines.push(line.to_string());
         }
     }
 
-    // Flush the last hunk
     if let Some((old_start, old_count, new_start, new_count, lines)) = current_hunk {
-        hunks.push(PatchHunk {
-            old_start,
-            old_count,
-            new_start,
-            new_count,
-            content: lines.join("\n"),
-        });
+        hunks.push(finalize_hunk(
+            old_start, old_count, new_start, new_count, lines,
+        ));
     }
 
     if hunks.is_empty() {
         return Err("no hunk headers found in UpdateFile block".to_string());
     }
-
     Ok(hunks)
 }
 
-/// Parse a hunk header line: "@@ -old_start,old_count +new_start,new_count @@"
+fn finalize_hunk(
+    old_start: u64,
+    old_count: u64,
+    new_start: u64,
+    new_count: u64,
+    lines: Vec<String>,
+) -> PatchHunk {
+    let inferred_old = lines
+        .iter()
+        .filter(|line| line.starts_with(' ') || line.starts_with('-'))
+        .count() as u64;
+    let inferred_new = lines
+        .iter()
+        .filter(|line| line.starts_with(' ') || line.starts_with('+'))
+        .count() as u64;
+    PatchHunk {
+        old_start,
+        old_count: if old_count == 0 {
+            inferred_old
+        } else {
+            old_count
+        },
+        new_start,
+        new_count: if new_count == 0 {
+            inferred_new
+        } else {
+            new_count
+        },
+        content: lines.join("\n"),
+    }
+}
+
+/// Parse a hunk header line. A bare `@@` is accepted for model patches; its
+/// line counts are inferred from the hunk body and the matcher performs a
+/// bounded full-file search when the line number is unknown.
 fn parse_hunk_header(line: &str) -> Result<(u64, u64, u64, u64, Vec<String>), String> {
-    // Strip the leading "@@ " and trailing " @@"
-    let inner = line
+    let trimmed = line.trim();
+    if trimmed == "@@" || trimmed == "@@ @@" {
+        return Ok((1, 0, 1, 0, Vec::new()));
+    }
+    let inner = trimmed
         .strip_prefix("@@ ")
         .and_then(|s| s.strip_suffix(" @@"))
         .ok_or_else(|| format!("invalid hunk header: '{line}'"))?;
-
     let parts: Vec<&str> = inner.split_whitespace().collect();
     if parts.len() < 2 {
         return Err(format!("invalid hunk header: '{line}'"));
     }
-
     let (old_start, old_count) = parse_hunk_range(parts[0])?;
     let (new_start, new_count) = parse_hunk_range(parts[1])?;
-
     Ok((old_start, old_count, new_start, new_count, Vec::new()))
 }
 
-/// Parse a hunk range like "-10,7" or "+10,8".
+/// Parse a hunk range like `-10,7` or `+10,8`.
 fn parse_hunk_range(s: &str) -> Result<(u64, u64), String> {
-    // Strip leading '-' or '+'
     let s = s.trim_start_matches(['-', '+']);
     if let Some((start_str, count_str)) = s.split_once(',') {
         let start: u64 = start_str
@@ -812,6 +879,33 @@ mod tests {
     fn text_patch_parses_multiple_operations() {
         let parsed = parse_structured_patch("*** Begin Patch\nAdd File: a.txt\n>>>\na\n>>>\n*** End Patch\n*** Begin Patch\nDelete File: b.txt\n*** End Patch").unwrap();
         assert_eq!(parsed.operations.len(), 2);
+    }
+
+    #[test]
+    fn common_model_patch_markers_parse_and_apply_without_fences() {
+        let parsed = parse_structured_patch(
+            "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch",
+        )
+        .unwrap();
+        let PatchOperation::UpdateFile { hunks, .. } = &parsed.operations[0] else {
+            panic!("expected update operation");
+        };
+        assert_eq!(apply_patch_hunks("old\n", hunks).unwrap(), "new\n");
+
+        let added = parse_structured_patch(
+            "*** Begin Patch\n*** Add File: notes.txt\n+created\n*** End Patch",
+        )
+        .unwrap();
+        assert!(matches!(
+            added.operations[0],
+            PatchOperation::AddFile { .. }
+        ));
+
+        let multiple = parse_structured_patch(
+            "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** Add File: notes.txt\n+created\n*** End Patch",
+        )
+        .unwrap();
+        assert_eq!(multiple.operations.len(), 2);
     }
 
     #[test]

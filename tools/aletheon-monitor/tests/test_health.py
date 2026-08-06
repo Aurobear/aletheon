@@ -1,6 +1,6 @@
 import asyncio
 
-from src.tools.health import health
+from src.tools.health import health, systemd_user_environment
 
 
 class FakeClient:
@@ -40,9 +40,11 @@ class FakeProcess:
 
 def test_health_queries_user_manager_for_user_socket(monkeypatch):
     calls = []
+    environments = []
 
     async def spawn(*args, **kwargs):
         calls.append(args)
+        environments.append(kwargs.get("env", {}))
         if "is-active" in args:
             return FakeProcess(b"active\n")
         return FakeProcess(b"2\n")
@@ -61,6 +63,27 @@ def test_health_queries_user_manager_for_user_socket(monkeypatch):
     }
     assert calls[0][:3] == ("systemctl", "--user", "is-active")
     assert calls[1][:3] == ("systemctl", "--user", "show")
+    for environment in environments:
+        assert environment["XDG_RUNTIME_DIR"] == "/run/user/1000"
+        assert environment["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
+
+
+def test_user_manager_environment_is_derived_without_overriding_operator_values():
+    derived = systemd_user_environment(
+        "/run/user/1234/aletheon/aletheon.sock", {"HOME": "/home/test"}
+    )
+    assert derived["XDG_RUNTIME_DIR"] == "/run/user/1234"
+    assert derived["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1234/bus"
+
+    explicit = systemd_user_environment(
+        "/run/user/1234/aletheon/aletheon.sock",
+        {
+            "XDG_RUNTIME_DIR": "/operator/runtime",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/operator/bus",
+        },
+    )
+    assert explicit["XDG_RUNTIME_DIR"] == "/operator/runtime"
+    assert explicit["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/operator/bus"
 
 
 def test_health_fails_closed_when_a_mandatory_rpc_errors(monkeypatch):

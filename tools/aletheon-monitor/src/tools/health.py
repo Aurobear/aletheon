@@ -1,6 +1,30 @@
 """aletheon_health — daemon liveness + readiness check."""
 
+import os
+import re
+
 from ..client import AletheonClient
+
+
+def systemd_user_environment(
+    socket_path: str, base: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Return an environment that can reach the socket owner's user manager.
+
+    MCP hosts commonly preserve ``HOME`` while omitting the login-session
+    variables required by ``systemctl --user``.  The official socket path is
+    already the authority used to select user scope, so use its numeric UID to
+    fill only missing variables.  Explicit operator values remain untouched.
+    """
+    environment = dict(os.environ if base is None else base)
+    match = re.match(r"^/run/user/([0-9]+)(?:/|$)", socket_path)
+    if match:
+        runtime_dir = f"/run/user/{match.group(1)}"
+        environment.setdefault("XDG_RUNTIME_DIR", runtime_dir)
+        environment.setdefault(
+            "DBUS_SESSION_BUS_ADDRESS", f"unix:path={runtime_dir}/bus"
+        )
+    return environment
 
 
 async def health(client: AletheonClient) -> dict:
@@ -16,7 +40,6 @@ async def health(client: AletheonClient) -> dict:
         "socket": {"path": client.socket_path, "exists": False},
     }
 
-    import os
     result["socket"]["exists"] = os.path.exists(client.socket_path)
 
     try:
@@ -49,6 +72,7 @@ async def health(client: AletheonClient) -> dict:
                 "systemctl", *systemctl_scope, "is-active", systemd_unit,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=systemd_user_environment(client.socket_path),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
             show = await asyncio.create_subprocess_exec(
@@ -56,6 +80,7 @@ async def health(client: AletheonClient) -> dict:
                 "--property=NRestarts", "--value",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=systemd_user_environment(client.socket_path),
             )
             restart_stdout, _ = await asyncio.wait_for(
                 show.communicate(), timeout=3.0

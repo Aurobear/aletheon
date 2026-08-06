@@ -140,7 +140,7 @@ impl SettlementEvidenceSink for SpineSettlementEvidenceSink {
             "detail": detail,
         });
         let mut envelope = EnvelopeV2::new(
-            fabric::SchemaId::from(fabric::SchemaId::TURN_EVENT_V1),
+            fabric::SchemaId::from(fabric::SchemaId::EVENT_AGENT_SETTLEMENT_V1),
             fabric::EnvelopeV2Target(format!("agent:{}", self.agent_id)),
             fabric::EnvelopeV2Target(format!("agent-tree:{}", self.root_agent_id)),
             fabric::EnvelopeV2Delivery::FanOut,
@@ -957,7 +957,7 @@ fn persistence(error: impl std::fmt::Display) -> AgentControlError {
 mod tests {
     use super::*;
     use parking_lot::Mutex as ParkingMutex;
-
+    mod audit_tests;
     #[test]
     fn parent_budget_acceptance_is_closed_until_transfer_is_published() {
         let gate = ParentBudgetAcceptance::default();

@@ -55,6 +55,43 @@ async fn send_request(app: &mut App, request: ClientRpcRequest) {
 
 pub async fn submit_message(app: &mut App, text: String) {
     let literal_input = std::mem::take(&mut app.input_literal);
+    if !literal_input && text.starts_with('!') {
+        let command = text.trim_start_matches('!').trim().to_owned();
+        if command.is_empty() {
+            app.input_buf = text;
+            app.cursor = app.input_buf.len();
+            app.app_state.last_error = Some("shell command cannot be empty".into());
+            return;
+        }
+        if app.turn_active {
+            app.input_buf = format!("!{command}");
+            app.cursor = app.input_buf.len();
+            app.app_state.last_error =
+                Some("shell command is unavailable while another turn is active".into());
+            return;
+        }
+        if app.pending_shell_confirmation.as_deref() != Some(command.as_str()) {
+            app.pending_shell_confirmation = Some(command.clone());
+            app.input_buf = format!("!{command}");
+            app.cursor = app.input_buf.len();
+            app.chat.add_text(
+                ChatRole::System,
+                format!(
+                    "Shell confirmation\nWorkspace: {}\nPermission: {:?}\nTransaction coverage: non-rollbackable\nHost policy and approval still apply. Press Enter again to submit or Esc to cancel.",
+                    app.workspace.cwd().display(),
+                    crate::host::permission_mode_from_environment(),
+                ),
+            );
+            return;
+        }
+        app.pending_shell_confirmation = None;
+        app.history.push(format!("!{command}"));
+        app.persist_input_state();
+        app.chat.add_text(ChatRole::User, format!("!{command}"));
+        send_shell_to_daemon(app, &command).await;
+        return;
+    }
+    app.pending_shell_confirmation = None;
     // Check for /commands (but NOT absolute paths like /home/... — those are chat)
     if !literal_input && looks_like_command(&text) {
         let parsed = app.registry.parse(&text);
@@ -547,6 +584,22 @@ pub async fn submit_message(app: &mut App, text: String) {
     send_to_daemon(app, &text).await;
 }
 
+async fn send_shell_to_daemon(app: &mut App, command: &str) {
+    let request_id = app.next_request_id;
+    let request = crate::intent::rpc(crate::intent::execute_shell(
+        format!("tui-shell:{request_id}"),
+        command,
+        app.app_state.session_id.clone().map(fabric::SessionId),
+        &app.workspace,
+        crate::host::permission_mode_from_environment(),
+    ));
+    write_request(app, request).await;
+    app.streaming = true;
+    app.response_buf.clear();
+    app.status.waiting = true;
+    app.app_state.streaming = true;
+}
+
 pub async fn send_to_daemon(app: &mut App, text: &str) {
     let request_id = app.next_request_id;
     app.next_request_id = app.next_request_id.saturating_add(1);
@@ -602,6 +655,57 @@ fn base64_encode(input: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod secure_shell_tests {
+    use super::*;
+    use crate::tui::host_time::ClientClock;
+    use crate::tui::term_compat::TermCaps;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn shell_intent_requires_confirmation_then_uses_typed_host_rpc() {
+        let (stream, mut peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test-model".into(),
+            std::sync::Arc::new(ClientClock::default()),
+            workspace,
+            vec![],
+        );
+
+        submit_message(&mut app, "!printf governed".into()).await;
+        assert_eq!(
+            app.pending_shell_confirmation.as_deref(),
+            Some("printf governed")
+        );
+        assert_eq!(app.input_buf, "!printf governed");
+
+        app.input_buf.clear();
+        app.cursor = 0;
+        submit_message(&mut app, "!printf governed".into()).await;
+        let mut bytes = vec![0; 4096];
+        let read = peer.read(&mut bytes).await.unwrap();
+        let request: serde_json::Value =
+            serde_json::from_slice(bytes[..read].strip_suffix(b"\n").unwrap()).unwrap();
+        assert_eq!(request["method"], "client.intent");
+        assert_eq!(request["params"]["command"]["command"], "execute_shell");
+        assert_eq!(
+            request["params"]["command"]["arguments"]["command"],
+            "printf governed"
+        );
+        assert!(app.pending_shell_confirmation.is_none());
+    }
 }
 
 #[cfg(test)]

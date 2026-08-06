@@ -43,12 +43,11 @@ impl PostTurnProjection for FailingProjection {
 #[tokio::test]
 async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
     let kernel = Arc::new(KernelRuntime::new());
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
         kernel.clone(),
-        store.clone(),
+        Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
     );
+    let store = coordinator.store();
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await

@@ -14,11 +14,15 @@ def check_dup_render(frame: str, min_block: int = 3) -> list[dict]:
     seen: dict[tuple, int] = {}
     for i in range(n - min_block + 1):
         window = tuple(lines[i:i + min_block])
-        if any(w.strip() == "" for w in window):
+        if any(
+            w.strip() == "" or re.fullmatch(r"[\s│┃║┆┇┊┋]+", w) is not None
+            for w in window
+        ):
             # Section templates commonly repeat around blank separators (for
-            # example "severity / evidence" headings). A duplicated renderer
-            # repeats contiguous painted content, so blank-spanning windows
-            # are structural noise rather than render evidence.
+            # example "severity / evidence" headings). Ratatui split panes
+            # also paint empty rows as repeated vertical borders. A duplicated
+            # renderer repeats contiguous content, so windows spanning either
+            # kind of structural blank are not render evidence.
             continue
         if window in seen:
             prev = seen[window]

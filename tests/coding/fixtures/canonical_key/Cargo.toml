@@ -1,6 +1,0 @@
-[package]
-name = "fixture_canonical_key"
-version = "0.1.0"
-edition = "2021"
-
-[workspace]

@@ -1,0 +1,13 @@
+schema_version = 1
+id = "unicode_boundary_bugfix"
+category = "behavioral_bugfix"
+fixture = "unicode_boundary_bugfix"
+prompt = "修复 truncate_chars：它必须按 Unicode 标量值截断且不能破坏 UTF-8；保持公开签名，不要修改测试或清单。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

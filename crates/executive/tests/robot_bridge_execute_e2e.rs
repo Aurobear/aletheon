@@ -30,6 +30,17 @@ async fn connect_service() -> EmbodimentService {
     let provider = GrpcEmbodimentProvider::connect_with_clock(
         GrpcProviderConfig {
             endpoint: "http://127.0.0.1:50051".into(),
+            required_device_id: Some(DEVICE_ID.into()),
+            required_observation_schemas: vec![
+                hardware::ObservationSchemaRequirement {
+                    schema: "base_pose".into(),
+                    schema_version: 1,
+                },
+                hardware::ObservationSchemaRequirement {
+                    schema: "base_twist".into(),
+                    schema_version: 1,
+                },
+            ],
             ..Default::default()
         },
         clock.clone(),

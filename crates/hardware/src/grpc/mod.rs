@@ -11,7 +11,7 @@ pub mod provider;
 /// by `grpc_contract.rs` against the bridge's copy; recorded on episode reports
 /// so a report is self-describing about the wire protocol it ran under.
 pub const BRIDGE_PROTOCOL_DIGEST: &str =
-    "4a205a75ac7643d7769fbd7bd52f32faba64b4cdf9d81f6908617da490a7d7ff";
+    "77e44869ba6a6b3345753f699f9acd403a6c8f4de3383dcd5827b0ba7673e679";
 
 /// Generated wire types from `gateway.proto`.
 /// Public only for integration test accessibility; proto types must not

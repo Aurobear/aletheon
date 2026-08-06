@@ -15,6 +15,7 @@ cmd_test() {
       _run_test_script suites/operations/cli_static_test.sh
       _run_test_script suites/operations/cli_test.sh
       _run_test_script suites/operations/installed_runtime_gate_test.sh
+      python3 "$ALETHEON_ROOT/scripts/tests/test_robot_r8_evidence.py"
       _run_test_script suites/operations/completion_test.sh
       _run_test_script suites/operations/extension_runtime_test.sh
       ;;
@@ -25,6 +26,7 @@ cmd_test() {
       ;;
     deployment)
       _run_test_script suites/deployment/systemd_runtime_boundary.sh
+      _run_test_script suites/deployment/runtime_generation_lock_static_test.sh
       _run_test_script suites/deployment/upgrade_multi_user_test.sh
       _run_test_script production/installed_host_static_test.sh
       _run_test_script production/sudo_deploy_user_context_static_test.sh

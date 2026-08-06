@@ -64,6 +64,9 @@ impl RuntimeCore {
             .preflight_integrations(&crate::composition::config::EnvironmentCredentialResolver)
             .context("optional integration startup preflight")?;
         let app_config = loaded.value;
+        let robot = app_config
+            .resolve_robot_config()
+            .context("resolving Robot/Policy configuration")?;
         tracing::info!(providers = %app_config.providers.len(), "Loaded config");
 
         // ── ProviderRegistry ────────────────────────────────────────
@@ -133,6 +136,7 @@ impl RuntimeCore {
                 .embodiment
                 .clone()
                 .unwrap_or_default(),
+            robot,
         };
 
         // ── Event bus ───────────────────────────────────────────────

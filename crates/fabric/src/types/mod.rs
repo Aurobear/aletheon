@@ -85,5 +85,6 @@ pub mod hil_evidence;
 pub mod outcome_verification;
 pub mod perception_observation;
 pub mod robot_audit;
+pub mod robot_failure;
 pub mod skill_proposal;
 pub mod world_state;

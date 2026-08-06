@@ -112,9 +112,9 @@ fn validate_production_gate(input: &DeploymentGateInput) -> DeploymentGateResult
     if input.evidence_digest.is_empty() {
         failures.push("evidence_digest required for Production".into());
     }
-    if input.now_ms > input.evidence_expiry_ms {
+    if input.now_ms >= input.evidence_expiry_ms {
         failures.push(format!(
-            "evidence expired: now {} > expiry {}",
+            "evidence expired: now {} >= expiry {}",
             input.now_ms, input.evidence_expiry_ms
         ));
     }

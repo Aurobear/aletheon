@@ -1,0 +1,1 @@
+use fixture_session_resume_no_side_effect::{resume::resume,store::ReceiptStore}; use std::cell::Cell; #[test] fn completed_is_not_reexecuted(){let mut s=ReceiptStore::default();s.mark("done");let n=Cell::new(0);resume(&s,"done",||n.set(n.get()+1));assert_eq!(n.get(),0);resume(&s,"new",||n.set(n.get()+1));assert_eq!(n.get(),1);}

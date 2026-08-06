@@ -65,8 +65,8 @@ Operations:
   secrets {init|audit}          Initialize or audit production credentials
   database check DATABASE...    Run read-only SQLite quick checks
   verify [TARGET]               Run deployed-state or specialized verification
-  acceptance {architecture|release|extension}
-                                Run architecture or release acceptance
+  acceptance {architecture|release|extension|robot-r8}
+                                Run architecture, release, or installed Robot R8 acceptance
   test {unit|operations|deployment|architecture|all}
                                 Run a focused test suite
   closure {install|run|status}  Manage the scheduled Pi-memory closure
@@ -94,6 +94,14 @@ cmd_deploy() {
     esac
     shift
   done
+  # A deployment changes the installed binary and daemon generation. Hold an
+  # exclusive machine-user lease for the complete build/install/restart/verify
+  # transaction so installed acceptance suites can hold the matching shared
+  # lease and cannot be silently invalidated midway through a run.
+  local runtime_lock=${ALETHEON_RUNTIME_LOCK_FILE:-${XDG_RUNTIME_DIR:-$HOME/.local/state}/aletheon/runtime-mutation.lock}
+  install -d -m 0700 "$(dirname -- "$runtime_lock")"
+  exec {runtime_lock_fd}>"$runtime_lock"
+  flock -x "$runtime_lock_fd"
   local install_args=()
   ((enable)) || install_args+=(--no-enable)
   ((build)) && cmd_build

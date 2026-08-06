@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 17;
+const CURRENT_VERSION: u32 = 18;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -515,6 +515,21 @@ CREATE INDEX IF NOT EXISTS idx_goal_evaluation_feedback_attempt
     ON goal_evaluation_feedback(objective_id, attempt_id);
 ";
 
+/// Migration 18 — retention tombstones for external artifacts. The metadata row
+/// and digest remain durable after the content file is deleted.
+const MIGRATION_18: &str = "
+ALTER TABLE external_artifacts ADD COLUMN retention_expired_at_ms INTEGER;
+ALTER TABLE external_artifacts ADD COLUMN retention_reason TEXT;
+CREATE TRIGGER external_artifact_retention_tombstone_immutable
+BEFORE UPDATE OF retention_expired_at_ms, retention_reason ON external_artifacts
+WHEN OLD.retention_expired_at_ms IS NOT NULL
+ AND (NEW.retention_expired_at_ms IS NOT OLD.retention_expired_at_ms
+      OR NEW.retention_reason IS NOT OLD.retention_reason)
+BEGIN
+    SELECT RAISE(ABORT, 'artifact retention tombstone is immutable');
+END;
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -670,6 +685,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
             .context("begin migration 17 transaction")?;
         tx.execute_batch(MIGRATION_17)?;
         tx.pragma_update(None, "user_version", 17)?;
+        tx.commit()?;
+    }
+
+    if version < 18 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 18 transaction")?;
+        tx.execute_batch(MIGRATION_18)?;
+        tx.pragma_update(None, "user_version", 18)?;
         tx.commit()?;
     }
 

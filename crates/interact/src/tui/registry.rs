@@ -480,6 +480,7 @@ mod tests {
                 "resume",
                 "rewind",
                 "sessions",
+                "shell",
                 "skills",
                 "status",
             ]

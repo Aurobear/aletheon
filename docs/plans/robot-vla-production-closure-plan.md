@@ -94,8 +94,9 @@ Aletheon。Aletheon 是任务、策略治理、权限、执行编排、验证和
 
 1. `build_robot_session_factory` 先从 embodiment provider 调 `list_skills(device)`；空技能表
    fail closed，得到的 descriptor 成为 Policy 和 validator 的 allowlist。
-2. `HarnessKind::Robot` 需要真实 `ALETHEON_POLICY_ENDPOINT`；缺失或无法连接时不回退到
-   `StubRobotPolicy`。
+2. `HarnessKind::Robot` 需要 resolved `integrations.robot.policy`；
+   `ALETHEON_POLICY_ENDPOINT` 仅作 legacy environment override source，bootstrap 不直读环境变量；
+   配置缺失或无法连接时不回退到 `StubRobotPolicy`。
 3. `Observe` 没有 fresh snapshot 时直接失败，不把空观测交给 Policy。
 4. Policy 只产生 `SkillProposal`，不执行动作；proposal 必须经过 allowlist/schema/device/
    expected-outcome 校验。
@@ -104,16 +105,14 @@ Aletheon。Aletheon 是任务、策略治理、权限、执行编排、验证和
 7. durable attempt/verification 是 report 的权威来源；artifact 只引用，不内嵌 rosbag/图像。
 8. 只有 `EpisodeReport::can_promote()` 的 matched+settled episode 才进入长期记忆。
 
-### 1.3 剩余缺口
+### 1.3 剩余缺口（R1 后）
 
-1. Policy endpoint 仍由 `ALETHEON_POLICY_ENDPOINT` 提供，没有进入 typed TOML config；
-2. `GrpcPolicyProvider` 支持 frame URI/label/confidence，但 RobotHarness 当前向 Policy 传 `&[]`；
-3. `DefaultPlanPort::plan/replan` 仍 fail closed，失败后的受限重规划未配置；
-4. `RobotHarnessConfig::default()` 在生产 composition 中缺少 per-device/per-scene 配置入口；
-5. bridge 与 Policy capability/protocol compatibility 主要在连接后暴露，启动前诊断不足；
-6. real bridge E2E 证明 execute/observe，但完整 natural-language + real Policy + bridge 测试仍缺；
-7. 实机相对仿真的硬安全 capability、watchdog、ownership 和部署 gate 尚未形成统一证据；
-8. episode artifact 的长期保存、清理和 report 可访问性需要完整策略。
+1. `GrpcPolicyProvider` 支持 frame URI/label/confidence，但 RobotHarness 当前向 Policy 传 `&[]`；
+2. `DefaultPlanPort::plan/replan` 仍 fail closed，失败后的受限重规划未配置；
+3. bridge 与 Policy capability/protocol compatibility 主要在连接后暴露，启动前诊断不足；
+4. real bridge E2E 证明 execute/observe，但完整 natural-language + real Policy + bridge 测试仍缺；
+5. 实机相对仿真的硬安全 capability、watchdog、ownership 和部署 gate 尚未形成统一证据；
+6. episode artifact 的长期保存、清理和 report 可访问性需要完整策略。
 
 ---
 
@@ -236,12 +235,12 @@ secret/token 不放 checked-in TOML；允许对应环境变量覆盖。环境变
 - bridge 本身不再列为 Aletheon 未实现项；
 - diagnostic 与 installed acceptance 明确区分。
 
-### 实施结果复核（2026-08-05）
+### 实施结果复核（2026-08-06）
 
-> **当前判定**：`docs/testing/robot-runtime.md` 仍未入库，并缺 bridge commit/version、proto digest 与 scene version。按统一计划 §3.4，R0 保持 `in_progress`；B0 入库且补齐这些字段后才能转为 `accepted`。
+> **当前判定**：`docs/testing/robot-runtime.md` 已由 commit `9e4c4ad3cd7d5adf6e3b5d329de732c7c475d011` 跟踪，并已补齐 bridge commit/version、proto digest 与 scene version。按统一计划 §3.4，R0 转为 `accepted`；该状态仅关闭基线与证据清单，不代表 R8 安装态运行验收。
 
 ```text
-STATUS: in_progress
+STATUS: accepted
 PHASE: R0（基线冻结与证据清单；不修改生产行为）
 SCOPE:
   - docs/testing/robot-runtime.md
@@ -251,15 +250,16 @@ CONTRACT:
 VALIDATION:
   - 测试分层与“#[ignore] live test 不等于当次通过”纪律已写入
   - 已完成能力链接到 fabric/cognit/executive 类型或 gated 测试
-  - 尚缺：bridge commit/version、proto digest、Kuavo scene/version
+  - bridge package 0.1.0 @ 1245538771b80f1b742d50f32041b801fba7b104
+  - Aletheon/bridge proto 逐字节相同，SHA-256 4a205a75ac7643d7769fbd7bd52f32faba64b4cdf9d81f6908617da490a7d7ff
+  - kuavo_assets 10.3.0 / default-v40 scene 及 asset manifest digest 已记录
 RUNTIME EVIDENCE:
-  - 无本轮新运行证据；历史仿真记录仅作背景
+  - 无本轮新运行验收；本主机无 /opt/ros；历史仿真记录仅作背景
 ROLLBACK:
   - 无生产路径影响
 BLOCKER:
-  - 外部版本事实尚未采集；B0 尚未入库证据文件
+  - none
 OPEN ITEMS:
-  - 补齐 R0 版本事实后转 accepted
   - R1-R7；R8 安装态真实 Policy+Bridge+MuJoCo
 ```
 
@@ -290,6 +290,40 @@ OPEN ITEMS:
 -普通 Linear harness 不要求 robot config；
 -旧 embodiment-only config 的兼容策略被明确测试或明确迁移失败信息。
 
+### 实施结果复核（2026-08-06）
+
+```text
+STATUS: accepted
+PHASE: R1（Robot/Policy typed config）
+SCOPE:
+  - Executive typed config/resolution, daemon Robot bootstrap and harness composition
+  - Cognit Policy endpoint validation, checked-in example and generated config schema
+CONTRACT:
+  - RobotIntegrationConfig / RobotPolicyConfig / RobotPerceptionConfig 进入分层 AppConfig
+  - Robot harness 必须解析显式 embodiment + policy + scene；Linear 不需要 Robot config
+  - ALETHEON_POLICY_ENDPOINT 仅转换为 typed environment override，bootstrap 不再直读
+  - endpoint 不允许 URI credential/query/fragment；非 loopback 明文 gRPC 拒绝
+  - timeout/poll interval 在 bootstrap 前做 checked + bounded Duration 解析
+  - scene 来自 resolved config；Aletheon version 与 bridge protocol digest 来自 build facts
+VALIDATION:
+  - robot_typed_config 5/5
+  - layered_config_contract 10/10；checked-in schema deterministic 1/1
+  - Cognit policy provider 12/12；Robot composition 2/2
+  - embodiment provider config 7/7；Robot harness selection 3/3
+  - `aletheon config effective --config config/aletheon.kuavo-mujoco.example.toml` 显示生效 endpoint/device/scene
+  - Executive/Cognit all-target checks, architecture-check, fmt and diff check 通过
+RUNTIME EVIDENCE:
+  - config/contract 阶段无外部 Policy/Bridge 运行验收；不影响 R1 accepted，R8 仍需安装态实证
+SAFETY:
+  - 缺配置、空 device/protocol、非法 timeout 和非 loopback 明文 endpoint 在连接/动作前 fail closed
+ROLLBACK:
+  - 未改外部 bridge/proto；可独立回滚 R1 typed config 与 wiring
+BLOCKER:
+  - none
+OPEN ITEMS:
+  - R2-R7；R8 安装态真实 Policy+Bridge+MuJoCo
+```
+
 ## Phase R2：启动 capability/compatibility gate（P0）
 
 ### 修改范围
@@ -319,6 +353,43 @@ OPEN ITEMS:
 - Policy healthy 但协议不兼容时不能启动；
 - skill descriptor 变化能进入 episode provenance；
 -启动 gate 不执行任何机器人动作。
+
+### 实施进度复核（2026-08-07）
+
+```text
+STATUS: accepted
+PHASE: R2（启动 capability/compatibility gate）
+COMPLETED:
+  - Policy connect 在暴露 provider 前依次执行 Health + GetCapabilities
+  - Policy health/protocol/provider_id/max_proposals 形成 typed snapshot 和 typed startup error
+  - Policy 响应数超过协商上限时 fail closed
+  - Bridge 启动依次只读调用 Health/GetCapabilities/ListSkills，并校验 protocol digest、device、
+    non-empty allowlist、完整 skill JSON Schema、required observation schema 和 max-message facts
+  - 缺少 required device 时在网络连接前拒绝；连接、health、协议、digest、无技能、descriptor、
+    observation schema 失败均有 typed startup error
+  - bridge candidate 从同一 reviewed manifest 投影运行 allowlist，广告 build-owned protocol digest、
+    observation schemas 和非零 capability limits，并把 receive timestamp 修正为 Unix time
+  - Policy/Bridge snapshot 写入 typed bootstrap log；这些 gate 不发送动作
+  - exact startup allowlist 的确定性 descriptor digest 与 bridge protocol digest 写入 EpisodeReport provenance
+VALIDATION:
+  - Cognit Policy provider 12/12
+  - Hardware capability unit 5/5；grpc_provider 6/6（另有 1 个 operator-gated ignored live diagnostic）
+  - bridge pytest 90/90（6 skipped）；changed-file Ruff 与 compileall
+  - local bridge candidate 与 Rust provider 的 cross-language startup gate 通过；两侧 proto byte-identical，
+    SHA-256 9517981e556d8c4320fcfc3d686bfa00c0963a7238c024828002fd1461587147
+  - Cognit/Hardware/Executive all-target checks；architecture/fmt/diff checks
+RUNTIME EVIDENCE:
+  - 旧 Bridge 的只读、不就绪 preflight 仍保留为 diagnostic：target/r2-readonly-preflight-20260806-074707/summary.json
+  - R8 随后部署 candidate Bridge；installed daemon 对真实 Policy/Bridge 完成 Health/GetCapabilities/
+    ListSkills/Snapshot gate，Health=READY，device/allowlist/schema/message limits 可用
+  - 最终 bridge protocol digest `77e44869ba6a6b3345753f699f9acd403a6c8f4de3383dcd5827b0ba7673e679`
+    和 descriptor digest `965d358f3c4487bcd4716609a27dde9edf05fa6b026a405d358d78275f887b60`
+    进入安装态 EpisodeReport/receipt
+REMAINING:
+  - none for R2；物理实机 gate 归独立 R6/HIL 计划
+BLOCKER:
+  - none
+```
 
 ## Phase R3：Perception / FrameRef 数据链（P0）
 
@@ -372,6 +443,42 @@ Hardware；Cognit 不依赖 Hardware。
 - stale frame 不进入 proposal；
 - perception port 故障不会绕过 required-perception gate。
 
+### 实施进度复核（2026-08-07）
+
+```text
+STATUS: accepted
+PHASE: R3（Perception / FrameRef 数据链）
+COMPLETED:
+  - Cognit 定义 RobotPerceptionPort，RobotHarness Plan 按 device/after-sequence/frame limit 读取，
+    不再向 Policy 固定传空 slice
+  - FrameRef/PerceptionObservation 保留 device/schema/source/sequence、captured/received Unix time、
+    confidence、encoded byte length 和 SHA-256 content digest
+  - Hardware 在 RPC 接收锚点把 Unix timestamp 转为本地 MonoTime；wall/monotonic facts 不再混用
+  - Executive perception store 按 max age、device、schema/source sequence、URI prefix、frame count、
+    per-frame hard cap 与 total byte budget fail closed
+  - visual observation 进入 WorldSnapshot 前只保留 URI/digest/camera/sequence；payload 中任意 image/base64
+    不进入 Policy snapshot、session output 或 EpisodeReport
+  - selected FrameRef 由 Host 绑定到 SkillProposal.frame_refs 和 EpisodeReport.selected_frames，
+    不信任 Policy 自报 provenance
+  - typed required_by_skill schema/version gate：非视觉 skill 可继续，required perception 缺失时拒绝
+VALIDATION:
+  - Fabric frame 7/7、SkillProposal 7/7、EpisodeReport 3/3
+  - Hardware gRPC conversion 10/10（含 Unix→Mono anchor、visual metadata/coordinate-frame isolation）
+  - Cognit robot_perception_path 3/3、proposal validator 6/6、Policy provider 2/2
+  - Executive perception store 2/2、world-state 10/10、typed Robot config 6/6、layered config 10/10、
+    robot session E2E 1/1；Dasein visual aggregator 8/8 + integration 1/1
+  - Fabric/Hardware/Cognit/Dasein/Executive all-target checks；architecture/fmt/diff checks
+RUNTIME EVIDENCE:
+  - installed R8 positive/stance reports retain a non-empty bounded `mujoco-simulator-screen` FrameRef with
+    URI/digest/size/time/camera/frame identity and bind real Policy provenance to the resulting report
+  - evidence: target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/positive-report.json and
+    target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/r8-stance-report.json
+REMAINING:
+  - none for R3
+BLOCKER:
+  - none
+```
+
 ## Phase R4：真实 VLA Policy Gateway 接入（P0）
 
 ### 协议边界
@@ -411,6 +518,42 @@ SkillProposal {
 -恶意/错误 proposal 无法越过 validator；
 -记录的 model/protocol 来自响应和连接事实，不来自自然语言输出；
 - Policy timeout 会触发受控失败/安全策略，不会重复无限请求。
+
+### 实施进度复核（2026-08-07）
+
+```text
+STATUS: accepted
+PHASE: R4（真实 VLA Policy Gateway 接入）
+COMPLETED:
+  - production composition 仅保留 GrpcPolicyProvider；Cognit/Executive 的生产 Stub provider 已删除，
+    in-process tonic server fixture 通过真实 Health/GetCapabilities/Propose 协议测试客户端
+  - ProposeRequest 传递 protocol、goal、device、bounded fresh typed snapshots、visual refs/labels/summary/
+    confidence 和 exact allowed skill IDs；snapshot payload 总量与数量有硬上限
+  - cached WorldSnapshot 在 read time 重新计算 provider monotonic deadline，过期后不能继续作为 fresh Policy input
+  - PolicyProviderError 区分 invalid request、timeout、RPC、gateway rejection、empty response、response limit 和
+    invalid response；Plan 对 timeout 单次失败，不在同一 Plan 内隐式重试
+  - validator 对 requested device、descriptor allowlist/JSON schema、fresh typed snapshot 中可观察的 outcome
+    path/type、descriptor timeout/stable-window cap、finite confidence 和完整 provenance fail closed
+  - provider/protocol 由 startup connection capability 绑定，response provider 不一致即拒绝；model/version/digest
+    来自 typed response，accepted provenance 进入 RobotHarnessState 和 EpisodeReport
+  - Policy port/adapter 无 EmbodimentExecutionPort、execute/cancel/safe-stop capability，并由机械 contract test 固定
+VALIDATION:
+  - Cognit in-process real gRPC gateway 4/4、proposal validator 10/10、Plan failure/perception path 5/5
+  - Executive Policy boundary 4/4、WorldState freshness 4/4、Robot session report 1/1
+  - Fabric SkillProposal 9/9、EpisodeReport 3/3、ExpectedOutcome schema 9/9
+  - Fabric/Cognit/Metacog/Executive all-target checks；architecture/fmt/diff checks
+RUNTIME EVIDENCE:
+  - installed daemon called real provider `aletheon-vla-lejurobot` / model `deepseek-v4-flash` / protocol `1.0`;
+    version/digest came from typed capability/response facts and are retained in report receipts
+  - direct proposal produced the exact accepted timed skill；out-of-bounds goal produced typed `SafetyFallback`,
+    which Host rejected before execution and routed to SafeStop
+  - evidence: target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/positive-report.json and
+    target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/negative-final-report.json
+REMAINING:
+  - none for R4
+BLOCKER:
+  - none
+```
 
 ## Phase R5：受控 replan/recovery（P1）
 
@@ -453,6 +596,37 @@ pub struct ReplanContext {
 - safe stop 失败被记录为独立严重错误，不能覆盖原始失败；
 - EpisodeReport 包含所有 durable attempts。
 
+### 实现状态（2026-08-07）
+
+```text
+STATUS: accepted
+REQUIREMENT:
+  - typed finite ReplanContext 与 prior attempts：spec:robot-vla-production-closure-plan.md:567-580
+  - validate/authorize/execute/verify、loop detector、budget、安全恢复：spec:robot-vla-production-closure-plan.md:582-590
+  - 独立计量、原始失败保留、durable attempts：spec:robot-vla-production-closure-plan.md:592-597
+IMPLEMENTATION:
+  - typed RobotFailureClass/RobotFailure：crates/fabric/src/types/robot_failure.rs:8-69
+  - independent retry/replan transitions + typed AttemptSummary/ReplanContext：crates/cognit/src/harness/robot/state.rs:52-123
+  - Policy Propose typed replan wire context：crates/cognit/proto/aletheon/policy/gateway/v1/policy.proto:23-62
+  - bounded counters、attempt digest、unchanged-world loop detector、typed recovery、safe-stop settlement：crates/cognit/src/harness/robot/mod.rs:372-490,646-877
+  - cancellation races the active harness step and produces a failed typed report：crates/cognit/src/harness/robot/session.rs:144-231
+  - EpisodeReport preserves ordered typed failures and durable attempt list：crates/fabric/src/types/episode_report.rs:59-145
+LOCAL VALIDATION:
+  - Cognit R5 recovery acceptance 5/5；gRPC Policy contract 5/5；state machine 9/9；perception 5/5；proposal outcome 1/1
+  - Executive robot session E2E 3/3（含 durable retry attempts 与 pre-cancelled typed report）
+  - Fabric robot failure serde 1/1、EpisodeReport 3/3
+  - Fabric/Cognit/Executive all-target checks；fmt、architecture、diff checks
+RUNTIME EVIDENCE:
+  - installed negative lane records typed `proposal_rejected`, zero unsafe attempts, bounded transition to SafeStop,
+    failed settlement, terminal `safe_stop succeeded`, and the same durable receipt after daemon restart
+  - evidence: target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/negative-final-report.json and
+    target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/negative-final-evidence-receipt-after-restart.json
+REMAINING:
+  - none for R5；physical-device safety remains R6/HIL scope
+BLOCKER:
+  - none
+```
+
 ## Phase R6：实机安全 capability（P1）
 
 ### 目标
@@ -488,6 +662,37 @@ safe_stop
 -越界 proposal 在 bridge/驱动硬限制和 Aletheon validator 两层都被拒绝；
 - emergency stop 不经过 LLM。
 
+### 实现状态（2026-08-07）
+
+```text
+STATUS: code_complete（local acceptance；未声明 physical-device / installed acceptance）
+REQUIREMENT:
+  - provider-owned environment + safety manifest、real fail closed：spec:robot-vla-production-closure-plan.md:634-651
+  - ownership/heartbeat/local watchdog/独立硬停/高风险 approval/deployment gate：spec:robot-vla-production-closure-plan.md:652-656
+  - anti-spoof、daemon crash、双层越界、local estop：spec:robot-vla-production-closure-plan.md:658-663
+IMPLEMENTATION:
+  - environment、完整 safety manifest 与 canonical manifest/request digests：crates/fabric/src/types/embodiment.rs:17-167,261-270
+  - Bridge capability 验证、独占 control session 与 provider-owned heartbeat：crates/hardware/src/grpc/provider.rs:126-157,267-314,504-638
+  - HIL/real pinned serial/manifest/limits/evidence profile 与 bootstrap gate：crates/executive/src/composition/config/robot.rs:28-85,438-632；crates/executive/src/host/daemon/bootstrap/embodiment.rs:85-237
+  - exact request-bound、expiring high-risk approval receipt，default deny：crates/executive/src/application/embodiment_approval.rs:10-85；crates/executive/src/application/embodiment_service.rs:93-177
+  - Bridge local monotonic owner/watchdog、hard-limit reject、fail-closed ROS command-owner discovery 与 local estop：aletheon-kuavo-bridge/src/aletheon_kuavo_bridge/watchdog.py:44-190；aletheon-kuavo-bridge/src/aletheon_kuavo_bridge/providers/kuavo_noetic/skills/move_base_timed.py:18-112,254-281；aletheon-kuavo-bridge/src/aletheon_kuavo_bridge/safety.py:78-107
+LOCAL VALIDATION:
+  - Bridge pytest 105 passed / 6 skipped；targeted Ruff；daemon-crash/ownership/estop/hard-limit tests；ROS XML-RPC command-owner regression 4/4
+  - Fabric embodiment 7/7；Hardware 72 passed / 3 ignored；Kernel 72/72
+  - Executive typed profile 11/11、service approval/bounds 4/4、bootstrap pin/receipt tests
+  - Cognit proposal validator 11/11 + integration 2/2
+  - local fake-Bridge Rust startup diagnostic 1/1；two proto copies byte-identical，SHA-256 77e44869ba6a6b3345753f699f9acd403a6c8f4de3383dcd5827b0ba7673e679
+  - Fabric/Hardware/Kernel/Executive all-target checks；config schema、architecture、fmt、two-repository diff checks
+RUNTIME EVIDENCE:
+  - old-Bridge diagnostic 暴露 command-owner discovery fail-open，保留为 failed safety evidence；candidate 修复随后已部署，
+    version 53 ROS/MuJoCo 的 R8 正向、stance 和负向 SafeStop 链路均重新通过
+  - physical independent hard stop 与 HIL/real device 未验收，因此 R6 仍为 code_complete，不声明 real-ready
+REMAINING:
+  - physical-device independent-hard-stop/watchdog evidence 由独立 HIL/production gate 采集
+BLOCKER:
+  - none for R6 code_complete；无物理设备证据时不得提升为 accepted/real-ready
+```
+
 ## Phase R7：Episode artifact 和报告闭环（P1）
 
 ### 修改范围
@@ -514,6 +719,36 @@ safe_stop
 - SQLite 重启后能重建相同 report；
 -大 artifact 不进入事件总线和数据库 JSON；
 - report 可追踪到 model、bridge protocol、scene、skill descriptor 和验证事实。
+
+### 实现状态（2026-08-07）
+
+```text
+STATUS: accepted
+REQUIREMENT:
+  - manifest、纯引用、sequence 与 settlement 单一权威：spec:robot-vla-production-closure-plan.md:705-710
+  - 三个写入边界恢复、immutable promotion、failed retention、expiry tombstone：spec:robot-vla-production-closure-plan.md:711-714
+  - attempt/operation 顺序、重启同一报告、无大对象 JSON、完整 provenance：spec:robot-vla-production-closure-plan.md:716-721
+IMPLEMENTATION:
+  - bounded external manifest、ordered attempt/verification facts、typed settlement、immutable receipt 与 retention projection：crates/fabric/src/types/episode_report.rs:37-78,87-325,335-428,439-720
+  - durable attempts 汇总、frame/evidence manifest、persist→audit→promotion 与 settlement→TurnStop：crates/cognit/src/harness/robot/session.rs:84-180,224-281
+  - idempotent SQLite append/update/close、legacy snapshot migration、immutable report/tombstone、跨 store retention crash reconciliation：crates/executive/src/adapters/episode/sqlite_episode_sink.rs:103-428,431-943
+  - retention tombstone 先提交、重启删残留 bytes、禁止 mutation/resurrection：crates/executive/src/adapters/artifact/store.rs:273-435
+  - verifier 写入实际 predicate paths；audit/promotion 验证 immutable receipt：crates/executive/src/application/deterministic_outcome_verifier.rs:47-137；crates/executive/src/application/robot_audit.rs:80-100；crates/executive/src/application/robot_episode_promotion.rs:25-50
+LOCAL VALIDATION:
+  - Fabric EpisodeReport 9/9
+  - Executive verifier 6/6、SQLite sink 8/8、artifact 1/1、promotion 3/3、audit 5/5、Robot session E2E 3/3
+  - Cognit robot harness/perception/replan/proposal/Policy targets 27/27
+  - Fabric/Cognit/Executive all-target checks；architecture 22 migrations / 62 acceptance IDs / 1079 Fabric public types；fmt/diff checks
+RUNTIME EVIDENCE:
+  - installed `/usr/bin/aletheon` produced immutable positive, stance and negative reports through real Policy/Bridge/
+    ROS/MuJoCo；`scripts/libexec/aletheon/robot_r8_evidence.py` cross-checked request/attempt/sequence/provenance/
+    safe-stop facts against SQLite and the receipts were read again after daemon restart
+  - evidence: target/r8-x13-installed-20260806-174928/goal-contract-deploy-221255/
+REMAINING:
+  - none for R7；physical-device retention policy is outside this MuJoCo phase
+BLOCKER:
+  - none
+```
 
 ## Phase R8：完整安装态 E2E（P0 closure）
 
@@ -556,6 +791,27 @@ safe_stop
 -最终 `EpisodeReport` 和 SQLite 重启后读取结果。
 
 直接运行 `robot_bridge_execute_e2e --ignored` 只能作为 diagnostic，不能替代本阶段。
+
+### 验收结果（2026-08-07）
+
+```text
+STATUS: accepted
+REQUIREMENT:
+  - installed real chain and evidence list：spec:robot-vla-production-closure-plan.md:763-793
+  - promotion/safety/deployment closure：spec:robot-vla-production-closure-plan.md:928-941
+RUNTIME EVIDENCE:
+  - final installed Robot acceptance SHA `038986c29aaf37680d0a8ce0702235bbf50c13b4df8aac9dd73be80730007b1a`
+    matched release, /usr/bin, machine core, user daemon and Memory Agent；restart counters remained stable；official
+    Memory Agent and official-socket real-request smokes passed
+  - three consecutive real-TUI stance goals executed `kuavo.stance {}` and matched zero base twist for 3000 ms without rendered/monitor/provider errors
+  - controlled positive executed exact `kuavo.move_base_timed` parameters and returned to zero velocity
+  - current unsafe/unavailable goal executed zero attempts：typed SafetyFallback -> Host proposal_rejected -> SafeStop succeeded
+  - current positive/negative immutable reports and SQLite receipts passed `REPORT_EVIDENCE_PASS`; the installed acceptance entrypoint rechecked deployment provenance and the official socket before report validation
+EVIDENCE ROOT:
+  - target/r8-x13-installed-20260806-174928/x13-current-sha-20260807-003254/
+BLOCKER:
+  - none；physical robot/HIL remains a separate gate and is not an R8/X13 prerequisite
+```
 
 ---
 

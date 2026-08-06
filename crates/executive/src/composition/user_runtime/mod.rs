@@ -55,6 +55,9 @@ impl UserRuntimeConfig {
             .policy
             .validate()
             .context("validating memory judgment policy")?;
+        let robot = app
+            .resolve_robot_config()
+            .context("resolving Robot/Policy configuration")?;
         let crate::composition::config::AppConfig {
             memory: crate::composition::config::MemoryConfig { supplemental, .. },
             ..
@@ -107,6 +110,7 @@ impl UserRuntimeConfig {
             harness_kind: app.agent.harness_kind,
             integrations,
             embodiment_provider: app.integrations.embodiment.clone().unwrap_or_default(),
+            robot,
         };
         Ok(Self {
             request,

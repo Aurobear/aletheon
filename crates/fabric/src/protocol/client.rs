@@ -1183,6 +1183,7 @@ pub enum TaskPhase {
     Active,
     Interrupted,
     Completed,
+    Blocked,
     Failed,
 }
 
@@ -1412,6 +1413,7 @@ pub enum ActivityState {
     Running,
     Waiting,
     Completed,
+    Blocked,
     Failed,
     Cancelled,
     Lost,

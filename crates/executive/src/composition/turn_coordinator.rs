@@ -8,6 +8,7 @@ use kernel::KernelRuntime;
 
 use crate::adapters::events::{DefaultEventProjectionSet, SqliteEventSpine};
 use crate::adapters::session::event_sourced_store::EventSourcedSessionStore;
+use crate::adapters::session::projection_store::SessionProjectionStore;
 use crate::application::event_projection::EventProjectionSink;
 use crate::application::turn_coordinator::TurnCoordinator;
 use crate::composition::config::GrokHardeningConfig;
@@ -33,22 +34,40 @@ pub fn compose_evaluation_service(
 
 pub fn compose_turn_coordinator(
     kernel: Arc<KernelRuntime>,
-    read_store: Arc<dyn SessionAppendStore>,
+    read_store: Arc<dyn SessionProjectionStore>,
     event_spine: Arc<dyn EventSpine>,
     projections: Arc<dyn EventProjectionSink>,
     grok_hardening: GrokHardeningConfig,
 ) -> TurnCoordinator {
-    let store: Arc<dyn SessionAppendStore> = Arc::new(EventSourcedSessionStore::new(
-        read_store.clone(),
-        event_spine.clone(),
-        projections,
-    ));
+    let store = compose_session_store(read_store, event_spine, projections);
     TurnCoordinator::from_components(kernel, store, grok_hardening)
+}
+
+pub fn compose_session_store(
+    read_store: Arc<dyn SessionProjectionStore>,
+    event_spine: Arc<dyn EventSpine>,
+    projections: Arc<dyn EventProjectionSink>,
+) -> Arc<dyn SessionAppendStore> {
+    Arc::new(EventSourcedSessionStore::new(
+        read_store,
+        event_spine,
+        projections,
+    ))
+}
+
+pub fn compose_in_memory_session_store(
+    read_store: Arc<dyn SessionProjectionStore>,
+) -> Arc<dyn SessionAppendStore> {
+    compose_session_store(
+        read_store,
+        Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine")),
+        Arc::new(DefaultEventProjectionSet::in_memory()),
+    )
 }
 
 pub fn compose_in_memory_turn_coordinator(
     kernel: Arc<KernelRuntime>,
-    read_store: Arc<dyn SessionAppendStore>,
+    read_store: Arc<dyn SessionProjectionStore>,
 ) -> TurnCoordinator {
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine"));
     let projections = Arc::new(DefaultEventProjectionSet::in_memory());
@@ -63,7 +82,7 @@ pub fn compose_in_memory_turn_coordinator(
 
 pub fn compose_with_event_spine(
     kernel: Arc<KernelRuntime>,
-    read_store: Arc<dyn SessionAppendStore>,
+    read_store: Arc<dyn SessionProjectionStore>,
     event_spine: Arc<dyn EventSpine>,
     grok_hardening: GrokHardeningConfig,
 ) -> TurnCoordinator {

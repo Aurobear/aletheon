@@ -32,6 +32,7 @@ pub enum ClientSurface {
 #[serde(rename_all = "snake_case")]
 pub enum CommandId {
     SubmitPrompt,
+    ExecuteShell,
     Status,
 }
 
@@ -166,6 +167,7 @@ fn parse_command_specs(input: &str) -> Vec<CommandSpec> {
         let intent = match columns[11] {
             "-" => None,
             "submit_prompt" => Some(CommandId::SubmitPrompt),
+            "execute_shell" => Some(CommandId::ExecuteShell),
             "status" => Some(CommandId::Status),
             other => panic!("invalid intent {other} at line {}", index + 1),
         };
@@ -205,6 +207,16 @@ pub struct SubmitPromptIntent {
     pub permission_mode: HostPermissionMode,
 }
 
+/// A user-authored shell action that must enter the ordinary governed turn
+/// path. The client selects the syntax; it never executes this command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecuteShellIntent {
+    pub command: String,
+    pub session_id: Option<SessionId>,
+    pub workspace: WorkspacePolicy,
+    pub permission_mode: HostPermissionMode,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct StatusIntent {
     pub session_id: Option<SessionId>,
@@ -214,6 +226,7 @@ pub struct StatusIntent {
 #[serde(tag = "command", content = "arguments", rename_all = "snake_case")]
 pub enum ClientCommand {
     SubmitPrompt(SubmitPromptIntent),
+    ExecuteShell(ExecuteShellIntent),
     Status(StatusIntent),
 }
 
@@ -221,6 +234,7 @@ impl ClientCommand {
     pub const fn id(&self) -> CommandId {
         match self {
             Self::SubmitPrompt(_) => CommandId::SubmitPrompt,
+            Self::ExecuteShell(_) => CommandId::ExecuteShell,
             Self::Status(_) => CommandId::Status,
         }
     }
@@ -261,10 +275,18 @@ impl ClientIntent {
         if self.correlation_id.trim().is_empty() {
             return Err(ClientIntentError::EmptyCorrelationId);
         }
-        if let ClientCommand::SubmitPrompt(prompt) = &self.command {
-            if prompt.content.trim().is_empty() {
+        match &self.command {
+            ClientCommand::SubmitPrompt(prompt) if prompt.content.trim().is_empty() => {
                 return Err(ClientIntentError::EmptyPrompt);
             }
+            ClientCommand::ExecuteShell(shell)
+                if shell.command.trim().is_empty()
+                    || shell.command.len() > 128 * 1024
+                    || shell.command.contains('\0') =>
+            {
+                return Err(ClientIntentError::InvalidShellCommand);
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -280,6 +302,8 @@ pub enum ClientIntentError {
     EmptyCorrelationId,
     #[error("client intent prompt is empty")]
     EmptyPrompt,
+    #[error("shell command must contain 1..=131072 bytes and no NUL")]
+    InvalidShellCommand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,7 +1,7 @@
 //! RobotHarness composition root.
 //!
 //! Assembles the robot main chain: polling world state, deterministic verifier,
-//! durable episode sink, embodied-execution adapter, policy provider and planner
+//! durable episode sink, embodied-execution adapter and policy provider
 //! into a `cognit::harness::robot::RobotHarness`. Construction is explicit —
 //! `HarnessKind::Robot` configuration must supply every port or the build fails
 //! closed; it never falls back to a Linear session that still claims to be a
@@ -13,20 +13,19 @@ use async_trait::async_trait;
 use cognit::harness::robot::session::RobotCognitiveSession;
 use cognit::harness::robot::state::RobotHarnessConfig;
 use cognit::harness::robot::{
-    EmbodiedExecutionPort, EpisodePromotionPort, EpisodeSink, OutcomeVerifierPort, PlanPort,
-    RobotHarness,
+    EmbodiedExecutionPort, EpisodeAuditPort, EpisodePromotionPort, EpisodeSink,
+    OutcomeVerifierPort, RobotHarness, RobotPerceptionPort,
 };
 use cognit::ports::policy_provider::PolicyProviderPort;
-use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillRequest};
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
+use fabric::types::embodiment::{DeviceId, SkillDescriptor};
+use fabric::types::expected_outcome::OutcomePredicate;
+use fabric::types::world_state::WorldStatePort;
 use fabric::Clock;
 
 use super::deterministic_outcome_verifier::DeterministicOutcomeVerifier;
 use super::embodied_execution_adapter::EmbodiedExecutionAdapter;
 use super::harness_factory::CognitiveSessionFactory;
+use super::robot_perception::{EmbodimentPerceptionStore, RobotPerceptionRuntimeConfig};
 use super::world_state::{EmbodimentWorldState, WorldStatePump};
 
 /// All robot-main-chain dependencies, assembled by the daemon bootstrap.
@@ -36,9 +35,9 @@ pub struct RobotHarnessDependencies {
     pub world_state: Arc<dyn WorldStatePort>,
     pub executor: Arc<dyn EmbodiedExecutionPort>,
     pub verifier: Arc<dyn OutcomeVerifierPort>,
-    pub planner: Arc<dyn PlanPort>,
     pub episodes: Arc<dyn EpisodeSink>,
     pub policy: Arc<dyn PolicyProviderPort>,
+    pub perception: Arc<dyn RobotPerceptionPort>,
     pub allowed_skills: Vec<SkillDescriptor>,
 }
 
@@ -53,80 +52,11 @@ pub fn build_robot_harness(dependencies: RobotHarnessDependencies) -> Result<Rob
         dependencies.world_state,
         dependencies.executor,
         dependencies.verifier,
-        dependencies.planner,
         dependencies.episodes,
         dependencies.policy,
+        dependencies.perception,
         dependencies.allowed_skills,
     ))
-}
-
-/// Fail-closed planner: replanning is not configured yet, so a replan request
-/// fails the harness closed instead of silently re-issuing a stale skill.
-pub struct DefaultPlanPort;
-#[async_trait]
-impl PlanPort for DefaultPlanPort {
-    async fn plan(
-        &self,
-        _d: &DeviceId,
-        _s: &WorldSnapshot,
-        _g: &str,
-    ) -> Result<SkillRequest, String> {
-        Err("robot planner not configured".into())
-    }
-    async fn replan(
-        &self,
-        _d: &DeviceId,
-        _s: &WorldSnapshot,
-        _f: &str,
-    ) -> Result<SkillRequest, String> {
-        Err("robot replan not configured".into())
-    }
-}
-
-/// Default policy: proposes the first allowed skill with a generic expected
-/// outcome. Production now requires a real policy provider (fail closed);
-/// this remains as the explicit dev/test fallback.
-#[allow(dead_code)]
-pub struct StubRobotPolicy;
-#[async_trait]
-impl PolicyProviderPort for StubRobotPolicy {
-    async fn propose(
-        &self,
-        _goal: &str,
-        device: &DeviceId,
-        _snapshots: &[WorldSnapshot],
-        _visual: &[PerceptionObservation],
-        allowed_skills: &[SkillDescriptor],
-    ) -> Result<Vec<SkillProposal>, String> {
-        let Some(skill) = allowed_skills.first() else {
-            return Ok(vec![]);
-        };
-        Ok(vec![SkillProposal {
-            skill: skill.skill.clone(),
-            device: device.clone(),
-            parameters: serde_json::json!({}),
-            expected_outcome: ExpectedOutcome {
-                predicate: OutcomePredicate::Equals {
-                    path: "mode".into(),
-                    value: serde_json::json!("stance"),
-                },
-                freshness_ms: 500,
-                stable_window_ms: 0,
-                timeout_ms: 5_000,
-            },
-            confidence: 0.9,
-            frame_refs: vec![],
-            provenance: PolicyProvenance {
-                provider: "default".into(),
-                model: "default-v1".into(),
-                version: "1.0".into(),
-                digest: "sha256:default".into(),
-            },
-        }])
-    }
-    async fn health(&self) -> Result<String, String> {
-        Ok("ready".into())
-    }
 }
 
 /// `CognitiveSessionFactory` that builds a RobotHarness per session and drives
@@ -138,7 +68,9 @@ pub struct RobotCognitiveSessionFactory {
     sim_scene_version: String,
     aletheon_commit: String,
     bridge_protocol_digest: String,
+    skill_descriptor_digest: String,
     promoter: Option<Arc<dyn EpisodePromotionPort>>,
+    auditor: Arc<dyn EpisodeAuditPort>,
 }
 
 impl RobotCognitiveSessionFactory {
@@ -149,7 +81,9 @@ impl RobotCognitiveSessionFactory {
         sim_scene_version: impl Into<String>,
         aletheon_commit: impl Into<String>,
         bridge_protocol_digest: impl Into<String>,
+        skill_descriptor_digest: impl Into<String>,
         promoter: Option<Arc<dyn EpisodePromotionPort>>,
+        auditor: Arc<dyn EpisodeAuditPort>,
     ) -> Result<Self, String> {
         // Validate the composition eagerly — fail closed at bootstrap.
         let _ = build_robot_harness(deps.clone())?;
@@ -160,7 +94,9 @@ impl RobotCognitiveSessionFactory {
             sim_scene_version: sim_scene_version.into(),
             aletheon_commit: aletheon_commit.into(),
             bridge_protocol_digest: bridge_protocol_digest.into(),
+            skill_descriptor_digest: skill_descriptor_digest.into(),
             promoter,
+            auditor,
         })
     }
 }
@@ -174,16 +110,20 @@ impl CognitiveSessionFactory for RobotCognitiveSessionFactory {
         cancellation: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
         let harness = build_robot_harness(self.deps.clone()).map_err(anyhow::Error::msg)?;
-        Ok(Box::new(RobotCognitiveSession::new(
-            harness,
-            self.clock.clone(),
-            cancellation,
-            self.device.clone(),
-            self.sim_scene_version.clone(),
-            self.aletheon_commit.clone(),
-            self.bridge_protocol_digest.clone(),
-            self.promoter.clone(),
-        )))
+        Ok(Box::new(
+            RobotCognitiveSession::new(
+                harness,
+                self.clock.clone(),
+                cancellation,
+                self.device.clone(),
+                self.sim_scene_version.clone(),
+                self.aletheon_commit.clone(),
+                self.bridge_protocol_digest.clone(),
+                self.skill_descriptor_digest.clone(),
+                self.promoter.clone(),
+            )
+            .with_auditor(self.auditor.clone()),
+        ))
     }
 }
 
@@ -198,6 +138,9 @@ pub async fn build_robot_session_factory(
     device: DeviceId,
     unsafe_predicates: Vec<OutcomePredicate>,
     policy: Arc<dyn PolicyProviderPort>,
+    harness_config: RobotHarnessConfig,
+    perception_config: RobotPerceptionRuntimeConfig,
+    perception_poll_interval: std::time::Duration,
     sim_scene_version: impl Into<String>,
     aletheon_commit: impl Into<String>,
     bridge_protocol_digest: impl Into<String>,
@@ -210,13 +153,37 @@ pub async fn build_robot_session_factory(
     if allowed_skills.is_empty() {
         return Err(format!("robot provider exposed no skills for {}", device.0));
     }
-    let world = Arc::new(EmbodimentWorldState::new(16, clock.clone()));
+    for descriptor in &allowed_skills {
+        descriptor.validate_contract(&device)?;
+    }
+    for skill in harness_config.required_perception.keys() {
+        if !allowed_skills
+            .iter()
+            .any(|descriptor| &descriptor.skill == skill)
+        {
+            return Err(format!(
+                "perception requirement names skill outside startup allowlist: {}",
+                skill.0
+            ));
+        }
+    }
+    let skill_descriptor_digest =
+        fabric::types::embodiment::skill_descriptor_digest(&allowed_skills)?;
+    let world = Arc::new(EmbodimentWorldState::new(
+        perception_config.max_devices,
+        clock.clone(),
+    ));
+    let perception = Arc::new(EmbodimentPerceptionStore::from_config(
+        clock.clone(),
+        perception_config,
+    )?);
     let pump = WorldStatePump::new(
         world.clone(),
         executor.clone(),
         clock.clone(),
-        std::time::Duration::from_millis(250),
-    );
+        perception_poll_interval,
+    )
+    .with_perception(perception.clone());
     Arc::new(pump).spawn(vec![device.clone()]);
     let executor_adapter: Arc<dyn EmbodiedExecutionPort> =
         Arc::new(EmbodiedExecutionAdapter::new(executor));
@@ -232,15 +199,17 @@ pub async fn build_robot_session_factory(
         )?,
     );
     let deps = RobotHarnessDependencies {
-        config: RobotHarnessConfig::default(),
+        config: harness_config,
         world_state: world.clone(),
         executor: executor_adapter,
         verifier,
-        planner: Arc::new(DefaultPlanPort),
         episodes,
         policy,
+        perception,
         allowed_skills,
     };
+    let auditor: Arc<dyn EpisodeAuditPort> =
+        Arc::new(crate::application::robot_audit::AuditChain::new(4_096));
     Ok(Arc::new(RobotCognitiveSessionFactory::new(
         deps,
         clock,
@@ -248,7 +217,9 @@ pub async fn build_robot_session_factory(
         sim_scene_version,
         aletheon_commit,
         bridge_protocol_digest,
+        skill_descriptor_digest,
         promoter,
+        auditor,
     )?))
 }
 
@@ -257,7 +228,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use cognit::harness::robot::{
-        EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, PlanPort,
+        EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, RobotExecutionError,
     };
     use cognit::ports::policy_provider::PolicyProviderPort;
     use fabric::types::embodiment::{DeviceId, SkillId, SkillRequest, SkillResult};
@@ -287,13 +258,13 @@ mod tests {
     struct NoopExecutor;
     #[async_trait]
     impl EmbodiedExecutionPort for NoopExecutor {
-        async fn execute(&self, _r: SkillRequest) -> Result<SkillResult, String> {
-            Err("noop".into())
+        async fn execute(&self, _r: SkillRequest) -> Result<SkillResult, RobotExecutionError> {
+            Err(RobotExecutionError::Control("noop".into()))
         }
-        async fn cancel(&self, _d: &DeviceId) -> Result<(), String> {
+        async fn cancel(&self, _d: &DeviceId) -> Result<(), RobotExecutionError> {
             Ok(())
         }
-        async fn safe_stop(&self, _d: &DeviceId) -> Result<(), String> {
+        async fn safe_stop(&self, _d: &DeviceId) -> Result<(), RobotExecutionError> {
             Ok(())
         }
     }
@@ -317,26 +288,6 @@ mod tests {
             }
         }
     }
-    struct NoopPlanner;
-    #[async_trait]
-    impl PlanPort for NoopPlanner {
-        async fn plan(
-            &self,
-            _d: &DeviceId,
-            _s: &WorldSnapshot,
-            _g: &str,
-        ) -> Result<SkillRequest, String> {
-            Err("noop".into())
-        }
-        async fn replan(
-            &self,
-            _d: &DeviceId,
-            _s: &WorldSnapshot,
-            _f: &str,
-        ) -> Result<SkillRequest, String> {
-            Err("noop".into())
-        }
-    }
     struct NoopEpisodes;
     #[async_trait]
     impl EpisodeSink for NoopEpisodes {
@@ -346,6 +297,7 @@ mod tests {
             _a: u32,
             _ai: &str,
             _o: Option<&fabric::OperationId>,
+            _request: &fabric::types::embodiment::SkillRequest,
             _x: &ExpectedOutcome,
             _b: Option<&WorldSnapshot>,
             _af: Option<&WorldSnapshot>,
@@ -354,13 +306,18 @@ mod tests {
         ) -> Result<(), String> {
             Ok(())
         }
-        async fn close_episode(&self, _e: &str, _o: &str) -> Result<(), String> {
+        async fn close_episode(
+            &self,
+            _e: &str,
+            _o: fabric::types::episode_report::EpisodeSettlement,
+        ) -> Result<(), String> {
             Ok(())
         }
         async fn update_verification(
             &self,
             _e: &str,
             _ai: &str,
+            _after: Option<&WorldSnapshot>,
             _v: &VerificationReport,
         ) -> Result<(), String> {
             Ok(())
@@ -382,7 +339,8 @@ mod tests {
             _s: &[WorldSnapshot],
             _v: &[PerceptionObservation],
             _a: &[SkillDescriptor],
-        ) -> Result<Vec<SkillProposal>, String> {
+        ) -> Result<Vec<SkillProposal>, cognit::ports::policy_provider::PolicyProviderError>
+        {
             Ok(vec![])
         }
         async fn health(&self) -> Result<String, String> {
@@ -396,9 +354,9 @@ mod tests {
             world_state: Arc::new(NoopWorld),
             executor: Arc::new(NoopExecutor),
             verifier: Arc::new(NoopVerifier),
-            planner: Arc::new(NoopPlanner),
             episodes: Arc::new(NoopEpisodes),
             policy: Arc::new(NoopPolicy),
+            perception: Arc::new(cognit::harness::robot::NoopRobotPerception),
             allowed_skills: allowlist,
         }
     }

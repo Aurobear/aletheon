@@ -52,9 +52,12 @@ mod tests {
             sequence,
             source_time: MonoTime(sequence),
             received_at: MonoTime(sequence),
+            source_unix_ms: 0,
+            received_unix_ms: 0,
             valid_until: None,
             confidence: 1.0,
-            frame_ref: None,
+            reference_frame: None,
+            frame: None,
             payload: serde_json::json!({}),
             evidence: vec![],
         }

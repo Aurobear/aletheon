@@ -8,18 +8,21 @@
 
 use cognit::harness::robot::state::RobotHarnessConfig;
 use cognit::harness::robot::{
-    EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, PlanPort, RobotHarness,
+    EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, RobotExecutionError, RobotHarness,
 };
 use cognit::ports::policy_provider::PolicyProviderPort;
 use fabric::types::embodiment::{
     DeviceId, RiskClass, SkillDescriptor, SkillId, SkillOutcome, SkillRequest, SkillResult,
 };
+use fabric::types::episode_report::EpisodeSettlement;
 use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
 use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};
 use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
+use fabric::types::robot_failure::RobotFailureClass;
+use fabric::types::skill_proposal::{GoalAlignment, PolicyProvenance, SkillProposal};
 use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
 use fabric::{MonoDeadline, OperationId};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 struct FakeWorldState;
@@ -28,9 +31,11 @@ impl FakeWorldState {
         WorldSnapshot {
             device: DeviceId("bot".into()),
             schema: "robot.state/v1".into(),
+            schema_version: 1,
             sequence: 1,
             payload: serde_json::json!({"mode": "stance2"}),
             observed_at: fabric::MonoTime(1),
+            valid_until: None,
             stale: false,
         }
     }
@@ -51,10 +56,43 @@ impl WorldStatePort for FakeWorldState {
     }
 }
 
-struct FakeExecutor;
+#[derive(Default)]
+struct FakeExecutor {
+    executions: AtomicUsize,
+    safe_stops: AtomicUsize,
+}
+
+#[derive(Default)]
+struct MismatchedExecutor {
+    safe_stops: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl EmbodiedExecutionPort for MismatchedExecutor {
+    async fn execute(&self, request: SkillRequest) -> Result<SkillResult, RobotExecutionError> {
+        Ok(SkillResult {
+            operation_id: OperationId::new(),
+            skill: SkillId("kuavo.stop".into()),
+            device: request.device,
+            outcome: SkillOutcome::Succeeded,
+            duration_ms: 10,
+            evidence: vec![],
+        })
+    }
+
+    async fn cancel(&self, _device: &DeviceId) -> Result<(), RobotExecutionError> {
+        Ok(())
+    }
+
+    async fn safe_stop(&self, _device: &DeviceId) -> Result<(), RobotExecutionError> {
+        self.safe_stops.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
 #[async_trait::async_trait]
 impl EmbodiedExecutionPort for FakeExecutor {
-    async fn execute(&self, request: SkillRequest) -> Result<SkillResult, String> {
+    async fn execute(&self, request: SkillRequest) -> Result<SkillResult, RobotExecutionError> {
+        self.executions.fetch_add(1, Ordering::SeqCst);
         Ok(SkillResult {
             operation_id: OperationId::new(),
             skill: request.skill,
@@ -64,10 +102,11 @@ impl EmbodiedExecutionPort for FakeExecutor {
             evidence: vec![],
         })
     }
-    async fn cancel(&self, _device: &DeviceId) -> Result<(), String> {
+    async fn cancel(&self, _device: &DeviceId) -> Result<(), RobotExecutionError> {
         Ok(())
     }
-    async fn safe_stop(&self, _device: &DeviceId) -> Result<(), String> {
+    async fn safe_stop(&self, _device: &DeviceId) -> Result<(), RobotExecutionError> {
+        self.safe_stops.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -97,27 +136,6 @@ impl OutcomeVerifierPort for RecordingVerifier {
     }
 }
 
-struct UnusedPlanner;
-#[async_trait::async_trait]
-impl PlanPort for UnusedPlanner {
-    async fn plan(
-        &self,
-        _device: &DeviceId,
-        _snapshot: &WorldSnapshot,
-        _goal: &str,
-    ) -> Result<SkillRequest, String> {
-        Err("plan not used in this test".into())
-    }
-    async fn replan(
-        &self,
-        _device: &DeviceId,
-        _snapshot: &WorldSnapshot,
-        _failure_reason: &str,
-    ) -> Result<SkillRequest, String> {
-        Err("replan not used in this test".into())
-    }
-}
-
 #[derive(Default)]
 struct RecordingEpisodes {
     attempt_ids: Mutex<Vec<String>>,
@@ -131,6 +149,7 @@ impl EpisodeSink for RecordingEpisodes {
         _attempt: u32,
         attempt_id: &str,
         operation_id: Option<&OperationId>,
+        _request: &SkillRequest,
         _expected: &ExpectedOutcome,
         _before: Option<&WorldSnapshot>,
         _after: Option<&WorldSnapshot>,
@@ -147,13 +166,18 @@ impl EpisodeSink for RecordingEpisodes {
             .push(operation_id.map(|id| id.0.to_string()));
         Ok(())
     }
-    async fn close_episode(&self, _episode_id: &str, _outcome: &str) -> Result<(), String> {
+    async fn close_episode(
+        &self,
+        _episode_id: &str,
+        _outcome: EpisodeSettlement,
+    ) -> Result<(), String> {
         Ok(())
     }
     async fn update_verification(
         &self,
         _episode_id: &str,
         _attempt_id: &str,
+        _after: Option<&WorldSnapshot>,
         _verification: &VerificationReport,
     ) -> Result<(), String> {
         Ok(())
@@ -167,7 +191,9 @@ impl EpisodeSink for RecordingEpisodes {
 }
 
 /// Policy returns a proposal whose expected outcome is `mode == "stance2"`.
-struct Stance2Policy;
+struct Stance2Policy {
+    goal_alignment: GoalAlignment,
+}
 #[async_trait::async_trait]
 impl PolicyProviderPort for Stance2Policy {
     async fn propose(
@@ -177,11 +203,12 @@ impl PolicyProviderPort for Stance2Policy {
         _snapshots: &[WorldSnapshot],
         _visual: &[PerceptionObservation],
         _allowed_skills: &[SkillDescriptor],
-    ) -> Result<Vec<SkillProposal>, String> {
+    ) -> Result<Vec<SkillProposal>, cognit::ports::policy_provider::PolicyProviderError> {
         Ok(vec![SkillProposal {
             skill: SkillId("kuavo.stance".into()),
             device: device.clone(),
             parameters: serde_json::json!({}),
+            goal_alignment: self.goal_alignment,
             expected_outcome: ExpectedOutcome {
                 predicate: OutcomePredicate::Equals {
                     path: "mode".into(),
@@ -197,6 +224,7 @@ impl PolicyProviderPort for Stance2Policy {
                 provider: "test".into(),
                 model: "m".into(),
                 version: "1".into(),
+                protocol_version: "1.0".into(),
                 digest: "sha256:test".into(),
             },
         }])
@@ -211,12 +239,17 @@ fn allowed_skills() -> Vec<SkillDescriptor> {
         skill: SkillId("kuavo.stance".into()),
         device: DeviceId("bot".into()),
         summary: "stance".into(),
-        input_schema: serde_json::json!({"type": "object", "required": []}),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        }),
         risk: RiskClass::Low,
         timeout_ms: 10000,
         cancellable: false,
-        preconditions: vec![],
-        success_criteria: vec![],
+        preconditions: vec!["ready".into()],
+        success_criteria: vec!["stance2".into()],
     }]
 }
 
@@ -228,11 +261,13 @@ async fn verify_uses_proposal_expected_outcome_not_hardcoded_stance() {
     let harness = RobotHarness::new(
         RobotHarnessConfig::default(),
         Arc::new(FakeWorldState),
-        Arc::new(FakeExecutor),
+        Arc::new(FakeExecutor::default()),
         verifier.clone(),
-        Arc::new(UnusedPlanner),
         episodes.clone(),
-        Arc::new(Stance2Policy),
+        Arc::new(Stance2Policy {
+            goal_alignment: GoalAlignment::Direct,
+        }),
+        Arc::new(cognit::harness::robot::NoopRobotPerception),
         allowed_skills(),
     );
 
@@ -256,7 +291,12 @@ async fn verify_uses_proposal_expected_outcome_not_hardcoded_stance() {
         .lock()
         .unwrap()
         .clone()
-        .expect("verifier.verify was never called");
+        .unwrap_or_else(|| {
+            panic!(
+                "verifier.verify was never called; terminal={:?} failures={:?}",
+                state.state, state.failures
+            )
+        });
     assert_eq!(
         received.predicate,
         OutcomePredicate::Equals {
@@ -285,4 +325,96 @@ async fn verify_uses_proposal_expected_outcome_not_hardcoded_stance() {
             "recorded operation id must be a valid OperationId: {op}"
         );
     }
+}
+
+#[tokio::test]
+async fn safety_fallback_never_executes_or_settles_the_goal_completed() {
+    let executor = Arc::new(FakeExecutor::default());
+    let episodes = Arc::new(RecordingEpisodes::default());
+    let harness = RobotHarness::new(
+        RobotHarnessConfig::default(),
+        Arc::new(FakeWorldState),
+        executor.clone(),
+        Arc::new(RecordingVerifier::default()),
+        episodes.clone(),
+        Arc::new(Stance2Policy {
+            goal_alignment: GoalAlignment::SafetyFallback,
+        }),
+        Arc::new(cognit::harness::robot::NoopRobotPerception),
+        allowed_skills(),
+    );
+
+    let mut state = harness.init(
+        DeviceId("bot".into()),
+        "request outside the available skill contract".into(),
+        "ep-fallback".into(),
+    );
+    for _ in 0..12 {
+        if state.state.is_terminal() {
+            break;
+        }
+        state = harness.step(state).await;
+    }
+
+    assert!(state.state.is_terminal());
+    assert_eq!(state.settlement, Some(EpisodeSettlement::Failed));
+    assert_eq!(executor.executions.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.safe_stops.load(Ordering::SeqCst), 1);
+    assert!(episodes.attempt_ids.lock().unwrap().is_empty());
+    assert_eq!(
+        state
+            .latest_policy_provenance
+            .as_ref()
+            .map(|provenance| provenance.provider.as_str()),
+        Some("test")
+    );
+    assert_eq!(
+        state
+            .latest_policy_provenance
+            .as_ref()
+            .map(|p| p.model.as_str()),
+        Some("m")
+    );
+    assert!(state.failures.iter().any(|failure| {
+        failure.class == RobotFailureClass::ProposalRejected
+            && failure.detail.contains("goal_alignment")
+    }));
+}
+
+#[tokio::test]
+async fn mismatched_execution_result_identity_fails_closed() {
+    let executor = Arc::new(MismatchedExecutor::default());
+    let episodes = Arc::new(RecordingEpisodes::default());
+    let harness = RobotHarness::new(
+        RobotHarnessConfig::default(),
+        Arc::new(FakeWorldState),
+        executor.clone(),
+        Arc::new(RecordingVerifier::default()),
+        episodes.clone(),
+        Arc::new(Stance2Policy {
+            goal_alignment: GoalAlignment::Direct,
+        }),
+        Arc::new(cognit::harness::robot::NoopRobotPerception),
+        allowed_skills(),
+    );
+
+    let mut state = harness.init(
+        DeviceId("bot".into()),
+        "stand".into(),
+        "ep-result-mismatch".into(),
+    );
+    for _ in 0..12 {
+        if state.state.is_terminal() {
+            break;
+        }
+        state = harness.step(state).await;
+    }
+
+    assert_eq!(state.settlement, Some(EpisodeSettlement::Failed));
+    assert_eq!(executor.safe_stops.load(Ordering::SeqCst), 1);
+    assert_eq!(episodes.attempt_ids.lock().unwrap().len(), 1);
+    assert!(state.failures.iter().any(|failure| {
+        failure.class == RobotFailureClass::ProviderDisconnected
+            && failure.detail.contains("result identity mismatch")
+    }));
 }

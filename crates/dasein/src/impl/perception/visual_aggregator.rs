@@ -110,6 +110,9 @@ impl VisualAggregator {
         let clamped_confidence = confidence.max(0.0).min(1.0);
 
         let obs = PerceptionObservation {
+            device: fabric::types::embodiment::DeviceId(frame.camera_id.clone()),
+            schema: "camera.rgb".into(),
+            schema_version: 1,
             frame,
             labels,
             summary,
@@ -157,12 +160,14 @@ mod tests {
     use super::*;
 
     fn test_frame(camera: &str, sha256: &str, source_ms: i64) -> FrameRef {
+        let sha256 = format!("{sha256:0>64}");
         FrameRef {
-            uri: format!("artifact://sha256:{sha256}"),
-            sha256: sha256.into(),
+            uri: format!("artifact://sha256/{sha256}"),
+            sha256,
             mime_type: "image/jpeg".into(),
             width: 640,
             height: 480,
+            byte_len: 32_000,
             source_time_ms: source_ms,
             camera_id: camera.into(),
             frame_id: 0,

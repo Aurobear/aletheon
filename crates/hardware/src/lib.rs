@@ -29,7 +29,10 @@ pub use device::{
     OperationId, PrincipalId,
 };
 pub use emergency_stop::EmergencyStop;
-pub use grpc::provider::{GrpcEmbodimentProvider, GrpcProviderConfig};
+pub use grpc::provider::{
+    BridgeCapabilitySnapshot, BridgeHealthComponentSnapshot, BridgeHealthSnapshot,
+    BridgeStartupError, GrpcEmbodimentProvider, GrpcProviderConfig, ObservationSchemaRequirement,
+};
 pub use lease::{ControlLease, ControlPermit};
 pub use observation::{is_stale, ObservationIngest};
 pub use provider::{DeviceProvider, ValidatedCommand};

@@ -12,11 +12,12 @@ fn integration_dedup_and_rate_limit() {
     for i in 0..10 {
         use fabric::types::frame::FrameRef;
         let f = FrameRef {
-            uri: format!("artifact://sha256:{i}"),
+            uri: format!("artifact://sha256/{i:064x}"),
             sha256: format!("{i:064x}"),
             mime_type: "image/jpeg".into(),
             width: 640,
             height: 480,
+            byte_len: 32_000,
             source_time_ms: 1000,
             camera_id: "cam0".into(),
             frame_id: i,

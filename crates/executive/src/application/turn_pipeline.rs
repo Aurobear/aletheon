@@ -1272,6 +1272,11 @@ impl TurnPipeline {
                                 return Err(error);
                             }
                         }
+                        TurnEventV1::RobotEpisodeSettled { receipt } => {
+                            canonical_items.push(fabric::ItemPayload::RobotEpisodeReceipt {
+                                receipt: receipt.clone(),
+                            });
+                        }
                         TurnEventV1::Usage { usage } => {
                             acc_tokens_in = acc_tokens_in.saturating_add(usage.total_input_tokens.unwrap_or(0));
                             acc_tokens_out = acc_tokens_out.saturating_add(usage.output_tokens.unwrap_or(0));
@@ -1341,6 +1346,11 @@ impl TurnPipeline {
                     ).await?;
                     let is_terminal = terminal_events.observe(&event);
                     match &event {
+                        TurnEventV1::RobotEpisodeSettled { receipt } => {
+                            canonical_items.push(fabric::ItemPayload::RobotEpisodeReceipt {
+                                receipt: receipt.clone(),
+                            });
+                        }
                         TurnEventV1::Usage { usage } => {
                             acc_tokens_in = acc_tokens_in.saturating_add(usage.total_input_tokens.unwrap_or(0));
                             acc_tokens_out = acc_tokens_out.saturating_add(usage.output_tokens.unwrap_or(0));
@@ -1392,7 +1402,7 @@ impl TurnPipeline {
             .collect::<Vec<_>>();
         let _buffered_terminal_events = terminal_events;
 
-        let turn_succeeded = text.is_ok();
+        let execution_returned = text.is_ok();
         let result = text.unwrap_or_else(|e| fabric::TurnResult {
             output: format!("error: {e}"),
             stop: fabric::TurnStop::Failed,
@@ -1405,11 +1415,35 @@ impl TurnPipeline {
                 completed_normally: false,
             },
         });
+        // A successfully returned runtime result can still be authoritatively
+        // blocked (for example a Robot safety denial). Do not collapse "RPC
+        // returned" into task success or let the rendered report advance the
+        // Session as completed.
+        let turn_succeeded = execution_returned && matches!(result.stop, fabric::TurnStop::Completed);
         let text = result.output;
         let metrics = result.metrics;
         canonical_items.extend(
             std::mem::take(&mut *completed_inference_items.lock().await),
         );
+        // Capability receipts are collected by the governed invoker for
+        // evaluation, but they are also canonical Session evidence. Persist
+        // them alongside the tool call/result so Activity projections never
+        // have to infer terminal command success from rendered output.
+        let mut completed_receipts = evaluation_capability_receipts.lock().await.clone();
+        completed_receipts.sort_by(|left, right| {
+            left.finished_at
+                .cmp(&right.finished_at)
+                .then_with(|| left.invocation_id.cmp(&right.invocation_id))
+        });
+        for receipt in completed_receipts {
+            let already_recorded = canonical_items.iter().any(|item| {
+                matches!(item, fabric::ItemPayload::CapabilityReceipt { receipt: existing }
+                    if existing.invocation_id == receipt.invocation_id)
+            });
+            if !already_recorded {
+                canonical_items.push(fabric::ItemPayload::CapabilityReceipt { receipt });
+            }
+        }
         info!(len = text.len(), "ReAct loop completed");
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ExecutionFinished)?;
@@ -1826,6 +1860,7 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
         TurnEventV1::CompactionOutcome { .. }
         | TurnEventV1::TextDeltaStop
         | TurnEventV1::Approval { .. }
+        | TurnEventV1::RobotEpisodeSettled { .. }
         | TurnEventV1::Generic { .. } => None,
     }
 }

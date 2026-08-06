@@ -99,16 +99,41 @@ EXPECTED_TERMINALS = frozenset(
     {"verified", "blocked", "budget_exhausted", "cancelled"}
 )
 OBSERVED_STOPS = frozenset(
-    {"completed", "blocked", "cancelled", "failed", "unavailable"}
+    {
+        "completed",
+        "blocked",
+        "cancelled",
+        "provider_unavailable",
+        "provider_rejected",
+        "validation_failed",
+        "output_backpressure",
+        "failed",
+        "unavailable",
+    }
 )
 OBSERVED_TERMINALS = frozenset(
-    {"verified", "blocked", "budget_exhausted", "cancelled", "failed", "unavailable"}
+    {
+        "verified",
+        "blocked",
+        "budget_exhausted",
+        "cancelled",
+        "provider_unavailable",
+        "provider_rejected",
+        "validation_failed",
+        "output_backpressure",
+        "failed",
+        "unavailable",
+    }
 )
 TERMINAL_STOPS = {
     "verified": frozenset({"completed"}),
     "blocked": frozenset({"blocked"}),
     "budget_exhausted": frozenset({"blocked"}),
     "cancelled": frozenset({"cancelled", "unavailable"}),
+    "provider_unavailable": frozenset({"provider_unavailable"}),
+    "provider_rejected": frozenset({"provider_rejected"}),
+    "validation_failed": frozenset({"validation_failed"}),
+    "output_backpressure": frozenset({"output_backpressure"}),
     "failed": frozenset({"failed"}),
     "unavailable": frozenset({"unavailable"}),
 }
@@ -337,7 +362,6 @@ def classify_failure(value: Mapping[str, Any]) -> tuple[str, list[str]]:
     """Return exactly one failure class using host-owned precedence."""
     execution = value.get("execution", {})
     workspace = value.get("workspace", {})
-    metrics = value.get("metrics", {})
 
     infrastructure: list[str] = []
     explicit = execution.get("infrastructure_error")
@@ -382,14 +406,25 @@ def classify_failure(value: Mapping[str, Any]) -> tuple[str, list[str]]:
         runtime.append("client_exit_nonzero")
     if value.get("observed_stop") == "failed":
         runtime.append("authoritative_stop_failed")
+    if value.get("observed_stop") in {
+        "provider_unavailable",
+        "provider_rejected",
+        "validation_failed",
+        "output_backpressure",
+    }:
+        runtime.append(f"authoritative_{value['observed_stop']}")
     if (
         value.get("observed_stop") == "completed"
         and execution.get("reported_success") is not True
     ):
         runtime.append("client_reported_failure")
-    tool_errors = metrics.get("tool_errors")
-    if isinstance(tool_errors, int) and tool_errors > 0:
-        runtime.append("tool_error_observed")
+    # Keep tool errors as a first-class diagnostic metric, but do not turn the
+    # aggregate count into a terminal failure by itself. A model may recover
+    # from a rejected patch shape, a failed exploratory command, or an initial
+    # validation attempt. The authoritative terminal, independent acceptance,
+    # workspace policy, resource checks, and correlated evidence below decide
+    # whether the task actually succeeded. Provider/runtime failures still
+    # fail closed through their typed terminal states above.
     if value.get("observed_terminal") != value.get("expected_terminal"):
         runtime.append("unexpected_terminal")
     if runtime:

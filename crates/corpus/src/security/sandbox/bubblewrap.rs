@@ -181,7 +181,18 @@ fn push_policy_fs_mounts(
         args.push(root.to_string_lossy().into_owned());
     }
 
-    // Mount read-write roots (skip duplicates of workspace writable roots).
+    // The resolved profile describes additional policy roots; the per-turn
+    // WorkspacePolicy remains the authority for the active checkout.  Mount
+    // those roots explicitly before any profile additions.  Previously this
+    // branch skipped duplicates without ever installing the workspace binds,
+    // making configured `workspace` profiles accidentally read-only.
+    for root in &workspace_writable {
+        args.push("--bind".into());
+        args.push(root.to_string_lossy().into_owned());
+        args.push(root.to_string_lossy().into_owned());
+    }
+
+    // Mount additional read-write roots (skip workspace duplicates).
     for root in &policy.read_write_roots {
         if workspace_writable.contains(root) {
             continue;
@@ -471,6 +482,30 @@ mod tests {
     }
 
     #[test]
+    fn resolved_profile_keeps_workspace_roots_writable() {
+        let temp = tempfile::tempdir().unwrap();
+        let work = temp.path().join("project");
+        std::fs::create_dir_all(&work).unwrap();
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(work.clone(), vec![]).unwrap(),
+            environment: Default::default(),
+            policy: Some(resolved_policy(Vec::new())),
+        };
+
+        let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        let work = work.to_string_lossy().into_owned();
+        assert!(
+            args.windows(3)
+                .any(|items| items[0] == "--bind" && items[1] == work && items[2] == work),
+            "configured profiles must retain the per-turn workspace bind: {args:?}"
+        );
+    }
+
+    #[test]
     fn deny_exact_directory_is_masked_with_tmpfs() {
         let temp = tempfile::tempdir().unwrap();
         let ssh = temp.path().join(".ssh");
@@ -588,10 +623,75 @@ mod tests {
         );
         assert_eq!(allowed.stdout, "PERMITTED_VALUE");
 
+        let writable = backend
+            .execute(
+                "printf UPDATED > \"$PERMITTED_PATH\"",
+                &config,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            writable.exit_code, 0,
+            "workspace write failed: {}",
+            writable.stderr
+        );
+        assert_eq!(std::fs::read_to_string(&permitted).unwrap(), "UPDATED");
+
         let blocked = backend
             .execute("cat -- \"$DENIED_PATH\"", &config, Duration::from_secs(5))
             .await
             .unwrap();
         assert_ne!(blocked.stdout, "DENIED_SECRET");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn configured_profile_allows_only_its_private_temp_root() {
+        let Some(backend) = BubblewrapBackend::probe(Arc::new(TestClock::default())) else {
+            return;
+        };
+        let workspace = tempfile::tempdir().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let mut policy = resolved_policy(Vec::new());
+        policy.read_write_roots.push(scratch.path().to_path_buf());
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                workspace.path().to_path_buf(),
+                vec![],
+            )
+            .unwrap(),
+            environment: BTreeMap::from([(
+                "TMPDIR".into(),
+                scratch.path().to_string_lossy().into_owned(),
+            )]),
+            policy: Some(policy),
+        };
+
+        let result = backend
+            .execute(
+                "created=$(mktemp) && printf OK > \"$created\" && printf %s \"$created\"",
+                &config,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        if result.exit_code != 0
+            && result
+                .stderr
+                .to_ascii_lowercase()
+                .contains("operation not permitted")
+        {
+            return;
+        }
+        assert_eq!(
+            result.exit_code, 0,
+            "private temp failed: {}",
+            result.stderr
+        );
+        assert!(result
+            .stdout
+            .starts_with(&scratch.path().to_string_lossy().to_string()));
+        assert_eq!(std::fs::read_to_string(result.stdout).unwrap(), "OK");
     }
 }

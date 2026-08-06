@@ -5,8 +5,8 @@ use executive::application::turn_policy::TurnPolicy;
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use fabric::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, OperationId, PermissionProfileId,
-    PrincipalContext, PrincipalId, SessionAppendStore, ThreadId, TurnMetrics, TurnRequest,
-    TurnResult, TurnStop, WorkspacePolicy,
+    PrincipalContext, PrincipalId, ThreadId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
+    WorkspacePolicy,
 };
 use kernel::KernelRuntime;
 use tokio::sync::{mpsc, Barrier, Mutex, Semaphore};
@@ -26,12 +26,10 @@ fn context(uid: u32, thread: &str, cwd: &str) -> PrincipalContext {
 #[tokio::test]
 async fn concurrent_principals_keep_distinct_thread_authority() {
     let kernel = Arc::new(KernelRuntime::new());
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = Arc::new(
         executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
             kernel.clone(),
-            store,
+            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         ),
     );
     let alice_process = kernel
@@ -174,12 +172,10 @@ fn completed() -> TurnExecution {
 #[tokio::test]
 async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
     let kernel = Arc::new(KernelRuntime::new());
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = Arc::new(
         executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
             kernel.clone(),
-            store,
+            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         )
         .with_backpressure(executive::composition::config::BackpressureConfig {
             max_concurrent_turns: Some(1),
@@ -237,12 +233,10 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
 #[tokio::test]
 async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelled() {
     let kernel = Arc::new(KernelRuntime::new());
-    let store: Arc<dyn SessionAppendStore> =
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = Arc::new(
         executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
             kernel.clone(),
-            store,
+            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         ),
     );
     let process = kernel

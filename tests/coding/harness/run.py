@@ -186,6 +186,14 @@ def _git(workspace: pathlib.Path, *arguments: str, check: bool = True) -> bytes:
 
 def _initialize_workspace(workspace: pathlib.Path) -> str:
     subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+    # Rust validation writes build artifacts into `target/`. They are execution
+    # evidence, not a model-authored source change, and must not make an
+    # otherwise scoped repair fail the changed-path gate. Keep the exclusion in
+    # Git's private control area so it neither changes the fixture baseline nor
+    # teaches the model an acceptance-specific source convention.
+    exclude = workspace / ".git/info/exclude"
+    with exclude.open("a", encoding="utf-8") as handle:
+        handle.write("\n/target/\n")
     subprocess.run(
         ["git", "config", "user.email", "fixture@aletheon.invalid"],
         cwd=workspace,
@@ -212,8 +220,8 @@ def apply_setup(task: BenchmarkTask, workspace: pathlib.Path) -> str | None:
     return digest(_git(workspace, "diff", "--binary", "HEAD", "--", dirty_path))
 
 
-def changed_paths(workspace: pathlib.Path) -> list[str]:
-    tracked = _git(workspace, "diff", "--name-only", "-z", "HEAD").split(b"\0")
+def changed_paths(workspace: pathlib.Path, baseline: str = "HEAD") -> list[str]:
+    tracked = _git(workspace, "diff", "--name-only", "-z", baseline).split(b"\0")
     untracked = _git(
         workspace, "ls-files", "--others", "--exclude-standard", "-z"
     ).split(b"\0")
@@ -236,9 +244,10 @@ def _workspace_evidence(
     task: BenchmarkTask,
     workspace: pathlib.Path,
     base_tree_digest: str,
+    base_commit: str,
     dirty_patch_digest: str | None,
 ) -> dict[str, object]:
-    changed = changed_paths(workspace)
+    changed = changed_paths(workspace, base_commit)
     untracked = _git(
         workspace, "ls-files", "--others", "--exclude-standard", "-z"
     ).split(b"\0")
@@ -251,12 +260,12 @@ def _workspace_evidence(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    diff_bytes = _git(workspace, "diff", "--binary", "HEAD", "--")
+    diff_bytes = _git(workspace, "diff", "--binary", base_commit, "--")
     diff_text = diff_bytes.decode("utf-8", errors="replace")
 
     forbidden_unchanged = all(
         subprocess.run(
-            ["git", "diff", "--quiet", "HEAD", "--", declared],
+            ["git", "diff", "--quiet", base_commit, "--", declared],
             cwd=workspace,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -277,15 +286,23 @@ def _workspace_evidence(
     current_dirty = None
     if isinstance(dirty_path, str):
         current_dirty = digest(
-            _git(workspace, "diff", "--binary", "HEAD", "--", dirty_path)
+            _git(workspace, "diff", "--binary", base_commit, "--", dirty_path)
         )
+    head_unchanged = (
+        _git(workspace, "rev-parse", "HEAD").decode("ascii").strip() == base_commit
+    )
     return {
         "base_tree_digest": base_tree_digest,
         "diff": diff_text,
         "diff_digest": digest(diff_bytes),
         "changed_files": changed,
         "forbidden_paths_unchanged": forbidden_unchanged,
-        "required_scope_satisfied": required_covered and allowed_scope,
+        # A model-authored commit must not hide changes from the benchmark's
+        # diff-based evidence. Treat moving HEAD as a scope violation while
+        # retaining the complete diff against the host-minted base commit.
+        "required_scope_satisfied": (
+            required_covered and allowed_scope and head_unchanged
+        ),
         "dirty_patch_digest": dirty_patch_digest,
         "dirty_patch_preserved": current_dirty == dirty_patch_digest,
     }
@@ -327,6 +344,20 @@ def default_binary(environ: Mapping[str, str]) -> pathlib.Path:
     return pathlib.Path(cache_root) / "target/debug/aletheon"
 
 
+def execution_prompt(task: BenchmarkTask) -> str:
+    """Bind real-model work to the public fixture contract and workspace."""
+    return "\n\n".join(
+        (
+            task.prompt,
+            """[host_execution_constraints]
+- The host-selected working directory is the complete and canonical task workspace. Do not inspect, read, or write parent, sibling, host-runtime, or hidden-acceptance paths.
+- Do not stage or commit changes and do not move Git HEAD. The host records the uncommitted workspace diff as evidence.
+- Do not create external scratch projects or destructive cleanup commands. If validation is useful, run at most one relevant non-destructive validation inside the task workspace.
+- After the smallest requested change, optional validation, and diff review, stop. The host runs the declared acceptance commands separately.""",
+        )
+    )
+
+
 def _check_resources(
     task: BenchmarkTask, results: list[Mapping[str, object]]
 ) -> dict[str, object]:
@@ -351,37 +382,31 @@ def _parse_executive(execution: Mapping[str, object]) -> tuple[dict[str, object]
         parsed = json.loads(decoded)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return {}, False
-    if not isinstance(parsed, dict):
-        return {}, False
-    # Installed ``aletheon exec --output json`` emits the versioned terminal
-    # envelope (type/status/metrics), while older diagnostic clients exposed
-    # the flattened stop/success fields. Normalize both at this boundary so
-    # acceptance remains based on the authoritative terminal snapshot.
-    if parsed.get("type") == "terminal" and "stop" not in parsed:
-        status = parsed.get("status")
-        if status in {"completed", "blocked", "cancelled", "failed"}:
-            parsed["stop"] = status
-        metrics = parsed.get("metrics")
-        if isinstance(metrics, dict):
-            for source, target in (
-                ("iterations", "iterations"),
-                ("tool_calls_made", "tool_calls_made"),
-                ("tool_errors", "tool_errors"),
-                ("provider_retries", "provider_retries"),
-                ("elapsed_ms", "elapsed_ms"),
-            ):
-                if target not in parsed and source in metrics:
-                    parsed[target] = metrics[source]
-            if "inference_rounds" not in parsed and "iterations" in metrics:
-                parsed["inference_rounds"] = metrics["iterations"]
-            if "success" not in parsed and isinstance(metrics.get("completed_normally"), bool):
-                parsed["success"] = metrics["completed_normally"]
-    return parsed, True
+    return (parsed, True) if isinstance(parsed, dict) else ({}, False)
+
+
+EXEC_TERMINAL_STATUSES = {
+    "completed",
+    "blocked",
+    "cancelled",
+    "provider_unavailable",
+    "provider_rejected",
+    "validation_failed",
+    "output_backpressure",
+    "failed",
+}
 
 
 def _observed_stop(executive: Mapping[str, object]) -> str:
-    stop = executive.get("stop")
-    return str(stop) if stop in {"completed", "blocked", "cancelled", "failed"} else "unavailable"
+    if executive.get("schema_version") != 1 or executive.get("type") != "terminal":
+        return "unavailable"
+    status = executive.get("status")
+    return str(status) if status in EXEC_TERMINAL_STATUSES else "unavailable"
+
+
+def _terminal_metrics(executive: Mapping[str, object]) -> Mapping[str, object]:
+    metrics = executive.get("metrics")
+    return metrics if isinstance(metrics, dict) else {}
 
 
 def observed_terminal(
@@ -392,12 +417,13 @@ def observed_terminal(
     if execution["timed_out"]:
         return "cancelled"
     stop = _observed_stop(executive)
+    metrics = _terminal_metrics(executive)
     limit = task.setup.get("exec_max_turns")
     if (
         task.expected_terminal == "budget_exhausted"
         and stop == "blocked"
         and isinstance(limit, int)
-        and executive.get("iterations") == limit
+        and metrics.get("iterations") == limit
     ):
         return "budget_exhausted"
     if stop == "completed":
@@ -419,20 +445,21 @@ def _build_receipt(
     operation_id = executive.get("operation_id")
     operation_id = operation_id if isinstance(operation_id, str) else ""
     stop = _observed_stop(executive)
+    terminal_metrics = _terminal_metrics(executive)
     observed = observed_terminal(task, executive, execution_result)
     execution = _public_command(execution_result)
     execution.update(
         {
             "json_valid": json_valid,
             "terminal_snapshot": stop != "unavailable",
-            "reported_success": executive.get("success")
-            if isinstance(executive.get("success"), bool)
+            "reported_success": stop == "completed"
+            if stop != "unavailable"
             else None,
             "infrastructure_error": execution_result.get("_spawn_error"),
         }
     )
     acceptance = [_public_command(result) for result in acceptance_results]
-    reported_elapsed = _integer_metric(executive.get("elapsed_ms"))
+    reported_elapsed = _integer_metric(terminal_metrics.get("elapsed_ms"))
     evidence: list[dict[str, object]] = []
     if stop != "unavailable":
         evidence.append(
@@ -469,13 +496,17 @@ def _build_receipt(
         "evidence": evidence,
         "resources": resources,
         "metrics": {
-            "iterations": _integer_metric(executive.get("iterations")),
-            "tool_calls": _integer_metric(executive.get("tool_calls_made")),
-            "tool_errors": _integer_metric(executive.get("tool_errors")),
-            "inference_rounds": _integer_metric(executive.get("inference_rounds")),
-            "provider_retries": _integer_metric(executive.get("provider_retries")),
+            "iterations": _integer_metric(terminal_metrics.get("iterations")),
+            "tool_calls": _integer_metric(terminal_metrics.get("tool_calls_made")),
+            "tool_errors": _integer_metric(terminal_metrics.get("tool_errors")),
+            "inference_rounds": _integer_metric(
+                terminal_metrics.get("inference_rounds")
+            ),
+            "provider_retries": _integer_metric(
+                terminal_metrics.get("provider_retries")
+            ),
             "active_context_tokens": _integer_metric(
-                executive.get("active_context_tokens")
+                terminal_metrics.get("active_context_tokens")
             ),
             "elapsed_ms": reported_elapsed
             if reported_elapsed is not None
@@ -514,6 +545,7 @@ def run_task(
         fixture = root / "tests/coding/fixtures" / task.fixture
         shutil.copytree(fixture, workspace)
         base_tree_digest = _initialize_workspace(workspace)
+        base_commit = _git(workspace, "rev-parse", "HEAD").decode("ascii").strip()
         dirty_patch_digest = apply_setup(task, workspace)
 
         home = temporary_root / "home"
@@ -532,6 +564,11 @@ def run_task(
                 "HOME": str(home),
                 "XDG_RUNTIME_DIR": str(runtime_dir),
                 "XDG_CONFIG_HOME": str(config),
+                # Installed corpus acceptance is intentionally stricter than a
+                # diagnostic developer run: it must not be able to inspect the
+                # host checkout or hidden acceptance overlays outside workspace.
+                "ALETHEON__GROK_HARDENING__SANDBOX_PROFILES": "true",
+                "ALETHEON__SANDBOX_PROFILES__DEFAULT_PROFILE": "strict",
             }
         )
         command = [
@@ -540,7 +577,7 @@ def run_task(
             str(workspace),
             "exec",
             "--prompt",
-            task.prompt,
+            execution_prompt(task),
             "--sandbox",
             sandbox,
             "--output",
@@ -566,7 +603,7 @@ def run_task(
         executive, json_valid = _parse_executive(execution_result)
 
         workspace_evidence = _workspace_evidence(
-            task, workspace, base_tree_digest, dirty_patch_digest
+            task, workspace, base_tree_digest, base_commit, dirty_patch_digest
         )
         _overlay_hidden_acceptance(task, workspace, root)
         acceptance_results: list[Mapping[str, object]] = []

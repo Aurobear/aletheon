@@ -174,7 +174,7 @@
           }
         },
         "system_prompt": {
-          "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar repository or workspace overview, the first and only initial inspection call MUST be `repo_inspect`; wait for its result before choosing further tools. It batch-reads conventional entry files and returns content-backed evidence. Treat every `missing_candidates` item as one exact unavailable candidate path only: never generalize it to absence of an alternative file, a file category, a capability, or its parent directory, and never contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only when exact evidence is still missing. Use glob only when a specific required path remains unknown. During a repository overview, never use recursive `**` patterns or wildcard crate/directory scopes; read only exact paths returned by `repo_inspect` or identified in returned content. Never inventory languages, file extensions, tests, or conventional filenames merely to infer maturity. A missing conventional file is not proof that a capability, deployment path, or integration is absent; verify absence against scoped content. Repository instructions describe operating and acceptance policy, not proof that a named runtime failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do not infer maintainer count or staffing risk from an author line or commit history. Before claiming that routing, failover, tests, or deployment support is absent, read its scoped implementation or authoritative architecture/status evidence. Never infer the effective production provider or route from examples or checked-in sample configuration; inspect typed host state and effective configuration, or label the production route unverified. Base conclusions on returned file contents rather than filenames. For repository analysis, cite the returned path or typed runtime source for every architecture, maturity, and risk conclusion; label unsupported conclusions unverified. Never claim to have reviewed a file, module, crate, test, or runtime path when only its name or discovery result was returned. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation. Distinguish documented design, observed runtime fact, and unverified inference in runtime conclusions, and disclose every failed or denied probe that limits the answer.",
+          "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar repository or workspace overview, the first and only initial inspection call MUST be `repo_inspect`; wait for its result before choosing further tools. It batch-reads conventional entry files and returns content-backed evidence. Treat every `missing_candidates` item as one exact unavailable candidate path only: never generalize it to absence of an alternative file, a file category, a capability, or its parent directory, and never contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only when exact evidence is still missing. Use glob only when a specific required path remains unknown. During a repository overview, never use recursive `**` patterns or wildcard crate/directory scopes; read only exact paths returned by `repo_inspect` or identified in returned content. Never inventory languages, file extensions, tests, or conventional filenames merely to infer maturity. A missing conventional file is not proof that a capability, deployment path, or integration is absent; verify absence against scoped content. Repository instructions describe operating and acceptance policy, not proof that a named runtime failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do not infer maintainer count or staffing risk from an author line or commit history. Before claiming that routing, failover, tests, or deployment support is absent, read its scoped implementation or authoritative architecture/status evidence. Never infer the effective production provider or route from examples or checked-in sample configuration; inspect typed host state and effective configuration, or label the production route unverified. Base conclusions on returned file contents rather than filenames. For repository analysis, cite the returned path or typed runtime source for every architecture, maturity, and risk conclusion; label unsupported conclusions unverified. Never claim to have reviewed a file, module, crate, test, or runtime path when only its name or discovery result was returned. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation. Distinguish documented design, observed runtime fact, and unverified inference in runtime conclusions, and disclose every failed or denied probe that limits the answer. For repository engineering tasks, treat the host-selected working directory as the canonical workspace unless the user explicitly broadens scope: do not inspect parent, sibling, host-runtime, or hidden-acceptance paths to discover an expected answer. Do not stage or commit repository changes unless the user explicitly asks. For repository edits, make the smallest scoped change, run only the requested or declared validation, review the resulting diff, and then stop rather than performing extra exploratory or version-control operations. For a version-bound repository edit, keep using the host-minted transaction ID through all scoped mutations; after the final mutation call `git_diff` once for the current transaction version, then call `validation_run` only for applicable required steps returned by that transaction's validation plan. Never validate before the diff review, retry a successful validation step, or substitute shell commands for the governed diff and validation tools.",
           "type": "string"
         }
       },
@@ -903,6 +903,15 @@
       },
       "type": "object"
     },
+    "ExecutionEnvironment": {
+      "description": "Provider-attested execution environment. The value comes from the device\nprovider capability handshake; operator configuration may only state the\nenvironment it expects and cannot upgrade this fact.",
+      "enum": [
+        "simulation",
+        "hil",
+        "real"
+      ],
+      "type": "string"
+    },
     "GoalRuntimeConfig": {
       "additionalProperties": false,
       "description": "Provider/model routing for durable Goal worker attempts.",
@@ -1253,6 +1262,18 @@
             "gmail_ingress_policy_file": null,
             "redirect_uri": null
           }
+        },
+        "robot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RobotIntegrationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Robot/Policy settings. Required only when the Robot harness is selected."
         },
         "search": {
           "$ref": "#/$defs/SearchIntegrationConfig",
@@ -2381,6 +2402,238 @@
       },
       "type": "object"
     },
+    "RobotDeploymentGateConfig": {
+      "additionalProperties": false,
+      "description": "Operator-reviewed deployment facts. The serial and digests are compared to\nthe provider-attested startup snapshot before the provider is registered.",
+      "properties": {
+        "device_serial": {
+          "default": "",
+          "type": "string"
+        },
+        "evidence_digest": {
+          "default": "",
+          "description": "Required only for a real deployment and expected to identify reviewed\nHIL/real acceptance evidence.",
+          "type": "string"
+        },
+        "evidence_expiry_unix_ms": {
+          "default": 0,
+          "description": "Unix milliseconds. Required and checked at bootstrap for real devices.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "limits_digest": {
+          "default": "",
+          "type": "string"
+        },
+        "safety_manifest_digest": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RobotIntegrationConfig": {
+      "additionalProperties": false,
+      "description": "Operator-owned Robot harness configuration. It is optional for a Linear\nharness and mandatory when `agent.harness_kind = \"robot\"`.",
+      "properties": {
+        "deployment_gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RobotDeploymentGateConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pinned device and reviewed evidence for HIL/real deployments. Simulation\nmust omit this section; HIL and real must provide it."
+        },
+        "execution_environment": {
+          "$ref": "#/$defs/ExecutionEnvironment",
+          "default": "simulation",
+          "description": "Deployment gate expected from the provider-owned capability handshake.\nThis value never upgrades the Bridge's attested environment."
+        },
+        "max_replans": {
+          "default": 1,
+          "description": "Bounded replan count consumed by `RobotHarness`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 1,
+          "description": "Bounded retry count consumed by `RobotHarness`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "perception": {
+          "$ref": "#/$defs/RobotPerceptionConfig",
+          "default": {
+            "allowed_uri_prefixes": [
+              "artifact://sha256/"
+            ],
+            "max_cached_frames_per_device": 64,
+            "max_devices": 16,
+            "max_frame_age_ms": 2000,
+            "max_frames": 4,
+            "max_total_bytes": 16777216,
+            "poll_interval_ms": 250,
+            "required_by_skill": {}
+          },
+          "description": "Perception polling and world-state bounds."
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RobotPolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A Robot harness must name a real Policy gateway explicitly."
+        },
+        "required_observation_schemas": {
+          "default": [
+            {
+              "schema": "base_pose",
+              "schema_version": 1
+            },
+            {
+              "schema": "base_twist",
+              "schema_version": 1
+            }
+          ],
+          "description": "Observation schemas the Bridge must advertise before Robot startup.",
+          "items": {
+            "$ref": "#/$defs/RobotObservationSchemaConfig"
+          },
+          "type": "array"
+        },
+        "scene_version": {
+          "default": "",
+          "description": "Scene identity recorded on every episode (for example\n`kuavo-mujoco/default-v40`).",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RobotObservationSchemaConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema",
+        "schema_version"
+      ],
+      "type": "object"
+    },
+    "RobotPerceptionConfig": {
+      "additionalProperties": false,
+      "description": "World-state polling settings used by the Robot composition root.",
+      "properties": {
+        "allowed_uri_prefixes": {
+          "default": [
+            "artifact://sha256/"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_cached_frames_per_device": {
+          "default": 64,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_devices": {
+          "default": 16,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_frame_age_ms": {
+          "default": 2000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_frames": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_total_bytes": {
+          "default": 16777216,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "poll_interval_ms": {
+          "default": 250,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "required_by_skill": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/RobotObservationSchemaConfig"
+            },
+            "type": "array"
+          },
+          "default": {},
+          "description": "Skills absent from this map may run without perception. Listed skills\nfail closed unless every schema/version requirement has a selected frame.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "RobotPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Policy gateway settings. Milliseconds remain wire/config values; resolution\nconverts them into checked, bounded `Duration`s before bootstrap.",
+      "properties": {
+        "connect_timeout_ms": {
+          "default": 5000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "endpoint": {
+          "default": "",
+          "type": "string"
+        },
+        "max_proposals": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "protocol_version": {
+          "default": "",
+          "type": "string"
+        },
+        "request_timeout_ms": {
+          "default": 30000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "RoleRuntimeConfig": {
       "additionalProperties": false,
       "description": "One cognitive role mapped to a stable runtime and strict model alias/spec.",
@@ -2792,7 +3045,7 @@
           "request_timeout_ms": 90000,
           "stream_idle_timeout_ms": 90000
         },
-        "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar repository or workspace overview, the first and only initial inspection call MUST be `repo_inspect`; wait for its result before choosing further tools. It batch-reads conventional entry files and returns content-backed evidence. Treat every `missing_candidates` item as one exact unavailable candidate path only: never generalize it to absence of an alternative file, a file category, a capability, or its parent directory, and never contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only when exact evidence is still missing. Use glob only when a specific required path remains unknown. During a repository overview, never use recursive `**` patterns or wildcard crate/directory scopes; read only exact paths returned by `repo_inspect` or identified in returned content. Never inventory languages, file extensions, tests, or conventional filenames merely to infer maturity. A missing conventional file is not proof that a capability, deployment path, or integration is absent; verify absence against scoped content. Repository instructions describe operating and acceptance policy, not proof that a named runtime failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do not infer maintainer count or staffing risk from an author line or commit history. Before claiming that routing, failover, tests, or deployment support is absent, read its scoped implementation or authoritative architecture/status evidence. Never infer the effective production provider or route from examples or checked-in sample configuration; inspect typed host state and effective configuration, or label the production route unverified. Base conclusions on returned file contents rather than filenames. For repository analysis, cite the returned path or typed runtime source for every architecture, maturity, and risk conclusion; label unsupported conclusions unverified. Never claim to have reviewed a file, module, crate, test, or runtime path when only its name or discovery result was returned. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation. Distinguish documented design, observed runtime fact, and unverified inference in runtime conclusions, and disclose every failed or denied probe that limits the answer."
+        "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar repository or workspace overview, the first and only initial inspection call MUST be `repo_inspect`; wait for its result before choosing further tools. It batch-reads conventional entry files and returns content-backed evidence. Treat every `missing_candidates` item as one exact unavailable candidate path only: never generalize it to absence of an alternative file, a file category, a capability, or its parent directory, and never contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only when exact evidence is still missing. Use glob only when a specific required path remains unknown. During a repository overview, never use recursive `**` patterns or wildcard crate/directory scopes; read only exact paths returned by `repo_inspect` or identified in returned content. Never inventory languages, file extensions, tests, or conventional filenames merely to infer maturity. A missing conventional file is not proof that a capability, deployment path, or integration is absent; verify absence against scoped content. Repository instructions describe operating and acceptance policy, not proof that a named runtime failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do not infer maintainer count or staffing risk from an author line or commit history. Before claiming that routing, failover, tests, or deployment support is absent, read its scoped implementation or authoritative architecture/status evidence. Never infer the effective production provider or route from examples or checked-in sample configuration; inspect typed host state and effective configuration, or label the production route unverified. Base conclusions on returned file contents rather than filenames. For repository analysis, cite the returned path or typed runtime source for every architecture, maturity, and risk conclusion; label unsupported conclusions unverified. Never claim to have reviewed a file, module, crate, test, or runtime path when only its name or discovery result was returned. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation. Distinguish documented design, observed runtime fact, and unverified inference in runtime conclusions, and disclose every failed or denied probe that limits the answer. For repository engineering tasks, treat the host-selected working directory as the canonical workspace unless the user explicitly broadens scope: do not inspect parent, sibling, host-runtime, or hidden-acceptance paths to discover an expected answer. Do not stage or commit repository changes unless the user explicitly asks. For repository edits, make the smallest scoped change, run only the requested or declared validation, review the resulting diff, and then stop rather than performing extra exploratory or version-control operations. For a version-bound repository edit, keep using the host-minted transaction ID through all scoped mutations; after the final mutation call `git_diff` once for the current transaction version, then call `validation_run` only for applicable required steps returned by that transaction's validation plan. Never validate before the diff review, retry a successful validation step, or substitute shell commands for the governed diff and validation tools."
       }
     },
     "agent_profiles": {
@@ -2985,6 +3238,7 @@
           "gmail_ingress_policy_file": null,
           "redirect_uri": null
         },
+        "robot": null,
         "search": {
           "api_key": null,
           "api_url": null,

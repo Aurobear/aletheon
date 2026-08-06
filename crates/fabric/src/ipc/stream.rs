@@ -226,6 +226,11 @@ pub enum TurnEventV1 {
         applied_count: Option<usize>,
         failed_count: Option<usize>,
     },
+    /// Robot-domain terminal receipt carried on the turn stream as its own
+    /// schema variant. It is not a tool result or runtime diagnostic payload.
+    RobotEpisodeSettled {
+        receipt: Box<crate::types::episode_report::SettledEpisodeReport>,
+    },
 
     // -- Bookkeeping --
     Usage {

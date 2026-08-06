@@ -6,6 +6,7 @@ import "google/protobuf/struct.proto";
 
 service EmbodimentGateway {
   rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
   rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);
   rpc ExecuteSkill(ExecuteSkillRequest) returns (stream ExecuteSkillEvent);
@@ -19,6 +20,13 @@ enum HealthState {
   HEALTH_STATE_READY = 1;
   HEALTH_STATE_DEGRADED = 2;
   HEALTH_STATE_UNAVAILABLE = 3;
+}
+
+enum ExecutionEnvironment {
+  EXECUTION_ENVIRONMENT_UNSPECIFIED = 0;
+  EXECUTION_ENVIRONMENT_SIMULATION = 1;
+  EXECUTION_ENVIRONMENT_HIL = 2;
+  EXECUTION_ENVIRONMENT_REAL = 3;
 }
 
 enum RiskClass {
@@ -80,6 +88,44 @@ message GetCapabilitiesResponse {
   repeated string device_ids = 3;
   uint32 max_message_bytes = 4;
   uint32 max_progress_hz = 5;
+  string protocol_digest = 6;
+  repeated ObservationSchemaDescriptor observation_schemas = 7;
+  ExecutionEnvironment execution_environment = 8;
+  SafetyCapabilityManifest safety_manifest = 9;
+}
+
+message SafetyCapabilityManifest {
+  bool watchdog = 1;
+  bool heartbeat = 2;
+  bool emergency_stop = 3;
+  bool joint_limits = 4;
+  bool velocity_limits = 5;
+  bool torque_or_current_limits = 6;
+  bool control_ownership = 7;
+  bool safe_stop = 8;
+  uint64 heartbeat_timeout_ms = 9;
+  string device_serial = 10;
+  uint64 watchdog_timeout_ms = 11;
+  uint64 heartbeat_interval_ms = 12;
+  bool independent_hard_stop = 13;
+  string limits_digest = 14;
+}
+
+message HeartbeatRequest {
+  RequestMeta meta = 1;
+  string device_id = 2;
+  string control_session_id = 3;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+  int64 observed_unix_ms = 2;
+  ErrorDetail error = 3;
+}
+
+message ObservationSchemaDescriptor {
+  string schema = 1;
+  uint32 schema_version = 2;
 }
 
 message SnapshotRequest {
@@ -136,6 +182,7 @@ message ExecuteSkillRequest {
   string skill_id = 4;
   google.protobuf.Struct parameters = 5;
   int64 lease_expires_unix_ms = 6;
+  string control_session_id = 7;
 }
 
 message Accepted {

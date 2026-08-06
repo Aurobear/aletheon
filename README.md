@@ -231,28 +231,28 @@ execd     ---> platform
 
 ### 6.1 Capability Matrix
 
-| Capability | Status | Code Anchor | Tests |
-|---|---|---|---|
-| DaemonHost (Unix socket JSON-RPC) | ✅ Stable | `crates/executive/src/host/mod.rs` | `crates/executive/tests/` |
-| SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/executive/src/host/systemd.rs` | `crates/executive/tests/` |
-| ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/executive/src/host/container.rs` | `crates/executive/tests/` |
-| JSON-RPC server (line-delimited) | ✅ Stable | `crates/executive/src/host/daemon/server.rs` | `crates/executive/tests/` |
-| TUI client (`interact`, assembled by `bin`) | ✅ Stable | `crates/interact/src/tui/` | `crates/interact/src/tui/test_infra.rs` |
-| ReActLoop inference engine | ✅ Stable | `crates/cognit/src/harness/linear/mod.rs` | `crates/executive/tests/` |
-| Multi-session support | ✅ Stable | `crates/executive/src/host/daemon/session_manager.rs` | `crates/executive/tests/` |
-| Health check endpoint | ✅ Stable | `crates/executive/src/host/daemon/handler/rpc.rs` | `crates/executive/tests/` |
-| Bash/File/Grep tools | ✅ Stable | `crates/corpus/src/tools/tools/` | `crates/corpus/src/tools/` |
-| Provider abstraction (Anthropic / OpenAI compatible) | ✅ Stable | `crates/cognit/src/composition/provider_registry.rs` | `crates/executive/tests/` |
-| Session persistence (SQLite) | ✅ Stable | `crates/executive/src/adapters/session/store.rs` | `crates/executive/tests/` |
-| Hook system (lifecycle hooks) | ✅ Stable | `crates/corpus/src/hook/` | `crates/executive/tests/` |
-| Bubblewrap Sandbox | ✅ Stable | `crates/corpus/src/security/sandbox/bubblewrap.rs` | `crates/corpus/tests/` |
-| Multi-agent Collaboration | ✅ Stable | `crates/executive/src/application/orchestration/agent.rs` | `crates/executive/tests/` |
-| io_uring IPC backend | 🔧 Experimental | `crates/fabric/src/ipc/backends/io_uring_transport.rs` | `crates/fabric/tests/` |
-| Local/Offline Model | 🔧 Experimental | — | — |
-| Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/evolution_loop/` | `crates/executive/tests/self_evolution_loop_test.rs` |
-| eBPF kernel awareness | 📋 Design | `crates/fabric/src/ipc/bus/kernel_bus.rs` | — |
-| Android / Embedded targets | 📋 Design | — | — |
-| Cross-platform (macOS / Windows) | 📋 Design | — | — |
+| Capability | Status | Production Code | E2E Evidence | Recovery Evidence |
+|---|---|---|---|---|
+| DaemonHost (Unix socket JSON-RPC) | ✅ Stable | `crates/executive/src/application/daemon_lifecycle.rs` | `crates/executive/tests/daemon_lifecycle.rs` | `crates/executive/tests/daemon_lifecycle.rs` |
+| SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/executive/src/host/systemd.rs` | `crates/executive/tests/production_health.rs` | `crates/executive/tests/supervision.rs` |
+| ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/executive/src/host/container.rs` | `crates/executive/tests/daemon_lifecycle.rs` | — |
+| JSON-RPC server (line-delimited) | ✅ Stable | `crates/executive/src/host/daemon/server.rs` | `crates/executive/tests/daemon_streaming_turn_e2e.rs` | `crates/executive/tests/session_protocol_reconnect.rs` |
+| TUI client (`interact`, assembled by `bin`) | ✅ Stable | `crates/interact/src/tui/task_console.rs` | `crates/interact/tests/tui_snapshots.rs` | `crates/interact/tests/tui_reducer.rs` |
+| ReActLoop inference engine | ✅ Stable | `crates/cognit/src/harness/linear/mod.rs` | `crates/executive/tests/turn_service_equivalence.rs` | `crates/executive/tests/goal_restart_recovery.rs` |
+| Multi-session support | ✅ Stable | `crates/executive/src/adapters/session/event_sourced_store.rs` | `crates/executive/tests/session_lifecycle_commands.rs` | `crates/executive/tests/session_protocol_reconnect.rs` |
+| Health check endpoint | ✅ Stable | `crates/executive/src/host/daemon/handler/rpc.rs` | `crates/executive/tests/production_health.rs` | `crates/executive/tests/daemon_lifecycle.rs` |
+| Bash/File/Grep tools | ✅ Stable | `crates/corpus/src/tools/tools/bash_exec.rs` | `crates/corpus/tests/capability_executor.rs` | `crates/corpus/tests/controlled_apply.rs` |
+| Provider abstraction (Anthropic / OpenAI compatible) | ✅ Stable | `crates/cognit/src/composition/provider_registry.rs` | `crates/executive/tests/inference_port_contract.rs` | `crates/cognit/src/adapters/inference/backpressure.rs` |
+| Session persistence (EventSpine + SQLite projection) | ✅ Stable | `crates/executive/src/adapters/session/event_sourced_store.rs` | `crates/executive/tests/session_append_store.rs` | `crates/executive/tests/session_event_recovery.rs` |
+| Hook system (extension-owned lifecycle hooks) | ✅ Stable | `crates/corpus/src/hook/mod.rs` | `crates/executive/tests/package_skill_hook_runtime.rs` | `crates/executive/tests/extension_restart_recovery.rs` |
+| Bubblewrap Sandbox | ✅ Stable | `crates/corpus/src/security/sandbox/bubblewrap.rs` | `crates/corpus/tests/workspace_sandbox.rs` | `crates/corpus/src/security/runner/tests.rs` |
+| Multi-agent Collaboration | ✅ Stable | `crates/executive/src/application/agent_control/mod.rs` | `crates/executive/tests/agent_control_spawn.rs` | `crates/executive/tests/agent_recovery.rs` |
+| io_uring IPC backend | 🔧 Experimental | `crates/fabric/src/ipc/backends/io_uring_transport.rs` | `crates/fabric/src/ipc/backends/io_uring_transport.rs` | — |
+| Local/Offline Model | 🔧 Experimental | — | — | — |
+| Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/evolution_loop/` | `crates/executive/tests/self_evolution_loop_test.rs` | — |
+| eBPF kernel awareness | 📋 Design | `crates/fabric/src/ipc/bus/kernel_bus.rs` | — | — |
+| Android / Embedded targets | 📋 Design | — | — | — |
+| Cross-platform (macOS / Windows) | 📋 Design | — | — | — |
 
 ### 6.2 Stable (has code + tests)
 
@@ -262,14 +262,14 @@ Every `✅ Stable` capability above must keep a concrete code anchor, focused te
 - **JSON-RPC API** — Line-delimited JSON-RPC over Unix socket with concurrent connection handling and streaming notifications (TextDelta, ToolCallStart, etc.).
 - **TUI client** — Terminal UI implemented in `crates/interact/` and assembled by `crates/aletheon`, connecting to the daemon over Unix socket.
 - **ReActLoop inference** — Sole production inference engine (Legacy Engine removed). Think-Act-Observe loop with streaming, tool execution, circuit breaker, and goal tracking.
-- **Multi-session** — HashMap-based session registry with create/list/switch RPC methods.
+- **Multi-session** — `EventSourcedSessionStore` is the single mutation authority; daemon snapshots, lists, and ordered event pages are materialized read projections.
 - **Health check** — RPC endpoint returning uptime, active connections, session count, and version.
 - **Bash/File/Grep tools** — Core tool set for filesystem interaction and command execution, with sandbox isolation.
 - **Provider abstraction** — LLM provider registry supporting Anthropic API, OpenAI API, and other OpenAI-compatible endpoints with model routing.
-- **Session persistence** — SQLite-backed session store with journaling and event logging.
+- **Session persistence** — EventSpine is the authoritative journal and the SQLite Session store is a replayable materialized projection.
 - **Hook system** — Lifecycle hooks (session distiller, recall injection) with config-based loading.
 - **Bubblewrap Sandbox** — Tool execution sandboxing via bubblewrap (bwrap) for filesystem and network isolation.
-- **Multi-agent Collaboration** — Orchestration module for spawning and coordinating multiple agent instances for complex tasks.
+- **Multi-agent Collaboration** — AgentControl owns bounded spawn, receipt settlement, generation fencing, and restart reconciliation.
 
 ### 6.3 Experimental (exists behind feature flags or as examples)
 

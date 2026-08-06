@@ -1,0 +1,1 @@
+#[test] fn report_explains_precedence(){ let r=include_str!("../REPORT.md").to_lowercase(); for s in ["defaults", "user", "project", "src/config.rs", "merge_layer"] { assert!(r.contains(s), "missing {s}"); } assert!(r.find("defaults").unwrap() < r.rfind("project").unwrap()); }

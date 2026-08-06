@@ -80,6 +80,50 @@ impl CommandUseCases for DaemonCommandUseCases {
         })
     }
 
+    async fn execute_shell(
+        &self,
+        intent: &fabric::contract::command::ClientIntent,
+        shell: &fabric::contract::command::ExecuteShellIntent,
+    ) -> anyhow::Result<CommandOutput> {
+        let thread_id = match &shell.session_id {
+            Some(session_id) => fabric::ThreadId(session_id.0.clone()),
+            None => {
+                self.handler
+                    .select_workspace_session(shell.workspace.cwd())
+                    .await?
+            }
+        };
+        // The shell sigil is an intent adapter, never a local execution path.
+        // A host-authored capability obligation routes the command through the
+        // ordinary policy, approval, audit, receipt, and Activity projection.
+        let content = format!(
+            "Execute the following user-requested shell command exactly through the `exec_command` capability and report its terminal result:\n{}",
+            shell.command
+        );
+        let response = self
+            .handler
+            .execute_explicit_chat(
+                &self.connection,
+                self.rpc_id.clone(),
+                content,
+                thread_id,
+                shell.workspace.clone(),
+                vec![fabric::TurnRequirement::InvokeCapability {
+                    name: "exec_command".into(),
+                }],
+                None,
+                shell.permission_mode,
+            )
+            .await;
+        if let Some((code, message)) = rpc_error_parts(&response) {
+            return Ok(CommandOutput::Rejected { code, message });
+        }
+        Ok(CommandOutput::PromptCompleted {
+            correlation_id: intent.correlation_id.clone(),
+            result: take_rpc_result(response)?,
+        })
+    }
+
     async fn status(
         &self,
         intent: &fabric::contract::command::ClientIntent,

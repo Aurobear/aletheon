@@ -565,6 +565,9 @@ mod tests {
     use fabric::ToolDefinition;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
+
+    mod policy_denial_tests;
+
     /// No-op compressor for tests that don't exercise compaction.
     struct NoopCompressor;
     impl CompactorTrait for NoopCompressor {
@@ -2041,11 +2044,6 @@ mod tests {
                     name: "validation_run".into(),
                     input: serde_json::json!({}),
                 },
-                6 => ContentBlock::ToolUse {
-                    id: "accept".into(),
-                    name: "change_accept".into(),
-                    input: serde_json::json!({}),
-                },
                 _ => ContentBlock::Text {
                     text: "version-bound change completed".into(),
                 },
@@ -2079,7 +2077,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn coding_loop_rejects_apply_and_diff_only_completion_then_accepts_exact_closure() {
+    async fn coding_loop_rejects_apply_and_diff_only_then_completes_exact_closure() {
         let mut lp = ReActLoop::new(
             HarnessConfig {
                 max_iterations: 10,
@@ -2102,7 +2100,6 @@ mod tests {
                         "apply_patch" => r#"{"kind":"apply_patch_receipt","transaction_id":"tx","resulting_workspace_version":"v1"}"#,
                         "git_diff" => r#"{"kind":"change_diff_receipt","transaction_id":"tx","workspace_version":"v1","diff_artifact_ref":"artifact://sha256/diff"}"#,
                         "validation_run" => r#"{"session_id":"validation-session","terminal":{"status":"exited","exit_code":0},"output_artifact_ref":"artifact://sha256/test","change_transaction":{"transaction_id":"tx","phase":"validated","validation_receipts":[{"workspace_version":"v1","output_ref":"artifact://sha256/test"}]}}"#,
-                        "change_accept" => r#"{"kind":"change_acceptance_receipt","transaction_id":"tx","workspace_version":"v1","transaction_phase":"accepted"}"#,
                         _ => unreachable!(),
                     };
                     async move { (content.to_string(), false) }
@@ -2113,8 +2110,8 @@ mod tests {
 
         assert_eq!(output, "version-bound change completed");
         assert_eq!(metrics.stop, fabric::TurnStop::Completed);
-        assert_eq!(*llm.calls.lock().unwrap(), 7);
-        assert_eq!(metrics.tool_calls_made, 4);
+        assert_eq!(*llm.calls.lock().unwrap(), 6);
+        assert_eq!(metrics.tool_calls_made, 3);
         assert!(matches!(
             lp.latest_completion_audit(),
             Some(ProgressDecision::Complete)

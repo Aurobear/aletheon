@@ -118,6 +118,9 @@ fn validate_projected_authority(
     if now >= lease.expires_at {
         return reject("lease expired");
     }
+    if !lease.exclusive {
+        return reject("control lease is not exclusive");
+    }
     if permit.device != request.device || lease.device != request.device {
         return reject("device mismatch");
     }
@@ -256,6 +259,7 @@ mod tests {
             Box::new(|a| a.permit.scope.clear()),
             Box::new(|a| a.permit.expires_at = crate::MonotonicInstant(0)),
             Box::new(|a| a.lease.expires_at = crate::MonotonicInstant(0)),
+            Box::new(|a| a.lease.exclusive = false),
         ];
         for mutate in mutations {
             let (broker, calls, mut authorized) = setup();

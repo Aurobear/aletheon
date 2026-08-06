@@ -108,6 +108,8 @@ pub struct IntegrationsConfig {
     pub search: SearchIntegrationConfig,
     /// Optional embodiment provider config. Defaults to simulator when absent.
     pub embodiment: Option<EmbodimentProviderConfig>,
+    /// Robot/Policy settings. Required only when the Robot harness is selected.
+    pub robot: Option<super::RobotIntegrationConfig>,
 }
 
 /// Tagged configuration for the embodied device provider.

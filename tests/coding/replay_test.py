@@ -256,6 +256,20 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(receipt.classify_failure(value), ("none", []))
         self.assertEqual(self.replay_value(value), (True, "verified"))
 
+    def test_recovered_tool_error_is_diagnostic_when_host_gates_pass(self):
+        value = self.base_v2()
+        value["metrics"]["tool_errors"] = 2
+        receipt.seal(value)
+        self.assertEqual(receipt.classify_failure(value), ("none", []))
+        self.assertEqual(self.replay_value(value), (True, "verified"))
+
+        acceptance_failed = self.base_v2()
+        acceptance_failed["metrics"]["tool_errors"] = 2
+        acceptance_failed["acceptance"][0]["exit_code"] = 1
+        failure_class, reasons = receipt.classify_failure(acceptance_failed)
+        self.assertEqual(failure_class, "verification_failure")
+        self.assertIn("acceptance_failed", reasons)
+
 
 if __name__ == "__main__":
     unittest.main()

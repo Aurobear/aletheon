@@ -635,7 +635,7 @@ impl Tool for ValidationRunTool {
     }
 
     fn description(&self) -> &str {
-        "Run an exact repository validation command through the governed command runtime. Classifies check/test/lint/build/deploy and preserves cwd, output cursors, and terminal status."
+        "After the final scoped mutation and a successful git_diff review, run an exact required validation_plan step through the governed command runtime using the same host-minted transaction_id. Do not call this before diff review or retry a step that already succeeded. Classifies check/test/lint/build/deploy and preserves cwd, output cursors, and terminal status."
     }
 
     fn input_schema(&self) -> serde_json::Value {

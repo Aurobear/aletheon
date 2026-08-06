@@ -25,6 +25,7 @@
 //! ```
 
 use async_trait::async_trait;
+use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, AdmissionError, AdmissionRequest, BudgetReservationId, ExecutionPermit,
     MonoDeadline, PermitId, ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement,
@@ -162,6 +163,18 @@ impl ProductionAdmissionController {
 #[async_trait]
 impl AdmissionController for ProductionAdmissionController {
     async fn admit(&self, request: AdmissionRequest) -> Result<ExecutionPermit, AdmissionError> {
+        // Destructive operations are never implicitly approved. Callers must
+        // route them through an explicit operator-approval policy and resubmit
+        // with a narrower, approval-aware authority path; model confidence is
+        // not an admission fact.
+        if request.risk == RiskLevel::Destructive {
+            return Err(AdmissionError::ApprovalRequired {
+                prompt: format!(
+                    "explicit operator approval required for {}:{}",
+                    request.capability.0, request.action
+                ),
+            });
+        }
         let now = self.clock.mono_now();
         let principal = request.principal.0.clone();
         let permit_id = PermitId::new();
@@ -342,6 +355,20 @@ mod tests {
         let permit = ctrl.admit(default_request()).await.unwrap();
         assert_eq!(permit.sandbox, SandboxDecision::NotApplicable);
         assert!(permit.is_valid_at(MonoTime(0)));
+    }
+
+    #[tokio::test]
+    async fn destructive_risk_requires_explicit_approval_before_any_reservation() {
+        let ctrl = ProductionAdmissionController::new(test_clock(0));
+        let request = AdmissionRequest {
+            risk: RiskLevel::Destructive,
+            ..default_request()
+        };
+        assert!(matches!(
+            ctrl.admit(request).await,
+            Err(AdmissionError::ApprovalRequired { .. })
+        ));
+        assert!(ctrl.active.lock().await.is_empty());
     }
 
     #[tokio::test]

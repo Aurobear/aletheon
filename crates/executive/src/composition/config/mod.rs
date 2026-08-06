@@ -17,6 +17,7 @@ mod integrations;
 pub mod memory_policy;
 mod provenance;
 mod provider;
+mod robot;
 pub mod schema;
 mod supplemental_memory;
 
@@ -48,6 +49,11 @@ pub use memory_policy::MemoryPolicyConfig;
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{
     CacheReportingMode, ModelRoutingConfig, PrefixCacheCapability, ProviderConfig, Transport,
+};
+pub use robot::{
+    ResolvedRobotDeploymentGateConfig, ResolvedRobotIntegrationConfig,
+    ResolvedRobotPerceptionConfig, ResolvedRobotPolicyConfig, RobotDeploymentGateConfig,
+    RobotIntegrationConfig, RobotObservationSchemaConfig, RobotPerceptionConfig, RobotPolicyConfig,
 };
 pub use supplemental_memory::{
     MemoryConfig, SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
@@ -161,12 +167,26 @@ impl AppConfig {
             .preflight(self.deployment.integrations.google, resolver)
     }
 
+    /// Resolve and validate optional Robot settings against the selected
+    /// harness. Linear remains valid without Robot configuration.
+    pub fn resolve_robot_config(&self) -> Result<Option<ResolvedRobotIntegrationConfig>> {
+        self.integrations.resolve_robot(self.agent.harness_kind)
+    }
+
     /// Parse one explicit file strictly. The caller chooses how it participates
     /// in application layering.
     pub fn from_file(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("read config layer {}", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("validate config layer {}", path.display()))
+        let config: Self = toml::from_str(&text)
+            .with_context(|| format!("validate config layer {}", path.display()))?;
+        config.resolve_robot_config().map_err(|error| {
+            anyhow::anyhow!(
+                "validate config layer {} Robot/Policy configuration: {error:#}",
+                path.display()
+            )
+        })?;
+        Ok(config)
     }
 
     /// Compatibility merge used by composition tests. It has the same structural
@@ -332,6 +352,9 @@ pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<Loa
     let value = merged
         .try_into::<AppConfig>()
         .context("validate effective application config")?;
+    value.resolve_robot_config().map_err(|error| {
+        anyhow::anyhow!("validate effective Robot/Policy configuration: {error:#}")
+    })?;
     Ok(LoadedConfig { value, provenance })
 }
 
@@ -564,6 +587,11 @@ fn normalize_legacy_environment(
         None,
     );
     add(
+        "ALETHEON_POLICY_ENDPOINT",
+        "ALETHEON__INTEGRATIONS__ROBOT__POLICY__ENDPOINT",
+        None,
+    );
+    add(
         "SEARCH_API_URL",
         "ALETHEON__INTEGRATIONS__SEARCH__API_URL",
         None,
@@ -595,6 +623,7 @@ fn is_legacy_business_env(name: &str) -> bool {
             | "ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED"
             | "ALETHEON_GOOGLE_DRIVE_FILE_IDS"
             | "ALETHEON_GMAIL_INGRESS_POLICY_FILE"
+            | "ALETHEON_POLICY_ENDPOINT"
             | "SEARCH_API_URL"
             | "SEARCH_API_KEY"
     )
@@ -715,6 +744,34 @@ mod legacy_environment_tests {
         assert_eq!(
             values["ALETHEON__INTEGRATIONS__GOOGLE__DRIVE_FILE_IDS"],
             "[\"first\", \"second\"]"
+        );
+    }
+
+    #[test]
+    fn legacy_policy_endpoint_becomes_typed_override_and_native_path_wins() {
+        let normalized = normalize_legacy_environment([
+            (
+                "ALETHEON_POLICY_ENDPOINT".into(),
+                "http://127.0.0.1:50052".into(),
+            ),
+            (
+                "ALETHEON__INTEGRATIONS__ROBOT__POLICY__ENDPOINT".into(),
+                "https://policy.example.test:443".into(),
+            ),
+        ]);
+        let values = normalized.into_iter().collect::<HashMap<_, _>>();
+        assert_eq!(
+            values["ALETHEON__INTEGRATIONS__ROBOT__POLICY__ENDPOINT"],
+            "https://policy.example.test:443"
+        );
+        assert_eq!(
+            values
+                .keys()
+                .filter(|name| {
+                    name.as_str() == "ALETHEON__INTEGRATIONS__ROBOT__POLICY__ENDPOINT"
+                })
+                .count(),
+            1
         );
     }
 

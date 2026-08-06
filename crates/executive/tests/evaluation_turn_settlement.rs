@@ -27,8 +27,6 @@ struct Fixture {
 impl Fixture {
     async fn new(mode: EvaluationMode, thread: &str) -> Self {
         let kernel = Arc::new(KernelRuntime::new());
-        let store: Arc<dyn SessionAppendStore> =
-            Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
         let evaluations = Arc::new(SqliteEvaluationStore::in_memory().unwrap());
         let settings = executive::composition::config::EvaluationSettings {
             enabled: true,
@@ -40,9 +38,10 @@ impl Fixture {
         );
         let coordinator = executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
             kernel.clone(),
-            store.clone(),
+            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         )
         .with_evaluation_service(evaluation);
+        let store = coordinator.store();
         let process_id = kernel
             .spawn_process(fabric::SpawnSpec::default())
             .await

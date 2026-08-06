@@ -235,9 +235,11 @@ mod tests {
         WorldSnapshot {
             device: fabric::types::embodiment::DeviceId("bot".into()),
             schema: "test".into(),
+            schema_version: 1,
             sequence: seq,
             payload,
             observed_at: fabric::MonoTime(seq),
+            valid_until: None,
             stale,
         }
     }

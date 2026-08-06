@@ -1,4 +1,9 @@
-use std::{fs, io::Write, path::PathBuf};
+use std::{
+    fs,
+    io::Write,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -8,7 +13,8 @@ use sha2::{Digest, Sha256};
 
 use fabric::WorkspacePolicy;
 
-const HISTORY_SCHEMA_VERSION: u16 = 1;
+const HISTORY_SCHEMA_VERSION: u16 = 2;
+const INPUT_RETENTION_SECS: u64 = 30 * 24 * 60 * 60;
 const MAX_HISTORY_ENTRIES: usize = 50;
 const MAX_HISTORY_ENTRY_BYTES: usize = 128 * 1024;
 const MAX_DRAFT_BYTES: usize = 1_000_000;
@@ -97,6 +103,7 @@ pub struct InputStateStore {
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedInputState {
     schema_version: u16,
+    saved_at_unix_seconds: u64,
     history: Vec<String>,
     draft: String,
 }
@@ -141,6 +148,13 @@ impl InputStateStore {
         if state.schema_version != HISTORY_SCHEMA_VERSION {
             return (CommandHistory::new(), String::new());
         }
+        let now = unix_seconds();
+        if state.saved_at_unix_seconds > now
+            || now.saturating_sub(state.saved_at_unix_seconds) > INPUT_RETENTION_SECS
+        {
+            self.delete();
+            return (CommandHistory::new(), String::new());
+        }
         let draft = if state.draft.len() <= MAX_DRAFT_BYTES && !looks_sensitive(&state.draft) {
             state.draft
         } else {
@@ -161,6 +175,7 @@ impl InputStateStore {
         };
         let state = PersistedInputState {
             schema_version: HISTORY_SCHEMA_VERSION,
+            saved_at_unix_seconds: unix_seconds(),
             history: history
                 .entries
                 .iter()
@@ -207,6 +222,13 @@ impl InputStateStore {
     fn at_path(path: PathBuf) -> Self {
         Self { path: Some(path) }
     }
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn history_entry_allowed(entry: &str) -> bool {
@@ -287,5 +309,27 @@ mod tests {
         let (mut loaded, draft) = store.load();
         assert!(loaded.up().is_none());
         assert!(draft.is_empty());
+    }
+
+    #[test]
+    fn expired_input_state_is_deleted_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("input").join("state.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+        let expired = PersistedInputState {
+            schema_version: HISTORY_SCHEMA_VERSION,
+            saved_at_unix_seconds: unix_seconds().saturating_sub(INPUT_RETENTION_SECS + 1),
+            history: vec!["expired".into()],
+            draft: "expired draft".into(),
+        };
+        fs::write(&path, serde_json::to_vec(&expired).unwrap()).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let store = InputStateStore::at_path(path.clone());
+        let (mut history, draft) = store.load();
+        assert!(history.up().is_none());
+        assert!(draft.is_empty());
+        assert!(!path.exists());
     }
 }

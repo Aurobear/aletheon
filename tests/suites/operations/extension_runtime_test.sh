@@ -133,27 +133,21 @@ inventory = []
 while True:
     connection, _ = server.accept()
     stream = connection.makefile('rwb')
-    for index in range(3):
-        line = stream.readline()
-        if not line: break
+    line = stream.readline()
+    if line:
         request = json.loads(line)
         ident = request.get('id')
         method = request.get('method')
-        if index == 0:
-            result = {'protocol_version': 1}
-        elif index == 1:
-            result = {'status': 'ready'}
+        params = request.get('params') or {}
+        with log_path.open('a') as log:
+            log.write(json.dumps({'method': method, 'params': params}, sort_keys=True) + '\n')
+        old = digest
+        operation = method.split('.', 1)[1]
+        package = str(params.get('path', ''))
+        if operation == 'upgrade' and 'broken' in package:
+            response = {'jsonrpc':'2.0','id':ident,'error':{
+                'code':-32060,'message':'probing extension runtime candidate failed'}}
         else:
-            params = request.get('params') or {}
-            with log_path.open('a') as log:
-                log.write(json.dumps({'method': method, 'params': params}, sort_keys=True) + '\n')
-            old = digest
-            operation = method.split('.', 1)[1]
-            package = str(params.get('path', ''))
-            if operation == 'upgrade' and 'broken' in package:
-                response = {'jsonrpc':'2.0','id':ident,'error':{
-                    'code':-32060,'message':'probing extension runtime candidate failed'}}
-                stream.write((json.dumps(response) + '\n').encode()); stream.flush(); continue
             if operation in ('enable', 'rollback'):
                 digest = 'full-v1'; inventory = ['skill','hook','agent_profile','connector','executable']
             elif operation == 'disable':
@@ -171,7 +165,7 @@ while True:
                           bool(params.get('approve_permissions', False)),
                           'health':'healthy','evidence_references':[],
                           'inventory':inventory}
-        response = {'jsonrpc':'2.0','id':ident,'result':result}
+            response = {'jsonrpc':'2.0','id':ident,'result':result}
         stream.write((json.dumps(response) + '\n').encode()); stream.flush()
     stream.close(); connection.close()
 PY

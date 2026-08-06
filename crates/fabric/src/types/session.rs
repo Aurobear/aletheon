@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{AuditEventId, OperationId, PermitId, PrincipalId, SessionId, TurnStop};
 
-pub const SESSION_SCHEMA_VERSION: u16 = 4;
+pub const SESSION_SCHEMA_VERSION: u16 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
@@ -70,6 +70,16 @@ pub struct SessionForkedEvent {
     pub inherited_items: Vec<ItemRecord>,
 }
 
+/// Canonical control event binding an authenticated principal to a Session.
+/// Rebinding to a different principal is rejected by the materialized store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionPrincipalBoundEvent {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    #[schemars(with = "String")]
+    pub principal: PrincipalId,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
@@ -104,6 +114,53 @@ pub struct ItemRecord {
     pub payload: ItemPayload,
 }
 
+pub const TASK_PROJECTION_FACT_SCHEMA_VERSION: u16 = 1;
+
+/// Host-authored durable Task read-model inputs. These facts are replayed with
+/// Session items so restart recovery never depends on process-local UI state or
+/// model self-reporting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskProjectionFact {
+    pub schema_version: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_revision: Option<u64>,
+    #[serde(default)]
+    pub active_runtime_children: Vec<String>,
+    #[serde(default)]
+    pub active_commands: Vec<String>,
+    #[serde(default)]
+    pub pending_approvals: Vec<String>,
+    #[schemars(with = "Option<serde_json::Value>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_head: Option<String>,
+}
+
+impl Default for TaskProjectionFact {
+    fn default() -> Self {
+        Self {
+            schema_version: TASK_PROJECTION_FACT_SCHEMA_VERSION,
+            plan_revision: None,
+            active_runtime_children: Vec::new(),
+            active_commands: Vec::new(),
+            pending_approvals: Vec::new(),
+            budget: None,
+            checkpoint_head: None,
+        }
+    }
+}
+
+/// Host classification written when startup recovery finds a turn that has a
+/// durable start boundary but no terminal fact. This is a Session journal fact,
+/// not a process-local recovery marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnRecoveryClassification {
+    Interrupted,
+    Failed,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ItemPayload {
@@ -130,6 +187,13 @@ pub enum ItemPayload {
     CapabilityReceipt {
         receipt: crate::CapabilityTerminalReceipt,
     },
+    /// Immutable Robot-domain terminal receipt. The report contains only
+    /// bounded typed facts and external artifact references; image/log bytes are
+    /// never embedded in the Session journal.
+    RobotEpisodeReceipt {
+        #[schemars(with = "serde_json::Value")]
+        receipt: Box<crate::types::episode_report::SettledEpisodeReport>,
+    },
     EvaluationReceiptRef {
         receipt: crate::EvaluationReceiptRef,
     },
@@ -138,6 +202,12 @@ pub enum ItemPayload {
     },
     InferenceReceipt {
         receipt: crate::types::inference_receipt::InferenceTerminalReceipt,
+    },
+    TaskProjection {
+        fact: TaskProjectionFact,
+    },
+    TurnRecovery {
+        classification: TurnRecoveryClassification,
     },
     ContextProjection {
         space: String,
@@ -181,6 +251,15 @@ pub enum SessionProtocolV3 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum SessionProtocolV4 {
+    Session(SessionRecord),
+    Turn(TurnRecord),
+    Item(ItemRecord),
+    Notification(SessionNotification),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum SessionProtocolV5 {
     Session(SessionRecord),
     Turn(TurnRecord),
     Item(ItemRecord),
@@ -234,8 +313,32 @@ pub enum AppendOutcome {
     AlreadyPresent,
 }
 
+/// Read side of the canonical Session authority contract. Projection stores may
+/// implement this trait without gaining authority to originate Session facts.
 #[async_trait]
-pub trait SessionAppendStore: Send + Sync {
+pub trait SessionReadStore: Send + Sync {
+    async fn load_session(&self, session: &SessionId) -> Result<Option<SessionRecord>>;
+    async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>>;
+    async fn list_sessions(&self, _limit: usize) -> Result<Vec<SessionRecord>> {
+        anyhow::bail!("Session listing is unavailable for this store")
+    }
+
+    /// Enumerate every durable Session identity for startup reconciliation.
+    async fn list_session_ids(&self) -> Result<Vec<SessionId>> {
+        anyhow::bail!("Session identity enumeration is unavailable for this store")
+    }
+
+    /// Read the durable principal binding used by picker/snapshot isolation.
+    async fn principal_for(&self, _session: &SessionId) -> Result<Option<PrincipalId>> {
+        Ok(None)
+    }
+}
+
+/// The single authoritative Session mutation port. Production implementations
+/// must commit through the EventSpine before updating any materialized read
+/// model; read-only projection stores implement `SessionReadStore` instead.
+#[async_trait]
+pub trait SessionAppendStore: SessionReadStore {
     async fn create(&self, session: SessionRecord) -> Result<()>;
     async fn append(
         &self,
@@ -249,21 +352,8 @@ pub trait SessionAppendStore: Send + Sync {
         through_sequence: u64,
         child: SessionRecord,
     ) -> Result<()>;
-    async fn load_session(&self, session: &SessionId) -> Result<Option<SessionRecord>>;
-    async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>>;
-    async fn list_sessions(&self, _limit: usize) -> Result<Vec<SessionRecord>> {
-        anyhow::bail!("Session listing is unavailable for this store")
-    }
 
     /// Bind a durable authenticated principal to a session. Implementations
-    /// must reject rebinding to a different principal; the default keeps
-    /// legacy in-memory stores source-compatible without claiming ownership.
-    async fn bind_principal(&self, _session: &SessionId, _principal: &PrincipalId) -> Result<()> {
-        Ok(())
-    }
-
-    /// Read the durable principal binding used by picker/snapshot isolation.
-    async fn principal_for(&self, _session: &SessionId) -> Result<Option<PrincipalId>> {
-        Ok(None)
-    }
+    /// must reject rebinding to a different principal.
+    async fn bind_principal(&self, session: &SessionId, principal: &PrincipalId) -> Result<()>;
 }

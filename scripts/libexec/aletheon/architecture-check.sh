@@ -196,14 +196,18 @@ metrics = {
     "SESSION_APPEND_WRITERS": 0,
 }
 
-# X1 governance counters. A production parser is counted only when a binary
-# entry point invokes Clap's `Type::parse()`; dormant compatibility library
+# X1 governance counters. Count the production Clap parse boundary whether the
+# binary invokes `Type::parse()` directly or materializes the canonical
+# CommandFactory and calls `get_matches()`. Dormant compatibility library
 # parsers do not become production authority merely by existing. Session
 # writers count concrete production implementations of the append port.
 for main in sorted((root / "crates").glob("*/src/main.rs")):
     production = main.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
     metrics["PRODUCTION_CLI_PARSERS"] += len(
         re.findall(r"\b[A-Z][A-Za-z0-9_]*::parse\(\)", production)
+    )
+    metrics["PRODUCTION_CLI_PARSERS"] += len(
+        re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\(\)\.get_matches\(\)", production)
     )
 for rel, body in production_rs():
     metrics["SESSION_APPEND_WRITERS"] += len(

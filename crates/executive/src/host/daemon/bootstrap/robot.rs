@@ -15,7 +15,7 @@ use fabric::Clock;
 
 use crate::application::embodiment_progress::{DeferredTurnEventSink, EventEmbodimentProgress};
 use crate::application::harness_factory::CognitiveSessionFactory;
-use crate::composition::config::EmbodimentProviderConfig;
+use crate::composition::config::{EmbodimentProviderConfig, ResolvedRobotIntegrationConfig};
 
 /// Build the embodiment execution port from the configured provider, together
 /// with its deferred progress sink.
@@ -29,6 +29,7 @@ pub async fn build_robot_embodiment_port(
     admission: Arc<dyn fabric::AdmissionController>,
     data_dir: &std::path::Path,
     provider_config: &EmbodimentProviderConfig,
+    robot_config: Option<&ResolvedRobotIntegrationConfig>,
 ) -> anyhow::Result<(Arc<dyn EmbodimentExecutionPort>, Arc<DeferredTurnEventSink>)> {
     let hardware_clock: Arc<dyn hardware::MonotonicClock> =
         Arc::new(super::embodiment::HardwareClockAdapter(clock.clone()));
@@ -48,6 +49,7 @@ pub async fn build_robot_embodiment_port(
         fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
         embodiment_workspace,
         Some(provider_config.clone()),
+        robot_config,
     )
     .await?;
     Ok((port, progress_sink))
@@ -76,33 +78,43 @@ pub async fn bind_robot_progress_spine(
 /// silently degrading to a stub.
 pub async fn build_robot_cognitive_session_factory(
     provider_config: &EmbodimentProviderConfig,
+    robot_config: &ResolvedRobotIntegrationConfig,
     embodiment_port: Arc<dyn EmbodimentExecutionPort>,
     clock: Arc<dyn Clock>,
     data_dir: &std::path::Path,
     promoter: Option<Arc<dyn cognit::harness::robot::EpisodePromotionPort>>,
 ) -> anyhow::Result<Arc<dyn CognitiveSessionFactory>> {
-    let device = match provider_config {
+    provider_config
+        .validate_runtime()
+        .context("validate embodiment provider configuration")?;
+    let provider_device = match provider_config {
         EmbodimentProviderConfig::Simulator { device_id } => DeviceId(device_id.clone()),
         EmbodimentProviderConfig::Grpc { device_id, .. } => DeviceId(device_id.clone()),
     };
-    let policy: Arc<dyn PolicyProviderPort> = match std::env::var("ALETHEON_POLICY_ENDPOINT") {
-        Ok(endpoint) => Arc::new(
-            cognit::GrpcPolicyProvider::connect(cognit::GrpcPolicyConfig {
-                endpoint,
-                ..Default::default()
-            })
-            .await
-            .map_err(anyhow::Error::msg)
-            .context("robot policy endpoint configured but unreachable")?,
-        ),
-        Err(_) => anyhow::bail!(
-            "HarnessKind::Robot requires ALETHEON_POLICY_ENDPOINT for a production policy provider"
-        ),
-    };
-    let sim_scene_version = match provider_config {
-        EmbodimentProviderConfig::Simulator { device_id } => format!("simulator:{device_id}"),
-        EmbodimentProviderConfig::Grpc { device_id, .. } => format!("bridge:{device_id}"),
-    };
+    anyhow::ensure!(
+        provider_device.0 == robot_config.device_id,
+        "resolved Robot device does not match embodiment provider"
+    );
+    let device = DeviceId(robot_config.device_id.clone());
+    let policy_provider = cognit::GrpcPolicyProvider::connect(cognit::GrpcPolicyConfig {
+        endpoint: robot_config.policy.endpoint.clone(),
+        protocol_version: robot_config.policy.protocol_version.clone(),
+        connect_timeout: robot_config.policy.connect_timeout,
+        request_timeout: robot_config.policy.request_timeout,
+        max_proposals: robot_config.policy.max_proposals,
+    })
+    .await
+    .map_err(anyhow::Error::msg)
+    .context("Robot Policy startup compatibility gate failed")?;
+    let policy_capabilities = policy_provider.capability_snapshot();
+    tracing::info!(
+        provider_id = %policy_capabilities.provider_id,
+        protocol_version = %policy_capabilities.protocol_version,
+        server_max_proposals = policy_capabilities.server_max_proposals,
+        negotiated_max_proposals = policy_capabilities.negotiated_max_proposals,
+        "Robot Policy startup capability snapshot"
+    );
+    let policy: Arc<dyn PolicyProviderPort> = Arc::new(policy_provider);
     crate::application::robot_harness_composition::build_robot_session_factory(
         embodiment_port,
         clock,
@@ -110,9 +122,24 @@ pub async fn build_robot_cognitive_session_factory(
         device,
         vec![],
         policy,
-        sim_scene_version,
-        option_env!("CARGO_PKG_VERSION").unwrap_or("unknown"),
-        hardware::grpc::BRIDGE_PROTOCOL_DIGEST,
+        cognit::harness::robot::state::RobotHarnessConfig {
+            max_retries: robot_config.max_retries,
+            max_replans: robot_config.max_replans,
+            default_expected_outcome: None,
+            perception_max_frames: robot_config.perception.max_frames,
+            required_perception: robot_config.perception.required_by_skill.clone(),
+        },
+        crate::application::robot_perception::RobotPerceptionRuntimeConfig {
+            max_devices: robot_config.perception.max_devices,
+            max_cached_frames_per_device: robot_config.perception.max_cached_frames_per_device,
+            max_age: robot_config.perception.max_frame_age,
+            max_total_bytes: robot_config.perception.max_total_bytes,
+            allowed_uri_prefixes: robot_config.perception.allowed_uri_prefixes.clone(),
+        },
+        robot_config.perception.poll_interval,
+        robot_config.scene_version.clone(),
+        robot_config.aletheon_version.clone(),
+        robot_config.bridge_protocol_digest.clone(),
         promoter,
     )
     .await

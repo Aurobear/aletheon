@@ -7,6 +7,19 @@ use fabric::types::perception_observation::PerceptionObservation;
 use fabric::types::world_state::WorldSnapshot;
 use std::sync::Arc;
 
+fn fresh_snapshot() -> WorldSnapshot {
+    WorldSnapshot {
+        device: DeviceId("bot".into()),
+        schema: "robot.state".into(),
+        schema_version: 1,
+        sequence: 1,
+        payload: serde_json::json!({"mode": "idle", "x": 0}),
+        observed_at: fabric::MonoTime(1),
+        valid_until: None,
+        stale: false,
+    }
+}
+
 /// Stub policy for testing
 struct StubPolicy;
 #[async_trait::async_trait]
@@ -18,11 +31,15 @@ impl PolicyProviderPort for StubPolicy {
         _snapshots: &[WorldSnapshot],
         _visual: &[PerceptionObservation],
         _allowed: &[SkillDescriptor],
-    ) -> Result<Vec<fabric::types::skill_proposal::SkillProposal>, String> {
+    ) -> Result<
+        Vec<fabric::types::skill_proposal::SkillProposal>,
+        cognit::ports::policy_provider::PolicyProviderError,
+    > {
         Ok(vec![fabric::types::skill_proposal::SkillProposal {
             skill: SkillId("kuavo.stance".into()),
             device: DeviceId("bot".into()),
             parameters: serde_json::json!({}),
+            goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
             expected_outcome: fabric::types::expected_outcome::ExpectedOutcome {
                 predicate: fabric::types::expected_outcome::OutcomePredicate::Equals {
                     path: "mode".into(),
@@ -38,6 +55,7 @@ impl PolicyProviderPort for StubPolicy {
                 provider: "test".into(),
                 model: "m".into(),
                 version: "1".into(),
+                protocol_version: "1.0".into(),
                 digest: "abc".into(),
             },
         }])
@@ -58,6 +76,54 @@ fn policy_cannot_call_embodied_execution_port() {
 }
 
 #[test]
+fn policy_boundary_has_no_execution_capability_symbols() {
+    let port = include_str!("../../cognit/src/ports/policy_provider.rs");
+    let adapter = include_str!("../../cognit/src/adapters/policy/grpc_provider.rs");
+    for forbidden in [
+        "EmbodimentExecutionPort",
+        "EmbodiedExecutionPort",
+        "execute_skill(",
+        "safe_stop(",
+        "cancel(",
+    ] {
+        assert!(
+            !port.contains(forbidden),
+            "Policy port contains {forbidden}"
+        );
+        assert!(
+            !adapter.contains(forbidden),
+            "Policy adapter contains {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn child_agent_runtime_is_pinned_to_linear_cognitive_sessions() {
+    let bootstrap = include_str!("../src/host/daemon/bootstrap/request.rs");
+    let native_start = bootstrap
+        .find("NativeCognitRuntimeResources {")
+        .expect("native Cognit runtime composition must remain explicit");
+    let native = &bootstrap[native_start..];
+    let native_end = native
+        .find("agent_runtimes.register_manifested")
+        .expect("native Cognit runtime composition must remain bounded");
+    let native = &native[..native_end];
+
+    assert!(
+        bootstrap.contains("HarnessKind::Robot =>"),
+        "the top-level runtime must retain the configured Robot path"
+    );
+    assert!(
+        native.contains("sessions: linear_cognitive_sessions.clone()"),
+        "child Agents must use the non-embodied linear session factory"
+    );
+    assert!(
+        !native.contains("sessions: domains.cognition()"),
+        "child Agents must not inherit the top-level Robot control surface"
+    );
+}
+
+#[test]
 fn proposal_validator_enforces_registered_skills() {
     use cognit::harness::robot::proposal_validator::validate_proposal;
     use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
@@ -67,7 +133,12 @@ fn proposal_validator_enforces_registered_skills() {
         skill: SkillId("kuavo.stance".into()),
         device: DeviceId("bot".into()),
         summary: "stance".into(),
-        input_schema: serde_json::json!({"type": "object", "required": []}),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        }),
         risk: RiskClass::Low,
         timeout_ms: 10000,
         cancellable: false,
@@ -79,6 +150,7 @@ fn proposal_validator_enforces_registered_skills() {
         skill: SkillId("kuavo.stance".into()),
         device: DeviceId("bot".into()),
         parameters: serde_json::json!({}),
+        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "mode".into(),
@@ -94,16 +166,29 @@ fn proposal_validator_enforces_registered_skills() {
             provider: "p".into(),
             model: "m".into(),
             version: "1".into(),
+            protocol_version: "1.0".into(),
             digest: "d".into(),
         },
     };
-    assert!(validate_proposal(&valid, &allowed, 0, 0).is_ok());
+    assert!(validate_proposal(
+        &valid,
+        &DeviceId("bot".into()),
+        &allowed,
+        &[fresh_snapshot()]
+    )
+    .is_ok());
 
     let invalid = SkillProposal {
         skill: SkillId("unknown.skill".into()),
         ..valid.clone()
     };
-    assert!(validate_proposal(&invalid, &allowed, 0, 0).is_err());
+    assert!(validate_proposal(
+        &invalid,
+        &DeviceId("bot".into()),
+        &allowed,
+        &[fresh_snapshot()]
+    )
+    .is_err());
 }
 
 #[test]
@@ -116,7 +201,12 @@ fn proposal_confidence_must_be_bounded() {
         skill: SkillId("s".into()),
         device: DeviceId("d".into()),
         summary: "s".into(),
-        input_schema: serde_json::json!({"type": "object", "required": []}),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        }),
         risk: RiskClass::Low,
         timeout_ms: 10000,
         cancellable: false,
@@ -128,6 +218,7 @@ fn proposal_confidence_must_be_bounded() {
         skill: SkillId("s".into()),
         device: DeviceId("d".into()),
         parameters: serde_json::json!({}),
+        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "x".into(),
@@ -135,7 +226,7 @@ fn proposal_confidence_must_be_bounded() {
             },
             freshness_ms: 0,
             stable_window_ms: 0,
-            timeout_ms: 0,
+            timeout_ms: 1,
         },
         confidence: 0.0,
         frame_refs: vec![],
@@ -143,6 +234,7 @@ fn proposal_confidence_must_be_bounded() {
             provider: "p".into(),
             model: "m".into(),
             version: "1".into(),
+            protocol_version: "1.0".into(),
             digest: "d".into(),
         },
     };
@@ -151,17 +243,44 @@ fn proposal_confidence_must_be_bounded() {
         confidence: -0.1,
         ..base.clone()
     };
-    assert!(validate_proposal(&low, &allowed, 0, 0).is_err());
+    assert!(validate_proposal(
+        &low,
+        &DeviceId("d".into()),
+        &allowed,
+        &[WorldSnapshot {
+            device: DeviceId("d".into()),
+            ..fresh_snapshot()
+        }]
+    )
+    .is_err());
 
     let high = SkillProposal {
         confidence: 1.1,
         ..base.clone()
     };
-    assert!(validate_proposal(&high, &allowed, 0, 0).is_err());
+    assert!(validate_proposal(
+        &high,
+        &DeviceId("d".into()),
+        &allowed,
+        &[WorldSnapshot {
+            device: DeviceId("d".into()),
+            ..fresh_snapshot()
+        }]
+    )
+    .is_err());
 
     let ok = SkillProposal {
         confidence: 0.5,
         ..base.clone()
     };
-    assert!(validate_proposal(&ok, &allowed, 0, 0).is_ok());
+    assert!(validate_proposal(
+        &ok,
+        &DeviceId("d".into()),
+        &allowed,
+        &[WorldSnapshot {
+            device: DeviceId("d".into()),
+            ..fresh_snapshot()
+        }]
+    )
+    .is_ok());
 }

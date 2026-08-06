@@ -5,22 +5,22 @@ use std::{path::Path, sync::Mutex};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use fabric::{
-    AppendOutcome, ItemId, ItemRecord, PrincipalId, SessionAppendStore, SessionId, SessionRecord,
+    AppendOutcome, ItemId, ItemRecord, PrincipalId, SessionId, SessionReadStore, SessionRecord,
     SESSION_SCHEMA_VERSION,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
-use crate::application::turn_recovery::{RecoveryClassification, TurnRecoveryStore};
+use crate::adapters::session::projection_store::SessionProjectionStore;
 
 pub struct CanonicalSessionStore {
     connection: Mutex<Connection>,
 }
 
 // Keep the database migration marker aligned with the newest record protocol
-// migration. Version 4 adds EvaluationReceiptRef Session items; older JSON
+// migration. Version 5 adds Host-authored TaskProjection Session items; older JSON
 // payloads are structurally compatible but must have their explicit record
 // version advanced before event-spine reconciliation compares them.
-const DATABASE_SCHEMA_VERSION: i64 = 5;
+const DATABASE_SCHEMA_VERSION: i64 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MigrationStep {
@@ -69,6 +69,13 @@ impl CanonicalSessionStore {
                 item.sequence,
                 expected
             );
+        }
+        if matches!(
+            &item.payload,
+            fabric::ItemPayload::TaskProjection { fact }
+                if fact.schema_version != fabric::TASK_PROJECTION_FACT_SCHEMA_VERSION
+        ) {
+            bail!("unsupported Task projection fact schema version");
         }
         Ok(())
     }
@@ -167,61 +174,7 @@ fn migrate_with_step_hook(
 }
 
 #[async_trait]
-impl TurnRecoveryStore for CanonicalSessionStore {
-    async fn list_session_ids(&self) -> Result<Vec<SessionId>> {
-        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
-        let mut statement =
-            connection.prepare("SELECT session_id FROM sessions ORDER BY session_id")?;
-        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-        rows.map(|row| row.map(SessionId).map_err(Into::into))
-            .collect()
-    }
-
-    async fn mark_recovered_turn(
-        &self,
-        session_id: &SessionId,
-        turn_id: fabric::TurnId,
-        classification: RecoveryClassification,
-    ) -> Result<()> {
-        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let json: String = tx
-            .query_row(
-                "SELECT record_json FROM sessions WHERE session_id=?1",
-                params![session_id.0],
-                |row| row.get(0),
-            )
-            .context("recovery session not found")?;
-        let mut session: SessionRecord = serde_json::from_str(&json)?;
-        let (classification_name, status) = match classification {
-            RecoveryClassification::Interrupted => {
-                ("interrupted", fabric::SessionStatus::Interrupted)
-            }
-            RecoveryClassification::Failed => ("failed", fabric::SessionStatus::Failed),
-        };
-        // Failed is the stronger aggregate state when a session has more than
-        // one incomplete turn.
-        if session.status != fabric::SessionStatus::Failed
-            || status == fabric::SessionStatus::Failed
-        {
-            session.status = status;
-        }
-        tx.execute(
-            "UPDATE sessions SET record_json=?2 WHERE session_id=?1",
-            params![session_id.0, serde_json::to_string(&session)?],
-        )?;
-        tx.execute(
-            "INSERT INTO recovered_turns(session_id,turn_id,classification) VALUES(?1,?2,?3)
-             ON CONFLICT(session_id,turn_id) DO UPDATE SET classification=excluded.classification",
-            params![session_id.0, turn_id.0.to_string(), classification_name],
-        )?;
-        tx.commit()?;
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl SessionAppendStore for CanonicalSessionStore {
+impl SessionProjectionStore for CanonicalSessionStore {
     async fn create(&self, session: SessionRecord) -> Result<()> {
         Self::validate_session(&session)?;
         let json = serde_json::to_string(&session)?;
@@ -255,6 +208,15 @@ impl SessionAppendStore for CanonicalSessionStore {
         item: ItemRecord,
     ) -> Result<AppendOutcome> {
         Self::validate_item(session, expected_sequence, &item)?;
+        let recovery_status = match &item.payload {
+            fabric::ItemPayload::TurnRecovery {
+                classification: fabric::TurnRecoveryClassification::Interrupted,
+            } => Some(fabric::SessionStatus::Interrupted),
+            fabric::ItemPayload::TurnRecovery {
+                classification: fabric::TurnRecoveryClassification::Failed,
+            } => Some(fabric::SessionStatus::Failed),
+            _ => None,
+        };
         let item_json = serde_json::to_string(&item)?;
         let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -290,6 +252,25 @@ impl SessionAppendStore for CanonicalSessionStore {
             "UPDATE sessions SET next_sequence=?2 WHERE session_id=?1",
             params![session.0, next + 1],
         )?;
+        if let Some(status) = recovery_status {
+            let json: String = tx.query_row(
+                "SELECT record_json FROM sessions WHERE session_id=?1",
+                params![session.0],
+                |row| row.get(0),
+            )?;
+            let mut record: SessionRecord = serde_json::from_str(&json)?;
+            // Failed is the stronger aggregate state when more than one
+            // incomplete turn is recovered from the same Session.
+            if record.status != fabric::SessionStatus::Failed
+                || status == fabric::SessionStatus::Failed
+            {
+                record.status = status;
+                tx.execute(
+                    "UPDATE sessions SET record_json=?2 WHERE session_id=?1",
+                    params![session.0, serde_json::to_string(&record)?],
+                )?;
+            }
+        }
         tx.commit()?;
         Ok(AppendOutcome::Appended)
     }
@@ -342,6 +323,28 @@ impl SessionAppendStore for CanonicalSessionStore {
         Ok(())
     }
 
+    async fn bind_principal(&self, session: &SessionId, principal: &PrincipalId) -> Result<()> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        connection.execute(
+            "INSERT INTO session_principals(session_id,principal_id) VALUES(?1,?2)
+             ON CONFLICT(session_id) DO UPDATE SET principal_id=excluded.principal_id
+             WHERE session_principals.principal_id=excluded.principal_id",
+            params![session.0, principal.0],
+        )?;
+        let owner: String = connection.query_row(
+            "SELECT principal_id FROM session_principals WHERE session_id=?1",
+            params![session.0],
+            |row| row.get(0),
+        )?;
+        if owner != principal.0 {
+            bail!("session is already owned by another principal");
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl SessionReadStore for CanonicalSessionStore {
     async fn load_session(&self, session: &SessionId) -> Result<Option<SessionRecord>> {
         let json = self
             .connection
@@ -385,23 +388,13 @@ impl SessionAppendStore for CanonicalSessionStore {
             .collect()
     }
 
-    async fn bind_principal(&self, session: &SessionId, principal: &PrincipalId) -> Result<()> {
+    async fn list_session_ids(&self) -> Result<Vec<SessionId>> {
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
-        connection.execute(
-            "INSERT INTO session_principals(session_id,principal_id) VALUES(?1,?2)
-             ON CONFLICT(session_id) DO UPDATE SET principal_id=excluded.principal_id
-             WHERE session_principals.principal_id=excluded.principal_id",
-            params![session.0, principal.0],
-        )?;
-        let owner: String = connection.query_row(
-            "SELECT principal_id FROM session_principals WHERE session_id=?1",
-            params![session.0],
-            |row| row.get(0),
-        )?;
-        if owner != principal.0 {
-            bail!("session is already owned by another principal");
-        }
-        Ok(())
+        let mut statement =
+            connection.prepare("SELECT session_id FROM sessions ORDER BY session_id")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| row.map(SessionId).map_err(Into::into))
+            .collect()
     }
 
     async fn principal_for(&self, session: &SessionId) -> Result<Option<PrincipalId>> {
@@ -423,6 +416,7 @@ pub use crate::application::session_projection::project_messages;
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
+    use crate::application::turn_recovery::RecoveryClassification;
     use fabric::{ContentBlock, ItemPayload, Role};
 
     const MIGRATION_STEPS: [MigrationStep; 2] = [MigrationStep::Schema, MigrationStep::Version];
@@ -650,7 +644,7 @@ mod tests {
     }
 
     async fn create_incomplete_turn(
-        store: &CanonicalSessionStore,
+        store: &dyn fabric::SessionAppendStore,
         session_id: &str,
     ) -> fabric::TurnId {
         let session_id = SessionId(session_id.into());
@@ -687,27 +681,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recovery_mutation_persists_turn_and_session_status() {
-        let store = CanonicalSessionStore::open(":memory:").unwrap();
+    async fn recovery_fact_persists_through_the_single_session_authority() {
+        let read_model = std::sync::Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
+        let store = crate::composition::turn_coordinator::compose_in_memory_session_store(
+            read_model.clone(),
+        );
         let session_id = SessionId("recovery-test".into());
-        store
-            .create(SessionRecord {
-                schema_version: SESSION_SCHEMA_VERSION,
-                id: session_id.clone(),
-                parent: None,
-                created_at_ms: 0,
-                status: fabric::SessionStatus::Active,
-            })
-            .await
-            .unwrap();
-        let turn_id = fabric::TurnId::new();
-        store
-            .mark_recovered_turn(&session_id, turn_id, RecoveryClassification::Interrupted)
-            .await
-            .unwrap();
+        create_incomplete_turn(store.as_ref(), &session_id.0).await;
+        let mut hardening = crate::composition::config::GrokHardeningConfig::default();
+        hardening.compaction_v2 = true;
+        let report =
+            crate::application::turn_recovery::scan_incomplete_turns(store.as_ref(), &hardening)
+                .await
+                .unwrap();
 
+        assert_eq!(report.incomplete_turns.len(), 1);
         assert_eq!(
-            store
+            read_model
                 .load_session(&session_id)
                 .await
                 .unwrap()
@@ -715,37 +705,37 @@ mod tests {
                 .status,
             fabric::SessionStatus::Interrupted
         );
-        let persisted: String = store
-            .connection
-            .lock()
-            .unwrap()
-            .query_row(
-                "SELECT classification FROM recovered_turns WHERE session_id=?1 AND turn_id=?2",
-                params![session_id.0, turn_id.0.to_string()],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(persisted, "interrupted");
+        let items = store.load_items(&session_id, None).await.unwrap();
+        assert!(matches!(
+            items.last().map(|item| &item.payload),
+            Some(ItemPayload::TurnRecovery {
+                classification: fabric::TurnRecoveryClassification::Interrupted
+            })
+        ));
     }
 
     #[tokio::test]
     async fn startup_recovery_enumerates_all_durable_sessions() {
-        let store = CanonicalSessionStore::open(":memory:").unwrap();
-        create_incomplete_turn(&store, "session-a").await;
-        create_incomplete_turn(&store, "session-b").await;
+        let read_model = std::sync::Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
+        let store = crate::composition::turn_coordinator::compose_in_memory_session_store(
+            read_model.clone(),
+        );
+        create_incomplete_turn(store.as_ref(), "session-a").await;
+        create_incomplete_turn(store.as_ref(), "session-b").await;
         let mut hardening = crate::composition::config::GrokHardeningConfig::default();
         hardening.compaction_v2 = true;
 
-        let report = crate::application::turn_recovery::scan_incomplete_turns(&store, &hardening)
-            .await
-            .unwrap();
+        let report =
+            crate::application::turn_recovery::scan_incomplete_turns(store.as_ref(), &hardening)
+                .await
+                .unwrap();
 
         assert_eq!(report.sessions_scanned, 2);
         assert_eq!(report.turns_scanned, 2);
         assert_eq!(report.incomplete_turns.len(), 2);
         for session in ["session-a", "session-b"] {
             assert_eq!(
-                store
+                read_model
                     .load_session(&SessionId(session.into()))
                     .await
                     .unwrap()
@@ -866,13 +856,18 @@ mod tests {
             let session = format!("crash-{index}");
             persist_until_crash(&path, boundary, &session).await;
 
-            let reopened = CanonicalSessionStore::open(&path).unwrap();
+            let reopened = std::sync::Arc::new(CanonicalSessionStore::open(&path).unwrap());
+            let authority = crate::composition::turn_coordinator::compose_in_memory_session_store(
+                reopened.clone(),
+            );
             let mut hardening = crate::composition::config::GrokHardeningConfig::default();
             hardening.compaction_v2 = true;
-            let report =
-                crate::application::turn_recovery::scan_incomplete_turns(&reopened, &hardening)
-                    .await
-                    .unwrap();
+            let report = crate::application::turn_recovery::scan_incomplete_turns(
+                authority.as_ref(),
+                &hardening,
+            )
+            .await
+            .unwrap();
             assert_eq!(report.incomplete_turns.len(), 1);
             let expected = if matches!(boundary, CrashBoundary::Tool) {
                 RecoveryClassification::Failed

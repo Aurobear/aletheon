@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fabric::contract::command::{ClientCommand, ClientIntent, StatusIntent, SubmitPromptIntent};
+use fabric::contract::command::{
+    ClientCommand, ClientIntent, ExecuteShellIntent, StatusIntent, SubmitPromptIntent,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutput {
@@ -42,6 +44,12 @@ pub trait CommandUseCases: Send + Sync {
         prompt: &SubmitPromptIntent,
     ) -> anyhow::Result<CommandOutput>;
 
+    async fn execute_shell(
+        &self,
+        intent: &ClientIntent,
+        shell: &ExecuteShellIntent,
+    ) -> anyhow::Result<CommandOutput>;
+
     async fn status(
         &self,
         intent: &ClientIntent,
@@ -68,6 +76,9 @@ impl CommandDispatcher {
         match &intent.command {
             ClientCommand::SubmitPrompt(prompt) => {
                 self.use_cases.submit_prompt(&intent, prompt).await
+            }
+            ClientCommand::ExecuteShell(shell) => {
+                self.use_cases.execute_shell(&intent, shell).await
             }
             ClientCommand::Status(status) => self.use_cases.status(&intent, status).await,
         }
