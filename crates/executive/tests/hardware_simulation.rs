@@ -7,8 +7,8 @@ use fabric::{
     PrincipalId as KernelPrincipalId, SandboxRequirement,
 };
 use hardware::{
-    CommandDecision, CommandSequence, ControlLease, ControlPermit, DeviceId, ManualClock,
-    MonotonicInstant, OperationId, PrincipalId, RejectionReason, SimulatedDevice, TypedCommand,
+    CommandDecision, CommandSequence, ControlLease, ControlPermit, DeviceId, DeviceOperationId,
+    ManualClock, MonotonicInstant, PrincipalId, RejectionReason, SimulatedDevice, TypedCommand,
 };
 use kernel::chronos::TestClock;
 
@@ -29,7 +29,7 @@ fn project_permit(
     }
     Ok(ControlPermit {
         permit_id: permit.id.0.to_string(),
-        operation: OperationId(permit.operation_id.0.to_string()),
+        operation: DeviceOperationId(permit.operation_id.0.to_string()),
         principal: PrincipalId(request.principal.0.clone()),
         device: device.clone(),
         scope: permit.granted_scope.allowed_paths.iter().cloned().collect(),
@@ -38,7 +38,7 @@ fn project_permit(
     })
 }
 
-fn verifies_operation(expected: &OperationId, receipt: &hardware::CommandReceipt) -> bool {
+fn verifies_operation(expected: &DeviceOperationId, receipt: &hardware::CommandReceipt) -> bool {
     receipt.operation == *expected && receipt.accepted()
 }
 
@@ -111,7 +111,7 @@ async fn kernel_permit_lease_navigate_stop_and_receipt_settlement_are_correlated
     ));
     assert!(verifies_operation(&operation, &stop_receipt));
     assert!(!verifies_operation(
-        &OperationId("other".into()),
+        &DeviceOperationId("other".into()),
         &stop_receipt
     ));
 
@@ -145,7 +145,7 @@ async fn a_cap_004_missing_mismatched_and_expired_authority_fail_closed() {
     let mut robot = SimulatedDevice::mobile_robot("bot", clock.clone());
     let command = TypedCommand {
         command_id: "c".into(),
-        operation: OperationId("op".into()),
+        operation: DeviceOperationId("op".into()),
         principal: PrincipalId("p".into()),
         sequence: CommandSequence(1),
         device: DeviceId("bot".into()),
@@ -159,7 +159,7 @@ async fn a_cap_004_missing_mismatched_and_expired_authority_fail_closed() {
     );
     let permit = ControlPermit {
         permit_id: "p".into(),
-        operation: OperationId("other".into()),
+        operation: DeviceOperationId("other".into()),
         principal: command.principal.clone(),
         device: command.device.clone(),
         scope: BTreeSet::from(["navigate".into()]),

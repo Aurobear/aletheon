@@ -1,5 +1,5 @@
 use crate::{
-    CommandDecision, CommandSequence, DeviceId, MonotonicInstant, OperationId, PrincipalId,
+    CommandDecision, CommandSequence, DeviceId, DeviceOperationId, MonotonicInstant, PrincipalId,
     SafetyState,
 };
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TypedCommand {
     pub command_id: String,
-    pub operation: OperationId,
+    pub operation: DeviceOperationId,
     pub principal: PrincipalId,
     pub sequence: CommandSequence,
     pub device: DeviceId,
@@ -23,7 +23,7 @@ impl TypedCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandReceipt {
-    pub operation: OperationId,
+    pub operation: DeviceOperationId,
     pub principal: PrincipalId,
     pub device: DeviceId,
     pub command_id: String,
@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn decision_round_trip_has_no_bool_reason_contradiction() {
         let receipt = CommandReceipt {
-            operation: OperationId("o".into()),
+            operation: DeviceOperationId("o".into()),
             principal: PrincipalId("p".into()),
             device: DeviceId("d".into()),
             command_id: "c".into(),

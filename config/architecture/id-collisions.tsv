@@ -4,6 +4,4 @@ AgentId	crates/fabric/src/ipc/ipc_types.rs,crates/fabric/src/types/process.rs	u6
 EntityId	crates/dasein/src/dasein/types.rs,crates/mnemosyne/src/knowledge_graph/entity.rs	String,String	retain_distinct_semantics	Dasein entity vs knowledge-graph entity	n/a
 EvidenceId	crates/cognit/src/core/cognitive_task.rs,crates/fabric/src/types/metacognition_evidence.rs	String,String	retain_distinct_semantics	runtime evidence vs metacognition evidence	n/a
 MessageId	crates/fabric/src/ipc/envelope_v2.rs,crates/fabric/src/types/channel.rs	Uuid,String	retain_distinct_semantics	IPC envelope message vs external channel message	n/a
-OperationId	crates/fabric/src/types/operation.rs,crates/hardware/src/device.rs	Uuid,String	rename	hardware::DeviceOperationId	X13
-PrincipalId	crates/fabric/src/types/admission.rs,crates/hardware/src/device.rs	String,String	converge	fabric::PrincipalId	X13
 ProcessId	crates/fabric/src/types/operation.rs,crates/platform/src/process.rs	Uuid,u32	retain_distinct_semantics	governed operation process vs OS process	n/a

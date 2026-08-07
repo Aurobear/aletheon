@@ -11,7 +11,7 @@ use fabric::{Message, Role};
 use sha2::{Digest, Sha256};
 
 /// The five regions of a turn's request context (see
-/// docs/plans/deepseek-cache-and-message-optimization-plan.md Phase C4).
+/// docs/testing/deepseek-cache.md#prompt-partition-and-stable-prefix).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PromptRegion {
     /// Identity/security rules and fixed protocol (never per-turn fields).

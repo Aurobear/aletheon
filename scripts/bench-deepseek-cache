@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# DeepSeek prompt-cache benchmark (Phase C5 of
-# docs/plans/deepseek-cache-and-message-optimization-plan.md).
+# DeepSeek prompt-cache benchmark (see
+# docs/testing/deepseek-cache.md#live-provider-benchmark).
 #
 # Sends REAL chat-completions requests and reports the provider's prompt-cache
 # figures (DeepSeek prompt_cache_hit/miss_tokens or OpenAI cached_tokens).

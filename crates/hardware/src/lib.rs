@@ -25,8 +25,8 @@ pub use clock::{ManualClock, MonotonicClock};
 pub use command::{CommandReceipt, TypedCommand};
 pub use deployment_gate::{validate_gate, DeploymentGateInput, DeploymentGateResult};
 pub use device::{
-    CommandSequence, DeviceClass, DeviceId, DeviceManifest, DeviceNamespace, MonotonicInstant,
-    OperationId, PrincipalId,
+    CommandSequence, DeviceClass, DeviceId, DeviceManifest, DeviceNamespace, DeviceOperationId,
+    MonotonicInstant, PrincipalId,
 };
 pub use emergency_stop::EmergencyStop;
 pub use grpc::provider::{

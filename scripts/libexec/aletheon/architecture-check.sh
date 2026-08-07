@@ -449,8 +449,8 @@ if actual_types != set(snapshot):
     )
 
 # Duplicate ID wrappers are explicit semantic decisions. New collisions fail;
-# the known hardware OperationId collision remains a ledgered rename debt until
-# its scoped robot convergence node replaces it.
+# completed rename/convergence work removes the duplicate wrapper and its debt
+# row together.
 collision_rows = rows("id-collisions.tsv", 6)
 recorded_collisions = {}
 for line_no, (symbol, paths, representations, decision, target, exit_node) in collision_rows:

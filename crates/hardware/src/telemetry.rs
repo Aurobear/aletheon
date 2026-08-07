@@ -1,9 +1,9 @@
-use crate::{DeviceId, MonotonicInstant, OperationId, SafetyState};
+use crate::{DeviceId, DeviceOperationId, MonotonicInstant, SafetyState};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TelemetryEnvelope {
     pub device: DeviceId,
-    pub operation: Option<OperationId>,
+    pub operation: Option<DeviceOperationId>,
     pub stream: String,
     pub sequence: u64,
     pub source_time: MonotonicInstant,

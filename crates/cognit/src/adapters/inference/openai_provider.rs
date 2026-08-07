@@ -191,7 +191,7 @@ struct ApiUsage {
 /// it), only off the configured `reporting` mode and which fields the provider
 /// actually returned.
 ///
-/// Priority (mirrors docs/plans/deepseek-cache-and-message-optimization-plan.md §3.2):
+/// Priority (see docs/testing/deepseek-cache.md#provider-telemetry-normalization):
 /// 0. `reporting == Unsupported` -> `CacheTelemetry::Unsupported`, no cache figures;
 /// 1. DeepSeek hit + miss both present -> use both, validate conservation;
 /// 2. only DeepSeek hit + total known -> miss = total - hit;
