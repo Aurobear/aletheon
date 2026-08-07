@@ -9,7 +9,7 @@ const MAX_FRAME_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FrameRef {
-    /// Content-addressed URI (e.g. "artifact://sha256/<digest>").
+    /// Content-addressed URI (e.g. `artifact://sha256/<digest>`).
     pub uri: String,
     /// SHA-256 hex digest of the image bytes.
     pub sha256: String,
