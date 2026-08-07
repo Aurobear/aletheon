@@ -101,7 +101,7 @@ impl SessionProjection {
             .unwrap_or_default();
         let settlement = latest_robot_receipt
             .map(robot_task_settlement)
-            .or_else(|| match session.status {
+            .or(match session.status {
                 SessionStatus::Failed => Some(TaskSettlement::Failed),
                 SessionStatus::Interrupted => Some(TaskSettlement::Cancelled),
                 // Completion is not acceptance. Only a persisted Host evaluation
