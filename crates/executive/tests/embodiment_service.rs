@@ -15,7 +15,7 @@ use fabric::types::embodiment::{
     SkillDescriptor, SkillId, SkillOutcome, SkillRequest, SkillResult,
 };
 use hardware::{
-    Broker, CancelAck, EmbodimentProvider, ManualClock, OperationId, ProviderError,
+    Broker, CancelAck, DeviceOperationId, EmbodimentProvider, ManualClock, ProviderError,
     ProviderRegistry, SimulatedEmbodiment, SkillProgressSink, StopReceipt, ValidatedSkillCommand,
 };
 use kernel::chronos::TestClock;
@@ -126,7 +126,7 @@ impl EmbodimentProvider for HighRiskProvider {
     async fn cancel(
         &self,
         device: &DeviceId,
-        operation: &OperationId,
+        operation: &DeviceOperationId,
     ) -> Result<CancelAck, ProviderError> {
         self.inner.cancel(device, operation).await
     }
