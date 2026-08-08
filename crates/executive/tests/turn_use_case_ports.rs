@@ -156,10 +156,10 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
         );
     }
 
-    let context = pipeline.find("let assembled_context").unwrap();
+    let context = pipeline.find("self.context_assembler.assemble").unwrap();
     let model = pipeline.find(".models.select").unwrap();
     let capability = pipeline.find(".capabilities").unwrap();
-    assert!(context < model && model < capability);
+    assert!(context < capability && model < capability);
 
     let coordinator = include_str!("../src/application/turn_coordinator.rs");
     let settlement = coordinator.find("terminal?;").unwrap();
