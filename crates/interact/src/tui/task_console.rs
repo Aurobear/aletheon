@@ -141,19 +141,20 @@ fn render_task_header(
         )));
     }
     if area.height >= 3 {
-        let mut runtime = vec![Span::styled(
+        let mut runtime = Vec::new();
+        if let Some(error) = state.last_error.as_deref() {
+            runtime.push(Span::styled(
+                format!(" ERROR {error} ·"),
+                Style::default().fg(theme.error),
+            ));
+        }
+        runtime.push(Span::styled(
             format!(
                 " activity {activity} · context {context} · {}",
                 runtime_metrics(task)
             ),
             Style::default().fg(theme.text_muted),
-        )];
-        if let Some(error) = state.last_error.as_deref() {
-            runtime.push(Span::styled(
-                format!(" · ERROR {error}"),
-                Style::default().fg(theme.error),
-            ));
-        }
+        ));
         lines.push(Line::from(runtime));
     }
     Paragraph::new(lines)
