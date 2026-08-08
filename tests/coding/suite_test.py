@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import fcntl
 import importlib.util
 import json
@@ -285,6 +286,108 @@ class SuiteTest(unittest.TestCase):
         self.assertEqual(empty["tasks"][0]["reasons"], ["catalog_invalid"])
 
 
+class AcceptanceInputDigestTest(unittest.TestCase):
+    """The published input digest binds every executable acceptance input."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temp.name)
+        self.task_source = self.root / "tests/coding/tasks/sample.toml"
+        self.fixture = self.root / "tests/coding/fixtures/sample"
+        self.acceptance = self.root / "tests/coding/acceptance/sample"
+        self.task_source.parent.mkdir(parents=True)
+        self.fixture.mkdir(parents=True)
+        self.acceptance.mkdir(parents=True)
+        self.task_source.write_text('prompt = "before"\n', encoding="utf-8")
+        (self.fixture / "source.txt").write_text("fixture\n", encoding="utf-8")
+        (self.acceptance / "rubric.toml").write_text("score = 1\n", encoding="utf-8")
+        self.task = suite.BenchmarkTask(
+            schema_version=1,
+            id="sample",
+            category="behavioral_bugfix",
+            fixture="sample",
+            prompt="before",
+            timeout_secs=30,
+            acceptance_commands=(("true",),),
+            forbidden_paths=(),
+            required_changed_paths=(),
+            expected_terminal="verified",
+            setup={},
+            resource_checks=(),
+            source=self.task_source,
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def digest(self) -> str:
+        return suite.acceptance_input_digest([self.task], self.root)
+
+    def test_digest_is_deterministic_when_inputs_are_unchanged(self):
+        self.assertEqual(self.digest(), self.digest())
+
+    def test_task_prompt_change_changes_digest(self):
+        before = self.digest()
+        self.task_source.write_text('prompt = "after"\n', encoding="utf-8")
+        self.assertNotEqual(before, self.digest())
+
+    def test_fixture_file_change_changes_digest(self):
+        before = self.digest()
+        (self.fixture / "source.txt").write_text("changed\n", encoding="utf-8")
+        self.assertNotEqual(before, self.digest())
+
+    def test_acceptance_rubric_change_changes_digest(self):
+        before = self.digest()
+        (self.acceptance / "rubric.toml").write_text("score = 2\n", encoding="utf-8")
+        self.assertNotEqual(before, self.digest())
+
+    def test_symlinked_input_is_rejected(self):
+        (self.fixture / "linked.txt").symlink_to(self.fixture / "source.txt")
+        with self.assertRaises(suite.ContractError):
+            self.digest()
+
+    def test_repository_escape_is_rejected(self):
+        outside = self.root.parent / f"{self.root.name}-outside.toml"
+        outside.write_text('prompt = "outside"\n', encoding="utf-8")
+        self.addCleanup(outside.unlink, missing_ok=True)
+        escaped = dataclasses.replace(self.task, source=outside)
+        with self.assertRaises(suite.ContractError):
+            suite.acceptance_input_digest([escaped], self.root)
+
+    def test_multifile_prompt_binds_comma_only_serialization(self):
+        prompt = (
+            pathlib.Path(__file__).parent / "tasks/rust_multifile.toml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("使用英文逗号直接连接结果（项目之间不插入空格）", prompt)
+
+
+class AcceptanceSourceGuardTest(unittest.TestCase):
+    def setUp(self):
+        self.before = {
+            "repo_sha": "a" * 40,
+            "repo_dirty": False,
+            "repo_status_digest": "sha256:" + "b" * 64,
+            "input_digest": "sha256:" + "c" * 64,
+        }
+
+    def test_unchanged_snapshot_is_accepted(self):
+        suite.assert_acceptance_source_unchanged(self.before, dict(self.before))
+
+    def test_head_dirty_and_input_mutations_are_rejected(self):
+        mutations = {
+            "repo_sha": "d" * 40,
+            "repo_dirty": True,
+            "repo_status_digest": "sha256:" + "e" * 64,
+            "input_digest": "sha256:" + "f" * 64,
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                after = dict(self.before)
+                after[field] = value
+                with self.assertRaises(suite.ContractError):
+                    suite.assert_acceptance_source_unchanged(self.before, after)
+
+
 class AcceptanceTaskTest(unittest.TestCase):
     """Tests for _acceptance_task evidence-path and projection behaviour."""
 
@@ -313,6 +416,8 @@ class AcceptanceTaskTest(unittest.TestCase):
         )
         self.assertEqual(result["evidence_paths"], ["logs/t1.json"])
         self.assertTrue(result["execution_present"])
+        self.assertEqual(result["expected_terminal"], "verified")
+        self.assertEqual(result["observed_terminal"], "verified")
 
     def test_evidence_path_none_gives_empty_list(self):
         """_acceptance_task with receipt_path=None produces empty evidence_paths."""
@@ -377,8 +482,19 @@ class AcceptanceCLITest(unittest.TestCase):
         self.listener.bind(str(self.socket_path))
         self._orig_argv = sys.argv[:]
         self._orig_environ = os.environ.copy()
+        self._source_snapshot_patch = mock.patch.object(
+            suite, "capture_acceptance_source_state"
+        )
+        self.mock_source_snapshot = self._source_snapshot_patch.start()
+        self.mock_source_snapshot.return_value = {
+            "repo_sha": "a" * 40,
+            "repo_dirty": False,
+            "repo_status_digest": "sha256:" + "b" * 64,
+            "input_digest": "sha256:" + "c" * 64,
+        }
 
     def tearDown(self):
+        self._source_snapshot_patch.stop()
         self.listener.close()
         self.temp.cleanup()
         sys.argv = self._orig_argv
@@ -526,6 +642,7 @@ class AcceptanceCLITest(unittest.TestCase):
         entries[0]["category"] = "lint"
         entries[0]["expected_terminal"] = "verified"
         report = suite._build_report(entries, [])
+        self.mock_source_snapshot.return_value["input_digest"] = report["catalog"]["digest"]
 
         mock_exec.return_value = (report, 0)
         mock_collect.return_value = {
@@ -574,6 +691,45 @@ class AcceptanceCLITest(unittest.TestCase):
     @mock.patch.object(suite, "collect_installed_provenance")
     @mock.patch.object(suite, "write_run")
     @mock.patch.object(suite, "execute_suite")
+    def test_source_mutation_preserves_report_but_aborts_artifact_emission(
+        self, mock_exec, mock_write, mock_collect,
+    ):
+        entries = [suite._invalid_entry("t1")]
+        entries[0]["category"] = "lint"
+        entries[0]["expected_terminal"] = "verified"
+        report = suite._build_report(entries, [])
+        before = dict(self.mock_source_snapshot.return_value)
+        before["input_digest"] = report["catalog"]["digest"]
+        after = dict(before)
+        after["input_digest"] = "sha256:" + "d" * 64
+        self.mock_source_snapshot.side_effect = [before, after]
+
+        def execute(*_args, **_kwargs):
+            suite._write_report(report, self.report_path)
+            return report, 0
+
+        mock_exec.side_effect = execute
+        self._set_env(ALETHEON_BIN="/usr/bin/aletheon")
+        sys.argv = [
+            "suite.py",
+            "--catalog", str(self.root / "catalog"),
+            "--receipts", str(self.root / "receipts"),
+            "--report", str(self.report_path),
+            "--run-id", "test-run-mutated",
+            "--generation-id", "gen1",
+            "--artifacts-root", str(self.root / "artifacts"),
+        ]
+
+        with self.assertRaises(SystemExit) as ctx:
+            suite.main()
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertTrue(self.report_path.is_file())
+        mock_collect.assert_not_called()
+        mock_write.assert_not_called()
+
+    @mock.patch.object(suite, "collect_installed_provenance")
+    @mock.patch.object(suite, "write_run")
+    @mock.patch.object(suite, "execute_suite")
     def test_malformed_catalog_digest_rejected(
         self, mock_exec, mock_write, mock_collect,
     ):
@@ -613,6 +769,7 @@ class AcceptanceCLITest(unittest.TestCase):
         entries[0]["category"] = "lint"
         entries[0]["expected_terminal"] = "verified"
         report = suite._build_report(entries, [])
+        self.mock_source_snapshot.return_value["input_digest"] = report["catalog"]["digest"]
         mock_exec.return_value = (report, 0)
         mock_collect.side_effect = suite.ProvenanceCollectionError(
             "secret details"
@@ -645,6 +802,7 @@ class AcceptanceCLITest(unittest.TestCase):
         entries[0]["category"] = "lint"
         entries[0]["expected_terminal"] = "verified"
         report = suite._build_report(entries, [])
+        self.mock_source_snapshot.return_value["input_digest"] = report["catalog"]["digest"]
         mock_exec.return_value = (report, 0)  # suite code 0 must not leak through
         mock_collect.return_value = {
             "generation_id": "gen1",

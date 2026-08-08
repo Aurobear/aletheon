@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import math
 import os
 import pathlib
 import stat
+import subprocess
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -23,6 +25,7 @@ from receipt import FAILURE_CLASSES, METRIC_KEYS, digest, seal, verify_receipt
 from run import ROOT, run_task
 
 REPORT_SCHEMA_VERSION = 1
+ACCEPTANCE_INPUT_DIGEST_VERSION = b"aletheon-acceptance-inputs-v1\0"
 
 # The only execution statuses allowed by the acceptance scoreboard
 # (A1-AUDIT-004 / plan spec:636-648). A `waived` entry additionally requires
@@ -33,6 +36,195 @@ EXECUTION_STATUSES = ("not_run", "infra_blocked", "failed", "passed", "waived")
 def utc_now() -> str:
     """Return current UTC time as ISO 8601 second-precision with Z suffix."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _checked_repository_path(
+    root: pathlib.Path,
+    path: pathlib.Path,
+    *,
+    expected: str,
+) -> tuple[pathlib.Path, str]:
+    """Return a repository-contained path after rejecting every symlink component."""
+    try:
+        repository = root.resolve(strict=True)
+    except OSError as error:
+        raise ContractError("acceptance repository root is unavailable") from error
+    candidate = path if path.is_absolute() else repository / path
+    candidate = pathlib.Path(os.path.abspath(candidate))
+    try:
+        relative = candidate.relative_to(repository)
+    except ValueError as error:
+        raise ContractError("acceptance input escapes repository root") from error
+
+    current = repository
+    try:
+        for part in relative.parts:
+            current = current / part
+            mode = current.lstat().st_mode
+            if stat.S_ISLNK(mode):
+                raise ContractError("acceptance input contains a symlink")
+    except OSError as error:
+        raise ContractError("acceptance input is unavailable") from error
+
+    try:
+        resolved = current.resolve(strict=True)
+        resolved.relative_to(repository)
+    except (OSError, ValueError) as error:
+        raise ContractError("acceptance input escapes repository root") from error
+    mode = current.stat().st_mode
+    if expected == "file" and not stat.S_ISREG(mode):
+        raise ContractError("acceptance input must be a regular file")
+    if expected == "directory" and not stat.S_ISDIR(mode):
+        raise ContractError("acceptance input must be a directory")
+    return current, relative.as_posix()
+
+
+def _hash_input_record(
+    hasher, kind: bytes, relative: str, body: bytes = b""
+) -> None:
+    """Hash a typed, length-delimited acceptance input record."""
+    encoded = relative.encode("utf-8")
+    hasher.update(len(kind).to_bytes(8, "big"))
+    hasher.update(kind)
+    hasher.update(len(encoded).to_bytes(8, "big"))
+    hasher.update(encoded)
+    hasher.update(len(body).to_bytes(8, "big"))
+    hasher.update(body)
+
+
+def _hash_regular_tree(
+    hasher, root: pathlib.Path, directory: pathlib.Path
+) -> None:
+    """Hash a complete regular-file tree without following special entries."""
+    checked, relative = _checked_repository_path(root, directory, expected="directory")
+    _hash_input_record(hasher, b"directory", relative)
+
+    def visit(parent: pathlib.Path) -> None:
+        try:
+            children = sorted(parent.iterdir(), key=lambda item: item.name)
+        except OSError as error:
+            raise ContractError("acceptance input tree is unreadable") from error
+        for child in children:
+            try:
+                mode = child.lstat().st_mode
+            except OSError as error:
+                raise ContractError("acceptance input tree is unreadable") from error
+            if stat.S_ISLNK(mode):
+                raise ContractError("acceptance input tree contains a symlink")
+            _, child_relative = _checked_repository_path(
+                root,
+                child,
+                expected="directory" if stat.S_ISDIR(mode) else "file",
+            )
+            if stat.S_ISDIR(mode):
+                _hash_input_record(hasher, b"directory", child_relative)
+                visit(child)
+            elif stat.S_ISREG(mode):
+                try:
+                    content = child.read_bytes()
+                except OSError as error:
+                    raise ContractError("acceptance input file is unreadable") from error
+                _hash_input_record(hasher, b"file", child_relative, content)
+            else:
+                raise ContractError("acceptance input tree contains a non-regular entry")
+
+    visit(checked)
+
+
+def acceptance_input_digest(
+    tasks: Sequence[BenchmarkTask], root: pathlib.Path
+) -> str:
+    """Bind task definitions, fixture trees, and hidden acceptance trees."""
+    hasher = hashlib.sha256()
+    hasher.update(ACCEPTANCE_INPUT_DIGEST_VERSION)
+    for task in sorted(tasks, key=lambda item: item.id):
+        source, relative = _checked_repository_path(root, task.source, expected="file")
+        try:
+            content = source.read_bytes()
+        except OSError as error:
+            raise ContractError("acceptance task definition is unreadable") from error
+        _hash_input_record(hasher, b"task", relative, content)
+        _hash_regular_tree(
+            hasher,
+            root,
+            root / "tests/coding/fixtures" / task.fixture,
+        )
+        _hash_regular_tree(
+            hasher,
+            root,
+            root / "tests/coding/acceptance" / task.id,
+        )
+    return "sha256:" + hasher.hexdigest()
+
+
+def _git_acceptance_state(root: pathlib.Path) -> dict[str, object]:
+    """Capture immutable Git identity plus a digest of the exact dirty state."""
+    repository = root.resolve(strict=True)
+
+    def run(*arguments: str) -> bytes:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repository), *arguments],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError as error:
+            raise ContractError("acceptance repository state is unavailable") from error
+        if result.returncode != 0:
+            raise ContractError("acceptance repository state is unavailable")
+        return result.stdout
+
+    try:
+        top = pathlib.Path(run("rev-parse", "--show-toplevel").decode("utf-8").strip())
+        sha = run("rev-parse", "HEAD").decode("ascii").strip()
+    except (UnicodeError, ValueError) as error:
+        raise ContractError("acceptance repository identity is malformed") from error
+    if top.resolve(strict=True) != repository:
+        raise ContractError("acceptance root is not the repository root")
+    if len(sha) not in {40, 64} or any(
+        character not in "0123456789abcdef" for character in sha
+    ):
+        raise ContractError("acceptance repository SHA is malformed")
+    status = run(
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    )
+    return {
+        "repo_sha": sha,
+        "repo_dirty": bool(status),
+        "repo_status_digest": digest(status),
+    }
+
+
+def capture_acceptance_source_state(
+    root: pathlib.Path, catalog: pathlib.Path
+) -> dict[str, object]:
+    """Capture the source identity whose installed acceptance run is authoritative."""
+    checked_catalog, _ = _checked_repository_path(root, catalog, expected="directory")
+    tasks = load_catalog(sorted(checked_catalog.glob("*.toml")), root)
+    if not tasks:
+        raise ContractError("catalog is empty")
+    return {
+        **_git_acceptance_state(root),
+        "input_digest": acceptance_input_digest(tasks, root),
+    }
+
+
+def assert_acceptance_source_unchanged(
+    before: Mapping[str, object], after: Mapping[str, object]
+) -> None:
+    """Fail closed rather than publish evidence spanning mixed source states."""
+    required = {
+        "repo_sha",
+        "repo_dirty",
+        "repo_status_digest",
+        "input_digest",
+    }
+    if set(before) != required or set(after) != required or dict(before) != dict(after):
+        raise ContractError("acceptance source changed during execution")
 
 
 def _entry_status(entry: Mapping[str, object]) -> str:
@@ -84,6 +276,8 @@ def _acceptance_task(
         terminal_settlement_count = 0
         retry_count = 0
         exit_code = None
+        expected_terminal = entry.get("expected_terminal")
+        observed_terminal = None
         started_at = None
         ended_at = None
         evidence_paths = []
@@ -104,6 +298,8 @@ def _acceptance_task(
         else:
             retry_count = retry_val
         exit_code = receipt.get("execution", {}).get("exit_code")
+        expected_terminal = receipt.get("expected_terminal")
+        observed_terminal = receipt.get("observed_terminal")
         if isinstance(receipt_path, str):
             evidence_paths = [receipt_path]
         else:
@@ -127,6 +323,8 @@ def _acceptance_task(
         "started_at": started_at,
         "ended_at": ended_at,
         "exit_code": exit_code,
+        "expected_terminal": expected_terminal,
+        "observed_terminal": observed_terminal,
         "evidence_paths": evidence_paths,
         "generation_id": generation_id,
         "p0": p0,
@@ -332,7 +530,10 @@ def _category_counts(entries: Sequence[Mapping[str, object]]) -> dict[str, dict[
 
 
 def _build_report(
-    entries: list[dict[str, object]], receipts: list[dict]
+    entries: list[dict[str, object]],
+    receipts: list[dict],
+    *,
+    catalog_digest: str | None = None,
 ) -> dict[str, object]:
     entries.sort(key=lambda item: str(item["task_id"]))
     total = len(entries)
@@ -343,14 +544,23 @@ def _build_report(
     )
     failure_counts = Counter(str(entry["failure_class"]) for entry in entries)
     terminal_counts = Counter(str(entry["observed_terminal"]) for entry in entries)
-    task_contract = [
-        {
-            "task_id": entry["task_id"],
-            "category": entry["category"],
-            "expected_terminal": entry["expected_terminal"],
-        }
-        for entry in entries
-    ]
+    if catalog_digest is None:
+        task_contract = [
+            {
+                "task_id": entry["task_id"],
+                "category": entry["category"],
+                "expected_terminal": entry["expected_terminal"],
+            }
+            for entry in entries
+        ]
+        catalog_digest = digest(
+            json.dumps(
+                task_contract,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        )
     binaries = {
         (value["binary"]["path"], value["binary"]["sha256"])
         for value in receipts
@@ -365,14 +575,7 @@ def _build_report(
         "catalog": {
             "task_schema_version": 1,
             "task_ids": [entry["task_id"] for entry in entries],
-            "digest": digest(
-                json.dumps(
-                    task_contract,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                ).encode("utf-8")
-            ),
+            "digest": catalog_digest,
         },
         "binaries": [
             {"path": path, "sha256": sha256}
@@ -480,6 +683,7 @@ def _execute_suite_locked(
         tasks = load_catalog(sorted(catalog.glob("*.toml")), root)
         if not tasks:
             raise ContractError("catalog is empty")
+        catalog_digest = acceptance_input_digest(tasks, root)
     except ContractError:
         report = _build_report([_invalid_entry("catalog", "catalog_invalid")], [])
         _write_report(report, report_path)
@@ -569,7 +773,7 @@ def _execute_suite_locked(
                             "ended_at": info["end"],
                         }
         acceptance_runtime_out.update(runtime_dict)
-    report = _build_report(entries, values)
+    report = _build_report(entries, values, catalog_digest=catalog_digest)
     _write_report(report, report_path)
     return report, exit_code(report)
 
@@ -604,10 +808,15 @@ def main() -> None:
             validate_official_acceptance_socket(os.environ)
         except AcceptanceContractError as error:
             parser.error(f"fatal: {error}")
+        catalog = args.catalog.resolve()
+        try:
+            source_before = capture_acceptance_source_state(ROOT, catalog)
+        except (OSError, ContractError):
+            parser.error("fatal: acceptance source snapshot failed")
         generation_id = args.generation_id
         runtime_out: dict[str, object] = {}
         report, code = execute_suite(
-            args.catalog.resolve(),
+            catalog,
             args.receipts.resolve(),
             args.report.resolve(),
             environ=os.environ,
@@ -621,6 +830,13 @@ def main() -> None:
         hex_digest = catalog_digest[len("sha256:"):]
         if len(hex_digest) != 64 or not all(c in "0123456789abcdef" for c in hex_digest):
             parser.error("fatal: report catalog digest must be sha256: + 64 lowercase hex")
+        if catalog_digest != source_before["input_digest"]:
+            parser.error("fatal: report does not match initial acceptance inputs")
+        try:
+            source_after = capture_acceptance_source_state(ROOT, catalog)
+            assert_acceptance_source_unchanged(source_before, source_after)
+        except (OSError, ContractError):
+            parser.error("fatal: acceptance source changed during execution")
         try:
             provenance = collect_installed_provenance(ROOT, hex_digest, generation_id)
         except ProvenanceCollectionError:

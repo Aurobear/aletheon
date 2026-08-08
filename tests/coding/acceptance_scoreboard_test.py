@@ -88,6 +88,8 @@ def _make_passing_task(task_id: str, generation_id: str) -> dict:
         "started_at": "2025-01-01T00:00:00Z",
         "ended_at": "2025-01-01T00:01:00Z",
         "exit_code": 0,
+        "expected_terminal": "verified",
+        "observed_terminal": "verified",
         "evidence_paths": [f"logs/{task_id}.log"],
         "generation_id": generation_id,
         "p0": False,
@@ -112,6 +114,8 @@ def _make_failed_task(task_id: str, generation_id: str, p0: bool = False) -> dic
         "started_at": "2025-01-01T00:00:00Z",
         "ended_at": "2025-01-01T00:01:00Z",
         "exit_code": 1,
+        "expected_terminal": "verified",
+        "observed_terminal": "verified",
         "evidence_paths": [f"logs/{task_id}.log"],
         "generation_id": generation_id,
         "p0": p0,
@@ -279,6 +283,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": None,
             "ended_at": None,
             "exit_code": None,
+            "expected_terminal": "verified",
+            "observed_terminal": None,
             "evidence_paths": [],
             "generation_id": "gen1",
             "p0": False,
@@ -307,6 +313,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 1,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -373,6 +381,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": None,
             "ended_at": None,
             "exit_code": None,
+            "expected_terminal": "verified",
+            "observed_terminal": None,
             "evidence_paths": [],
             "generation_id": "gen1",
             "p0": False,
@@ -397,6 +407,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": None,
             "ended_at": None,
             "exit_code": None,
+            "expected_terminal": "verified",
+            "observed_terminal": None,
             "evidence_paths": [],
             "generation_id": "gen1",
             "p0": False,
@@ -423,6 +435,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 1,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -449,6 +463,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 0,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -473,6 +489,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 1,  # non-zero => failed
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -480,6 +498,45 @@ class AcceptanceScoreboardTest(unittest.TestCase):
         }
         result = project_task(entry, "gen1")
         self.assertEqual(result["status"], "failed")
+
+    def test_expected_blocked_and_budget_exit_twenty_pass(self):
+        for expected in ("blocked", "budget_exhausted"):
+            with self.subTest(expected=expected):
+                entry = _make_passing_task("t1", "gen1")
+                entry.update(
+                    expected_terminal=expected,
+                    observed_terminal=expected,
+                    exit_code=20,
+                )
+                result = project_task(entry, "gen1")
+                self.assertEqual(result["status"], "passed")
+
+    def test_expected_cancelled_exit_twenty_one_passes(self):
+        entry = _make_passing_task("t1", "gen1")
+        entry.update(
+            expected_terminal="cancelled",
+            observed_terminal="cancelled",
+            exit_code=21,
+        )
+        self.assertEqual(project_task(entry, "gen1")["status"], "passed")
+
+    def test_expected_terminal_rejects_arbitrary_nonzero_exit(self):
+        entry = _make_passing_task("t1", "gen1")
+        entry.update(
+            expected_terminal="blocked",
+            observed_terminal="blocked",
+            exit_code=7,
+        )
+        self.assertEqual(project_task(entry, "gen1")["status"], "failed")
+
+    def test_terminal_mismatch_cannot_pass_with_canonical_exit(self):
+        entry = _make_passing_task("t1", "gen1")
+        entry.update(
+            expected_terminal="blocked",
+            observed_terminal="budget_exhausted",
+            exit_code=20,
+        )
+        self.assertEqual(project_task(entry, "gen1")["status"], "failed")
 
     def test_project_task_passed_requires_settlement_one(self):
         entry = {
@@ -497,6 +554,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 0,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -521,6 +580,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 0,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -545,6 +606,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 0,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -571,6 +634,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 1,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -597,6 +662,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": None,
             "ended_at": None,
             "exit_code": None,
+            "expected_terminal": "verified",
+            "observed_terminal": None,
             "evidence_paths": [],
             "generation_id": "gen1",
             "p0": False,
@@ -629,6 +696,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 1,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": True,
@@ -657,6 +726,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 1,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -706,6 +777,8 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
             "exit_code": 0,
+            "expected_terminal": "verified",
+            "observed_terminal": "verified",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,

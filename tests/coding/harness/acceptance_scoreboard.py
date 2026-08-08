@@ -12,7 +12,11 @@ from acceptance_contract import (
     validate_provenance,
     validate_waiver,
 )
-from receipt import verify_integrity as receipt_verify_integrity
+from receipt import (
+    EXPECTED_TERMINALS,
+    OBSERVED_TERMINALS,
+    verify_integrity as receipt_verify_integrity,
+)
 
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -25,8 +29,15 @@ _ENTRY_KEYS = {
     "outcome_passed", "failure_class", "reasons",
     "scope_violation_count", "resource_leak_count",
     "terminal_settlement_count", "retry_count", "started_at",
-    "ended_at", "exit_code", "evidence_paths", "generation_id",
-    "p0", "waiver",
+    "ended_at", "exit_code", "expected_terminal", "observed_terminal",
+    "evidence_paths", "generation_id", "p0", "waiver",
+}
+
+EXPECTED_TERMINAL_EXIT_CODES = {
+    "verified": 0,
+    "blocked": 20,
+    "budget_exhausted": 20,
+    "cancelled": 21,
 }
 
 TERMINAL_STATUSES = {"passed", "failed", "waived"}
@@ -161,8 +172,9 @@ def project_task(entry, generation_id, reference_time=None):
       - not executed => not_run with null timing/exit/evidence, zero counts
       - executed with infrastructure_failure => infra_blocked
       - executed invalid receipt => failed
-      - passed only if outcome true, exit 0, receipt valid, settlement 1,
-        scope 0, leak 0
+      - passed only if the receipt's expected and observed terminals match,
+        the client exit code is canonical for that terminal, outcome is true,
+        receipt is valid, settlement is 1, scope is 0, and leak is 0
       - otherwise failed
       - valid non-P0 waiver can convert failed/infra_blocked/not_run to waived;
         P0 waiver rejected.
@@ -183,6 +195,13 @@ def project_task(entry, generation_id, reference_time=None):
         isinstance(entry["exit_code"], bool) or not isinstance(entry["exit_code"], int)
     ):
         _fail("exit_code must be an integer or None")
+    if entry["expected_terminal"] not in EXPECTED_TERMINALS:
+        _fail("expected_terminal must be a supported expected terminal")
+    if (
+        entry["observed_terminal"] is not None
+        and entry["observed_terminal"] not in OBSERVED_TERMINALS
+    ):
+        _fail("observed_terminal must be a supported observed terminal or None")
     _bool(entry["receipt_valid"], "receipt_valid")
     _bool(entry["execution_present"], "execution_present")
     _bool(entry["outcome_passed"], "outcome_passed")
@@ -201,6 +220,8 @@ def project_task(entry, generation_id, reference_time=None):
             _fail("not_run tasks must have None start/end timestamps")
         if entry["exit_code"] is not None:
             _fail("not_run tasks must have None exit_code")
+        if entry["observed_terminal"] is not None:
+            _fail("not_run tasks must have None observed_terminal")
         if (
             entry["terminal_settlement_count"] != 0
             or entry["retry_count"] != 0
@@ -220,6 +241,8 @@ def project_task(entry, generation_id, reference_time=None):
             _fail("ended_at must not be before started_at")
         if entry["exit_code"] is None:
             _fail("executed tasks must have an integer exit_code")
+        if entry["receipt_valid"] and entry["observed_terminal"] is None:
+            _fail("valid executed tasks must have an observed_terminal")
         if entry["failure_class"] == "infrastructure_failure":
             status = "infra_blocked"
         elif not entry["receipt_valid"]:
@@ -227,7 +250,9 @@ def project_task(entry, generation_id, reference_time=None):
         elif entry["failure_class"] == "none":
             if (
                 entry["outcome_passed"] is True
-                and entry["exit_code"] == 0
+                and entry["observed_terminal"] == entry["expected_terminal"]
+                and entry["exit_code"]
+                == EXPECTED_TERMINAL_EXIT_CODES[entry["expected_terminal"]]
                 and entry["receipt_valid"] is True
                 and entry["terminal_settlement_count"] == 1
                 and entry["scope_violation_count"] == 0
@@ -258,6 +283,8 @@ def project_task(entry, generation_id, reference_time=None):
         "started_at": entry["started_at"],
         "ended_at": entry["ended_at"],
         "exit_code": entry["exit_code"],
+        "expected_terminal": entry["expected_terminal"],
+        "observed_terminal": entry["observed_terminal"],
         "evidence_paths": list(entry["evidence_paths"]),
         "generation_id": generation_id,
         "p0": entry["p0"],
@@ -281,8 +308,8 @@ def validate_projected_task(task, generation_id, evaluated_at):
         "outcome_passed", "failure_class", "reasons",
         "scope_violation_count", "resource_leak_count",
         "terminal_settlement_count", "retry_count", "started_at",
-        "ended_at", "exit_code", "evidence_paths", "generation_id",
-        "p0", "waiver", "status",
+        "ended_at", "exit_code", "expected_terminal", "observed_terminal",
+        "evidence_paths", "generation_id", "p0", "waiver", "status",
     }
     if not isinstance(task, dict) or set(task.keys()) != required_keys:
         _fail("projected task must have exact required keys including status")
