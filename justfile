@@ -38,6 +38,10 @@ test-lib package:
 test-one package target:
     bash scripts/cargo-agent.sh test -p {{package}} --test {{target}}
 
+# 根据当前分支相对 origin/dev 的 diff 选择 crate、测试目标和直接下游。
+test-changed *args:
+    bash scripts/aletheon.sh test changed {{args}}
+
 # 只对一个 crate 做 all-targets 严格 lint。
 lint-one package:
     bash scripts/cargo-agent.sh clippy -p {{package}} --all-targets -- -D warnings

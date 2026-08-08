@@ -66,7 +66,7 @@ Operations:
   verify [TARGET]               Run deployed-state or specialized verification
   acceptance {architecture|release|extension|robot-r8}
                                 Run architecture, release, or installed Robot R8 acceptance
-  test {unit|operations|deployment|architecture|all}
+  test {changed|unit|operations|deployment|architecture|all}
                                 Run a focused test suite
   closure {install|run|status}  Manage the scheduled Pi-memory closure
   completion {bash|zsh}         Print shell completion definitions

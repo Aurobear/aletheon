@@ -149,22 +149,40 @@ pub(super) fn derive_validation_plan(
                     });
                 }
             }
-            let integration_dir = Path::new(&context.root)
-                .join("crates")
-                .join(&crate_dir)
-                .join("tests");
-            if integration_dir.is_dir()
-                || changed_paths
-                    .iter()
-                    .any(|path| path.starts_with(&format!("crates/{crate_dir}/tests/")))
+            let integration_prefix = format!("crates/{crate_dir}/tests/");
+            let mut exact_integration_targets = std::collections::BTreeSet::new();
+            let mut shared_integration_support_changed = false;
+            for path in changed_paths
+                .iter()
+                .filter_map(|path| path.strip_prefix(&integration_prefix))
+                .filter(|path| path.ends_with(".rs"))
             {
-                let command = format!("{prefix} test -p {crate_name} --tests");
+                if !path.contains('/') {
+                    exact_integration_targets.insert(path.trim_end_matches(".rs").to_string());
+                } else {
+                    shared_integration_support_changed = true;
+                }
+            }
+            for target in exact_integration_targets {
+                let command = format!("{prefix} test -p {crate_name} --test {target}");
                 plan.push(ValidationPlanStep {
-                    id: format!("cargo-integration-{crate_name}"),
+                    id: format!("cargo-integration-{crate_name}-{target}"),
                     validation_kind: "test".into(),
                     command,
                     reason: format!(
-                        "changed Rust package `{crate_name}` has relevant integration-test targets"
+                        "changed integration target `{target}` in Rust package `{crate_name}`"
+                    ),
+                    source: format!("manifest:crates/{crate_dir}/Cargo.toml"),
+                    required: true,
+                });
+            }
+            if shared_integration_support_changed {
+                plan.push(ValidationPlanStep {
+                    id: format!("cargo-integration-{crate_name}-shared"),
+                    validation_kind: "test".into(),
+                    command: format!("{prefix} test -p {crate_name} --tests"),
+                    reason: format!(
+                        "shared integration-test support changed in Rust package `{crate_name}`"
                     ),
                     source: format!("manifest:crates/{crate_dir}/Cargo.toml"),
                     required: true,
@@ -208,11 +226,11 @@ pub(super) fn derive_validation_plan(
     }
     if !plan
         .iter()
-        .any(|step| step.validation_kind == "test" && step.command.contains("--tests"))
+        .any(|step| step.id.starts_with("cargo-integration-"))
     {
         omissions.push(ValidationPlanOmission {
             validation_kind: "integration_test".into(),
-            reason: "no changed package exposed a relevant integration-test target".into(),
+            reason: "no integration-test target or shared integration support changed".into(),
         });
     }
     if !deployment_required {

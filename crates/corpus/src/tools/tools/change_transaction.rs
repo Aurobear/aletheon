@@ -1934,6 +1934,60 @@ mod tests {
         assert!(!commands.iter().any(|command| command.contains("unrelated")));
     }
 
+    #[test]
+    fn validation_planner_selects_changed_integration_target_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let crate_root = temp.path().join("crates/demo");
+        std::fs::create_dir_all(crate_root.join("tests/support")).unwrap();
+        std::fs::create_dir_all(temp.path().join("scripts")).unwrap();
+        std::fs::write(temp.path().join("scripts/cargo-agent.sh"), "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            crate_root.join("Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        let context = RepositoryContext {
+            root: temp.path().display().to_string(),
+            version: "context".into(),
+            instructions: Vec::new(),
+            manifests: vec![ManifestRef {
+                file: RepositoryFileEvidence {
+                    path: "Cargo.toml".into(),
+                    sha256: "manifest".into(),
+                    size_bytes: 0,
+                    artifact_ref: "artifact://sha256/manifest".into(),
+                    preview: String::new(),
+                    preview_truncated: false,
+                },
+                kind: "cargo".into(),
+            }],
+            entry_files: Vec::new(),
+            evidence_constraints: Vec::new(),
+            exact_follow_up_paths: Vec::new(),
+            missing_candidates: Vec::new(),
+            vcs_state: VcsSnapshot::default(),
+            validation_commands: Vec::new(),
+            protected_paths: Vec::new(),
+            deployment_policy: None,
+        };
+
+        let exact = derive_validation_plan(&context, &["crates/demo/tests/contract.rs".into()]);
+        assert!(exact.steps.iter().any(|step| {
+            step.command == "bash scripts/cargo-agent.sh test -p demo --test contract"
+        }));
+        assert!(!exact
+            .steps
+            .iter()
+            .any(|step| step.command.ends_with("--tests")));
+
+        let shared =
+            derive_validation_plan(&context, &["crates/demo/tests/support/fixture.rs".into()]);
+        assert!(shared
+            .steps
+            .iter()
+            .any(|step| step.command == "bash scripts/cargo-agent.sh test -p demo --tests"));
+    }
+
     #[tokio::test]
     async fn u_chk_001_rollback_restores_preexisting_user_baseline_and_removes_turn_files() {
         let repo = init_repo();
