@@ -117,6 +117,7 @@ fn live_tool_overlay_is_visible_then_atomically_replaced_by_durable_activity() {
         UiAction::LiveActivity(LiveActivityEvent::ToolStarted {
             call_id: "call-1".into(),
             tool: "file_read".into(),
+            args: serde_json::json!({"path":"src/lib.rs"}),
             observed_at: 10,
         }),
     );
@@ -610,4 +611,55 @@ fn live_assistant_text_does_not_displace_an_already_committed_item() {
             .any(|id| id.starts_with("live:") && id.ends_with(":assistant")),
         "live overlay must be dropped when a durable assistant item already exists"
     );
+}
+
+#[test]
+fn durable_assistant_clears_compatibility_overlay_with_local_turn_identity() {
+    let mut state = AppState::default();
+    state.session_id = Some("session-1".into());
+
+    // The legacy stream does not carry a canonical turn ID, so the reducer
+    // creates a local identity until the durable projection catches up.
+    reduce(
+        &mut state,
+        UiAction::LiveAssistantText {
+            text: "streamed answer".into(),
+            sequence: 7,
+        },
+    );
+    assert!(state
+        .items
+        .keys()
+        .any(|id| id.starts_with("live:") && id.ends_with(":assistant")));
+
+    // The durable record carries a different, authoritative turn ID. It must
+    // still replace the sole live assistant overlay rather than render twice.
+    let durable = completed(8, "streamed answer");
+    reduce(
+        &mut state,
+        UiAction::Item(ItemEvent {
+            cursor: EventCursor {
+                sequence: 8,
+                event_id: None,
+            },
+            item_id: durable.id.0.to_string(),
+            phase: ItemPhase::Completed,
+            delta: None,
+            item: Some(durable),
+            error: None,
+        }),
+    );
+
+    assert_eq!(
+        state
+            .items
+            .values()
+            .filter(|item| item.kind == "assistant")
+            .count(),
+        1
+    );
+    assert!(!state
+        .items
+        .keys()
+        .any(|id| id.starts_with("live:") && id.ends_with(":assistant")));
 }

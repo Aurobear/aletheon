@@ -75,7 +75,8 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
             | ItemPayload::ModelContextProjection { .. }
             | ItemPayload::InferenceReceipt { .. }
             | ItemPayload::TaskProjection { .. }
-            | ItemPayload::TurnRecovery { .. } => None,
+            | ItemPayload::TurnRecovery { .. }
+            | ItemPayload::TurnSettlement { .. } => None,
         };
         if let Some(message) = message {
             messages.push(message);

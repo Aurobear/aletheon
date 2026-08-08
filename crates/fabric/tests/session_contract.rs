@@ -44,6 +44,10 @@ fn lifecycle_contract_round_trips_with_explicit_version_and_tags() {
         ItemPayload::SystemNotice {
             content: "s".into(),
         },
+        ItemPayload::TurnSettlement {
+            status: TurnTerminalStatus::Interrupted,
+            content: "Turn cancelled (User). The cancelled turn objective is closed.".into(),
+        },
     ];
     for payload in values {
         let json = serde_json::to_value(&payload).unwrap();

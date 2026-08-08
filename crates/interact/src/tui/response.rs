@@ -100,16 +100,23 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             let new_turn = iteration == 0 || !app.turn_active;
             let observed_at = app.clock.mono_now().0;
             super::reducer::begin_live_turn(&mut app.app_state, None);
-            let _ = super::reducer::reduce(
-                &mut app.app_state,
-                super::reducer::UiAction::LiveActivity(
-                    super::reducer::LiveActivityEvent::InferenceStarted {
-                        iteration,
-                        observed_at,
-                    },
-                ),
-            );
+            // Cognit emits iteration 0 as a turn-lifecycle marker, then emits
+            // one-based inference iterations. Do not render the lifecycle
+            // marker as a phantom inference round.
+            if let Some(inference_index) = iteration.checked_sub(1) {
+                let _ = super::reducer::reduce(
+                    &mut app.app_state,
+                    super::reducer::UiAction::LiveActivity(
+                        super::reducer::LiveActivityEvent::InferenceStarted {
+                            iteration: inference_index,
+                            observed_at,
+                        },
+                    ),
+                );
+            }
             if new_turn {
+                app.turn_cancel_requested = false;
+                app.app_state.last_terminal_status = None;
                 app.stream_ctrl.start_turn();
                 app.status.elapsed_secs = 0.0;
                 app.app_state.turn_tool_count = 0;
@@ -155,6 +162,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     super::reducer::LiveActivityEvent::ToolStarted {
                         call_id: call_id.clone(),
                         tool: tool.clone(),
+                        args: public_tool_args(&args),
                         observed_at,
                     },
                 ),
@@ -171,6 +179,17 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             tool: _,
             args,
         } => {
+            let observed_at = app.clock.mono_now().0;
+            let _ = super::reducer::reduce(
+                &mut app.app_state,
+                super::reducer::UiAction::LiveActivity(
+                    super::reducer::LiveActivityEvent::ToolArguments {
+                        call_id: call_id.clone(),
+                        args: public_tool_args(&args),
+                        observed_at,
+                    },
+                ),
+            );
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.compat_transcript.update_exec_args(&call_id, &args_str);
         }
@@ -266,7 +285,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 &mut app.app_state,
                 super::reducer::UiAction::LiveActivity(
                     super::reducer::LiveActivityEvent::InferenceFinished {
-                        iteration: app.current_iteration,
+                        iteration: app.current_iteration.saturating_sub(1),
                         observed_at,
                     },
                 ),
@@ -299,6 +318,16 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.streaming = false;
             app.turn_active = false;
             app.app_state.turn_active = false;
+            let terminal = if app.turn_cancel_requested {
+                fabric::TurnTerminalStatus::Interrupted
+            } else if app.app_state.last_terminal_status == Some(fabric::TurnTerminalStatus::Failed)
+            {
+                fabric::TurnTerminalStatus::Failed
+            } else {
+                fabric::TurnTerminalStatus::Completed
+            };
+            super::reducer::finish_live_turn(&mut app.app_state, terminal);
+            app.turn_cancel_requested = false;
             app.status.session_turns += 1;
         }
         ClientEvent::Error { message } => {
@@ -309,6 +338,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.streaming = false;
             app.turn_active = false;
             app.app_state.turn_active = false;
+            super::reducer::finish_live_turn(
+                &mut app.app_state,
+                fabric::TurnTerminalStatus::Failed,
+            );
         }
         ClientEvent::AwarenessChanged { level, context } => {
             if let Ok(awareness_level) =
@@ -440,6 +473,86 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
     }
 }
 
+fn public_tool_args(value: &serde_json::Value) -> serde_json::Value {
+    fn redact_inline_secrets(value: &str) -> String {
+        let mut redacted = value.to_owned();
+        for marker in [
+            "anthropic_api_key=",
+            "openai_api_key=",
+            "google_api_key=",
+            "api_key=",
+            "authorization: bearer ",
+            "secret=",
+            "token=",
+        ] {
+            let mut search_from = 0;
+            while let Some(offset) = redacted[search_from..].to_ascii_lowercase().find(marker) {
+                let start = search_from + offset;
+                let value_start = start + marker.len();
+                let value_end = redacted[value_start..]
+                    .find(char::is_whitespace)
+                    .map(|offset| value_start + offset)
+                    .unwrap_or(redacted.len());
+                redacted.replace_range(value_start..value_end, "[redacted]");
+                search_from = value_start + "[redacted]".len();
+            }
+        }
+        redacted
+    }
+
+    fn redact(value: &serde_json::Value, depth: usize) -> serde_json::Value {
+        if depth >= 3 {
+            return serde_json::json!("…");
+        }
+        match value {
+            serde_json::Value::Object(map) => serde_json::Value::Object(
+                map.iter()
+                    .take(8)
+                    .map(|(key, value)| {
+                        let sensitive = [
+                            "token",
+                            "secret",
+                            "password",
+                            "credential",
+                            "api_key",
+                            "authorization",
+                            "bearer",
+                        ]
+                        .iter()
+                        .any(|needle| key.to_ascii_lowercase().contains(needle));
+                        (
+                            key.clone(),
+                            if sensitive {
+                                serde_json::json!("[redacted]")
+                            } else {
+                                redact(value, depth + 1)
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            serde_json::Value::Array(values) => serde_json::Value::Array(
+                values
+                    .iter()
+                    .take(8)
+                    .map(|value| redact(value, depth + 1))
+                    .collect(),
+            ),
+            serde_json::Value::String(value) => {
+                let value = redact_inline_secrets(value);
+                let bounded = value.chars().take(160).collect::<String>();
+                serde_json::Value::String(if value.chars().count() > 160 {
+                    format!("{bounded}…")
+                } else {
+                    bounded
+                })
+            }
+            value => value.clone(),
+        }
+    }
+    redact(value, 0)
+}
+
 pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
     if let Some(params) = msg.get("params") {
         let approval_id = params
@@ -516,8 +629,11 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
 /// Temporary V0 response adapter. This is the only location allowed to inspect
 /// legacy result fields; remove after the compatibility window ending 2026-12-31.
 fn set_compat_assistant(app: &mut App, text: String) {
+    let already_streamed = !text.is_empty() && app.stream_ctrl.current_text() == text;
     app.compat_transcript.set_assistant_stream(text.clone());
-    app.show_transient_assistant(text);
+    if !already_streamed {
+        app.replace_transient_assistant(text);
+    }
 }
 
 fn add_compat_notice(app: &mut App, text: String) {
@@ -641,6 +757,13 @@ fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> boo
                 add_compat_notice(app, format!("Turn stopped: {:?}", completion.stop));
             }
         }
+        CommandOutputV1::CancelRequested(cancel) => add_compat_notice(
+            app,
+            format!(
+                "Cancellation requested for {} active turn(s).",
+                cancel.active_turns
+            ),
+        ),
         CommandOutputV1::Status(status) => {
             set_compat_assistant(
                 app,
@@ -725,6 +848,22 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 Err(error) => app
                     .compat_transcript
                     .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
+            }
+        }
+        (super::PendingCommand::OpenAgentInspector { focus }, Some(result), None) => {
+            let agents = result.get("agents").unwrap_or(&serde_json::Value::Null);
+            let parsed = if let Some(inspector) = app.agent_inspector.as_mut() {
+                inspector.replace(agents)
+            } else {
+                super::agent_inspector::AgentInspector::from_json(agents, focus.as_deref())
+                    .map(|inspector| app.agent_inspector = Some(inspector))
+            };
+            if let Err(error) = parsed {
+                app.agent_inspector = None;
+                app.compat_transcript.add_text(
+                    ChatRole::System,
+                    format!("无法打开 Agent sessions：{error}"),
+                );
             }
         }
         (super::PendingCommand::OpenCheckpointPicker, Some(result), None) => {
@@ -1363,6 +1502,7 @@ pub fn format_memory_status(memory: &serde_json::Value) -> String {
 mod tests {
     use super::{
         deduplicate_consecutive_text, format_memory_status, handle_event, process_response,
+        public_tool_args,
     };
     use crate::tui::{
         chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App, PendingCommand,
@@ -1374,6 +1514,24 @@ mod tests {
     };
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn public_tool_arguments_are_bounded_and_redacted() {
+        let value = public_tool_args(&serde_json::json!({
+            "path": "/workspace/src/lib.rs",
+            "authorization": "Bearer visible-secret",
+            "nested": {"api_key": "sk-secret"},
+            "command": "run OPENAI_API_KEY=inline-secret tool",
+            "query": "x".repeat(300),
+        }));
+
+        assert_eq!(value["authorization"], "[redacted]");
+        assert_eq!(value["nested"]["api_key"], "[redacted]");
+        assert!(!value.to_string().contains("visible-secret"));
+        assert!(!value.to_string().contains("sk-secret"));
+        assert!(!value.to_string().contains("inline-secret"));
+        assert!(value["query"].as_str().unwrap().ends_with('…'));
+    }
 
     #[test]
     fn deduplicates_only_an_exact_repeated_response() {
@@ -1438,12 +1596,134 @@ mod tests {
             ),
         );
 
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "text_snapshot", "text": "typed answer"}),
+        );
+
         process_response(&mut app, serde_json::json!({"id": 1, "result": output}));
 
         assert!(matches!(
             app.compat_transcript.entries.last(),
             Some(ChatEntry::Text(message)) if message.content == "typed answer"
         ));
+        assert_eq!(
+            app.app_state
+                .items
+                .values()
+                .filter(|item| item.kind == "assistant")
+                .count(),
+            1,
+            "multiple completion transports must replace the same transient item"
+        );
+
+        process_response(
+            &mut app,
+            serde_json::json!({"id": 2, "result": {"response": "typed answer"}}),
+        );
+        assert_eq!(
+            app.app_state
+                .items
+                .values()
+                .filter(|item| item.kind == "assistant")
+                .count(),
+            1,
+            "legacy and typed completion envelopes must not render separately"
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_cancel_ack_is_not_parsed_as_a_status_projection() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        let output = fabric::contract::command::CommandOutputEnvelopeV1::new(
+            "cancel:1",
+            fabric::contract::command::CommandOutputV1::CancelRequested(
+                fabric::contract::command::CancelRequestedV1 { active_turns: 1 },
+            ),
+        );
+
+        process_response(&mut app, serde_json::json!({"id": 1, "result": output}));
+
+        assert!(app.compat_transcript.entries.iter().any(|entry| {
+            matches!(entry, ChatEntry::Text(message)
+                if message.content == "Cancellation requested for 1 active turn(s).")
+        }));
+        assert!(!app.compat_transcript.entries.iter().any(|entry| {
+            matches!(entry, ChatEntry::Text(message)
+                if message.content.contains("Invalid typed status projection"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn cancelled_compatibility_turn_settles_live_progress_and_keeps_output() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "turn_started", "iteration": 0}),
+        );
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "turn_started", "iteration": 1}),
+        );
+        app.turn_cancel_requested = true;
+        handle_event(
+            &mut app,
+            &serde_json::json!({
+                "type": "text_snapshot",
+                "text": "Cancelled by user. The cancelled turn objective is closed."
+            }),
+        );
+        handle_event(&mut app, &serde_json::json!({"type": "turn_done"}));
+
+        assert_eq!(
+            app.app_state.last_terminal_status,
+            Some(fabric::TurnTerminalStatus::Interrupted)
+        );
+        assert!(app
+            .app_state
+            .activities
+            .iter()
+            .all(|activity| activity.state != fabric::ActivityState::Running));
+        assert!(app.app_state.activities.iter().any(|activity| {
+            activity.kind == fabric::ActivityKind::Runtime
+                && activity.state == fabric::ActivityState::Cancelled
+        }));
+        assert!(app.app_state.items.values().any(|item| {
+            item.kind == "assistant" && item.content.starts_with("Cancelled by user")
+        }));
     }
 
     #[tokio::test]
@@ -1685,6 +1965,7 @@ mod tests {
 
         for event in [
             fabric::ui_event::ClientEvent::TurnStarted { iteration: 0 },
+            fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 },
             fabric::ui_event::ClientEvent::Usage {
                 usage: fabric::InferenceUsage::unsupported(Some(100), Some(10)),
             },
@@ -1693,7 +1974,7 @@ mod tests {
                 tool: "file_read".into(),
                 args: serde_json::Value::Null,
             },
-            fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 },
+            fabric::ui_event::ClientEvent::TurnStarted { iteration: 2 },
             fabric::ui_event::ClientEvent::Usage {
                 usage: fabric::InferenceUsage::unsupported(Some(200), Some(20)),
             },
@@ -1710,7 +1991,17 @@ mod tests {
         assert_eq!(app.app_state.total_tokens, 330);
         assert_eq!(app.app_state.turn_activity.inference_rounds, 2);
         assert_eq!(app.app_state.turn_activity.tool_calls, 1);
-        assert_eq!(app.app_state.current_iteration, 1);
+        assert_eq!(app.app_state.current_iteration, 2);
+        let inference = app
+            .app_state
+            .activities
+            .iter()
+            .filter(|activity| activity.activity_id.contains(":inference:"))
+            .collect::<Vec<_>>();
+        assert_eq!(inference.len(), 2);
+        assert!(inference
+            .iter()
+            .all(|activity| activity.state == fabric::ActivityState::Completed));
         assert_eq!(app.app_state.context.used, Some(200));
         assert_eq!(app.app_state.context.max, Some(1_000_000));
     }
@@ -1820,6 +2111,16 @@ mod tests {
         handle_event(
             &mut app,
             &serde_json::to_value(fabric::ui_event::ClientEvent::TurnStarted { iteration: 0 })
+                .unwrap(),
+        );
+        assert!(!app
+            .app_state
+            .activities
+            .iter()
+            .any(|activity| activity.activity_id.contains(":inference:")));
+        handle_event(
+            &mut app,
+            &serde_json::to_value(fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 })
                 .unwrap(),
         );
         handle_event(

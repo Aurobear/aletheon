@@ -1020,7 +1020,7 @@ impl ToolRunnerWithGuard {
                 // bounded timeout. Path-mutating tools enforce canonical workspace
                 // confinement in their own implementation.
                 // NetworkProxied is Phase 2+; in Phase 1 it falls through to InProcess.
-                const TOOL_TIMEOUT_SECS: u64 = 60;
+                let tool_timeout = tool.execution_timeout(&input);
                 let execution = async {
                     if let Some(sink) = sink.as_deref_mut() {
                         tool.execute_streaming(input.clone(), ctx, sink).await;
@@ -1042,15 +1042,21 @@ impl ToolRunnerWithGuard {
                     }
                 };
                 match kernel::chronos::SystemTimer
-                    .timeout(Duration::from_secs(TOOL_TIMEOUT_SECS), execution)
+                    .timeout(tool_timeout, execution)
                     .await
                 {
                     Ok(result) => result,
                     Err(_) => ToolResult {
-                        content: format!("Tool '{tool_name}' timed out after {TOOL_TIMEOUT_SECS}s"),
+                        content: format!(
+                            "Tool '{tool_name}' timed out after {}ms",
+                            tool_timeout.as_millis()
+                        ),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: TOOL_TIMEOUT_SECS * 1000,
+                            execution_time_ms: tool_timeout
+                                .as_millis()
+                                .try_into()
+                                .unwrap_or(u64::MAX),
                             truncated: false,
                             patch_delta: None,
                         },

@@ -818,7 +818,6 @@ impl TurnCoordinator {
                     return self.finish_cancelled_execution(
                         &session_id,
                         turn_id,
-                        sequence,
                         &mut write_tracker,
                         reason,
                     ).await;
@@ -837,7 +836,6 @@ impl TurnCoordinator {
                     return self.finish_cancelled_execution(
                         &session_id,
                         turn_id,
-                        sequence,
                         &mut write_tracker,
                         reason,
                     ).await;
@@ -855,7 +853,6 @@ impl TurnCoordinator {
                     return self.finish_cancelled_execution(
                         &session_id,
                         turn_id,
-                        sequence,
                         &mut write_tracker,
                         reason,
                     ).await;
@@ -982,8 +979,16 @@ impl TurnCoordinator {
                         }
                     }
                 }
+                if result.stop == TurnStop::Cancelled && result.output.trim().is_empty() {
+                    result.output = cancelled_result().output;
+                }
                 let terminal = if result.stop == TurnStop::Completed {
                     ItemPayload::AssistantMessage {
+                        content: result.output.clone(),
+                    }
+                } else if result.stop == TurnStop::Cancelled {
+                    ItemPayload::TurnSettlement {
+                        status: fabric::TurnTerminalStatus::Interrupted,
                         content: result.output.clone(),
                     }
                 } else {
@@ -1059,16 +1064,23 @@ impl TurnCoordinator {
         &self,
         session_id: &SessionId,
         turn_id: TurnId,
-        mut sequence: u64,
         write_tracker: &mut Option<TurnWriteTracker>,
         reason: CancelReason,
     ) -> Result<CompletedExecution> {
+        // The runner may have persisted model-visible lifecycle fragments
+        // before observing cancellation. It is fully drained at this point, so
+        // refresh the authoritative tail instead of reusing the sequence that
+        // preceded runner execution.
+        let mut sequence = self.next_sequence(session_id).await?;
         self.append_tracked(
             session_id,
             turn_id,
             &mut sequence,
-            ItemPayload::SystemNotice {
-                content: format!("turn cancelled: {reason:?}"),
+            ItemPayload::TurnSettlement {
+                status: fabric::TurnTerminalStatus::Interrupted,
+                content: format!(
+                    "Turn cancelled ({reason:?}). The cancelled turn objective is closed."
+                ),
             },
             WritePhase::TerminalFlush,
             write_tracker,
@@ -1175,7 +1187,7 @@ impl TurnCoordinator {
 
 pub fn cancelled_result() -> TurnResult {
     TurnResult {
-        output: String::new(),
+        output: "Cancelled by user. The cancelled turn objective is closed.".into(),
         stop: TurnStop::Cancelled,
         failure: None,
         usage: Default::default(),
@@ -1189,6 +1201,14 @@ pub fn cancelled_result() -> TurnResult {
 #[cfg(test)]
 mod durable_failure_tests {
     use super::*;
+
+    #[test]
+    fn cancelled_result_is_typed_and_never_empty() {
+        let result = cancelled_result();
+        assert_eq!(result.stop, TurnStop::Cancelled);
+        assert!(!result.output.trim().is_empty());
+        assert!(!result.metrics.completed_normally);
+    }
 
     #[test]
     fn active_retention_only_recognizes_terminal_durable_write_failure() {

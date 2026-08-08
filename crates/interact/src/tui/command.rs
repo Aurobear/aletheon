@@ -27,6 +27,9 @@ pub enum BuiltinCommand {
     Target {
         value: String,
     },
+    Runtime {
+        value: String,
+    },
     Agents,
     AgentDetail {
         id: String,

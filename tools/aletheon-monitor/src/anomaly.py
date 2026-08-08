@@ -81,6 +81,57 @@ def check_context_overflow(journal: list[dict]) -> Optional[dict]:
     return None
 
 
+def check_context_pressure(snapshot: dict) -> Optional[dict]:
+    """Compare active occupancy to capacity; cumulative usage is never a window."""
+    tasks = snapshot.get("tasks", [])
+    if not isinstance(tasks, list):
+        return None
+    for task in reversed(tasks):
+        facts = task.get("runtime_facts") if isinstance(task, dict) else None
+        if not isinstance(facts, dict):
+            continue
+        active = facts.get("active_context_occupancy_tokens")
+        capacity = facts.get("context_capacity_tokens")
+        if not isinstance(active, int) or not isinstance(capacity, int) or capacity <= 0:
+            continue
+        ratio = active / capacity
+        if ratio > 1:
+            return {
+                "type": "active_context_overflow",
+                "severity": "CRITICAL",
+                "detail": f"active context {active}/{capacity} tokens exceeds capacity",
+            }
+        if ratio >= 0.9:
+            return {
+                "type": "active_context_pressure",
+                "severity": "WARN",
+                "detail": f"active context is {ratio:.0%} full ({active}/{capacity}); cumulative usage was not used",
+            }
+    return None
+
+
+def _nested_true(value: object, key: str) -> bool:
+    if isinstance(value, dict):
+        return value.get(key) is True or any(_nested_true(item, key) for item in value.values())
+    if isinstance(value, list):
+        return any(_nested_true(item, key) for item in value)
+    return False
+
+
+def check_recent_tool_errors(journal: list[dict]) -> Optional[dict]:
+    failures = [
+        entry for entry in journal
+        if entry.get("event_type") == "tool_result" and _nested_true(entry, "is_error")
+    ]
+    if failures:
+        return {
+            "type": "recent_tool_errors",
+            "severity": "WARN",
+            "detail": f"{len(failures)} authoritative tool result(s) failed in the selected session journal",
+        }
+    return None
+
+
 def check_socket(snapshot: dict) -> Optional[dict]:
     """Socket file missing or unwritable."""
     sock = snapshot.get("socket", {})
@@ -125,6 +176,8 @@ ALL_RULES = [
     ("tool_error_rate", check_tool_error_rate),
     ("llm_error_rate", check_llm_error_rate),
     ("context_overflow", check_context_overflow),
+    ("context_pressure", check_context_pressure),
+    ("recent_tool_errors", check_recent_tool_errors),
     ("socket_missing", check_socket),
     ("provider_unreachable", check_provider),
     ("memory_growth", check_memory_growth),
@@ -148,11 +201,11 @@ def run_all(perf: dict, snapshot: dict, journal: list[dict]) -> list[dict]:
                     anomalies.append(result)
         elif rule is check_tool_error_rate:
             anomalies.extend(rule(perf))
-        elif rule is check_context_overflow:
+        elif rule is check_context_overflow or rule is check_recent_tool_errors:
             result = rule(journal)
             if result:
                 anomalies.append(result)
-        elif rule is check_socket or rule is check_provider:
+        elif rule is check_socket or rule is check_provider or rule is check_context_pressure:
             result = rule(snapshot)
             if result:
                 anomalies.append(result)

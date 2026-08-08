@@ -161,7 +161,10 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
         } else if self.state.total_tokens > 0 {
             spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
             spans.push(Span::styled(
-                format!("seen {} tok", format_with_commas(self.state.total_tokens)),
+                format!(
+                    "task total {} tok",
+                    format_with_commas(self.state.total_tokens)
+                ),
                 Style::default().fg(Color::DarkGray),
             ));
         }
@@ -282,7 +285,7 @@ impl<'a> Widget for StatusBarWidget<'a> {
         let mut right_parts = Vec::new();
         if self.status.total_tokens > 0 {
             right_parts.push(format!(
-                "{} tok",
+                "task total {} tok",
                 format_with_commas(self.status.total_tokens)
             ));
         }
@@ -399,7 +402,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
 
-        assert!(rendered.contains("400,000 tok"));
+        assert!(rendered.contains("task total 400,000 tok"));
         assert!(rendered.contains("2% ctx"));
         assert!(!rendered.contains("40% ctx"));
     }
@@ -427,6 +430,6 @@ mod tests {
 
         assert!(rendered.contains("ctx: 8k / 1,000k (1%)"), "{rendered}");
         assert!(rendered.contains("turn 300 in/30 out"), "{rendered}");
-        assert!(!rendered.contains("seen 10,500 tok"), "{rendered}");
+        assert!(!rendered.contains("task total 10,500 tok"), "{rendered}");
     }
 }

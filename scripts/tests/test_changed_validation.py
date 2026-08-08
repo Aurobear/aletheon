@@ -15,6 +15,13 @@ assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+FILTERED_PATH = ROOT / "scripts/libexec/aletheon/test-filtered.py"
+FILTERED_SPEC = importlib.util.spec_from_file_location("test_filtered", FILTERED_PATH)
+FILTERED = importlib.util.module_from_spec(FILTERED_SPEC)
+assert FILTERED_SPEC.loader is not None
+sys.modules[FILTERED_SPEC.name] = FILTERED
+FILTERED_SPEC.loader.exec_module(FILTERED)
+
 
 def package(root: Path, name: str, dependencies=(), tests=(), target_kind="lib"):
     package_root = root / "crates" / name
@@ -51,6 +58,8 @@ class ChangedValidationTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / "crates/core/tests").mkdir(parents=True)
         (self.root / "crates/client/tests").mkdir(parents=True)
+        (self.root / "crates/core/src").mkdir(parents=True)
+        (self.root / "crates/core/src/lib.rs").write_text("", encoding="utf-8")
         core = package(self.root, "core", tests=("contract", "runtime"))
         client = package(self.root, "client", dependencies=("core",))
         self.metadata = {
@@ -64,12 +73,126 @@ class ChangedValidationTests(unittest.TestCase):
     def commands(self, paths):
         return [step.command for step in MODULE.derive_steps(self.root, paths, self.metadata)]
 
+    def write_groups(self, body: str):
+        (self.root / ".aletheon-validation.toml").write_text(
+            "[changed_validation]\nschema_version = 1\n\n" + body,
+            encoding="utf-8",
+        )
+
     def test_source_change_uses_lib_test_and_direct_dependent_check(self):
         commands = self.commands(["crates/core/src/lib.rs"])
-        self.assertIn(("bash", "scripts/cargo-agent.sh", "check", "-p", "core"), commands)
+        self.assertIn(
+            (
+                "bash",
+                "scripts/cargo-agent.sh",
+                "check",
+                "-p",
+                "client",
+                "-p",
+                "core",
+            ),
+            commands,
+        )
         self.assertIn(("bash", "scripts/cargo-agent.sh", "test", "-p", "core", "--lib"), commands)
-        self.assertIn(("bash", "scripts/cargo-agent.sh", "check", "-p", "client"), commands)
         self.assertNotIn(("bash", "scripts/cargo-agent.sh", "test", "-p", "core", "--tests"), commands)
+
+    def test_fully_mapped_sources_use_filtered_tests_and_group_checks(self):
+        self.write_groups(
+            """
+[[changed_validation.rust_test_groups]]
+package = "core"
+source_paths = ["crates/core/src/lib.rs"]
+lib_filters = ["module::tests::"]
+integration_targets = ["contract"]
+"""
+        )
+        commands = self.commands(
+            ["crates/core/src/lib.rs", "crates/core/tests/contract.rs"]
+        )
+        self.assertIn(
+            (
+                "python3",
+                "scripts/libexec/aletheon/test-filtered.py",
+                "--package",
+                "core",
+            ),
+            commands,
+        )
+        self.assertNotIn(
+            ("bash", "scripts/cargo-agent.sh", "test", "-p", "core", "--lib"),
+            commands,
+        )
+        self.assertNotIn(
+            (
+                "bash",
+                "scripts/cargo-agent.sh",
+                "test",
+                "-p",
+                "core",
+                "--test",
+                "contract",
+            ),
+            commands,
+        )
+
+    def test_unmapped_source_forces_safe_package_fallback(self):
+        self.write_groups(
+            """
+[[changed_validation.rust_test_groups]]
+package = "core"
+source_paths = ["crates/core/src/mapped.rs"]
+lib_filters = ["module::tests::"]
+"""
+        )
+        commands = self.commands(["crates/core/src/lib.rs"])
+        self.assertIn(
+            ("bash", "scripts/cargo-agent.sh", "test", "-p", "core", "--lib"),
+            commands,
+        )
+
+    def test_deleted_mapped_source_forces_safe_package_fallback(self):
+        self.write_groups(
+            """
+[[changed_validation.rust_test_groups]]
+package = "core"
+source_paths = ["crates/core/src/deleted.rs"]
+lib_filters = ["module::tests::"]
+"""
+        )
+        commands = self.commands(["crates/core/src/deleted.rs"])
+        self.assertIn(
+            ("bash", "scripts/cargo-agent.sh", "test", "-p", "core", "--lib"),
+            commands,
+        )
+
+    def test_manifest_change_forces_safe_package_fallback(self):
+        self.write_groups(
+            """
+[[changed_validation.rust_test_groups]]
+package = "core"
+source_paths = ["crates/core/src/lib.rs"]
+lib_filters = ["module::tests::"]
+"""
+        )
+        commands = self.commands(
+            ["crates/core/src/lib.rs", "crates/core/Cargo.toml"]
+        )
+        self.assertIn(
+            ("bash", "scripts/cargo-agent.sh", "test", "-p", "core", "--lib"),
+            commands,
+        )
+
+    def test_unknown_group_package_is_rejected(self):
+        self.write_groups(
+            """
+[[changed_validation.rust_test_groups]]
+package = "missing"
+source_paths = ["crates/missing/src/lib.rs"]
+lib_filters = ["tests::"]
+"""
+        )
+        with self.assertRaisesRegex(ValueError, "unknown workspace packages"):
+            self.commands(["crates/core/src/lib.rs"])
 
     def test_binary_only_source_change_uses_bin_tests(self):
         binary = package(self.root, "runner", target_kind="bin")
@@ -87,6 +210,35 @@ class ChangedValidationTests(unittest.TestCase):
         self.assertNotIn(
             ("bash", "scripts/cargo-agent.sh", "test", "-p", "runner", "--lib"),
             commands,
+        )
+
+    def test_binary_mapping_still_uses_safe_bin_fallback(self):
+        binary = package(self.root, "runner", target_kind="bin")
+        metadata = {"packages": [binary], "workspace_members": [binary["id"]]}
+        (self.root / ".aletheon-validation.toml").write_text(
+            """
+[changed_validation]
+schema_version = 1
+
+[[changed_validation.rust_test_groups]]
+package = "runner"
+source_paths = ["crates/runner/src/main.rs"]
+lib_filters = ["tests::"]
+""",
+            encoding="utf-8",
+        )
+        commands = [
+            step.command
+            for step in MODULE.derive_steps(
+                self.root, ["crates/runner/src/main.rs"], metadata
+            )
+        ]
+        self.assertIn(
+            ("bash", "scripts/cargo-agent.sh", "test", "-p", "runner", "--bins"),
+            commands,
+        )
+        self.assertFalse(
+            any("test-filtered.py" in part for command in commands for part in command)
         )
 
     def test_deleted_paths_are_included_in_the_diff(self):
@@ -131,6 +283,56 @@ class ChangedValidationTests(unittest.TestCase):
         self.assertIn(("bash", "tests/suites/operations/cli_static_test.sh"), commands)
         self.assertIn(("bash", "tests/suites/operations/script_surface_test.sh"), commands)
 
+    def test_architecture_inventory_change_selects_architecture_gate(self):
+        commands = self.commands(["config/architecture/fabric-public-types.tsv"])
+        self.assertIn(
+            ("bash", "tests/suites/architecture/architecture_check.sh"), commands
+        )
+
+    def test_monitor_source_change_selects_full_monitor_suite(self):
+        commands = self.commands(["tools/aletheon-monitor/src/anomaly.py"])
+        self.assertIn(
+            (
+                "python3",
+                "scripts/libexec/aletheon/test-monitor.py",
+                "tools/aletheon-monitor/tests",
+            ),
+            commands,
+        )
+
+    def test_only_monitor_test_entries_selects_exact_files(self):
+        path = "tools/aletheon-monitor/tests/test_watch.py"
+        (self.root / path).parent.mkdir(parents=True)
+        (self.root / path).write_text("", encoding="utf-8")
+        commands = self.commands([path])
+        self.assertIn(
+            ("python3", "scripts/libexec/aletheon/test-monitor.py", path), commands
+        )
+
+    def test_monitor_test_support_selects_full_suite(self):
+        commands = self.commands(["tools/aletheon-monitor/tests/conftest.py"])
+        self.assertIn(
+            (
+                "python3",
+                "scripts/libexec/aletheon/test-monitor.py",
+                "tools/aletheon-monitor/tests",
+            ),
+            commands,
+        )
+
+    def test_deleted_monitor_test_entry_selects_full_suite(self):
+        commands = self.commands(
+            ["tools/aletheon-monitor/tests/test_deleted_contract.py"]
+        )
+        self.assertIn(
+            (
+                "python3",
+                "scripts/libexec/aletheon/test-monitor.py",
+                "tools/aletheon-monitor/tests",
+            ),
+            commands,
+        )
+
     def test_failed_rerun_is_intersected_with_current_plan(self):
         steps = MODULE.derive_steps(
             self.root, ["crates/core/src/lib.rs"], self.metadata
@@ -166,6 +368,14 @@ class ChangedValidationTests(unittest.TestCase):
         payload = json.loads(report.read_text(encoding="utf-8"))
         with self.assertRaises(ValueError):
             MODULE.select_report_steps(payload, steps, True)
+
+    def test_filtered_runner_rejects_zero_test_selection(self):
+        command = [sys.executable, "-c", "print('running 0 tests')"]
+        self.assertEqual(FILTERED.run_checked(self.root, command, "empty"), 3)
+
+    def test_filtered_runner_accepts_nonzero_test_selection(self):
+        command = [sys.executable, "-c", "print('running 2 tests')"]
+        self.assertEqual(FILTERED.run_checked(self.root, command, "matched"), 0)
 
 
 if __name__ == "__main__":

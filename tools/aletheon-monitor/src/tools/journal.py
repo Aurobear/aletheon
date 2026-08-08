@@ -7,6 +7,7 @@ async def journal(
     client: AletheonClient,
     last_n: int = 20,
     event_type: str = "",
+    session_id: str = "",
 ) -> dict:
     """Retrieve recent session journal events.
 
@@ -16,7 +17,9 @@ async def journal(
         event_type: Optional filter: "tool_use", "user_message", "error",
             "compacted", "checkpoint".
     """
-    params = {"last_n": last_n}
+    params = {"limit": last_n}
+    if session_id:
+        params["session_id"] = session_id
     if event_type and event_type != "all":
         params["event_type"] = event_type
 
@@ -26,7 +29,7 @@ async def journal(
         return {"error": resp["error"]}
 
     result = resp.get("result", resp)
-    events = result.get("events", result.get("journal", []))
+    events = result.get("entries", result.get("events", result.get("journal", [])))
 
     return {
         "events": events,

@@ -1024,6 +1024,35 @@
           ]
         },
         {
+          "description": "Authoritative terminal fact for an ordinarily executed turn. This is\ndistinct from `TurnRecovery`, which is reserved for startup recovery of\na turn whose terminal boundary was missing.",
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "status": {
+                  "$ref": "#/$defs/TurnTerminalStatus"
+                }
+              },
+              "required": [
+                "status",
+                "content"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "turn_settlement"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
           "type": "object",
           "properties": {
             "data": {
@@ -1572,6 +1601,15 @@
         "Blocked",
         "Cancelled",
         "Failed"
+      ]
+    },
+    "TurnTerminalStatus": {
+      "description": "Authoritative terminal status exposed by the versioned client protocol.",
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "interrupted"
       ]
     }
   }

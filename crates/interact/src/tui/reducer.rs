@@ -42,6 +42,12 @@ pub enum LiveActivityEvent {
     ToolStarted {
         call_id: String,
         tool: String,
+        args: serde_json::Value,
+        observed_at: u64,
+    },
+    ToolArguments {
+        call_id: String,
+        args: serde_json::Value,
         observed_at: u64,
     },
     ToolProgress {
@@ -213,10 +219,15 @@ fn reduce_live_assistant_text(state: &mut AppState, text: String, sequence: u64)
 /// Remove the ephemeral live-assistant overlay once a durable assistant item
 /// commits, so the same text is atomically replaced rather than duplicated.
 fn clear_live_assistant_overlay(state: &mut AppState, record: &ItemRecord) {
-    state.items.remove(&format!(
+    let canonical_id = format!(
         "live:{}:{}:assistant",
         record.session_id.0, record.turn_id.0
-    ));
+    );
+    state.items.retain(|id, _| {
+        id != &canonical_id
+            && !(id.starts_with("live:") && id.ends_with(":assistant"))
+            && !(id.starts_with("local:") && id.contains(":assistant:"))
+    });
 }
 
 fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> Vec<UiEffect> {
@@ -335,6 +346,7 @@ fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
         LiveActivityEvent::ToolStarted {
             call_id,
             tool,
+            args,
             observed_at,
         } => {
             let activity_id = live_activity_id(state, &call_id);
@@ -347,7 +359,10 @@ fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
                 activity.label = tool;
                 activity.state = ActivityState::Running;
                 activity.updated_at = observed_at;
-                activity.progress = Some(serde_json::json!("started"));
+                activity.progress = Some(serde_json::json!({
+                    "status": "running",
+                    "args": args,
+                }));
             } else {
                 state.activities.push(ActivitySnapshot {
                     activity_id,
@@ -359,10 +374,35 @@ fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
                     state: ActivityState::Running,
                     started_at: observed_at,
                     updated_at: observed_at,
-                    progress: Some(serde_json::json!("started")),
+                    progress: Some(serde_json::json!({
+                        "status": "running",
+                        "args": args,
+                    })),
                     artifact_refs: Vec::new(),
                     receipt_ref: None,
                 });
+            }
+        }
+        LiveActivityEvent::ToolArguments {
+            call_id,
+            args,
+            observed_at,
+        } => {
+            let activity_id = live_activity_id(state, &call_id);
+            if let Some(activity) = state
+                .activities
+                .iter_mut()
+                .find(|activity| activity.activity_id == activity_id)
+            {
+                let mut progress = activity
+                    .progress
+                    .take()
+                    .and_then(|value| value.as_object().cloned())
+                    .unwrap_or_default();
+                progress.insert("args".into(), args);
+                progress.insert("status".into(), serde_json::json!("running"));
+                activity.progress = Some(serde_json::Value::Object(progress));
+                activity.updated_at = observed_at;
             }
         }
         LiveActivityEvent::ToolProgress {
@@ -399,10 +439,17 @@ fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
                     ActivityState::Completed
                 };
                 activity.updated_at = observed_at;
-                activity.progress = Some(serde_json::json!({
-                    "status": if is_error { "failed" } else { "completed" },
-                    "elapsed_ms": elapsed_ms,
-                }));
+                let mut progress = activity
+                    .progress
+                    .take()
+                    .and_then(|value| value.as_object().cloned())
+                    .unwrap_or_default();
+                progress.insert(
+                    "status".into(),
+                    serde_json::json!(if is_error { "failed" } else { "completed" }),
+                );
+                progress.insert("elapsed_ms".into(), serde_json::json!(elapsed_ms));
+                activity.progress = Some(serde_json::Value::Object(progress));
             }
         }
         LiveActivityEvent::ProgressSummary {
@@ -697,12 +744,32 @@ pub fn reduce_terminal(
         fabric::protocol::client::ClientEvent::Failed { .. } => fabric::TurnTerminalStatus::Failed,
         _ => return false,
     };
+    finish_live_turn(state, status);
+    true
+}
+
+/// Settle reducer-local progress when the compatibility stream reaches its
+/// terminal boundary. Durable conversation and task truth still arrive through
+/// the Session projection; this only prevents an already-finished turn from
+/// remaining visibly `running` while that projection catches up.
+pub fn finish_live_turn(state: &mut AppState, status: fabric::TurnTerminalStatus) {
+    let activity_state = match status {
+        fabric::TurnTerminalStatus::Completed => ActivityState::Completed,
+        fabric::TurnTerminalStatus::Interrupted => ActivityState::Cancelled,
+        fabric::TurnTerminalStatus::Failed => ActivityState::Failed,
+    };
+    for activity in &mut state.activities {
+        if state.live_activity_ids.contains(&activity.activity_id)
+            && activity.state == ActivityState::Running
+        {
+            activity.state = activity_state;
+        }
+    }
     state.last_terminal_status = Some(status);
     state.streaming = false;
     state.turn_active = false;
     state.active_turn_id = None;
     state.live_turn_id = None;
-    true
 }
 
 fn advance(state: &mut AppState, cursor: &EventCursor) -> bool {
@@ -830,6 +897,9 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
             format!("Turn recovery settled: {classification:?}"),
             true,
         ),
+        ItemPayload::TurnSettlement { status, content } => {
+            ("assistant".into(), format!("{content} ({status:?})"), false)
+        }
         ItemPayload::ContextProjection { space, .. } => ("context".into(), space.clone(), true),
         ItemPayload::SystemNotice { content } => ("system".into(), content.clone(), false),
     }

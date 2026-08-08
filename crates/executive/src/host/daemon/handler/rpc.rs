@@ -107,13 +107,18 @@ impl RequestHandler {
                 let cancelled = self
                     .cancel_current_turn_for_principal(connection.principal_id.clone())
                     .await;
+                let result = fabric::contract::command::CommandOutputEnvelopeV1::new(
+                    format!("legacy-cancel:{}", super::rpc_id_fragment(&id)),
+                    fabric::contract::command::CommandOutputV1::CancelRequested(
+                        fabric::contract::command::CancelRequestedV1 {
+                            active_turns: cancelled,
+                        },
+                    ),
+                );
                 serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    "result": {
-                        "status": "cancel_requested",
-                        "active_turns": cancelled
-                    }
+                    "result": result
                 })
             }
             "interrupt" => self.handle_interrupt(&id, &request).await,

@@ -24,6 +24,8 @@ pub struct TaskConsole<'a> {
     pub caps: &'a TermCaps,
     pub workspace: &'a WorkspacePolicy,
     pub selected_activity: Option<usize>,
+    /// Explicit typed Agent runtime requirement waiting for the next turn.
+    pub next_agent_runtime: Option<&'a str>,
 }
 
 impl Widget for TaskConsole<'_> {
@@ -36,7 +38,14 @@ impl Widget for TaskConsole<'_> {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(header_height), Constraint::Min(1)])
             .split(area);
-        render_task_header(chunks[0], buf, self.state, self.caps, self.workspace);
+        render_task_header(
+            chunks[0],
+            buf,
+            self.state,
+            self.caps,
+            self.workspace,
+            self.next_agent_runtime,
+        );
 
         // Conversation is the normal Aletheon work surface. The dense
         // timeline/diagnostics sidecar is useful while a Robot episode needs
@@ -86,6 +95,7 @@ fn render_task_header(
     state: &AppState,
     caps: &TermCaps,
     workspace: &WorkspacePolicy,
+    next_agent_runtime: Option<&str>,
 ) {
     let task = active_task(state);
     let task_id = task
@@ -139,7 +149,8 @@ fn render_task_header(
     if area.height >= 2 {
         lines.push(Line::from(Span::styled(
             format!(
-                " session {session} · target {target} · provider {provider} · model {model} · permission {permission}"
+                " session {session} · target {target} · next runtime {} · provider {provider} · model {model} · permission {permission}",
+                next_agent_runtime.unwrap_or("auto")
             ),
             Style::default().fg(theme.text_muted),
         )));
@@ -181,17 +192,24 @@ fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &Te
         .collect::<Vec<_>>();
     items.sort_by_key(|item| item.sequence);
     let mut lines = Vec::new();
+    let mut last_assistant_content: Option<&str> = None;
     for item in items {
         if item.kind == "user" {
+            last_assistant_content = None;
             lines.push(Line::from(vec![
                 Span::styled("> ", Style::default().fg(theme.user_icon)),
                 Span::styled(item.content.clone(), Style::default().fg(theme.user_icon)),
             ]));
         } else {
+            if last_assistant_content == Some(item.content.as_str()) {
+                continue;
+            }
+            last_assistant_content = Some(item.content.as_str());
             lines.extend(markdown::render_markdown(&item.content, inner.width, caps));
         }
         lines.push(Line::from(""));
     }
+    append_work_trace(&mut lines, state, caps);
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "No projected conversation yet",
@@ -211,6 +229,31 @@ fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &Te
         .min(u16::MAX as usize) as u16;
     let scroll = tail_scroll.saturating_sub(state.conversation_scroll.min(tail_scroll));
     paragraph.scroll((scroll, 0)).render(inner, buf);
+}
+
+fn append_work_trace(lines: &mut Vec<Line<'static>>, state: &AppState, caps: &TermCaps) {
+    if state.activities.is_empty() {
+        return;
+    }
+    let theme = caps.theme();
+    lines.push(Line::from(vec![
+        Span::styled(
+            "Work trace",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "  (public progress · Ctrl+B full details)",
+            Style::default().fg(theme.text_muted),
+        ),
+    ]));
+    let mut activities = state.activities.iter().collect::<Vec<_>>();
+    activities.sort_by_key(|activity| activity.updated_at);
+    for activity in activities.into_iter().rev().take(12).rev() {
+        lines.push(activity_line(activity, caps, false));
+    }
+    lines.push(Line::from(""));
 }
 
 fn render_activity_panel(
@@ -447,8 +490,19 @@ fn runtime_metrics(task: Option<&TaskSnapshot>) -> String {
             "unknown (provider receipt did not report cache usage)".into()
         }
     };
+    let task_usage = format!(
+        "task usage {} in / {} out",
+        facts
+            .cumulative_usage
+            .total_input_tokens
+            .map_or_else(|| "unknown".into(), compact_tokens),
+        facts
+            .cumulative_usage
+            .output_tokens
+            .map_or_else(|| "unknown".into(), compact_tokens),
+    );
     format!(
-        "{budget} · cache {cache} · infer {} · retries {} · tools {}/{}",
+        "{budget} · {task_usage} · cache {cache} · infer {} · retries {} · tools {}/{}",
         facts.inference_rounds,
         facts
             .provider_retries
@@ -522,18 +576,34 @@ fn activity_line(activity: &ActivitySnapshot, caps: &TermCaps, selected: bool) -
         ActivityState::Failed | ActivityState::Lost => ("failed", caps.theme().error),
         ActivityState::Cancelled => ("cancelled", caps.theme().text_muted),
     };
-    let progress = activity
-        .progress
-        .as_ref()
-        .map(|value| format!(" · {}", bounded_value(value, 32)))
-        .unwrap_or_default();
+    let progress = activity_progress(activity);
     let selection = if selected { ">" } else { " " };
     Line::from(vec![
         Span::styled(selection, Style::default().fg(caps.theme().accent)),
         Span::styled(format!(" {} ", caps.bullet()), Style::default().fg(color)),
-        Span::styled(format!("{state:9}"), Style::default().fg(color)),
+        Span::styled(format!("{state:9} "), Style::default().fg(color)),
         Span::raw(format!("{}{progress}", activity.label)),
     ])
+}
+
+fn activity_progress(activity: &ActivitySnapshot) -> String {
+    let Some(progress) = activity.progress.as_ref() else {
+        return String::new();
+    };
+    if let Some(object) = progress.as_object() {
+        let args = object
+            .get("args")
+            .filter(|value| !value.is_null())
+            .map(|value| format!(" {}", bounded_value(value, 72)))
+            .unwrap_or_default();
+        let elapsed = object
+            .get("elapsed_ms")
+            .and_then(serde_json::Value::as_u64)
+            .map(|value| format!(" · {value}ms"))
+            .unwrap_or_default();
+        return format!("{args}{elapsed}");
+    }
+    format!(" · {}", bounded_value(progress, 64))
 }
 
 fn bounded_value(value: &serde_json::Value, limit: usize) -> String {
@@ -651,6 +721,7 @@ mod tests {
             caps: &caps,
             workspace: &workspace,
             selected_activity,
+            next_agent_runtime: None,
         }
         .render(area, &mut buffer);
         buffer
@@ -695,6 +766,49 @@ mod tests {
             assert!(!rendered.contains("|---"), "width={width}: {rendered}");
             assert!(!rendered.contains("||"), "width={width}: {rendered}");
         }
+    }
+
+    #[test]
+    fn consecutive_identical_assistant_transport_rows_render_once_per_turn() {
+        let mut state = AppState::default();
+        for (id, sequence) in [("durable-1", 1), ("compat-1", 2)] {
+            state.items.insert(
+                id.into(),
+                UiItem {
+                    id: id.into(),
+                    sequence,
+                    kind: "assistant".into(),
+                    content: "same answer".into(),
+                    status: UiItemStatus::Completed,
+                    collapsed: false,
+                },
+            );
+        }
+        state.items.insert(
+            "user-2".into(),
+            UiItem {
+                id: "user-2".into(),
+                sequence: 3,
+                kind: "user".into(),
+                content: "repeat".into(),
+                status: UiItemStatus::Completed,
+                collapsed: false,
+            },
+        );
+        state.items.insert(
+            "durable-2".into(),
+            UiItem {
+                id: "durable-2".into(),
+                sequence: 4,
+                kind: "assistant".into(),
+                content: "same answer".into(),
+                status: UiItemStatus::Completed,
+                collapsed: false,
+            },
+        );
+
+        let rendered = rendered_text(120, 40, &state);
+        assert_eq!(rendered.matches("same answer").count(), 2, "{rendered}");
     }
 
     fn projected_state() -> AppState {
@@ -782,10 +896,12 @@ mod tests {
     }
 
     #[test]
-    fn non_robot_activity_does_not_take_permanent_screen_space() {
+    fn non_robot_activity_is_visible_inline_without_a_permanent_side_panel() {
         let rendered = rendered_text(120, 40, &projected_state());
         assert!(rendered.contains("1 active"));
-        assert!(!rendered.contains("42/100 lines"));
+        assert!(rendered.contains("Work trace"));
+        assert!(rendered.contains("cargo check"));
+        assert!(rendered.contains("42/100 lines"));
         assert!(!rendered.contains("Changes / diagnostics"));
     }
 
@@ -800,14 +916,25 @@ mod tests {
     }
 
     #[test]
-    fn u_tui_003_failed_runtime_does_not_pollute_conversation_text() {
+    fn u_tui_003_failed_runtime_is_visible_as_public_progress() {
         let mut state = projected_state();
         state.activities[0].kind = fabric::ActivityKind::Runtime;
         state.activities[0].state = ActivityState::Failed;
         state.activities[0].label = "sub-agent reviewer".into();
         let rendered = rendered_text(120, 40, &state);
         assert!(rendered.contains("1 recorded"));
-        assert!(!rendered.contains("sub-agent reviewer"));
+        assert!(rendered.contains("sub-agent reviewer"));
+        assert!(rendered.contains("failed"));
+    }
+
+    #[test]
+    fn cancelled_activity_status_is_separated_from_its_label() {
+        let mut state = projected_state();
+        state.activities[0].state = ActivityState::Cancelled;
+        state.activities[0].label = "Model inference round 2".into();
+        let rendered = rendered_text(120, 40, &state);
+        assert!(rendered.contains("cancelled Model inference round 2"));
+        assert!(!rendered.contains("cancelledModel inference round 2"));
     }
 
     #[test]
@@ -842,6 +969,7 @@ mod tests {
             caps: &caps,
             workspace: &workspace,
             selected_activity: None,
+            next_agent_runtime: None,
         }
         .render(area, &mut buffer);
         let rendered = buffer
@@ -851,7 +979,7 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("TASK"));
         assert!(rendered.contains("Conversation"));
-        assert!(!rendered.contains("cargo check"));
+        assert!(rendered.contains("cargo check"));
         assert!(buffer
             .content
             .iter()
@@ -1027,6 +1155,7 @@ mod tests {
         assert!(identity.contains("history 83k / 915k"));
         assert!(metrics.contains("child limit 200k"));
         assert!(metrics.contains("root remaining unknown (no active Agent rollout)"));
+        assert!(metrics.contains("task usage 10k in / 500 out"));
         assert!(diagnostic.contains("Window: 1,000k (source: runtime model capability"));
         assert!(diagnostic.contains("child limit 200k (source: effective admission config"));
     }

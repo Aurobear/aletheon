@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::super::agent_inspector::AgentInspectorAction;
 use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
 use super::super::chat::{ChatWidget, Role as ChatRole};
 use super::super::checkpoint_picker::CheckpointPickerAction;
@@ -143,6 +144,23 @@ pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
 }
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) {
+    if let Some(mut inspector) = app.agent_inspector.take() {
+        match inspector.handle_key(key) {
+            AgentInspectorAction::Continue => app.agent_inspector = Some(inspector),
+            AgentInspectorAction::Close => {}
+            AgentInspectorAction::Refresh => {
+                let focus = inspector.focus_id();
+                app.agent_inspector = Some(inspector);
+                let request_id = write_request(app, ClientRpcRequest::SubAgents).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::OpenAgentInspector { focus },
+                );
+                app.pending_non_turn.insert(request_id);
+            }
+        }
+        return;
+    }
     if let Some(mut search) = app.history_search.take() {
         if search.handle_key(key) {
             if let Some(entry) = search.selected_entry() {
@@ -513,6 +531,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             app.last_ctrl_c = Some(now);
+            app.turn_cancel_requested = true;
             write_request(app, ClientRpcRequest::Cancel).await;
             return;
         }

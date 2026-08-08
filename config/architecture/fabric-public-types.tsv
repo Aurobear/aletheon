@@ -19,6 +19,7 @@ crates/fabric/src/contract/command.rs	enum	CommandOutputError	governed	fabric	al
 crates/fabric/src/contract/command.rs	enum	CommandOutputProtocol	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	enum	CommandOutputV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	struct	CommandOutputEnvelopeV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
+crates/fabric/src/contract/command.rs	struct	CancelRequestedV1	governed	fabric	interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	struct	CommandRejectionV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	struct	PromptCompletionV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	struct	StatusCareWeightV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
@@ -1108,3 +1109,5 @@ crates/fabric/src/types/execution_target.rs	enum	ExecutionTargetSource	governed	
 crates/fabric/src/types/execution_target.rs	struct	ExecutionTargetSelection	governed	fabric	aletheon,executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#command-and-client-entry-authority
 crates/fabric/src/types/turn.rs	enum	TurnFailureKind	governed	fabric	cognit,executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#runtime-authorities
 crates/fabric/src/types/turn.rs	struct	TurnFailure	governed	fabric	cognit,executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#runtime-authorities
+crates/fabric/src/protocol/client.rs	struct	AgentSessionSnapshot	governed	fabric	executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
+crates/fabric/src/protocol/client.rs	struct	AgentTimelineEntry	governed	fabric	executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections

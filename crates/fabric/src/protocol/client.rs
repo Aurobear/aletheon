@@ -42,6 +42,7 @@ pub enum ClientRpcRequest {
     Compact,
     CompactFor(SessionParams),
     ModelList,
+    SubAgents,
     AgentProfileList,
     AgentProfileSet(AgentProfileSetParams),
     SkillsList,
@@ -778,6 +779,7 @@ impl ClientRpcRequest {
             Self::Compact => ("compact", None),
             Self::CompactFor(params) => ("compact", Some(serde_json::to_value(params)?)),
             Self::ModelList => ("model_list", None),
+            Self::SubAgents => ("sub_agents", None),
             Self::AgentProfileList => ("agent.profile.list", None),
             Self::AgentProfileSet(params) => {
                 ("agent.profile.set", Some(serde_json::to_value(params)?))
@@ -1479,6 +1481,32 @@ pub struct AgentEvent {
     pub cursor: EventCursor,
     #[schemars(with = "serde_json::Value")]
     pub agent: AgentSnapshot,
+}
+
+/// One bounded, public observation from an Aletheon-owned child Agent
+/// session. `detail` is already redacted/bounded by the Host; it is not raw
+/// chain-of-thought or an untrusted runtime log stream.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentTimelineEntry {
+    pub sequence: u64,
+    pub kind: String,
+    #[schemars(with = "serde_json::Value")]
+    pub detail: serde_json::Value,
+}
+
+/// Navigable child Agent session read model used by interactive clients.
+/// Lifecycle/result authority remains in `AgentSnapshot`; the timeline is a
+/// projection of canonical Agent events and cannot mutate the run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentSessionSnapshot {
+    pub id: String,
+    pub task: String,
+    pub status: String,
+    pub runtime_id: String,
+    pub profile_id: String,
+    #[schemars(with = "serde_json::Value")]
+    pub snapshot: AgentSnapshot,
+    pub timeline: Vec<AgentTimelineEntry>,
 }
 
 /// Structured terminal failure carried by the versioned protocol. `code` is

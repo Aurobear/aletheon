@@ -224,6 +224,13 @@ pub enum ItemPayload {
     TurnRecovery {
         classification: TurnRecoveryClassification,
     },
+    /// Authoritative terminal fact for an ordinarily executed turn. This is
+    /// distinct from `TurnRecovery`, which is reserved for startup recovery of
+    /// a turn whose terminal boundary was missing.
+    TurnSettlement {
+        status: crate::TurnTerminalStatus,
+        content: String,
+    },
     ContextProjection {
         space: String,
         broadcast_epoch: Option<u64>,
@@ -306,6 +313,18 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&payload).unwrap();
+        assert_eq!(serde_json::from_str::<ItemPayload>(&json).unwrap(), payload);
+    }
+
+    #[test]
+    fn ordinary_turn_settlement_is_distinct_from_recovery() {
+        let payload = ItemPayload::TurnSettlement {
+            status: crate::TurnTerminalStatus::Interrupted,
+            content: "Cancelled by user".into(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("turn_settlement"));
+        assert!(!json.contains("turn_recovery"));
         assert_eq!(serde_json::from_str::<ItemPayload>(&json).unwrap(), payload);
     }
 

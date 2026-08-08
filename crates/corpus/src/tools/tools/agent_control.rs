@@ -264,6 +264,25 @@ impl Tool for AgentControlTool {
         PermissionLevel::L1
     }
 
+    fn execution_timeout(&self, input: &Value) -> std::time::Duration {
+        const SETTLEMENT_GRACE_MS: u64 = 5_000;
+        match self.operation {
+            AgentControlOperation::Wait => input
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .filter(|timeout| *timeout > 0)
+                .map(|timeout| {
+                    std::time::Duration::from_millis(
+                        timeout
+                            .min(fabric::agent_control::MAX_AGENT_WAIT_MS)
+                            .saturating_add(SETTLEMENT_GRACE_MS),
+                    )
+                })
+                .unwrap_or_else(|| std::time::Duration::from_secs(60)),
+            _ => std::time::Duration::from_secs(60),
+        }
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(Self {
             control: self.control.clone(),

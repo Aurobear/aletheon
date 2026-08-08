@@ -4,7 +4,7 @@ use fabric::Clock;
 use fabric::Timer;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{collections::BTreeMap, path::Path, path::PathBuf};
+use std::{path::Path, path::PathBuf};
 use tracing::{info, warn};
 
 use crate::sandbox::{
@@ -102,7 +102,10 @@ impl BubblewrapBackend {
         if restrict_network {
             args.push("--unshare-net".into());
         }
-        args.push("--clearenv".into());
+        // The launcher supplies an exact allow-listed environment to the
+        // outer bwrap process. Bubblewrap inherits that environment into the
+        // sandbox. Never encode environment values as `--setenv` arguments:
+        // Linux exposes argv through ps and /proc/<pid>/cmdline.
 
         // S1 D1-T5: filesystem mount plan. When the resolved policy specifies
         // explicit `read_only_roots`, use those instead of the default
@@ -140,13 +143,6 @@ impl BubblewrapBackend {
         args.push("--dev-bind".into());
         args.push("/dev/null".into());
         args.push("/dev/null".into());
-
-        // Environment variables
-        for (key, value) in &config.environment {
-            args.push("--setenv".into());
-            args.push(key.clone());
-            args.push(value.clone());
-        }
 
         // The command to execute
         args.push("--".into());
@@ -288,7 +284,7 @@ impl SandboxBackend for BubblewrapBackend {
         Ok(SandboxCommand {
             program: PathBuf::from(&self.bwrap_path),
             args: self.build_argv_args(program, args, config),
-            environment: BTreeMap::new(),
+            environment: config.environment.clone(),
         })
     }
 
@@ -307,6 +303,8 @@ impl SandboxBackend for BubblewrapBackend {
             .timeout(timeout, async {
                 tokio::process::Command::new(&self.bwrap_path)
                     .args(&args)
+                    .env_clear()
+                    .envs(&config.environment)
                     .current_dir(config.working_dir())
                     .output()
                     .await
@@ -346,6 +344,8 @@ impl SandboxBackend for BubblewrapBackend {
         let mut command = tokio::process::Command::new(&self.bwrap_path);
         command
             .args(self.build_args(cmd, config))
+            .env_clear()
+            .envs(&config.environment)
             .current_dir(config.working_dir());
         super::streaming::execute_command_streaming(
             command,
@@ -397,13 +397,49 @@ mod tests {
             .windows(3)
             .any(|items| { items == ["--bind", "/managed/job-1", "/managed/job-1"] }));
         assert!(wrapped.args.iter().any(|arg| arg == "--unshare-net"));
-        assert!(wrapped.args.iter().any(|arg| arg == "--clearenv"));
+        assert!(!wrapped.args.iter().any(|arg| arg == "--setenv"));
+        assert_eq!(
+            wrapped.environment.get("PATH").map(String::as_str),
+            Some("/usr/bin:/bin")
+        );
         let separator = wrapped.args.iter().position(|arg| arg == "--").unwrap();
         assert_eq!(
             &wrapped.args[separator + 1..],
             ["/opt/pi/bin/pi", "--task", "literal;not-shell"]
         );
         assert!(!wrapped.args.iter().any(|arg| arg == "-c"));
+    }
+
+    #[test]
+    fn argv_wrapper_never_exposes_environment_values() {
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let secret = "credential-must-not-enter-argv";
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                "/managed/job-1".into(),
+                vec![],
+            )
+            .unwrap(),
+            environment: BTreeMap::from([("OPENAI_API_KEY".into(), secret.into())]),
+            policy: None,
+        };
+        let wrapped = backend
+            .wrap_argv(Path::new("/opt/pi/bin/pi"), &[], &config)
+            .unwrap();
+        assert!(!wrapped
+            .args
+            .iter()
+            .any(|argument| argument.contains(secret)));
+        assert_eq!(
+            wrapped
+                .environment
+                .get("OPENAI_API_KEY")
+                .map(String::as_str),
+            Some(secret)
+        );
     }
 
     #[test]

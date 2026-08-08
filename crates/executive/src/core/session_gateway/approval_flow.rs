@@ -92,6 +92,7 @@ impl SessionGateway {
                             fabric::ItemPayload::InferenceReceipt { .. } => "inference_receipt",
                             fabric::ItemPayload::TaskProjection { .. } => "task_projection",
                             fabric::ItemPayload::TurnRecovery { .. } => "turn_recovery",
+                            fabric::ItemPayload::TurnSettlement { .. } => "turn_settlement",
                         };
                         if event_type.is_some_and(|expected| expected != event_type_str) {
                             return None;
@@ -106,7 +107,9 @@ impl SessionGateway {
                     })
                     .collect();
                 if let Some(limit) = limit {
-                    rendered.truncate(limit);
+                    if rendered.len() > limit {
+                        rendered.drain(..rendered.len() - limit);
+                    }
                 }
 
                 json!({

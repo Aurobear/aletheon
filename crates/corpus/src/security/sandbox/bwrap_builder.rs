@@ -33,9 +33,9 @@ impl BwrapBuilder {
     /// 5. Bind writable roots (`--bind <root> <root>`)
     /// 6. Re-protect sub-paths (`--ro-bind` for `.git`, etc.)
     /// 7. Mask unreadable glob matches (`--ro-bind /dev/null <path>`)
-    /// 8. Environment variables
-    /// 9. Command
-    pub fn build_args(&self, cmd: &str, config: &SandboxConfig) -> Vec<String> {
+    /// 8. Command. Environment values deliberately remain outside argv; the
+    ///    caller must launch bwrap with an exact inherited environment allow-list.
+    pub fn build_args(&self, cmd: &str, _config: &SandboxConfig) -> Vec<String> {
         let mut args = Vec::with_capacity(128);
 
         // -- Step 1: Base isolation flags --
@@ -47,14 +47,7 @@ impl BwrapBuilder {
         // -- Step 3: Device and proc (fresh devtmpfs on top of RO root) --
         self.push_dev_and_proc(&mut args);
 
-        // -- Step 4: Environment variables --
-        for (key, value) in &config.environment {
-            args.push("--setenv".into());
-            args.push(key.clone());
-            args.push(value.clone());
-        }
-
-        // -- Step 5: Command --
+        // -- Step 4: Command --
         args.push("--".into());
         args.push("/bin/bash".into());
         args.push("-c".into());
@@ -273,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn test_env_vars_propagated() {
+    fn test_env_values_are_never_encoded_in_argv() {
         let mut env = std::collections::BTreeMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
         let config = SandboxConfig {
@@ -286,10 +279,8 @@ mod tests {
         let builder = BwrapBuilder::new(policy);
         let args = builder.build_args("echo hi", &config);
 
-        let setenv_pos = args.iter().position(|a| a == "--setenv");
-        assert!(setenv_pos.is_some(), "Expected --setenv for env vars");
-        assert_eq!(args[setenv_pos.unwrap() + 1], "FOO");
-        assert_eq!(args[setenv_pos.unwrap() + 2], "bar");
+        assert!(!args.iter().any(|argument| argument == "--setenv"));
+        assert!(!args.iter().any(|argument| argument == "bar"));
     }
 
     #[test]

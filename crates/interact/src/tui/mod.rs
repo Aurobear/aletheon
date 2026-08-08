@@ -9,6 +9,7 @@ pub mod session_protocol;
 pub mod test_infra;
 
 pub mod activity_detail;
+pub mod agent_inspector;
 pub mod approval_dialog;
 pub mod awareness;
 pub mod chat;
@@ -303,6 +304,8 @@ struct App {
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
     requested_task_kind: Option<fabric::TaskKind>,
+    /// Explicit runtime requirement consumed by the next submitted turn.
+    next_agent_runtime: Option<String>,
     /// Compatibility-only V0 transcript recorder. It is never rendered and is
     /// never consulted for durable conversation, tool, or terminal truth; all
     /// visible state is projected into `app_state` through the reducer.
@@ -345,6 +348,10 @@ struct App {
     status: StatusBar,
     /// Last Ctrl+C press time (for double-press detection).
     last_ctrl_c: Option<fabric::MonoTime>,
+    /// Local acknowledgement that the current turn received an explicit user
+    /// cancellation request. Authoritative settlement still comes from the
+    /// daemon's durable `TurnSettlement` item.
+    turn_cancel_requested: bool,
     /// Whether input has CJK characters (affects Enter behavior).
     has_cjk: bool,
     /// A leading action sigil arrived through paste and remains inert until
@@ -379,6 +386,8 @@ struct App {
     pager: Option<pager::PagerOverlay>,
     /// Canonical session list with keyboard navigation and resume action.
     session_picker: Option<session_picker::SessionPicker>,
+    /// Read-only navigator over canonical child Agent sessions.
+    agent_inspector: Option<agent_inspector::AgentInspector>,
     /// Local selection cursor over the daemon-owned checkpoint list.
     checkpoint_picker: Option<checkpoint_picker::CheckpointPicker>,
     /// Transaction awaiting a second explicit rollback keypress because the
@@ -424,6 +433,7 @@ impl App {
             workspace,
             turn_requirements,
             requested_task_kind: None,
+            next_agent_runtime: None,
             compat_transcript: ChatWidget::new(caps.clone()),
             input_buf: draft,
             cursor,
@@ -446,6 +456,7 @@ impl App {
             model_name,
             status,
             last_ctrl_c: None,
+            turn_cancel_requested: false,
             has_cjk: false,
             input_literal: false,
             pending_shell_confirmation: None,
@@ -465,6 +476,7 @@ impl App {
             completion: CompletionPopup::new(),
             pager: None,
             session_picker: None,
+            agent_inspector: None,
             checkpoint_picker: None,
             review_risk_confirmation: None,
             frame_counter: 0,
@@ -528,6 +540,19 @@ impl App {
         );
     }
 
+    /// Replace any in-flight assistant compatibility representation with one
+    /// bounded transient item. The daemon can deliver the same completion as
+    /// live text, a typed command result, and the legacy response envelope;
+    /// those transports must not become separate conversation messages.
+    pub(crate) fn replace_transient_assistant(&mut self, text: impl Into<String>) {
+        self.app_state.items.retain(|id, item| {
+            item.kind != "assistant"
+                || item.status != self::state::UiItemStatus::Streaming
+                || !(id.starts_with("live:") || id.starts_with("local:"))
+        });
+        self.show_transient_assistant(text);
+    }
+
     /// Mirror only new V0 system notices into reducer-owned visible state.
     /// User/assistant/tool business truth is never read from this recorder.
     pub(crate) fn sync_compat_notices(&mut self) {
@@ -584,6 +609,9 @@ enum PendingCommand {
         clear_screen: bool,
     },
     OpenSessionPicker,
+    OpenAgentInspector {
+        focus: Option<String>,
+    },
     OpenCheckpointPicker,
     CheckpointFork {
         parent_session_id: String,

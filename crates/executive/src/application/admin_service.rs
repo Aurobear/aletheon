@@ -46,11 +46,14 @@ pub struct HookDescriptor {
     pub script_path: Option<std::path::PathBuf>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct SubAgentSummary {
-    pub id: String,
-    pub task: String,
-    pub status: String,
+#[async_trait]
+pub trait AgentTimelinePort: Send + Sync {
+    async fn read_agent_timeline(
+        &self,
+        root_agent_id: fabric::AgentId,
+        agent_id: fabric::AgentId,
+        limit: usize,
+    ) -> Result<Vec<fabric::protocol::client::AgentTimelineEntry>, AdminServiceError>;
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -424,7 +427,9 @@ pub trait AdminUseCases: Send + Sync {
     async fn tools(&self) -> Result<Vec<fabric::ToolDefinition>, AdminServiceError>;
     async fn hooks(&self) -> Result<Vec<HookDescriptor>, AdminServiceError>;
     async fn list_skills(&self) -> Vec<SkillDescriptor>;
-    async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError>;
+    async fn sub_agents(
+        &self,
+    ) -> Result<Vec<fabric::protocol::client::AgentSessionSnapshot>, AdminServiceError>;
     async fn list_agent_profiles(&self) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError>;
     async fn switch_agent_profile(
         &self,
@@ -563,6 +568,7 @@ pub struct AdminResources {
     pub runtime_shutdown: Arc<dyn Fn() -> RuntimeShutdownFuture + Send + Sync>,
     pub memory_admin: Option<Arc<dyn MemoryAdminUseCases>>,
     pub agent_runs: Option<Arc<dyn crate::application::agent_control::AgentRunRepository>>,
+    pub agent_timeline: Option<Arc<dyn AgentTimelinePort>>,
     pub agent_profiles: Option<Arc<dyn AgentProfileCatalogPort>>,
     pub current_profile: Option<Arc<tokio::sync::Mutex<String>>>,
     pub profile_switch_events: Arc<dyn ProfileSwitchEventSink>,
@@ -823,22 +829,45 @@ impl AdminUseCases for AdminService {
         skills
     }
 
-    async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError> {
+    async fn sub_agents(
+        &self,
+    ) -> Result<Vec<fabric::protocol::client::AgentSessionSnapshot>, AdminServiceError> {
         let Some(repository) = &self.resources.agent_runs else {
             return Ok(Vec::new());
         };
-        Ok(repository
+        let runs = repository
             .list_recent(MAX_ADMIN_ITEMS)
             .await
             .map_err(|error| AdminServiceError::Operation(error.to_string()))?
             .into_iter()
             .take(MAX_ADMIN_ITEMS)
-            .map(|run| SubAgentSummary {
-                id: run.agent_id().0.to_string(),
+            .collect::<Vec<_>>();
+        let mut sessions = Vec::with_capacity(runs.len());
+        for run in runs {
+            let snapshot = run.snapshot.clone();
+            let timeline = match &self.resources.agent_timeline {
+                Some(reader) => {
+                    reader
+                        .read_agent_timeline(
+                            snapshot.handle.root_agent_id,
+                            snapshot.handle.agent_id,
+                            MAX_ADMIN_ITEMS,
+                        )
+                        .await?
+                }
+                None => Vec::new(),
+            };
+            sessions.push(fabric::protocol::client::AgentSessionSnapshot {
+                id: snapshot.handle.agent_id.0.to_string(),
                 task: run.request.task.clone(),
-                status: format!("{:?}", run.status()),
-            })
-            .collect())
+                status: format!("{:?}", snapshot.status).to_ascii_lowercase(),
+                runtime_id: snapshot.handle.runtime_id.0.clone(),
+                profile_id: snapshot.handle.profile_id.0.clone(),
+                snapshot,
+                timeline,
+            });
+        }
+        Ok(sessions)
     }
 
     async fn list_agent_profiles(&self) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError> {
