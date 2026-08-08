@@ -30,6 +30,9 @@ def load_module(name: str, path: pathlib.Path):
 
 receipt = load_module("suite_receipt", HARNESS / "receipt.py")
 suite = load_module("coding_suite", HARNESS / "suite.py")
+acceptance_scoreboard = load_module(
+    "suite_acceptance_scoreboard", HARNESS / "acceptance_scoreboard.py"
+)
 
 
 def command(exit_code: int = 0) -> dict:
@@ -285,6 +288,105 @@ class SuiteTest(unittest.TestCase):
         self.assertTrue(report_path.is_file())
         self.assertEqual(empty["tasks"][0]["reasons"], ["catalog_invalid"])
 
+    def test_invalid_executed_receipt_projects_as_structural_failure(self):
+        catalog = self.root / "tests/coding/tasks"
+        fixture = self.root / "tests/coding/fixtures/sample"
+        hidden = self.root / "tests/coding/acceptance/sample"
+        catalog.mkdir(parents=True)
+        fixture.mkdir(parents=True)
+        hidden.mkdir(parents=True)
+        (fixture / "input.txt").write_text("fixture\n", encoding="utf-8")
+        (hidden / "rubric.toml").write_text("schema_version = 1\n", encoding="utf-8")
+        (catalog / "sample.toml").write_text(
+            """schema_version = 1
+id = "sample"
+category = "lint"
+fixture = "sample"
+prompt = "make the smallest safe change"
+timeout_secs = 30
+acceptance_commands = [["true"]]
+forbidden_paths = []
+required_changed_paths = []
+expected_terminal = "verified"
+resource_checks = []
+
+[setup]
+""",
+            encoding="utf-8",
+        )
+        runtime = {}
+
+        def write_invalid(_task_path, output, **_kwargs):
+            output.write_text("{}\n", encoding="utf-8")
+            return {}
+
+        with mock.patch.object(suite, "run_task", side_effect=write_invalid):
+            report, code = suite.execute_suite(
+                catalog,
+                self.root / "receipts",
+                self.root / "report.json",
+                root=self.root,
+                environ={"ALETHEON_BIN": str(self.root / "not-installed")},
+                acceptance_generation_id="gen1",
+                acceptance_runtime_out=runtime,
+            )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(report["tasks"][0]["expected_terminal"], "verified")
+        self.assertEqual(report["tasks"][0]["category"], "lint")
+        acceptance = suite._acceptance_report(report, runtime, "gen1")
+        projected_input = acceptance["tasks"][0]
+        self.assertTrue(projected_input["execution_present"])
+        self.assertFalse(projected_input["receipt_valid"])
+        self.assertIsNone(projected_input["exit_code"])
+        self.assertEqual(projected_input["evidence_paths"], ["logs/sample.json"])
+        projected = acceptance_scoreboard.project_task(projected_input, "gen1")
+        self.assertEqual(projected["status"], "failed")
+
+        installed_sha = "a" * 64
+        report["binaries"] = [
+            {"path": "/usr/bin/aletheon", "sha256": "sha256:" + installed_sha}
+        ]
+        acceptance = suite._acceptance_report(report, runtime, "gen1")
+        provenance = {
+            "repo": {"sha": "b" * 40, "dirty": False},
+            "build": {"profile": "release", "features": []},
+            "environment_level": "installed",
+            "installed_artifact": {
+                "path": "/usr/bin/aletheon",
+                "sha256": installed_sha,
+            },
+            "client": {"version": "1.0.0", "protocol_version": "1"},
+            "daemons": {
+                name: {
+                    "path": "/usr/bin/aletheon",
+                    "sha256": installed_sha,
+                    "version": "1.0.0",
+                    "protocol_version": "1",
+                }
+                for name in ("machine", "user")
+            },
+            "provider": {
+                "provider_id": "test-provider",
+                "model_id": "test-model",
+                "endpoint_id": "test-endpoint",
+            },
+            "fixture_digest": report["catalog"]["digest"][len("sha256:"):],
+            "generation_id": "gen1",
+        }
+        artifacts = self.root / "artifacts"
+        artifacts.mkdir()
+        run_dir = suite.write_run(
+            "invalid-receipt",
+            acceptance,
+            provenance,
+            artifacts,
+            evidence_root=self.root / "receipts",
+        )
+        scoreboard = json.loads((run_dir / "scoreboard.json").read_text())
+        self.assertEqual(scoreboard["tasks"][0]["status"], "failed")
+        self.assertEqual(scoreboard["gate"]["status"], "failed")
+
 
 class AcceptanceInputDigestTest(unittest.TestCase):
     """The published input digest binds every executable acceptance input."""
@@ -354,6 +456,44 @@ class AcceptanceInputDigestTest(unittest.TestCase):
         with self.assertRaises(suite.ContractError):
             suite.acceptance_input_digest([escaped], self.root)
 
+    def test_catalog_directory_symlink_is_rejected_before_resolution(self):
+        alias = self.root / "catalog-alias"
+        alias.symlink_to(self.task_source.parent, target_is_directory=True)
+        with self.assertRaises(suite.ContractError):
+            suite._checked_repository_path(self.root, alias, expected="directory")
+
+    def test_oversized_file_is_rejected(self):
+        with mock.patch.object(suite, "MAX_ACCEPTANCE_INPUT_FILE_BYTES", 3):
+            with self.assertRaises(suite.ContractError):
+                self.digest()
+
+    def test_excessive_entry_count_is_rejected(self):
+        with mock.patch.object(suite, "MAX_ACCEPTANCE_INPUT_ENTRIES", 1):
+            with self.assertRaises(suite.ContractError):
+                self.digest()
+
+    def test_total_input_size_is_bounded(self):
+        with mock.patch.object(suite, "MAX_ACCEPTANCE_INPUT_TOTAL_BYTES", 1):
+            with self.assertRaises(suite.ContractError):
+                self.digest()
+
+    def test_symlink_replacement_before_open_is_rejected(self):
+        real_open = os.open
+        replaced = False
+
+        def replace_then_open(path, flags, *args, **kwargs):
+            nonlocal replaced
+            if pathlib.Path(path) == self.task_source and not replaced:
+                replaced = True
+                self.task_source.unlink()
+                self.task_source.symlink_to(self.fixture / "source.txt")
+            return real_open(path, flags, *args, **kwargs)
+
+        with mock.patch.object(suite.os, "open", side_effect=replace_then_open):
+            with self.assertRaises(suite.ContractError):
+                self.digest()
+        self.assertTrue(replaced)
+
     def test_multifile_prompt_binds_comma_only_serialization(self):
         prompt = (
             pathlib.Path(__file__).parent / "tasks/rust_multifile.toml"
@@ -386,6 +526,25 @@ class AcceptanceSourceGuardTest(unittest.TestCase):
                 after[field] = value
                 with self.assertRaises(suite.ContractError):
                     suite.assert_acceptance_source_unchanged(self.before, after)
+
+    def test_provenance_must_match_source_identity_and_digest(self):
+        provenance = {
+            "repo": {"sha": self.before["repo_sha"], "dirty": False},
+            "fixture_digest": str(self.before["input_digest"])[len("sha256:"):],
+        }
+        suite.assert_acceptance_provenance_matches_source(self.before, provenance)
+        for mutation in (
+            {"repo": {"sha": "d" * 40, "dirty": False}},
+            {"repo": {"sha": self.before["repo_sha"], "dirty": True}},
+            {"fixture_digest": "e" * 64},
+        ):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(provenance)
+                changed.update(mutation)
+                with self.assertRaises(suite.ContractError):
+                    suite.assert_acceptance_provenance_matches_source(
+                        self.before, changed
+                    )
 
 
 class AcceptanceTaskTest(unittest.TestCase):
@@ -444,8 +603,8 @@ class AcceptanceTaskTest(unittest.TestCase):
         self.assertFalse(result["outcome_passed"])
         self.assertIn("receipt_evidence_path_missing", result["reasons"])
 
-    def test_invalid_receipt_empty_evidence(self):
-        """_acceptance_task with receipt_valid=False produces empty evidence_paths."""
+    def test_invalid_executed_receipt_preserves_evidence_path(self):
+        """An invalid generated receipt remains evidence of a failed execution."""
         entry = {
             "task_id": "t3",
             "category": "lint",
@@ -461,8 +620,8 @@ class AcceptanceTaskTest(unittest.TestCase):
             entry, None, "logs/t3.json",
             "2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z", "gen1",
         )
-        self.assertEqual(result["evidence_paths"], [])
-        self.assertFalse(result["execution_present"])
+        self.assertEqual(result["evidence_paths"], ["logs/t3.json"])
+        self.assertTrue(result["execution_present"])
 
 
 class AcceptanceCLITest(unittest.TestCase):
@@ -509,6 +668,16 @@ class AcceptanceCLITest(unittest.TestCase):
                 **kwargs,
             }
         )
+
+    def _matching_provenance(self, report):
+        return {
+            "repo": {
+                "sha": self.mock_source_snapshot.return_value["repo_sha"],
+                "dirty": self.mock_source_snapshot.return_value["repo_dirty"],
+            },
+            "generation_id": "gen1",
+            "fixture_digest": report["catalog"]["digest"][len("sha256:"):],
+        }
 
     # ------------------------------------------------------------------
     #  CLI rejection tests
@@ -645,10 +814,7 @@ class AcceptanceCLITest(unittest.TestCase):
         self.mock_source_snapshot.return_value["input_digest"] = report["catalog"]["digest"]
 
         mock_exec.return_value = (report, 0)
-        mock_collect.return_value = {
-            "generation_id": "gen1",
-            "fixture_digest": "a" * 64,
-        }
+        mock_collect.return_value = self._matching_provenance(report)
         mock_write.return_value = self.root / "artifacts" / "test-run-1"
 
         self._set_env(ALETHEON_BIN="/usr/bin/aletheon")
@@ -730,6 +896,69 @@ class AcceptanceCLITest(unittest.TestCase):
     @mock.patch.object(suite, "collect_installed_provenance")
     @mock.patch.object(suite, "write_run")
     @mock.patch.object(suite, "execute_suite")
+    def test_provenance_repo_mismatch_aborts_artifact_emission(
+        self, mock_exec, mock_write, mock_collect,
+    ):
+        entries = [suite._invalid_entry("t1")]
+        entries[0]["category"] = "lint"
+        entries[0]["expected_terminal"] = "verified"
+        report = suite._build_report(entries, [])
+        self.mock_source_snapshot.return_value["input_digest"] = report["catalog"]["digest"]
+        mock_exec.return_value = (report, 0)
+        mock_collect.return_value = self._matching_provenance(report)
+        mock_collect.return_value["repo"]["sha"] = "d" * 40
+        self._set_env(ALETHEON_BIN="/usr/bin/aletheon")
+        sys.argv = [
+            "suite.py", "--catalog", str(self.root / "catalog"),
+            "--receipts", str(self.root / "receipts"),
+            "--report", str(self.report_path),
+            "--run-id", "test-run-provenance-mismatch",
+            "--generation-id", "gen1",
+            "--artifacts-root", str(self.root / "artifacts"),
+        ]
+        with self.assertRaises(SystemExit) as ctx:
+            suite.main()
+        self.assertEqual(ctx.exception.code, 2)
+        mock_write.assert_not_called()
+
+    @mock.patch.object(suite, "collect_installed_provenance")
+    @mock.patch.object(suite, "write_run")
+    @mock.patch.object(suite, "execute_suite")
+    def test_source_mutation_during_provenance_aborts_artifact_emission(
+        self, mock_exec, mock_write, mock_collect,
+    ):
+        entries = [suite._invalid_entry("t1")]
+        entries[0]["category"] = "lint"
+        entries[0]["expected_terminal"] = "verified"
+        report = suite._build_report(entries, [])
+        before = dict(self.mock_source_snapshot.return_value)
+        before["input_digest"] = report["catalog"]["digest"]
+        after = dict(before)
+        after["repo_status_digest"] = "sha256:" + "d" * 64
+        self.mock_source_snapshot.side_effect = [before, before, after]
+        mock_exec.return_value = (report, 0)
+        mock_collect.return_value = {
+            "repo": {"sha": before["repo_sha"], "dirty": before["repo_dirty"]},
+            "generation_id": "gen1",
+            "fixture_digest": report["catalog"]["digest"][len("sha256:"):],
+        }
+        self._set_env(ALETHEON_BIN="/usr/bin/aletheon")
+        sys.argv = [
+            "suite.py", "--catalog", str(self.root / "catalog"),
+            "--receipts", str(self.root / "receipts"),
+            "--report", str(self.report_path),
+            "--run-id", "test-run-provenance-race",
+            "--generation-id", "gen1",
+            "--artifacts-root", str(self.root / "artifacts"),
+        ]
+        with self.assertRaises(SystemExit) as ctx:
+            suite.main()
+        self.assertEqual(ctx.exception.code, 2)
+        mock_write.assert_not_called()
+
+    @mock.patch.object(suite, "collect_installed_provenance")
+    @mock.patch.object(suite, "write_run")
+    @mock.patch.object(suite, "execute_suite")
     def test_malformed_catalog_digest_rejected(
         self, mock_exec, mock_write, mock_collect,
     ):
@@ -804,10 +1033,7 @@ class AcceptanceCLITest(unittest.TestCase):
         report = suite._build_report(entries, [])
         self.mock_source_snapshot.return_value["input_digest"] = report["catalog"]["digest"]
         mock_exec.return_value = (report, 0)  # suite code 0 must not leak through
-        mock_collect.return_value = {
-            "generation_id": "gen1",
-            "fixture_digest": "a" * 64,
-        }
+        mock_collect.return_value = self._matching_provenance(report)
         mock_write.side_effect = OSError("disk full")
 
         self._set_env(ALETHEON_BIN="/usr/bin/aletheon")

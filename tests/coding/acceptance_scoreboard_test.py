@@ -312,9 +312,9 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "retry_count": 0,
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
-            "exit_code": 1,
+            "exit_code": 22,
             "expected_terminal": "verified",
-            "observed_terminal": "verified",
+            "observed_terminal": "provider_unavailable",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -423,20 +423,20 @@ class AcceptanceScoreboardTest(unittest.TestCase):
         entry = {
             "task_id": "t1",
             "category": "test",
-            "receipt_valid": False,
+            "receipt_valid": True,
             "execution_present": True,
             "outcome_passed": False,
             "failure_class": "infrastructure_failure",
             "reasons": [],
             "scope_violation_count": 0,
             "resource_leak_count": 0,
-            "terminal_settlement_count": 0,
+            "terminal_settlement_count": 1,
             "retry_count": 0,
             "started_at": "2025-01-01T00:00:00Z",
             "ended_at": "2025-01-01T00:01:00Z",
-            "exit_code": 1,
+            "exit_code": 22,
             "expected_terminal": "verified",
-            "observed_terminal": "verified",
+            "observed_terminal": "provider_unavailable",
             "evidence_paths": ["logs/ev"],
             "generation_id": "gen1",
             "p0": False,
@@ -641,6 +641,19 @@ class AcceptanceScoreboardTest(unittest.TestCase):
             "p0": False,
             "waiver": None,
         }
+        result = project_task(entry, "gen1")
+        self.assertEqual(result["status"], "failed")
+
+    def test_project_task_invalid_executed_receipt_allows_unknown_exit(self):
+        entry = _make_failed_task("t1", "gen1")
+        entry.update(
+            failure_class="infrastructure_failure",
+            reasons=["receipt_invalid"],
+            retry_count=0,
+            terminal_settlement_count=0,
+            exit_code=None,
+            observed_terminal=None,
+        )
         result = project_task(entry, "gen1")
         self.assertEqual(result["status"], "failed")
 

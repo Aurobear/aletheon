@@ -26,6 +26,11 @@ from run import ROOT, run_task
 
 REPORT_SCHEMA_VERSION = 1
 ACCEPTANCE_INPUT_DIGEST_VERSION = b"aletheon-acceptance-inputs-v1\0"
+MAX_ACCEPTANCE_INPUT_ENTRIES = 4_096
+MAX_ACCEPTANCE_INPUT_FILE_BYTES = 4 * 1024 * 1024
+MAX_ACCEPTANCE_INPUT_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_ACCEPTANCE_INPUT_PATH_BYTES = 4_096
+ACCEPTANCE_INPUT_READ_CHUNK = 64 * 1024
 
 # The only execution statuses allowed by the acceptance scoreboard
 # (A1-AUDIT-004 / plan spec:636-648). A `waived` entry additionally requires
@@ -79,32 +84,128 @@ def _checked_repository_path(
     return current, relative.as_posix()
 
 
-def _hash_input_record(
-    hasher, kind: bytes, relative: str, body: bytes = b""
+class _AcceptanceInputBudget:
+    """Bound the amount of repository input inspected for one digest."""
+
+    def __init__(self) -> None:
+        self.entries = 0
+        self.total_bytes = 0
+
+    def reserve(self, body_bytes: int, *, regular_file: bool) -> None:
+        self.entries += 1
+        if self.entries > MAX_ACCEPTANCE_INPUT_ENTRIES:
+            raise ContractError("acceptance input contains too many entries")
+        if regular_file and body_bytes > MAX_ACCEPTANCE_INPUT_FILE_BYTES:
+            raise ContractError("acceptance input file exceeds size limit")
+        self.total_bytes += body_bytes
+        if self.total_bytes > MAX_ACCEPTANCE_INPUT_TOTAL_BYTES:
+            raise ContractError("acceptance input exceeds total size limit")
+
+
+def _hash_input_header(
+    hasher, kind: bytes, relative: str, body_bytes: int
 ) -> None:
-    """Hash a typed, length-delimited acceptance input record."""
+    """Hash a typed, length-delimited acceptance input header."""
     encoded = relative.encode("utf-8")
+    if len(encoded) > MAX_ACCEPTANCE_INPUT_PATH_BYTES:
+        raise ContractError("acceptance input path exceeds size limit")
     hasher.update(len(kind).to_bytes(8, "big"))
     hasher.update(kind)
     hasher.update(len(encoded).to_bytes(8, "big"))
     hasher.update(encoded)
-    hasher.update(len(body).to_bytes(8, "big"))
-    hasher.update(body)
+    hasher.update(body_bytes.to_bytes(8, "big"))
+
+
+def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _hash_regular_file(
+    hasher,
+    budget: _AcceptanceInputBudget,
+    root: pathlib.Path,
+    path: pathlib.Path,
+    *,
+    kind: bytes,
+) -> None:
+    """Hash one stable regular file through a no-follow descriptor."""
+    checked, relative = _checked_repository_path(root, path, expected="file")
+    try:
+        path_before = checked.lstat()
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(checked, flags)
+    except OSError as error:
+        raise ContractError("acceptance input file is unreadable") from error
+    try:
+        descriptor_before = os.fstat(descriptor)
+        if not stat.S_ISREG(descriptor_before.st_mode):
+            raise ContractError("acceptance input must be a regular file")
+        if _stat_identity(path_before) != _stat_identity(descriptor_before):
+            raise ContractError("acceptance input file changed before read")
+        budget.reserve(descriptor_before.st_size, regular_file=True)
+        _hash_input_header(hasher, kind, relative, descriptor_before.st_size)
+        total = 0
+        while True:
+            try:
+                chunk = os.read(descriptor, ACCEPTANCE_INPUT_READ_CHUNK)
+            except OSError as error:
+                raise ContractError("acceptance input file is unreadable") from error
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > descriptor_before.st_size:
+                raise ContractError("acceptance input file changed during read")
+            hasher.update(chunk)
+        descriptor_after = os.fstat(descriptor)
+        if total != descriptor_before.st_size or (
+            _stat_identity(descriptor_before) != _stat_identity(descriptor_after)
+        ):
+            raise ContractError("acceptance input file changed during read")
+        try:
+            path_after = checked.lstat()
+        except OSError as error:
+            raise ContractError("acceptance input file changed during read") from error
+        if _stat_identity(path_before) != _stat_identity(path_after):
+            raise ContractError("acceptance input file changed during read")
+    finally:
+        os.close(descriptor)
 
 
 def _hash_regular_tree(
-    hasher, root: pathlib.Path, directory: pathlib.Path
+    hasher,
+    budget: _AcceptanceInputBudget,
+    root: pathlib.Path,
+    directory: pathlib.Path,
 ) -> None:
     """Hash a complete regular-file tree without following special entries."""
     checked, relative = _checked_repository_path(root, directory, expected="directory")
-    _hash_input_record(hasher, b"directory", relative)
+    budget.reserve(0, regular_file=False)
+    _hash_input_header(hasher, b"directory", relative, 0)
 
     def visit(parent: pathlib.Path) -> None:
+        children: list[pathlib.Path] = []
         try:
-            children = sorted(parent.iterdir(), key=lambda item: item.name)
+            with os.scandir(parent) as iterator:
+                for entry in iterator:
+                    children.append(pathlib.Path(entry.path))
+                    if (
+                        len(children) + budget.entries
+                        > MAX_ACCEPTANCE_INPUT_ENTRIES
+                    ):
+                        raise ContractError(
+                            "acceptance input contains too many entries"
+                        )
         except OSError as error:
             raise ContractError("acceptance input tree is unreadable") from error
-        for child in children:
+        for child in sorted(children, key=lambda item: item.name):
             try:
                 mode = child.lstat().st_mode
             except OSError as error:
@@ -117,18 +218,57 @@ def _hash_regular_tree(
                 expected="directory" if stat.S_ISDIR(mode) else "file",
             )
             if stat.S_ISDIR(mode):
-                _hash_input_record(hasher, b"directory", child_relative)
+                budget.reserve(0, regular_file=False)
+                _hash_input_header(hasher, b"directory", child_relative, 0)
                 visit(child)
             elif stat.S_ISREG(mode):
-                try:
-                    content = child.read_bytes()
-                except OSError as error:
-                    raise ContractError("acceptance input file is unreadable") from error
-                _hash_input_record(hasher, b"file", child_relative, content)
+                _hash_regular_file(
+                    hasher,
+                    budget,
+                    root,
+                    child,
+                    kind=b"file",
+                )
             else:
                 raise ContractError("acceptance input tree contains a non-regular entry")
 
     visit(checked)
+
+
+def _catalog_task_paths(
+    root: pathlib.Path, catalog: pathlib.Path
+) -> list[pathlib.Path]:
+    """Enumerate a bounded, real catalog without resolving symlink aliases."""
+    checked, _ = _checked_repository_path(root, catalog, expected="directory")
+    paths: list[pathlib.Path] = []
+    scanned = 0
+    task_bytes = 0
+    try:
+        with os.scandir(checked) as iterator:
+            for entry in iterator:
+                scanned += 1
+                if scanned > MAX_ACCEPTANCE_INPUT_ENTRIES:
+                    raise ContractError(
+                        "acceptance catalog contains too many entries"
+                    )
+                if entry.name.endswith(".toml"):
+                    path, _ = _checked_repository_path(
+                        root, pathlib.Path(entry.path), expected="file"
+                    )
+                    size = path.lstat().st_size
+                    if size > MAX_ACCEPTANCE_INPUT_FILE_BYTES:
+                        raise ContractError(
+                            "acceptance task definition exceeds size limit"
+                        )
+                    task_bytes += size
+                    if task_bytes > MAX_ACCEPTANCE_INPUT_TOTAL_BYTES:
+                        raise ContractError(
+                            "acceptance task definitions exceed total size limit"
+                        )
+                    paths.append(path)
+    except OSError as error:
+        raise ContractError("acceptance catalog is unreadable") from error
+    return sorted(paths, key=lambda item: item.name)
 
 
 def acceptance_input_digest(
@@ -137,20 +277,24 @@ def acceptance_input_digest(
     """Bind task definitions, fixture trees, and hidden acceptance trees."""
     hasher = hashlib.sha256()
     hasher.update(ACCEPTANCE_INPUT_DIGEST_VERSION)
+    budget = _AcceptanceInputBudget()
     for task in sorted(tasks, key=lambda item: item.id):
-        source, relative = _checked_repository_path(root, task.source, expected="file")
-        try:
-            content = source.read_bytes()
-        except OSError as error:
-            raise ContractError("acceptance task definition is unreadable") from error
-        _hash_input_record(hasher, b"task", relative, content)
+        _hash_regular_file(
+            hasher,
+            budget,
+            root,
+            task.source,
+            kind=b"task",
+        )
         _hash_regular_tree(
             hasher,
+            budget,
             root,
             root / "tests/coding/fixtures" / task.fixture,
         )
         _hash_regular_tree(
             hasher,
+            budget,
             root,
             root / "tests/coding/acceptance" / task.id,
         )
@@ -203,8 +347,7 @@ def capture_acceptance_source_state(
     root: pathlib.Path, catalog: pathlib.Path
 ) -> dict[str, object]:
     """Capture the source identity whose installed acceptance run is authoritative."""
-    checked_catalog, _ = _checked_repository_path(root, catalog, expected="directory")
-    tasks = load_catalog(sorted(checked_catalog.glob("*.toml")), root)
+    tasks = load_catalog(_catalog_task_paths(root, catalog), root)
     if not tasks:
         raise ContractError("catalog is empty")
     return {
@@ -225,6 +368,22 @@ def assert_acceptance_source_unchanged(
     }
     if set(before) != required or set(after) != required or dict(before) != dict(after):
         raise ContractError("acceptance source changed during execution")
+
+
+def assert_acceptance_provenance_matches_source(
+    source: Mapping[str, object], provenance: Mapping[str, object]
+) -> None:
+    """Require collected provenance to describe the executed source snapshot."""
+    repo = provenance.get("repo")
+    fixture_digest = provenance.get("fixture_digest")
+    if (
+        not isinstance(repo, Mapping)
+        or repo.get("sha") != source.get("repo_sha")
+        or repo.get("dirty") is not source.get("repo_dirty")
+        or not isinstance(fixture_digest, str)
+        or "sha256:" + fixture_digest != source.get("input_digest")
+    ):
+        raise ContractError("acceptance provenance does not match executed source")
 
 
 def _entry_status(entry: Mapping[str, object]) -> str:
@@ -270,7 +429,7 @@ def _acceptance_task(
     receipt_valid = bool(entry.get("receipt_valid", False))
 
     if not receipt_valid or receipt is None:
-        execution_present = False
+        execution_present = isinstance(receipt_path, str)
         receipt_valid = False
         outcome_passed = False
         terminal_settlement_count = 0
@@ -278,9 +437,12 @@ def _acceptance_task(
         exit_code = None
         expected_terminal = entry.get("expected_terminal")
         observed_terminal = None
-        started_at = None
-        ended_at = None
-        evidence_paths = []
+        if execution_present:
+            evidence_paths = [receipt_path]
+        else:
+            started_at = None
+            ended_at = None
+            evidence_paths = []
     else:
         execution_present = True
         evidence_list = list(receipt.get("evidence", []) or [])
@@ -680,7 +842,7 @@ def _execute_suite_locked(
     acceptance_runtime_out: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], int]:
     try:
-        tasks = load_catalog(sorted(catalog.glob("*.toml")), root)
+        tasks = load_catalog(_catalog_task_paths(root, catalog), root)
         if not tasks:
             raise ContractError("catalog is empty")
         catalog_digest = acceptance_input_digest(tasks, root)
@@ -712,6 +874,8 @@ def _execute_suite_locked(
         task_run_info.append(
             {
                 "task_id": task.id,
+                "category": task.category,
+                "expected_terminal": task.expected_terminal,
                 "start": start,
                 "end": end,
                 "receipt_path": receipt_path,
@@ -725,6 +889,18 @@ def _execute_suite_locked(
     for info in task_run_info:
         if info["receipt_path"] is not None:
             entry, receipt_value = _load_receipt(info["receipt_path"])
+            if receipt_value is not None and (
+                receipt_value.get("category") != info["category"]
+                or receipt_value.get("expected_terminal")
+                != info["expected_terminal"]
+            ):
+                entry = _invalid_entry(
+                    str(info["task_id"]), "receipt_task_contract_mismatch"
+                )
+                entry["receipt_path"] = info["receipt_path"].name
+                receipt_value = None
+            entry["category"] = info["category"]
+            entry["expected_terminal"] = info["expected_terminal"]
             entries.append(entry)
             valid_receipts[info["task_id"]] = receipt_value
             if receipt_value is not None:
@@ -748,11 +924,12 @@ def _execute_suite_locked(
             else:
                 receipt_val = valid_receipts.get(tid)
                 if receipt_val is None:
+                    name = info["receipt_path"].name
                     runtime_dict[tid] = {
                         "receipt": None,
-                        "receipt_path": None,
-                        "started_at": None,
-                        "ended_at": None,
+                        "receipt_path": f"logs/{name}",
+                        "started_at": info["start"],
+                        "ended_at": info["end"],
                     }
                 else:
                     name = info["receipt_path"].name
@@ -808,7 +985,7 @@ def main() -> None:
             validate_official_acceptance_socket(os.environ)
         except AcceptanceContractError as error:
             parser.error(f"fatal: {error}")
-        catalog = args.catalog.resolve()
+        catalog = pathlib.Path(os.path.abspath(args.catalog))
         try:
             source_before = capture_acceptance_source_state(ROOT, catalog)
         except (OSError, ContractError):
@@ -842,6 +1019,12 @@ def main() -> None:
         except ProvenanceCollectionError:
             parser.error("fatal: provenance collection failed")
         try:
+            assert_acceptance_provenance_matches_source(source_before, provenance)
+            source_final = capture_acceptance_source_state(ROOT, catalog)
+            assert_acceptance_source_unchanged(source_before, source_final)
+        except (OSError, ContractError):
+            parser.error("fatal: acceptance provenance/source mismatch")
+        try:
             run_dir = write_run(
                 args.run_id, acceptance_report, provenance, args.artifacts_root,
                 evidence_root=args.receipts.resolve(),
@@ -853,7 +1036,7 @@ def main() -> None:
         raise SystemExit(code)
     else:
         report, code = execute_suite(
-            args.catalog.resolve(),
+            pathlib.Path(os.path.abspath(args.catalog)),
             args.receipts.resolve(),
             args.report.resolve(),
             environ=os.environ,

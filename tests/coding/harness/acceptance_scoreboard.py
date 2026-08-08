@@ -239,14 +239,14 @@ def project_task(entry, generation_id, reference_time=None):
         end = _parse_timestamp(entry["ended_at"], "ended_at")
         if end < start:
             _fail("ended_at must not be before started_at")
-        if entry["exit_code"] is None:
-            _fail("executed tasks must have an integer exit_code")
+        if entry["receipt_valid"] and entry["exit_code"] is None:
+            _fail("valid executed tasks must have an integer exit_code")
         if entry["receipt_valid"] and entry["observed_terminal"] is None:
             _fail("valid executed tasks must have an observed_terminal")
-        if entry["failure_class"] == "infrastructure_failure":
-            status = "infra_blocked"
-        elif not entry["receipt_valid"]:
+        if not entry["receipt_valid"]:
             status = "failed"
+        elif entry["failure_class"] == "infrastructure_failure":
+            status = "infra_blocked"
         elif entry["failure_class"] == "none":
             if (
                 entry["outcome_passed"] is True
