@@ -283,6 +283,12 @@ lib_filters = ["tests::"]
         self.assertIn(("bash", "tests/suites/operations/cli_static_test.sh"), commands)
         self.assertIn(("bash", "tests/suites/operations/script_surface_test.sh"), commands)
 
+    def test_architecture_inventory_change_selects_architecture_gate(self):
+        commands = self.commands(["config/architecture/fabric-public-types.tsv"])
+        self.assertIn(
+            ("bash", "tests/suites/architecture/architecture_check.sh"), commands
+        )
+
     def test_monitor_source_change_selects_full_monitor_suite(self):
         commands = self.commands(["tools/aletheon-monitor/src/anomaly.py"])
         self.assertIn(

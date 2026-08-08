@@ -45,6 +45,7 @@ source_paths = [
   "crates/executive/src/adapters/events/agent_timeline.rs",
   "crates/executive/src/adapters/events/mod.rs",
   "crates/executive/src/adapters/events/sqlite_event_spine.rs",
+  "crates/executive/src/adapters/channel/daemon_adapter.rs",
   "crates/executive/src/adapters/runtime/pi_rpc.rs",
   "crates/executive/src/application/admin_service.rs",
   "crates/executive/src/application/daemon_turn_engine.rs",
@@ -53,6 +54,7 @@ source_paths = [
   "crates/executive/src/core/session_gateway/approval_flow.rs",
   "crates/executive/src/core/session_gateway/gateway.rs",
   "crates/executive/src/host/daemon/bootstrap/request.rs",
+  "crates/executive/src/host/daemon/handler/rpc.rs",
 ]
 lib_filters = [
   "adapters::runtime::pi_rpc::tests::",
@@ -62,17 +64,24 @@ lib_filters = [
   "core::session_gateway::gateway::tests::",
   "host::daemon::bootstrap::request::tests::",
 ]
-integration_targets = ["admin_service", "memory_forget_admin"]
+integration_targets = [
+  "admin_service",
+  "memory_forget_admin",
+  "pi_rpc_runtime",
+  "turn_coordinator_lifecycle",
+]
 
 [[changed_validation.rust_test_groups]]
 package = "fabric"
 source_paths = [
+  "crates/fabric/src/contract/command.rs",
   "crates/fabric/src/ipc/stream.rs",
   "crates/fabric/src/protocol/client.rs",
   "crates/fabric/src/types/agent_control.rs",
   "crates/fabric/src/types/tool.rs",
 ]
 lib_filters = [
+  "contract::command::tests::",
   "ipc::stream::tests::",
   "protocol::client::request_tests::",
   "types::agent_control::delegation_tests::",
@@ -83,7 +92,9 @@ integration_targets = ["agent_control_contract"]
 [[changed_validation.rust_test_groups]]
 package = "interact"
 source_paths = [
+  "crates/interact/src/single_message.rs",
   "crates/interact/src/tui/agent_inspector.rs",
+  "crates/interact/src/tui/app/lifecycle.rs",
   "crates/interact/src/tui/app/key_handler.rs",
   "crates/interact/src/tui/app/submit.rs",
   "crates/interact/src/tui/command.rs",

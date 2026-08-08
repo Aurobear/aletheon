@@ -401,6 +401,22 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
             ),
         )
 
+    if any(
+        path == "architecture-status.toml"
+        or path.startswith("config/architecture")
+        or path == "scripts/libexec/aletheon/architecture-check.sh"
+        or path.startswith("tests/suites/architecture/")
+        for path in changed
+    ):
+        append_unique(
+            steps,
+            Step(
+                "script",
+                ("bash", "tests/suites/architecture/architecture_check.sh"),
+                "architecture policy or inventory changed",
+            ),
+        )
+
     if any(path == "scripts/aletheon.sh" or path.startswith("scripts/lib/aletheon/") for path in changed):
         append_unique(
             steps,
