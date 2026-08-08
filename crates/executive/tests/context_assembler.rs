@@ -245,7 +245,8 @@ fn turn_pipeline_has_one_context_assembly_route() {
                 &existing_messages,"
     ));
     assert!(pipeline.contains(".canonical_sessions"));
-    assert!(pipeline.contains(".resume(&fabric::SessionId"));
+    assert!(pipeline.contains("let canonical_session = fabric::SessionId"));
+    assert!(pipeline.contains(".resume(&canonical_session)"));
     for removed in [
         "inject_keyword_skills",
         "inject_composite_recall",
