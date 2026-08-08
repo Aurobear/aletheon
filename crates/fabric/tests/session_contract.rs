@@ -23,6 +23,7 @@ fn lifecycle_contract_round_trips_with_explicit_version_and_tags() {
     let values = [
         ItemPayload::UserMessage {
             content: "u".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
         ItemPayload::AssistantMessage {
             content: "a".into(),

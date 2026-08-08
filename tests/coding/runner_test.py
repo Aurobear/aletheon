@@ -362,6 +362,17 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(budget["verification"]["passed"])
         self.assertIn("--max-turns", budget["execution"]["argv"])
 
+    def test_installed_acceptance_socket_is_explicit_before_exec(self):
+        socket_path = "/run/user/1000/aletheon/aletheon.sock"
+        value = self.execute(
+            "completed",
+            self.task(),
+            ALETHEON_ACCEPTANCE_SOCKET=socket_path,
+        )
+        argv = value["execution"]["argv"]
+        self.assertEqual(argv[1:3], ["--socket", socket_path])
+        self.assertLess(argv.index("--socket"), argv.index("exec"))
+
     def test_dirty_setup_is_preserved_and_scope_changes_are_rejected(self):
         dirty = self.execute(
             "dirty",

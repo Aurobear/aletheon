@@ -7,11 +7,11 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: 2
-  CARGO_INCREMENTAL: 0
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
 jobs:
@@ -20,13 +20,61 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch origin/main and origin/dev refs explicitly
+        run: |
+          git fetch origin refs/heads/main:refs/remotes/origin/main
+          git fetch origin refs/heads/dev:refs/remotes/origin/dev
+
+      - name: Validate semver tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          SEMVER_RE='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[a-zA-Z0-9][-a-zA-Z0-9.]*)?(\+[a-zA-Z0-9][-a-zA-Z0-9.]*)?$'
+          if ! echo "$TAG" | grep -qE "$SEMVER_RE"; then
+            echo "ERROR: tag '${TAG}' is not a valid semver tag (must match vMAJOR.MINOR.PATCH[-PRERELEASE][+BUILD])" >&2
+            exit 1
+          fi
+
+      - name: Verify tag commit equals origin/main
+        run: |
+          TAG_COMMIT=$(git rev-parse HEAD)
+          MAIN_COMMIT=$(git rev-parse origin/main)
+          if [ "$TAG_COMMIT" != "$MAIN_COMMIT" ]; then
+            echo "ERROR: tag commit ${TAG_COMMIT} does not equal origin/main ${MAIN_COMMIT}" >&2
+            exit 1
+          fi
+          echo "TAG_COMMIT=${TAG_COMMIT}" >> "$GITHUB_ENV"
+
+      - name: Verify origin/dev is ancestor of main
+        run: |
+          MAIN_COMMIT=$(git rev-parse origin/main)
+          DEV_COMMIT=$(git rev-parse origin/dev)
+          if ! git merge-base --is-ancestor "$DEV_COMMIT" "$MAIN_COMMIT"; then
+            echo "ERROR: origin/dev ${DEV_COMMIT} is not an ancestor of origin/main ${MAIN_COMMIT}" >&2
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.88.0
+
       - name: Formatting
         run: bash scripts/cargo-agent.sh +1.88.0 fmt --all -- --check
-      - name: Assembly package tests
-        run: bash scripts/cargo-agent.sh +1.88.0 test -p aletheon --locked
+
+      - name: Workspace clippy
+        run: bash scripts/cargo-agent.sh +1.88.0 clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Workspace tests
+        run: bash scripts/cargo-agent.sh +1.88.0 test --workspace --all-features
+
+      - name: Architecture checks
+        run: bash scripts/libexec/aletheon/architecture-check.sh
+
+      - name: Migration matrix verification
+        run: bash scripts/libexec/aletheon/verify/migration-matrix.sh
+
       - name: Release metadata tests
         run: python3 -m unittest scripts/tests/test_release_metadata.py
 
@@ -34,6 +82,11 @@ jobs:
     name: Build (${{ matrix.target }})
     needs: validate
     runs-on: ${{ matrix.os }}
+    # Tagged distributable artifacts retain a clean non-incremental codegen
+    # lane; local development, tests, benchmarks and installed deployments use
+    # the incremental workspace profiles.
+    env:
+      CARGO_INCREMENTAL: 0
     strategy:
       fail-fast: false
       matrix:
@@ -71,13 +124,14 @@ jobs:
       - name: Package
         id: package
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           ARCH="${{ matrix.target }}"
           STAGING="aletheon-${TAG}-${ARCH}"
           mkdir "${STAGING}"
 
           cp "target/${ARCH}/release/aletheon" "${STAGING}/"
-          cp LICENSE README.md "${STAGING}/" 2>/dev/null || true
+          cp LICENSE README.md "${STAGING}/"
 
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
             python3 scripts/release_metadata.py \
@@ -96,9 +150,435 @@ jobs:
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.metadata }}
 
+  convergence-gate:
+    name: Install and accept exact x86_64 RC
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ALETHEON_PROVIDER: lejurobot_deepseek
+      ALETHEON_MODEL: deepseek/deepseek-v4-flash[1m]
+      ALETHEON_CODING_SANDBOX: forbid
+      LEJU_API_KEY: ${{ secrets.LEJU_API_KEY }}
+      ALETHEON_BIN: /usr/bin/aletheon
+    outputs:
+      acceptance-run-id: ${{ steps.acceptance-run.outputs.run-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb1-dev ripgrep bubblewrap python3-venv
+
+      - name: Download x86_64 release archive
+        uses: actions/download-artifact@v4
+        with:
+          pattern: aletheon-*-x86_64-unknown-linux-gnu.tar.gz
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-candidate
+
+      - name: Install the exact release-candidate binary
+        id: install-rc
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP"/release-candidate/aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "expected exactly one x86_64 archive, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          echo "rc-archive=${archives[0]}" >> "$GITHUB_OUTPUT"
+
+          mkdir -p target/release
+          ARCHIVE="${archives[0]}" OUTPUT=target/release/aletheon python3 - <<'PY'
+          import os
+          import pathlib
+          import shutil
+          import tarfile
+
+          archive = pathlib.Path(os.environ["ARCHIVE"])
+          output = pathlib.Path(os.environ["OUTPUT"])
+          with tarfile.open(archive, "r:gz") as source:
+              members = [m for m in source.getmembers() if m.name.endswith("/aletheon")]
+              if len(members) != 1 or not members[0].isfile():
+                  raise SystemExit("release archive must contain exactly one regular aletheon binary")
+              member = members[0]
+              stream = source.extractfile(member)
+              if stream is None:
+                  raise SystemExit("release candidate binary is unreadable")
+              descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+              with os.fdopen(descriptor, "wb") as destination:
+                  shutil.copyfileobj(stream, destination)
+          PY
+          chmod 0755 target/release/aletheon
+
+          if [[ -z "${LEJU_API_KEY:-}" ]]; then
+            echo "LEJU_API_KEY repository secret is required" >&2
+            exit 2
+          fi
+          install -d -m 0700 "$HOME/.aletheon"
+          CONFIG_PATH="$HOME/.aletheon/config.toml" python3 - <<'PY'
+          import json
+          import os
+
+          path = os.environ["CONFIG_PATH"]
+          content = f'''[agent]
+          default_provider = {json.dumps(os.environ["ALETHEON_PROVIDER"])}
+          default_model = {json.dumps(os.environ["ALETHEON_MODEL"])}
+
+          [[providers]]
+          name = {json.dumps(os.environ["ALETHEON_PROVIDER"])}
+          base_url = "https://aiapi.lejurobot.com"
+          api_key = ""
+          transport = "openai"
+          models = [{json.dumps(os.environ["ALETHEON_MODEL"])}]
+          '''
+          descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+          with os.fdopen(descriptor, "w") as output:
+              output.write(content)
+          PY
+
+          getent group aletheon >/dev/null || sudo groupadd --system aletheon
+          id -u aletheon >/dev/null 2>&1 || sudo useradd --system --gid aletheon \
+            --home-dir /var/lib/aletheon --shell /usr/sbin/nologin aletheon
+          sudo install -d -o root -g aletheon -m 0750 \
+            /etc/aletheon /etc/aletheon/credentials
+          credential=$(mktemp)
+          chmod 0600 "$credential"
+          printf 'LEJUROBOT_DEEPSEEK_API_KEY=%s\n' "$LEJU_API_KEY" > "$credential"
+          sudo install -o aletheon -g aletheon -m 0600 "$credential" \
+            /etc/aletheon/credentials/provider.env
+          rm -f "$credential"
+
+          # No Cargo invocation occurs here: deploy installs, restarts, and
+          # verifies the exact binary extracted from the build artifact.
+          sudo bash scripts/aletheon.sh deploy --no-build
+
+      - name: Download R8 evidence for this exact commit
+        id: download-r8
+        shell: bash
+        run: |
+          set -euo pipefail
+          r8_dir="$RUNNER_TEMP/r8-evidence"
+          mkdir -p "$r8_dir"
+
+          # Locate the R8 evidence artifact via the repository Actions
+          # artifacts API, not gh run list/headSha.  The artifact name
+          # is r8-evidence-${GITHUB_SHA} (produced by the handoff
+          # workflow).  Pick the newest non-expired artifact by ID.
+          ARTIFACT_NAME="r8-evidence-${GITHUB_SHA}"
+          ARTIFACTS_JSON=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${{ github.repository }}/actions/artifacts?name=${ARTIFACT_NAME}&per_page=100")
+          ARTIFACT_BINDING=$(echo "$ARTIFACTS_JSON" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          if not isinstance(data, dict) or 'artifacts' not in data:
+              print('ERROR: malformed artifacts API response', file=sys.stderr)
+              sys.exit(1)
+          exact_name = '${ARTIFACT_NAME}'
+          best = None
+          for art in data.get('artifacts', []):
+              if not isinstance(art, dict):
+                  continue
+              if art.get('name') != exact_name:
+                  continue
+              if art.get('expired', True):
+                  continue
+              aid = art.get('id')
+              if not isinstance(aid, int):
+                  continue
+              source = art.get('workflow_run')
+              source_id = source.get('id') if isinstance(source, dict) else None
+              if not isinstance(source_id, int):
+                  continue
+              if best is None or aid > best[0]:
+                  best = (aid, source_id)
+          if best is None:
+              print('ERROR: no non-expired artifact exactly named ${ARTIFACT_NAME} found', file=sys.stderr)
+              sys.exit(1)
+          print(best[0], best[1])
+          ")
+          read -r ARTIFACT_ID HANDOFF_RUN_ID <<< "$ARTIFACT_BINDING"
+
+          if [[ -z "$ARTIFACT_ID" || -z "$HANDOFF_RUN_ID" ]]; then
+            echo "ERROR: no non-expired artifact named ${ARTIFACT_NAME} found" >&2
+            echo "Run r8-evidence-handoff for this SHA and Release run ${GITHUB_RUN_ID}, then re-run failed jobs." >&2
+            exit 1
+          fi
+
+          # Authenticate the specific artifact producer instead of trusting
+          # the artifact name alone. Commit and source Release run binding are
+          # independently checked inside r8-metadata.json below.
+          HANDOFF_JSON=$(gh run view "$HANDOFF_RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --json workflowName,status,conclusion)
+          echo "$HANDOFF_JSON" | python3 -c "
+          import json, sys
+          run = json.load(sys.stdin)
+          if run.get('workflowName') != 'R8 Evidence Handoff':
+              print('ERROR: R8 artifact was not produced by the handoff workflow', file=sys.stderr)
+              sys.exit(1)
+          if run.get('status') != 'completed' or run.get('conclusion') != 'success':
+              print('ERROR: R8 artifact producer did not complete successfully', file=sys.stderr)
+              sys.exit(1)
+          "
+
+          # Download the artifact ZIP by ID non-interactively
+          gh api "/repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            > "$r8_dir/artifact.zip"
+
+          # Safely extract exactly the 3 expected regular root files:
+          # r8-metadata.json, positive-receipt.json, negative-receipt.json.
+          # Reject symlinks, path traversal, duplicates, or extras.
+          python3 - "$r8_dir/artifact.zip" "$r8_dir" <<'PY'
+          import os
+          import pathlib
+          import stat
+          import sys
+          import zipfile
+
+          zip_path = sys.argv[1]
+          dest = pathlib.Path(sys.argv[2])
+          expected = {"r8-metadata.json", "positive-receipt.json", "negative-receipt.json"}
+          found = set()
+          with zipfile.ZipFile(zip_path, "r") as zf:
+              for info in zf.infolist():
+                  full_path = pathlib.Path(info.filename)
+                  if (
+                      full_path.is_absolute()
+                      or len(full_path.parts) != 1
+                      or full_path.name != info.filename
+                  ):
+                      print(f"ERROR: artifact entry is not a root file: {info.filename}", file=sys.stderr)
+                      sys.exit(1)
+                  name = full_path.name
+                  unix_mode = (info.external_attr >> 16) & 0xFFFF
+                  if stat.S_IFMT(unix_mode) != 0 and not stat.S_ISREG(unix_mode):
+                      print(f"ERROR: non-regular file type in artifact: {info.filename}", file=sys.stderr)
+                      sys.exit(1)
+                  if info.is_dir():
+                      print(f"ERROR: directory in artifact: {info.filename}", file=sys.stderr)
+                      sys.exit(1)
+                  if name not in expected:
+                      print(f"ERROR: unexpected file in artifact: {name}", file=sys.stderr)
+                      sys.exit(1)
+                  if name in found:
+                      print(f"ERROR: duplicate entry in artifact: {name}", file=sys.stderr)
+                      sys.exit(1)
+                  found.add(name)
+                  # Extract only the basename into dest with exclusive creation
+                  with zf.open(info) as src:
+                      content = src.read()
+                  out_path = dest / name
+                  fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+                  with os.fdopen(fd, 'wb') as dst:
+                      dst.write(content)
+          missing = expected - found
+          if missing:
+              print(f"ERROR: missing expected files in artifact: {missing}", file=sys.stderr)
+              sys.exit(1)
+          print(f"Extracted {len(found)} files from artifact")
+          PY
+
+          echo "r8-dir=${r8_dir}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify R8 evidence with metadata binding
+        id: verify-r8
+        shell: bash
+        run: |
+          set -euo pipefail
+          r8_dir="$RUNNER_TEMP/r8-evidence"
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP"/release-candidate/aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "ERROR: expected exactly one x86_64 archive for R8 verification" >&2
+            exit 1
+          fi
+          rc_archive="${archives[0]}"
+          installed_digest=$(sha256sum /usr/bin/aletheon | awk '{print $1}')
+
+          echo "R8 verification parameters:"
+          echo "  metadata:       ${r8_dir}/r8-metadata.json"
+          echo "  positive:       ${r8_dir}/positive-receipt.json"
+          echo "  negative:       ${r8_dir}/negative-receipt.json"
+          echo "  commit:         ${GITHUB_SHA}"
+          echo "  run ID:         ${GITHUB_RUN_ID}"
+          echo "  rc archive:     ${rc_archive}"
+          echo "  installed:      ${installed_digest}"
+
+          # Read device from metadata (produced by handoff workflow),
+          # not from a hardcoded literal.
+          expected_device=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['device'])" "$r8_dir/r8-metadata.json")
+
+          python3 tests/coding/harness/r8_evidence_verifier.py \
+            --metadata "$r8_dir/r8-metadata.json" \
+            --positive-receipt "$r8_dir/positive-receipt.json" \
+            --negative-receipt "$r8_dir/negative-receipt.json" \
+            --expected-commit "${GITHUB_SHA}" \
+            --expected-run-id "${GITHUB_RUN_ID}" \
+            --expected-rc-archive "$rc_archive" \
+            --expected-installed-digest "$installed_digest" \
+            --expected-device "$expected_device"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run installed acceptance and bind it to the RC archive
+        id: acceptance-run
+        shell: bash
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP"/release-candidate/aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          artifacts="$RUNNER_TEMP/release-acceptance"
+          run_id="${GITHUB_REF_NAME}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          installed_digest=$(sha256sum /usr/bin/aletheon | awk '{print $1}')
+          generation_id="rc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${installed_digest:0:16}"
+          export ALETHEON_ACCEPTANCE_SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/aletheon/aletheon.sock"
+          mkdir -p "$artifacts"
+
+          echo "run-id=${run_id}" >> "$GITHUB_OUTPUT"
+
+          python3 tests/coding/harness/suite.py \
+            --catalog tests/coding/tasks \
+            --receipts "$artifacts/receipts" \
+            --report "$artifacts/suite.json" \
+            --run-id "$run_id" \
+            --generation-id "$generation_id" \
+            --artifacts-root "$artifacts/runs"
+          suite_exit=$?
+          if (( suite_exit != 0 )); then
+            echo "installed release acceptance failed with status $suite_exit" >&2
+            exit "$suite_exit"
+          fi
+
+          run_dir="$artifacts/runs/$run_id"
+          python3 tests/coding/harness/release_acceptance_gate.py \
+            --run-dir "$run_dir" \
+            --commit "${GITHUB_SHA}" \
+            --x86-64-archive "${archives[0]}"
+
+          tar -C "$artifacts/runs" -czf \
+            "$artifacts/acceptance-${GITHUB_REF_NAME}.tar.gz" "$run_id"
+
+      - name: Bundle verified R8 evidence
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifacts="$RUNNER_TEMP/release-acceptance"
+          r8_dir="$RUNNER_TEMP/r8-evidence"
+          r8_bundle="$artifacts/robot-r8-evidence-${GITHUB_REF_NAME}.tar.gz"
+          tar -C "$r8_dir" -czf "$r8_bundle" \
+            positive-receipt.json negative-receipt.json r8-metadata.json
+          echo "R8_BUNDLE=${r8_bundle}" >> "$GITHUB_ENV"
+          echo "R8 evidence bundled: $r8_bundle"
+
+      - name: Capture acceptance metadata
+        if: always()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          artifacts="$RUNNER_TEMP/release-acceptance"
+          r8_dir="$RUNNER_TEMP/r8-evidence"
+          acceptance_archive="$artifacts/acceptance-${GITHUB_REF_NAME}.tar.gz"
+          r8_bundle="${R8_BUNDLE:-$artifacts/robot-r8-evidence-${GITHUB_REF_NAME}.tar.gz}"
+          archives=("$RUNNER_TEMP"/release-candidate/aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          installed_digest=$(sha256sum /usr/bin/aletheon | awk '{print $1}' 2>/dev/null || echo "")
+          run_id="${GITHUB_REF_NAME}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          meta_path="$artifacts/release-acceptance-metadata.json"
+          python3 - "$meta_path" "$installed_digest" "$run_id" "${GITHUB_SHA}" "$acceptance_archive" "${archives[0]:-}" "$r8_dir" "$r8_bundle" <<'PY'
+          import hashlib, json, sys, pathlib
+          meta_path = sys.argv[1]
+          installed_digest = sys.argv[2]
+          run_id = sys.argv[3]
+          commit = sys.argv[4]
+          acceptance_archive = sys.argv[5]
+          rc_archive = sys.argv[6]
+          r8_dir = sys.argv[7]
+          r8_bundle = sys.argv[8]
+          meta = {
+              "schema_version": 1,
+              "acceptance_run_id": run_id,
+              "commit": commit,
+              "installed_digest": installed_digest,
+          }
+          # All following fields are mandatory; fail if any path is missing.
+          if not pathlib.Path(rc_archive).is_file():
+              print(f"ERROR: rc archive is missing: {rc_archive}", file=sys.stderr)
+              sys.exit(1)
+          meta["rc_archive_sha256"] = hashlib.sha256(pathlib.Path(rc_archive).read_bytes()).hexdigest()
+          if not pathlib.Path(acceptance_archive).is_file():
+              print(f"ERROR: acceptance archive is missing: {acceptance_archive}", file=sys.stderr)
+              sys.exit(1)
+          meta["acceptance_archive_sha256"] = hashlib.sha256(pathlib.Path(acceptance_archive).read_bytes()).hexdigest()
+          meta["acceptance_archive_name"] = pathlib.Path(acceptance_archive).name
+          # Bind R8 evidence digests into the acceptance metadata
+          r8_positive = pathlib.Path(r8_dir) / "positive-receipt.json"
+          r8_negative = pathlib.Path(r8_dir) / "negative-receipt.json"
+          if not r8_positive.is_file():
+              print(f"ERROR: positive receipt missing: {r8_positive}", file=sys.stderr)
+              sys.exit(1)
+          meta["r8_positive_receipt_sha256"] = hashlib.sha256(r8_positive.read_bytes()).hexdigest()
+          if not r8_negative.is_file():
+              print(f"ERROR: negative receipt missing: {r8_negative}", file=sys.stderr)
+              sys.exit(1)
+          meta["r8_negative_receipt_sha256"] = hashlib.sha256(r8_negative.read_bytes()).hexdigest()
+          # Bundle the verified R8 evidence into one current-run archive
+          if not pathlib.Path(r8_bundle).is_file():
+              print(f"ERROR: R8 evidence bundle missing: {r8_bundle}", file=sys.stderr)
+              sys.exit(1)
+          meta["r8_evidence_archive_sha256"] = hashlib.sha256(pathlib.Path(r8_bundle).read_bytes()).hexdigest()
+          meta["r8_evidence_archive_name"] = pathlib.Path(r8_bundle).name
+          pathlib.Path(meta_path).write_text(json.dumps(meta, sort_keys=True) + "\n")
+          PY
+
+      - name: Remove provider credential
+        if: always()
+        run: sudo rm -f /etc/aletheon/credentials/provider.env
+
+      - name: Upload machine-generated release acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-acceptance-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release-acceptance/acceptance-${{ github.ref_name }}.tar.gz
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload R8 evidence bundle
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-r8-evidence-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release-acceptance/robot-r8-evidence-${{ github.ref_name }}.tar.gz
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload acceptance metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-acceptance-metadata-${{ github.ref_name }}
+          path: ${{ runner.temp }}/release-acceptance/release-acceptance-metadata.json
+          if-no-files-found: warn
+          retention-days: 90
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, convergence-gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -109,44 +589,430 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+          path: ${{ runner.temp }}/release-bundle
 
       - name: Verify release artifacts and generate checksums
         shell: bash
+        working-directory: ${{ runner.temp }}/release-bundle
         run: |
+          set -euo pipefail
           shopt -s nullglob
+          # Select x86 and ARM into separate arrays; require exactly one each.
+          x86_archives=(aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          arm_archives=(aletheon-*-aarch64-unknown-linux-gnu.tar.gz)
+          [[ ${#x86_archives[@]} -eq 1 ]] || {
+            echo "expected exactly one x86_64 archive, found ${#x86_archives[@]}" >&2
+            exit 1
+          }
+          [[ ${#arm_archives[@]} -eq 1 ]] || {
+            echo "expected exactly one aarch64 archive, found ${#arm_archives[@]}" >&2
+            exit 1
+          }
+          x86_archive="${x86_archives[0]}"
+          arm_archive="${arm_archives[0]}"
+
           archives=(aletheon-*.tar.gz)
-          metadata=(aletheon-*.spdx.json)
+          acceptance=(acceptance-*.tar.gz)
+          r8_evidence=(robot-r8-evidence-*.tar.gz)
+          spdx_metadata=(aletheon-*.spdx.json)
           [[ ${#archives[@]} -eq 2 ]] || {
             echo "expected two release archives, found ${#archives[@]}" >&2
             exit 1
           }
-          [[ ${#metadata[@]} -eq 2 ]] || {
-            echo "expected two SPDX metadata files, found ${#metadata[@]}" >&2
+          [[ ${#spdx_metadata[@]} -eq 2 ]] || {
+            echo "expected two SPDX metadata files, found ${#spdx_metadata[@]}" >&2
             exit 1
           }
-          sha256sum "${archives[@]}" "${metadata[@]}" > SHA256SUMS
+          [[ ${#acceptance[@]} -eq 1 ]] || {
+            echo "expected one acceptance evidence archive, found ${#acceptance[@]}" >&2
+            exit 1
+          }
+          [[ ${#r8_evidence[@]} -eq 1 ]] || {
+            echo "expected one R8 evidence archive, found ${#r8_evidence[@]}" >&2
+            exit 1
+          }
+
+          # Require exactly one safe regular metadata file, reject symlink.
+          meta_raw=(release-acceptance-metadata.json)
+          [[ ${#meta_raw[@]} -eq 1 ]] || {
+            echo "expected exactly one acceptance metadata file, found ${#meta_raw[@]}" >&2
+            exit 1
+          }
+          if [[ -L "${meta_raw[0]}" ]]; then
+            echo "ERROR: acceptance metadata file is a symlink; regular file required" >&2
+            exit 1
+          fi
+          if [[ ! -f "${meta_raw[0]}" ]]; then
+            echo "ERROR: acceptance metadata file does not exist" >&2
+            exit 1
+          fi
+          meta_file="${meta_raw[0]}"
+
+          # Schema-check acceptance metadata and recompute/bind all digests.
+          # All required fields must fail if absent or malformed (no
+          # optional-only comparison).
+          python3 - "$meta_file" "${GITHUB_SHA}" "$x86_archive" "${arm_archive}" "${acceptance[0]}" "${r8_evidence[0]}" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/r8-extracted" <<'PY'
+          import hashlib
+          import json
+          import os as _os
+          import pathlib
+          import sys
+          import tarfile
+          meta_path = sys.argv[1]
+          expected_commit = sys.argv[2]
+          x86_archive = sys.argv[3]
+          arm_archive = sys.argv[4]
+          acceptance_archive = sys.argv[5]
+          r8_evidence_archive = sys.argv[6]
+          workspace = sys.argv[7]
+          r8_out_dir = sys.argv[8]
+
+          def reject_constant(value):
+              raise ValueError(f"non-finite JSON constant is not accepted: {value}")
+
+          try:
+              with open(meta_path) as f:
+                  meta = json.load(f, parse_constant=reject_constant)
+          except (OSError, ValueError, json.JSONDecodeError) as error:
+              print(f"ERROR: invalid acceptance metadata: {error}", file=sys.stderr)
+              sys.exit(1)
+          if not isinstance(meta, dict):
+              print("ERROR: acceptance metadata must be a JSON object", file=sys.stderr)
+              sys.exit(1)
+
+          errors = []
+          def require_str(key):
+              val = meta.get(key)
+              if not isinstance(val, str) or not val:
+                  errors.append(f"acceptance metadata {key} is required and must be a non-empty string")
+                  return None
+              return val
+          def require_hex(key, length):
+              val = require_str(key)
+              if val is not None:
+                  if len(val) != length or not all(c in "0123456789abcdef" for c in val):
+                      errors.append(f"acceptance metadata {key} must be a {length}-char lowercase hex string")
+              return val
+
+          if meta.get("schema_version") != 1:
+              errors.append("acceptance metadata schema_version must be 1")
+          commit_val = require_str("commit")
+          if commit_val and commit_val != expected_commit:
+              errors.append(f"acceptance metadata commit {commit_val!r} != GITHUB_SHA {expected_commit!r}")
+          require_str("acceptance_run_id")
+          require_hex("installed_digest", 64)
+          require_hex("rc_archive_sha256", 64)
+          require_hex("acceptance_archive_sha256", 64)
+          acceptance_archive_name = require_str("acceptance_archive_name")
+          require_hex("r8_evidence_archive_sha256", 64)
+          r8_evidence_archive_name = require_str("r8_evidence_archive_name")
+          require_hex("r8_positive_receipt_sha256", 64)
+          require_hex("r8_negative_receipt_sha256", 64)
+
+          if (
+              acceptance_archive_name
+              and acceptance_archive_name != pathlib.Path(acceptance_archive).name
+          ):
+              errors.append(
+                  "acceptance metadata acceptance_archive_name does not match "
+                  "the downloaded acceptance archive"
+              )
+          if (
+              r8_evidence_archive_name
+              and r8_evidence_archive_name != pathlib.Path(r8_evidence_archive).name
+          ):
+              errors.append(
+                  "acceptance metadata r8_evidence_archive_name does not match "
+                  "the downloaded R8 evidence archive"
+              )
+
+          # Recompute x86 archive SHA
+          x86_actual = hashlib.sha256(pathlib.Path(x86_archive).read_bytes()).hexdigest()
+          x86_meta = meta.get("rc_archive_sha256", "")
+          if x86_meta and x86_actual != x86_meta:
+              errors.append(f"rc_archive_sha256 mismatch: metadata={x86_meta} actual={x86_actual}")
+
+          # Recompute acceptance archive SHA
+          acc_actual = hashlib.sha256(pathlib.Path(acceptance_archive).read_bytes()).hexdigest()
+          acc_meta = meta.get("acceptance_archive_sha256", "")
+          if acc_meta and acc_actual != acc_meta:
+              errors.append(f"acceptance_archive_sha256 mismatch: metadata={acc_meta} actual={acc_actual}")
+
+          # Recompute R8 evidence archive SHA
+          r8_actual = hashlib.sha256(pathlib.Path(r8_evidence_archive).read_bytes()).hexdigest()
+          r8_meta = meta.get("r8_evidence_archive_sha256", "")
+          if r8_meta and r8_actual != r8_meta:
+              errors.append(f"r8_evidence_archive_sha256 mismatch: metadata={r8_meta} actual={r8_actual}")
+
+          # Fail-closed inventory scan for each release archive.
+          # Reject symlinks, hardlinks, devices, FIFOs, unexpected
+          # files, duplicates, and unreadable expected members.
+          def scan_release_tar(archive_path, label):
+              """Return (binary_sha256 | None, errors list)."""
+              errs = []
+              expected_regular = {"aletheon", "LICENSE", "README.md"}
+              expected_root = pathlib.Path(archive_path).name.removesuffix(".tar.gz")
+              found = {}
+              binary_hash = None
+              with tarfile.open(archive_path, "r:gz") as tf:
+                  for m in tf.getmembers():
+                      full = pathlib.Path(m.name)
+                      # Path traversal / absolute path rejection
+                      if full.is_absolute() or ".." in full.parts:
+                          errs.append(f"{label} archive path traversal: {m.name}")
+                          continue
+                      if not full.parts or full.parts[0] != expected_root:
+                          errs.append(f"{label} archive unexpected root: {m.name}")
+                          continue
+                      if m.issym():
+                          errs.append(f"{label} archive symlink: {m.name}")
+                          continue
+                      if m.islnk():
+                          errs.append(f"{label} archive hardlink: {m.name}")
+                          continue
+                      if m.isdev() or m.isfifo():
+                          errs.append(f"{label} archive device/FIFO: {m.name}")
+                          continue
+                      if m.isdir():
+                          # Only the top-level staging directory is permitted.
+                          if len(full.parts) != 1:
+                              errs.append(f"{label} archive nested directory: {m.name}")
+                          continue
+                      if not m.isfile():
+                          errs.append(f"{label} archive unrecognised entry type: {m.name}")
+                          continue
+                      # Require root-level regular files only.
+                      if len(full.parts) != 2:
+                          errs.append(f"{label} archive nested file: {m.name}")
+                          continue
+                      basename = full.name
+                      if basename not in expected_regular:
+                          errs.append(f"{label} archive unexpected file: {basename}")
+                          continue
+                      if basename in found:
+                          errs.append(f"{label} archive duplicate: {basename}")
+                          continue
+                      stream = tf.extractfile(m)
+                      if stream is None:
+                          errs.append(f"{label} archive unreadable: {basename}")
+                          continue
+                      content = stream.read()
+                      found[basename] = content
+                      if basename == "aletheon":
+                          binary_hash = hashlib.sha256(content).hexdigest()
+              missing = expected_regular - set(found)
+              if missing:
+                  errs.append(f"{label} archive missing required files: {sorted(missing)}")
+              return binary_hash, errs
+
+          installed_digest = meta.get("installed_digest", "")
+          x86_hash, x86_errs = scan_release_tar(x86_archive, "x86")
+          errors.extend(x86_errs)
+          if installed_digest and x86_hash and x86_hash != installed_digest:
+              errors.append(f"x86 binary hash {x86_hash} != metadata installed_digest {installed_digest}")
+
+          _arm_hash, arm_errs = scan_release_tar(arm_archive, "arm")
+          errors.extend(arm_errs)
+
+          # Fail-closed R8 evidence tar scan: exact root regular files,
+          # no symlinks/traversal/nested paths, hash receipts and compare.
+          with tarfile.open(r8_evidence_archive, "r:gz") as rf:
+              r8_members = {}
+              for m in rf.getmembers():
+                  full = pathlib.Path(m.name)
+                  if full.is_absolute() or ".." in full.parts:
+                      errors.append(f"R8 evidence archive path traversal: {m.name}")
+                      continue
+                  if m.issym():
+                      errors.append(f"R8 evidence archive symlink: {m.name}")
+                      continue
+                  if m.islnk():
+                      errors.append(f"R8 evidence archive hardlink: {m.name}")
+                      continue
+                  if m.isdev() or m.isfifo():
+                      errors.append(f"R8 evidence archive device/FIFO: {m.name}")
+                      continue
+                  if m.isdir():
+                      errors.append(f"R8 evidence archive directory: {m.name}")
+                      continue
+                  if not m.isfile():
+                      errors.append(f"R8 evidence archive unrecognised entry: {m.name}")
+                      continue
+                  # Require root-level files only.
+                  if len(full.parts) != 1:
+                      errors.append(f"R8 evidence archive nested file: {m.name}")
+                      continue
+                  name = full.name
+                  if not name:
+                      continue
+                  if name in r8_members:
+                      errors.append(f"R8 evidence archive duplicate: {name}")
+                      continue
+                  stream = rf.extractfile(m)
+                  if stream is None:
+                      errors.append(f"R8 evidence archive unreadable: {name}")
+                      continue
+                  r8_members[name] = stream.read()
+
+              expected_names = {"positive-receipt.json", "negative-receipt.json", "r8-metadata.json"}
+              found_names = set(r8_members.keys())
+              missing = expected_names - found_names
+              extra = found_names - expected_names
+              if missing:
+                  errors.append(f"R8 evidence archive missing: {sorted(missing)}")
+              if extra:
+                  errors.append(f"R8 evidence archive unexpected files: {sorted(extra)}")
+
+              if "positive-receipt.json" in r8_members:
+                  pos_hash = hashlib.sha256(r8_members["positive-receipt.json"]).hexdigest()
+                  pos_meta_hash = meta.get("r8_positive_receipt_sha256", "")
+                  if pos_meta_hash and pos_hash != pos_meta_hash:
+                      errors.append(f"positive receipt hash mismatch: tar={pos_hash} metadata={pos_meta_hash}")
+              if "negative-receipt.json" in r8_members:
+                  neg_hash = hashlib.sha256(r8_members["negative-receipt.json"]).hexdigest()
+                  neg_meta_hash = meta.get("r8_negative_receipt_sha256", "")
+                  if neg_meta_hash and neg_hash != neg_meta_hash:
+                      errors.append(f"negative receipt hash mismatch: tar={neg_hash} metadata={neg_meta_hash}")
+
+          if errors:
+              for e in errors:
+                  print(f"ERROR: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          # Save extracted R8 evidence files for the external verifier
+          r8_dir = pathlib.Path(r8_out_dir)
+          r8_dir.mkdir(parents=True, exist_ok=True)
+          for fname, content in r8_members.items():
+              out_path = r8_dir / fname
+              fd = _os.open(out_path, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL)
+              with _os.fdopen(fd, "wb") as output:
+                  output.write(content)
+
+          print("Acceptance metadata verified: all digests bound")
+          PY
+
+          # Run the R8 evidence verifier against the extracted files
+          expected_device=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['device'])" "$RUNNER_TEMP/r8-extracted/r8-metadata.json")
+          installed_digest=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['installed_digest'])" "$meta_file")
+          python3 "$GITHUB_WORKSPACE/tests/coding/harness/r8_evidence_verifier.py" \
+            --metadata "$RUNNER_TEMP/r8-extracted/r8-metadata.json" \
+            --positive-receipt "$RUNNER_TEMP/r8-extracted/positive-receipt.json" \
+            --negative-receipt "$RUNNER_TEMP/r8-extracted/negative-receipt.json" \
+            --expected-commit "${GITHUB_SHA}" \
+            --expected-run-id "${GITHUB_RUN_ID}" \
+            --expected-rc-archive "$x86_archive" \
+            --expected-installed-digest "$installed_digest" \
+            --expected-device "$expected_device"
+
+          sha256sum "${archives[@]}" "${spdx_metadata[@]}" "${acceptance[@]}" "${r8_evidence[@]}" "$meta_file" > SHA256SUMS
           sha256sum --check SHA256SUMS
 
-      - name: Generate changelog
-        id: changelog
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^${TAG}$" | tail -1)
-
-          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$TAG" ]; then
-            CHANGES=$(git log --oneline --no-decorate)
-          else
-            CHANGES=$(git log --oneline --no-decorate "${PREV_TAG}..${TAG}")
+          # Copy known-limitations into the bundle so it is published alongside
+          if [[ -f "$GITHUB_WORKSPACE/docs/release/known-limitations.md" ]]; then
+            cp "$GITHUB_WORKSPACE/docs/release/known-limitations.md" KNOWN_LIMITATIONS.md
           fi
 
-          # Write to file to avoid shell escaping issues
+      - name: Generate release notes
+        id: release-notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+
+          # Run git from the actual checkout (GITHUB_WORKSPACE), not
+          # RUNNER_TEMP where no repository exists.
+          cd "$GITHUB_WORKSPACE"
+
+          # Determine previous tag for changelog and compare URL.
+          # Use reachable semantic v* tags merged into GITHUB_SHA,
+          # excluding the current tag.
+          PREV_TAG=$(git tag --merged "${GITHUB_SHA}" --sort=-v:refname | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z][-0-9A-Za-z.]*)?(\+[0-9A-Za-z][-0-9A-Za-z.]*)?$' | grep -Fvx -- "$TAG" | head -1 || true)
+
+          if [ -z "$PREV_TAG" ]; then
+            # First release: show all history.
+            CHANGES=$(git log --oneline --no-decorate)
+            COMPARE_URL=""
+          else
+            CHANGES=$(git log --oneline --no-decorate "${PREV_TAG}..${TAG}")
+            COMPARE_URL="https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+          fi
+
+          # Acceptance metadata is mandatory; fail if missing.
+          META_FILE="$RUNNER_TEMP/release-bundle/release-acceptance-metadata.json"
+          if [[ ! -f "$META_FILE" ]]; then
+            echo "ERROR: acceptance metadata file is required but missing" >&2
+            exit 1
+          fi
+
+          ACCEPTANCE_RUN_ID=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['acceptance_run_id'])" "$META_FILE")
+          ACCEPTANCE_ARCHIVE_SHA256=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('acceptance_archive_sha256',''))" "$META_FILE")
+          INSTALLED_DIGEST=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['installed_digest'])" "$META_FILE")
+          RC_ARCHIVE_SHA256=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('rc_archive_sha256',''))" "$META_FILE")
+          R8_POSITIVE_SHA256=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('r8_positive_receipt_sha256',''))" "$META_FILE")
+          R8_NEGATIVE_SHA256=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('r8_negative_receipt_sha256',''))" "$META_FILE")
+          R8_EVIDENCE_ARCHIVE_SHA256=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('r8_evidence_archive_sha256',''))" "$META_FILE")
+
+          # Acceptance run ID and installed digest are required.
+          if [[ -z "$ACCEPTANCE_RUN_ID" ]]; then
+            echo "ERROR: acceptance_run_id is required in acceptance metadata" >&2
+            exit 1
+          fi
+          if [[ -z "$INSTALLED_DIGEST" ]]; then
+            echo "ERROR: installed_digest is required in acceptance metadata" >&2
+            exit 1
+          fi
+          if [[ -z "$R8_POSITIVE_SHA256" || -z "$R8_NEGATIVE_SHA256" ]]; then
+            echo "ERROR: R8 positive and negative receipt digests are required in acceptance metadata" >&2
+            exit 1
+          fi
+
+          cd "$RUNNER_TEMP/release-bundle"
+          X86_SHA256=$(sha256sum aletheon-*-x86_64-unknown-linux-gnu.tar.gz | awk '{print $1}' || echo "")
+          ARM_SHA256=$(sha256sum aletheon-*-aarch64-unknown-linux-gnu.tar.gz | awk '{print $1}' || echo "")
+
           {
-            echo "## What's Changed"
+            echo "## Release ${TAG}"
+            echo ""
+            echo "**Commit**: \`${GITHUB_SHA}\`"
+            echo "**Acceptance Run ID**: \`${ACCEPTANCE_RUN_ID}\`"
+            echo "**Acceptance Evidence Digest**: \`sha256:${ACCEPTANCE_ARCHIVE_SHA256}\`"
+            echo "**Installed Binary Digest**: \`sha256:${INSTALLED_DIGEST}\`"
+            echo "**RC Archive Digest**: \`sha256:${RC_ARCHIVE_SHA256}\`"
+            echo "**R8 Positive Receipt Digest**: \`sha256:${R8_POSITIVE_SHA256}\`"
+            echo "**R8 Negative Receipt Digest**: \`sha256:${R8_NEGATIVE_SHA256}\`"
+            echo "**R8 Evidence Archive Digest**: \`sha256:${R8_EVIDENCE_ARCHIVE_SHA256}\`"
+            echo ""
+            echo "### Artifacts"
+            echo ""
+            echo "- \`aletheon-${TAG}-x86_64-unknown-linux-gnu.tar.gz\` (SHA256: \`${X86_SHA256}\`)"
+            echo "- \`aletheon-${TAG}-aarch64-unknown-linux-gnu.tar.gz\` (SHA256: \`${ARM_SHA256}\`)"
+            echo "- \`SHA256SUMS\` (all artifact checksums)"
+            echo "- SPDX metadata (SBOM)"
+            echo ""
+            echo "### What's Changed"
             echo ""
             echo "$CHANGES"
             echo ""
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
-          } > changelog.md
+            echo "### Known Limitations"
+            echo ""
+            echo "- **Physical HIL (H1)**: No physical hardware acceptance has been performed. This release is validated on MuJoCo simulation only."
+            echo "- **Robot R8 Acceptance**: Simulation Robot acceptance (positive completed + negative safe-stop) has been verified for the exact release candidate. See R8 receipt digests above."
+            echo "- See \`KNOWN_LIMITATIONS.md\` in the release assets or \`docs/release/known-limitations.md\` in the repository for the full detailed list."
+            echo ""
+            echo "### Rollback"
+            echo ""
+            if [[ -n "$PREV_TAG" ]]; then
+              echo "**Rollback Point**: \`${PREV_TAG}\`"
+              echo ""
+            fi
+            echo "To roll back to a previous release, deploy the prior tagged binary with its matching data snapshot. The migration matrix (\`config/release/migration-matrix.toml\`) is forward-only for data-changing transitions; binary-only rollback after data change is forbidden. Components with \`data_change=false\` support matching-data-and-binary rollback. See \`config/release/migration-matrix.toml\` for per-component rollback policies."
+            echo ""
+            if [[ -n "$COMPARE_URL" ]]; then
+              echo "**Full Changelog**: ${COMPARE_URL}"
+            else
+              echo "**Full Changelog**: This is the first tagged release."
+            fi
+          } > release-notes.md
 
       - name: Check prerelease
         id: prerelease
@@ -162,11 +1028,562 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
-          body_path: changelog.md
+          body_path: ${{ runner.temp }}/release-bundle/release-notes.md
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
           files: |
-            *.tar.gz
-            *.spdx.json
-            SHA256SUMS
+            ${{ runner.temp }}/release-bundle/aletheon-*-x86_64-unknown-linux-gnu.tar.gz
+            ${{ runner.temp }}/release-bundle/aletheon-*-aarch64-unknown-linux-gnu.tar.gz
+            ${{ runner.temp }}/release-bundle/*.spdx.json
+            ${{ runner.temp }}/release-bundle/SHA256SUMS
+            ${{ runner.temp }}/release-bundle/KNOWN_LIMITATIONS.md
+            ${{ runner.temp }}/release-bundle/acceptance-*.tar.gz
+            ${{ runner.temp }}/release-bundle/robot-r8-evidence-*.tar.gz
+            ${{ runner.temp }}/release-bundle/release-acceptance-metadata.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  smoke:
+    name: Post-release smoke (x86_64)
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download published release assets
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/smoke"
+          cd "$RUNNER_TEMP/smoke"
+          gh release download "${GITHUB_REF_NAME}" \
+            --pattern "aletheon-*-x86_64-unknown-linux-gnu.tar.gz" \
+            --pattern "SHA256SUMS" \
+            --pattern "robot-r8-evidence-*.tar.gz" \
+            --pattern "release-acceptance-metadata.json" \
+            --dir .
+          echo "downloaded release assets:"
+          ls -la
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify checksums
+        shell: bash
+        working-directory: ${{ runner.temp }}/smoke
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "ERROR: expected exactly one x86_64 archive, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          x86_archive="${archives[0]}"
+          echo "x86_archive=${x86_archive}" >> "$GITHUB_ENV"
+
+          r8_archives=(robot-r8-evidence-*.tar.gz)
+          if [[ ${#r8_archives[@]} -ne 1 ]]; then
+            echo "ERROR: expected exactly one R8 evidence archive, found ${#r8_archives[@]}" >&2
+            exit 1
+          fi
+          r8_archive="${r8_archives[0]}"
+          echo "r8_archive=${r8_archive}" >> "$GITHUB_ENV"
+
+          if [[ ! -f "release-acceptance-metadata.json" ]]; then
+            echo "ERROR: release-acceptance-metadata.json is missing" >&2
+            exit 1
+          fi
+
+          # Require every downloaded asset and SHA256SUMS itself to be a
+          # regular file, not a symlink or other special file type.
+          for asset in "$x86_archive" "$r8_archive" "release-acceptance-metadata.json" "SHA256SUMS"; do
+            if [[ -L "$asset" ]]; then
+              echo "ERROR: $asset is a symlink; regular file required" >&2
+              exit 1
+            fi
+            if [[ ! -f "$asset" ]]; then
+              echo "ERROR: $asset is not a regular file" >&2
+              exit 1
+            fi
+          done
+
+          # Verify exact filename matches using awk field equality,
+          # not grep substring. Missing/duplicate lines fail.
+          for asset in "$x86_archive" "$r8_archive" "release-acceptance-metadata.json"; do
+            basename=$(basename "$asset")
+            count=$(awk -v name="$basename" '$2 == name {count++} END {print count+0}' SHA256SUMS)
+            if [[ "$count" -eq 0 ]]; then
+              echo "ERROR: ${basename} not found in SHA256SUMS" >&2
+              exit 1
+            elif [[ "$count" -gt 1 ]]; then
+              echo "ERROR: multiple SHA256SUMS entries for ${basename}" >&2
+              exit 1
+            fi
+            # Verify this single line
+            awk -v name="$basename" '$2 == name {print}' SHA256SUMS | sha256sum --check --strict
+          done
+
+          # All expected assets verified
+          x86_basename=$(basename "$x86_archive")
+          x86_line=$(awk -v name="$x86_basename" '$2 == name {print}' SHA256SUMS)
+          echo "x86 checksum verified: $(echo "$x86_line" | awk '{print $1}')"
+
+      - name: Extract and smoke-test binary
+        id: smoke-test
+        shell: bash
+        working-directory: ${{ runner.temp }}/smoke
+        run: |
+          set -euo pipefail
+          mkdir -p extracted
+          ARCHIVE="$x86_archive" OUTPUT=extracted/aletheon python3 - <<'PY'
+          import os, pathlib, shutil, tarfile
+          archive = pathlib.Path(os.environ["ARCHIVE"])
+          output = pathlib.Path(os.environ["OUTPUT"])
+          with tarfile.open(archive, "r:gz") as source:
+              members = [m for m in source.getmembers() if m.name.endswith("/aletheon")]
+              if len(members) != 1 or not members[0].isfile():
+                  raise SystemExit("release archive must contain exactly one regular aletheon binary")
+              stream = source.extractfile(members[0])
+              if stream is None:
+                  raise SystemExit("release candidate binary is unreadable")
+              descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+              with os.fdopen(descriptor, "wb") as destination:
+                  shutil.copyfileobj(stream, destination)
+          PY
+          binary=extracted/aletheon
+          if [[ ! -x "$binary" ]]; then
+            echo "ERROR: could not locate executable aletheon binary in archive" >&2
+            exit 1
+          fi
+
+          binary_digest=$(sha256sum "$binary" | awk '{print $1}')
+          echo "binary-digest=${binary_digest}" >> "$GITHUB_OUTPUT"
+
+          # Run version check -- this validates the binary loads and prints version
+          version_output=$("$binary" version --json 2>&1) || {
+            echo "ERROR: aletheon version --json failed: $version_output" >&2
+            exit 1
+          }
+          echo "$version_output" > version-output.json
+
+          # Validate the public version contract implemented by the binary.
+          python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          required = {'schema_version', 'name', 'version', 'protocol_version'}
+          if not isinstance(data, dict) or set(data) != required:
+              print('ERROR: version output does not match the public field contract', file=sys.stderr)
+              sys.exit(1)
+          if data['schema_version'] != 1 or data['name'] != 'aletheon':
+              print('ERROR: version output has invalid identity fields', file=sys.stderr)
+              sys.exit(1)
+          if not isinstance(data['version'], str) or not data['version']:
+              print('ERROR: version output has invalid version', file=sys.stderr)
+              sys.exit(1)
+          if not isinstance(data['protocol_version'], int) or isinstance(data['protocol_version'], bool):
+              print('ERROR: version output has invalid protocol_version', file=sys.stderr)
+              sys.exit(1)
+          print(f'version check OK: {data[\"version\"]}')
+          " < version-output.json || exit 1
+
+      - name: Validate acceptance metadata from published assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/smoke"
+          shopt -s nullglob
+          META_FILE="release-acceptance-metadata.json"
+
+          if [[ ! -f "$META_FILE" ]]; then
+            echo "ERROR: acceptance metadata is required for smoke receipt" >&2
+            exit 1
+          fi
+
+          x86_archives=(aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          r8_archives=(robot-r8-evidence-*.tar.gz)
+          [[ ${#x86_archives[@]} -eq 1 ]] || { echo "ERROR: expected exactly one x86 archive" >&2; exit 1; }
+          [[ ${#r8_archives[@]} -eq 1 ]] || { echo "ERROR: expected exactly one R8 archive" >&2; exit 1; }
+          x86_actual_digest=$(sha256sum "${x86_archives[0]}" | awk '{print $1}')
+          r8_actual_digest=$(sha256sum "${r8_archives[0]}" | awk '{print $1}')
+          r8_actual_basename=$(basename "${r8_archives[0]}")
+          r8_extract="$RUNNER_TEMP/smoke/r8-extracted"
+          mkdir -p "$r8_extract"
+          validated_out="$RUNNER_TEMP/smoke/validated-metadata.json"
+
+          # Single centralized strict validation: parse once, check
+          # every required field, cross-check digests, extract R8
+          # evidence, compare receipt hashes, run verifier, and emit
+          # validated values for downstream steps.
+          python3 - "$META_FILE" \
+            "${x86_archives[0]}" "$x86_actual_digest" \
+            "${r8_archives[0]}" "$r8_actual_digest" "$r8_actual_basename" \
+            "$r8_extract" "$validated_out" \
+            "${{ steps.smoke-test.outputs.binary-digest }}" \
+            "${GITHUB_SHA}" "${GITHUB_RUN_ID}" \
+            "${GITHUB_REF_NAME}" \
+            "$GITHUB_WORKSPACE" <<'PY'
+          import hashlib
+          import json
+          import os as _os
+          import pathlib
+          import re
+          import subprocess
+          import sys
+          import tarfile
+
+          meta_path = sys.argv[1]
+          x86_archive = sys.argv[2]
+          x86_actual_digest = sys.argv[3]
+          r8_archive = sys.argv[4]
+          r8_actual_digest = sys.argv[5]
+          r8_actual_basename = sys.argv[6]
+          r8_extract = sys.argv[7]
+          validated_out = sys.argv[8]
+          binary_digest = sys.argv[9]
+          expected_commit = sys.argv[10]
+          expected_run_id = sys.argv[11]
+          expected_tag = sys.argv[12]
+          workspace = sys.argv[13]
+
+          def reject_constant(value):
+              raise ValueError(f"non-finite JSON constant is not accepted: {value}")
+
+          try:
+              with open(meta_path) as f:
+                  meta = json.load(f, parse_constant=reject_constant)
+          except (OSError, ValueError, json.JSONDecodeError) as error:
+              print(f"ERROR: invalid acceptance metadata: {error}", file=sys.stderr)
+              sys.exit(1)
+          if not isinstance(meta, dict):
+              print("ERROR: acceptance metadata must be a JSON object", file=sys.stderr)
+              sys.exit(1)
+
+          errors = []
+
+          def require_str(key):
+              val = meta.get(key)
+              if not isinstance(val, str) or not val:
+                  errors.append(f"acceptance metadata {key} is required and must be a non-empty string")
+                  return None
+              return val
+
+          def require_hex(key, length):
+              val = require_str(key)
+              if val is not None:
+                  if len(val) != length or not all(c in "0123456789abcdef" for c in val):
+                      errors.append(f"acceptance metadata {key} must be a {length}-char lowercase hex string")
+              return val
+
+          if meta.get("schema_version") != 1:
+              errors.append("acceptance metadata schema_version must be 1")
+
+          # commit
+          commit_val = require_str("commit")
+          if commit_val and commit_val != expected_commit:
+              errors.append(f"acceptance metadata commit {commit_val!r} != GITHUB_SHA {expected_commit!r}")
+
+          semver_tag = re.compile(
+              r"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+              r"(?:-[0-9A-Za-z](?:[-0-9A-Za-z.]*[0-9A-Za-z])?)?"
+              r"(?:\+[0-9A-Za-z](?:[-0-9A-Za-z.]*[0-9A-Za-z])?)?$"
+          )
+          if not semver_tag.fullmatch(expected_tag):
+              errors.append(f"release tag {expected_tag!r} is not valid semantic version syntax")
+
+          # acceptance_run_id must bind the exact tag, release workflow run,
+          # and a positive numeric attempt. This also restricts the value to
+          # data that is safe to persist without shell interpretation.
+          run_id_val = require_str("acceptance_run_id")
+          if run_id_val:
+              parts = run_id_val.rsplit("-", 2)
+              if (
+                  len(parts) != 3
+                  or parts[0] != expected_tag
+                  or parts[1] != expected_run_id
+                  or not parts[2].isascii()
+                  or not parts[2].isdigit()
+                  or int(parts[2]) < 1
+              ):
+                  errors.append(
+                      f"acceptance_run_id {run_id_val!r} does not match "
+                      "the release tag, GITHUB_RUN_ID, and positive run attempt"
+                  )
+
+          installed_digest = require_hex("installed_digest", 64)
+          require_hex("rc_archive_sha256", 64)
+          require_hex("acceptance_archive_sha256", 64)
+          acceptance_archive_name = require_str("acceptance_archive_name")
+          require_hex("r8_evidence_archive_sha256", 64)
+          r8_evidence_archive_name = require_str("r8_evidence_archive_name")
+          require_hex("r8_positive_receipt_sha256", 64)
+          require_hex("r8_negative_receipt_sha256", 64)
+
+          # The acceptance archive is not downloaded by smoke, so bind its
+          # metadata name to the exact release tag rather than a local file.
+          expected_acceptance_name = f"acceptance-{expected_tag}.tar.gz"
+          if acceptance_archive_name and acceptance_archive_name != expected_acceptance_name:
+              errors.append(
+                  f"acceptance_archive_name {acceptance_archive_name!r} "
+                  f"!= expected {expected_acceptance_name!r}"
+              )
+
+          # r8_evidence_archive_name must equal the basename of the
+          # actual downloaded R8 archive.
+          if r8_evidence_archive_name and r8_evidence_archive_name != r8_actual_basename:
+              errors.append(
+                  f"r8_evidence_archive_name {r8_evidence_archive_name!r} "
+                  f"!= actual R8 basename {r8_actual_basename!r}"
+              )
+          expected_r8_name = f"robot-r8-evidence-{expected_tag}.tar.gz"
+          if r8_actual_basename != expected_r8_name:
+              errors.append(
+                  f"R8 evidence archive basename {r8_actual_basename!r} "
+                  f"!= expected {expected_r8_name!r}"
+              )
+
+          # Cross-check: rc_archive_sha256 == actual x86 file digest
+          rc_meta = meta.get("rc_archive_sha256", "")
+          if rc_meta and rc_meta != x86_actual_digest:
+              errors.append(f"metadata rc_archive_sha256 {rc_meta} != actual x86 digest {x86_actual_digest}")
+
+          # Cross-check: r8_evidence_archive_sha256 == actual R8 file digest
+          r8_meta = meta.get("r8_evidence_archive_sha256", "")
+          if r8_meta and r8_meta != r8_actual_digest:
+              errors.append(f"metadata r8_evidence_archive_sha256 {r8_meta} != actual R8 digest {r8_actual_digest}")
+
+          # installed_digest must match the nonempty smoke binary digest
+          if not binary_digest:
+              errors.append("smoke binary digest is empty or unavailable")
+          elif installed_digest and installed_digest != binary_digest:
+              errors.append(f"installed_digest {installed_digest} != smoke binary digest {binary_digest}")
+
+          # ---------- Fail-closed R8 evidence tar extraction ----------
+          # Reject symlinks, hardlinks, devices, FIFOs, directories,
+          # nested paths, duplicates, unexpected files; require exactly
+          # the three evidence files as root regular members.
+          r8_members = {}
+          expected_names = {"r8-metadata.json", "positive-receipt.json", "negative-receipt.json"}
+          with tarfile.open(r8_archive, "r:gz") as rf:
+              for m in rf.getmembers():
+                  full = pathlib.Path(m.name)
+                  if full.is_absolute() or ".." in full.parts:
+                      errors.append(f"R8 archive path traversal: {m.name}")
+                      continue
+                  if m.issym():
+                      errors.append(f"R8 archive symlink: {m.name}")
+                      continue
+                  if m.islnk():
+                      errors.append(f"R8 archive hardlink: {m.name}")
+                      continue
+                  if m.isdev() or m.isfifo():
+                      errors.append(f"R8 archive device/FIFO: {m.name}")
+                      continue
+                  if m.isdir():
+                      errors.append(f"R8 archive directory: {m.name}")
+                      continue
+                  if not m.isfile():
+                      errors.append(f"R8 archive unrecognised entry: {m.name}")
+                      continue
+                  # Require exact root-level files (no nested paths).
+                  if len(full.parts) != 1:
+                      errors.append(f"R8 archive nested file: {m.name}")
+                      continue
+                  name = full.name
+                  if not name:
+                      continue
+                  if name not in expected_names:
+                      errors.append(f"R8 archive unexpected file: {name}")
+                      continue
+                  if name in r8_members:
+                      errors.append(f"R8 archive duplicate: {name}")
+                      continue
+                  stream = rf.extractfile(m)
+                  if stream is None:
+                      errors.append(f"R8 archive unreadable: {name}")
+                      continue
+                  r8_members[name] = stream.read()
+
+          missing = expected_names - set(r8_members.keys())
+          if missing:
+              errors.append(f"R8 archive missing: {sorted(missing)}")
+
+          # Cross-check receipt hashes from extracted files against metadata
+          if "positive-receipt.json" in r8_members:
+              pos_hash = hashlib.sha256(r8_members["positive-receipt.json"]).hexdigest()
+              pos_meta = meta.get("r8_positive_receipt_sha256", "")
+              if pos_meta and pos_hash != pos_meta:
+                  errors.append(f"positive receipt hash mismatch: extracted={pos_hash} metadata={pos_meta}")
+          if "negative-receipt.json" in r8_members:
+              neg_hash = hashlib.sha256(r8_members["negative-receipt.json"]).hexdigest()
+              neg_meta = meta.get("r8_negative_receipt_sha256", "")
+              if neg_meta and neg_hash != neg_meta:
+                  errors.append(f"negative receipt hash mismatch: extracted={neg_hash} metadata={neg_meta}")
+
+          if errors:
+              for e in errors:
+                  print(f"ERROR: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          # Save extracted R8 evidence files with exclusive creation
+          r8_dir = pathlib.Path(r8_extract)
+          r8_dir.mkdir(parents=True, exist_ok=True)
+          for fname, content in r8_members.items():
+              out_path = r8_dir / fname
+              fd = _os.open(out_path, _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL)
+              with _os.fdopen(fd, "wb") as dst:
+                  dst.write(content)
+
+          # Run the R8 evidence verifier against extracted files
+          try:
+              r8_meta = json.loads(
+                  pathlib.Path(r8_extract, "r8-metadata.json").read_text(),
+                  parse_constant=reject_constant,
+              )
+          except (OSError, ValueError, json.JSONDecodeError) as error:
+              raise SystemExit(f"ERROR: invalid extracted R8 metadata: {error}") from error
+          expected_device = r8_meta.get("device") if isinstance(r8_meta, dict) else None
+          if not isinstance(expected_device, str) or not expected_device:
+              raise SystemExit("ERROR: extracted R8 metadata device must be a non-empty string")
+          verifier = pathlib.Path(workspace, "tests/coding/harness/r8_evidence_verifier.py")
+          subprocess.run(
+              [
+                  sys.executable, str(verifier),
+                  "--metadata", str(pathlib.Path(r8_extract, "r8-metadata.json")),
+                  "--positive-receipt", str(pathlib.Path(r8_extract, "positive-receipt.json")),
+                  "--negative-receipt", str(pathlib.Path(r8_extract, "negative-receipt.json")),
+                  "--expected-commit", expected_commit,
+                  "--expected-run-id", expected_run_id,
+                  "--expected-rc-archive", x86_archive,
+                  "--expected-installed-digest", installed_digest,
+                  "--expected-device", expected_device,
+              ],
+              check=True,
+          )
+
+          # Persist only validated typed data. Never source metadata-derived
+          # text as shell, even after validation.
+          validated = {
+              "installed_digest": installed_digest,
+              "acceptance_run_id": run_id_val,
+              "r8_positive_receipt_sha256": meta["r8_positive_receipt_sha256"],
+              "r8_negative_receipt_sha256": meta["r8_negative_receipt_sha256"],
+              "r8_evidence_archive_sha256": meta["r8_evidence_archive_sha256"],
+          }
+          descriptor = _os.open(
+              validated_out,
+              _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL,
+              0o600,
+          )
+          with _os.fdopen(descriptor, "w", encoding="utf-8") as output:
+              json.dump(validated, output, sort_keys=True, separators=(",", ":"))
+              output.write("\n")
+
+          print("acceptance metadata validated: all bindings correct")
+          PY
+
+      - name: Write smoke receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/smoke"
+
+          # Consume typed validated data produced by the centralized strict
+          # validation step. Metadata-derived text is never evaluated as shell.
+          validated_out="$RUNNER_TEMP/smoke/validated-metadata.json"
+          if [[ -L "$validated_out" || ! -f "$validated_out" ]]; then
+            echo "ERROR: validated metadata output is missing" >&2
+            exit 1
+          fi
+
+          META_FILE="release-acceptance-metadata.json"
+          META_DIGEST=$(sha256sum "$META_FILE" | awk '{print $1}')
+
+          # Determine the actual previous tag as the rollback point.
+          cd "$GITHUB_WORKSPACE"
+          PREV_TAG=$(git tag --merged "${GITHUB_SHA}" --sort=-v:refname | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z][-0-9A-Za-z.]*)?(\+[0-9A-Za-z][-0-9A-Za-z.]*)?$' | grep -Fvx -- "$GITHUB_REF_NAME" | head -1 || true)
+
+          receipt_path="$RUNNER_TEMP/smoke-receipt.json"
+          python3 - "$receipt_path" \
+            "${GITHUB_REF_NAME}" \
+            "${GITHUB_SHA}" \
+            "${{ steps.smoke-test.outputs.binary-digest }}" \
+            "$validated_out" \
+            "version-output.json" \
+            "$PREV_TAG" \
+            "$META_DIGEST" <<'PY'
+          import datetime, json, os, pathlib, sys
+
+          receipt_path = sys.argv[1]
+          tag = sys.argv[2]
+          commit = sys.argv[3]
+          binary_digest = sys.argv[4]
+          validated_path = pathlib.Path(sys.argv[5])
+          version_path = pathlib.Path(sys.argv[6])
+          prev_tag = sys.argv[7]
+          meta_digest = sys.argv[8]
+
+          def reject_constant(value):
+              raise ValueError(f"non-finite JSON constant is not accepted: {value}")
+
+          validated = json.loads(
+              validated_path.read_text(), parse_constant=reject_constant
+          )
+          required_validated = {
+              "installed_digest",
+              "acceptance_run_id",
+              "r8_positive_receipt_sha256",
+              "r8_negative_receipt_sha256",
+              "r8_evidence_archive_sha256",
+          }
+          if not isinstance(validated, dict) or set(validated) != required_validated:
+              raise SystemExit("validated metadata output has an unexpected schema")
+          if validated["installed_digest"] != binary_digest:
+              raise SystemExit("validated installed digest differs from smoke binary")
+          for key in required_validated:
+              if not isinstance(validated[key], str) or not validated[key]:
+                  raise SystemExit(f"validated metadata {key} must be a non-empty string")
+
+          try:
+              version_data = json.loads(
+                  version_path.read_text(), parse_constant=reject_constant
+              )
+          except (OSError, ValueError, json.JSONDecodeError) as error:
+              raise SystemExit(f"validated version output is unreadable: {error}") from error
+
+          receipt = {
+              "schema_version": 1,
+              "tag": tag,
+              "commit": commit,
+              "binary_digest": f"sha256:{binary_digest}",
+              "acceptance_run_id": validated["acceptance_run_id"],
+              "rollback_point": prev_tag if prev_tag else "none (first release)",
+              "r8_positive_receipt_sha256": validated["r8_positive_receipt_sha256"],
+              "r8_negative_receipt_sha256": validated["r8_negative_receipt_sha256"],
+              "r8_evidence_archive_sha256": validated["r8_evidence_archive_sha256"],
+              "acceptance_metadata_sha256": meta_digest,
+              "smoke_checks": {
+                  "checksums_verified": True,
+                  "version_json": version_data,
+              },
+              "completed_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+          }
+          descriptor = os.open(
+              receipt_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+          )
+          with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+              json.dump(receipt, output, sort_keys=True, indent=2)
+              output.write("\n")
+          PY
+
+          echo "smoke receipt written to $receipt_path"
+          cat "$receipt_path"
+
+      - name: Upload smoke receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-receipt-${{ github.ref_name }}
+          path: ${{ runner.temp }}/smoke-receipt.json
+          if-no-files-found: error
+          retention-days: 90

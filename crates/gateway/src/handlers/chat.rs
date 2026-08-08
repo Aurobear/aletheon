@@ -88,6 +88,7 @@ impl CapabilityHandler for ChatHandler {
                 requirements: Vec::new(),
                 task_kind: None,
                 permission_mode: HostPermissionMode::Safe,
+                execution_target: fabric::ExecutionTargetSelection::default(),
             }),
         );
         let reply = self.turn_executor.execute(&client_intent).await?;

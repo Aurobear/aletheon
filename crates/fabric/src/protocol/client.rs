@@ -1386,6 +1386,10 @@ pub struct TaskRuntimeFacts {
     pub context_capacity_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_context_occupancy_tokens: Option<u64>,
+    /// Host-authoritative per-turn budget breakdown. This remains distinct from
+    /// cumulative inference usage and from the legacy opaque Task budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_budget: Option<Box<crate::ContextBudgetProjection>>,
     pub cumulative_usage: crate::InferenceUsage,
     pub inference_rounds: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1482,18 +1486,24 @@ pub struct AgentEvent {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TurnCompletionError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::TurnFailureKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     pub message: String,
 }
 
-/// Bounded turn-level usage projection. Additive fields default to zero so a
-/// current client can decode terminal events emitted by an older daemon.
+/// Bounded turn-level usage projection. Token fields are nullable so a current
+/// client can decode old events without misreporting absent telemetry as zero.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TurnCompletionUsage {
-    #[serde(default)]
-    pub input_tokens: u64,
-    #[serde(default)]
-    pub output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
     #[serde(default)]
     pub tool_calls: u64,
     #[serde(default)]

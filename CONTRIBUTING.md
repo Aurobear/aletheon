@@ -21,6 +21,34 @@ Repository Cargo commands must run through `scripts/cargo-agent.sh`. The
 wrapper provides a bounded shared target cache and serializes compilation
 across concurrent worktrees.
 
+The wrapper sizes compilation concurrency from total and currently available
+memory (capped at eight), uses `sccache` and `mold` when they are installed, and
+keeps incremental compilation enabled in the dev, test, release, and benchmark
+profiles. Tagged release artifacts explicitly disable incremental codegen.
+Override `CARGO_BUILD_JOBS` for a specific host, set
+`ALETHEON_CARGO_FAST_LINKER=off` to disable mold, or set
+`CARGO_PROFILE_TEST_DEBUG=1` when line-level test debug information is needed.
+The 60 GiB target-capacity audit is throttled to once every 15 minutes so a
+recursive size scan does not delay every no-op incremental command. Set
+`ALETHEON_CARGO_TARGET_FORCE_SCAN=1` for an immediate audit or override
+`ALETHEON_CARGO_TARGET_SCAN_INTERVAL_SEC` when operating under a tighter disk
+budget.
+
+Prefer crate- and target-scoped edit loops instead of enumerating every
+workspace integration binary:
+
+```bash
+just dev executive
+just test-lib executive
+just test-one executive daemon_turn_engine
+just lint-one executive
+```
+
+Rust source modules within one crate are not separate Cargo compilation units;
+incremental rustc codegen handles changed units inside that crate. Use a new
+crate boundary only when the code has a genuine stable architectural API, not
+merely to split a file.
+
 ### Building
 
 ```bash

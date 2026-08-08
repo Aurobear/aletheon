@@ -68,6 +68,7 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
         created_at_ms: 11,
         payload: ItemPayload::UserMessage {
             content: "survive restart".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
     };
 
@@ -120,8 +121,10 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
         spine.clone(),
         projections.clone(),
     );
-    let mut hardening = executive::composition::config::GrokHardeningConfig::default();
-    hardening.compaction_v2 = true;
+    let hardening = executive::composition::config::GrokHardeningConfig {
+        compaction_v2: true,
+        ..Default::default()
+    };
     let recovery = executive::application::turn_recovery::scan_incomplete_turns(
         authority.as_ref(),
         &hardening,
@@ -185,6 +188,7 @@ async fn restart_upgrades_compatible_legacy_event_records_before_materialization
         created_at_ms: 11,
         payload: ItemPayload::UserMessage {
             content: "legacy event".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
     };
     let spine = SqliteEventSpine::open(directory.path().join("events.db")).unwrap();

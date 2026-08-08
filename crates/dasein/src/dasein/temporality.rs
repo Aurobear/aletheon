@@ -11,7 +11,7 @@ use fabric::dasein::{
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 // ═══ RetentionField (Task 2.1) ═══
 
@@ -254,7 +254,7 @@ impl Default for ProtentionField {
 }
 
 /// Patterns detected in the temporal stream.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TemporalPattern {
     Repetition { what: String, interval: u64 },
     Trend { direction: String, toward: String },
@@ -323,13 +323,31 @@ impl Tempo {
     }
 }
 
-/// Passive synthesizer — background meaning sedimentation.
-/// Husserl: passive synthesis operates before active consciousness.
 #[derive(Clone, Debug, Default)]
 pub struct PassiveSynthesizer {
     pub associations: Vec<(String, String, f64)>, // (a, b, strength)
+    /// Internal index: canonical sorted (min,max) pair -> position in associations Vec.
+    association_index: HashMap<(String, String), usize>,
     pub habits: Vec<HabitEntry>,
+    /// Internal index: pattern string -> position in habits Vec.
+    habit_index: HashMap<String, usize>,
     pub sediment_count: usize,
+    /// Exact cached pattern vector; rebuilt only on first call or when
+    /// the pattern set/content/order changes.
+    cached_patterns: Option<Vec<TemporalPattern>>,
+    /// True when a public `synthesize` call rebuilt patterns that have not
+    /// been applied to protention yet.  Set by public calls, cleared only
+    /// after a successful internal materialization + protention update.
+    projection_dirty: bool,
+}
+
+/// Return a canonical sorted pair key for bidirectional association lookup.
+fn canonical_pair(a: &str, b: &str) -> (String, String) {
+    if a <= b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -341,49 +359,123 @@ pub struct HabitEntry {
 
 impl PassiveSynthesizer {
     /// Run passive synthesis — called every N ticks.
+    /// Public callers always receive a freshly materialized pattern vector.
     pub fn synthesize(&mut self, recent: &[RentionalMoment]) -> Vec<TemporalPattern> {
-        self.sediment_count += 1;
+        // Public path: always force materialization.
+        self.synthesize_impl(recent, true)
+            .0
+            .expect("force_materialize always produces Some")
+    }
 
-        // Detect associations: if two concepts appear close together, link them
+    /// Internal path: only materializes the full deterministic pattern vector
+    /// on the first call, when the set/content/order of projected patterns
+    /// changes, or when a prior public `synthesize` call has dirtied the
+    /// projection cache.  On stable reflections the internal counts are
+    /// updated exactly but no Vec allocation is performed.
+    ///
+    /// Returns `Some(patterns)` when a fresh projection was needed;
+    /// `None` on stable reflections that did not alter the pattern set.
+    pub(crate) fn synthesize_maybe_skip(
+        &mut self,
+        recent: &[RentionalMoment],
+    ) -> Option<Vec<TemporalPattern>> {
+        self.synthesize_impl(recent, false).0
+    }
+
+    /// Core implementation shared by public and internal paths.
+    ///
+    /// Updates all internal state (habits, associations, sediment) exactly as
+    /// before.  When `force_materialize` is false, the full pattern vector is
+    /// only rebuilt on threshold crossings, index changes, or when a prior
+    /// public call has set [`projection_dirty`].
+    ///
+    /// Returns `(Some(patterns), true)` when a new pattern vector was
+    /// materialized; `(None, false)` on stable reflections.
+    fn synthesize_impl(
+        &mut self,
+        recent: &[RentionalMoment],
+        force_materialize: bool,
+    ) -> (Option<Vec<TemporalPattern>>, bool) {
+        self.sediment_count += 1;
+        let mut patterns_dirty = false;
+
+        // Detect associations: use index for O(1) lookup per window.
         for window in recent.windows(2) {
             let a = &window[0].content.semantic;
             let b = &window[1].content.semantic;
+            let key = canonical_pair(a, b);
 
-            // Check if association already exists
-            if let Some(entry) = self
-                .associations
-                .iter_mut()
-                .find(|(x, y, _)| (x == a && y == b) || (x == b && y == a))
-            {
-                entry.2 = (entry.2 + 0.1).min(1.0); // strengthen
+            if let Some(&idx) = self.association_index.get(&key) {
+                let old_strength = self.associations[idx].2;
+                self.associations[idx].2 = (old_strength + 0.1).min(1.0);
+                // Threshold crossing into pattern territory (> 0.5)
+                if old_strength <= 0.5 && self.associations[idx].2 > 0.5 {
+                    patterns_dirty = true;
+                }
             } else {
+                let idx = self.associations.len();
                 self.associations.push((a.clone(), b.clone(), 0.1));
+                self.association_index.insert(key, idx);
             }
         }
 
-        // Detect habits: repeated patterns
+        // Detect habits: use index for O(1) lookup per moment.
         for moment in recent {
-            if let Some(habit) = self
-                .habits
-                .iter_mut()
-                .find(|h| h.pattern == moment.content.semantic)
-            {
-                habit.frequency += 1;
-                habit.last_seen = moment.position;
+            if let Some(&idx) = self.habit_index.get(&moment.content.semantic) {
+                let old_freq = self.habits[idx].frequency;
+                self.habits[idx].frequency += 1;
+                self.habits[idx].last_seen = moment.position;
+                // Threshold crossing into pattern territory (>= 3)
+                if old_freq < 3 && self.habits[idx].frequency >= 3 {
+                    patterns_dirty = true;
+                }
             } else {
+                let idx = self.habits.len();
                 self.habits.push(HabitEntry {
                     pattern: moment.content.semantic.clone(),
                     frequency: 1,
                     last_seen: moment.position,
                 });
+                self.habit_index
+                    .insert(moment.content.semantic.clone(), idx);
             }
         }
 
-        // Prune weak associations
+        // Prune weak associations and rebuild index when elements are removed.
+        let old_assoc_len = self.associations.len();
         self.associations
             .retain(|(_, _, strength)| *strength > 0.05);
+        if self.associations.len() != old_assoc_len {
+            self.association_index.clear();
+            for (i, (a, b, _)) in self.associations.iter().enumerate() {
+                self.association_index.insert(canonical_pair(a, b), i);
+            }
+            // Index shifting changes pattern order within associations section
+            patterns_dirty = true;
+        }
 
-        // Derive temporal patterns from accumulated state
+        // Determine whether the projection must be rebuilt this call.
+        let call_dirty = force_materialize || patterns_dirty;
+        // A prior public `synthesize` may have rebuilt the cache without
+        // updating protention.  Honor that dirty flag only on internal path.
+        let projection_stale = self.projection_dirty && !force_materialize;
+        let rebuilt = call_dirty || projection_stale || self.cached_patterns.is_none();
+
+        if rebuilt {
+            let patterns = self.build_patterns();
+            self.cached_patterns = Some(patterns.clone());
+            if force_materialize {
+                self.projection_dirty = true;
+            }
+            (Some(patterns), true)
+        } else {
+            (None, false)
+        }
+    }
+
+    /// Build the deterministic pattern vector from current state.
+    /// Order: habits (by insertion), then associations (by insertion).
+    fn build_patterns(&self) -> Vec<TemporalPattern> {
         let mut patterns = Vec::new();
 
         // Repetition: habits with frequency >= 3
@@ -396,7 +488,7 @@ impl PassiveSynthesizer {
             }
         }
 
-        // Trend: strong associations (strength > 0.5) indicate a directional flow
+        // Trend: strong associations (strength > 0.5)
         for (a, b, strength) in &self.associations {
             if *strength > 0.5 {
                 patterns.push(TemporalPattern::Trend {
@@ -454,15 +546,33 @@ impl TemporalStream {
         }
     }
 
-    /// Run passive synthesis (called periodically).
-    /// Returns detected temporal patterns.
-    pub(crate) fn passive_synthesize(&self) -> Vec<TemporalPattern> {
+    /// Run passive synthesis and update protention when patterns change.
+    ///
+    /// On stable reflections where no habit/association crosses a projection
+    /// threshold and no prior public call has changed the pattern set, the
+    /// pattern vector is reused from cache, no Vec allocation is performed,
+    /// and protention is not rebuilt.
+    ///
+    /// Returns `true` when protention was updated, `false` on stable
+    /// reflections.
+    pub(crate) fn passive_synthesize_and_update(&self) -> bool {
         let vivid = self.retention.vivid_moments(0.3);
         let mut synth = self.synthesizer.write();
-        synth.synthesize(&vivid)
+        if let Some(patterns) = synth.synthesize_maybe_skip(&vivid) {
+            synth.projection_dirty = false;
+            drop(synth);
+            self.protention.write().update_from_patterns(&patterns);
+            true
+        } else {
+            false
+        }
     }
 
-    /// Feed detected patterns into the protention field to close the prediction loop.
+    /// Apply patterns directly to the protention field.
+    ///
+    /// Always updates protention; callers that want to avoid redundant
+    /// rebuilds should use [`passive_synthesize_and_update`] instead.
+    #[allow(dead_code)]
     pub(crate) fn update_protentions_from_patterns(&self, patterns: &[TemporalPattern]) {
         self.protention.write().update_from_patterns(patterns);
     }
@@ -703,5 +813,246 @@ mod tests {
         assert_eq!(synth.associations[0].0, "code");
         assert_eq!(synth.associations[0].1, "test");
         assert_eq!(synth.habits.len(), 2);
+    }
+
+    #[test]
+    fn first_pattern_projection_is_not_skipped() {
+        let stream = TemporalStream::new(8, 0.95);
+        let patterns = vec![TemporalPattern::Repetition {
+            what: "code".to_string(),
+            interval: 3,
+        }];
+
+        stream.update_protentions_from_patterns(&patterns);
+
+        let protention = stream.protention.read();
+        assert_eq!(protention.possibilities.len(), 1);
+        assert_eq!(protention.possibilities[0].content, "code may repeat");
+        assert_eq!(protention.certainty, 0.7);
+    }
+
+    /// Regression: after ingesting lived events and running the combined
+    /// synthesis+protention path, the protention field must contain
+    /// non-empty expectations with meaningful certainty.
+    #[test]
+    fn lived_events_produce_non_empty_protentions() {
+        let stream = TemporalStream::new(20, 0.95);
+
+        // Ingest overlapping lived events so habits and associations cross
+        // their projection thresholds.
+        let events = [
+            ("code", "compile"),
+            ("test", "verify"),
+            ("code", "compile"),
+            ("test", "verify"),
+            ("code", "compile"), // 3rd "code" -> repetition pattern
+            ("test", "verify"),
+            ("code", "compile"),
+            ("test", "verify"),
+            ("code", "compile"),
+            ("test", "verify"),
+            ("code", "compile"), // 6th pair: association > 0.5 -> trend
+        ];
+
+        for (semantic, action) in &events {
+            stream.ingest(
+                ExperientialContent {
+                    semantic: semantic.to_string(),
+                    action: Some(action.to_string()),
+                    perception: None,
+                    negation: None,
+                },
+                Stimmung::Gelassenheit,
+            );
+        }
+
+        // Run passive synthesis through the combined path.
+        let changed = stream.passive_synthesize_and_update();
+        assert!(
+            changed,
+            "synthesis must detect changes after ingesting repeated events"
+        );
+
+        // Verify protention field was populated.
+        let protention = stream.protention.read();
+        assert!(
+            !protention.possibilities.is_empty(),
+            "protention field must contain expected possibilities"
+        );
+        assert!(
+            protention.certainty > 0.0,
+            "protention certainty must be non-zero after pattern-driven update"
+        );
+
+        // At least one repetition for "code" (appeared >= 3 times).
+        // Re-read the synthesizer to inspect cached patterns.
+        let synth = stream.synthesizer.read();
+        let cached = synth
+            .cached_patterns
+            .as_ref()
+            .expect("cached patterns must be populated");
+        let has_code_repetition = cached
+            .iter()
+            .any(|p| matches!(p, TemporalPattern::Repetition { what, .. } if what == "code"));
+        assert!(
+            has_code_repetition,
+            "'code' must generate a repetition pattern"
+        );
+    }
+
+    /// The optimized `synthesize_maybe_skip` path must return `None` on
+    /// every stable call once the projection has been materialized, proving
+    /// no Vec allocation is performed on the hot path.  1,000 stable
+    /// reflections must each return `None`.
+    #[test]
+    fn optimized_path_bounds_pattern_materializations() {
+        let mut synth = PassiveSynthesizer::default();
+
+        // Seed a habit that crosses the repetition threshold.
+        let moments: Vec<_> = (0..3)
+            .map(|i| RentionalMoment {
+                content: ExperientialContent {
+                    semantic: "code".to_string(),
+                    action: None,
+                    perception: None,
+                    negation: None,
+                },
+                vividness: 0.8,
+                significance: 0.5,
+                affect: AffectTone::Neutral,
+                position: TemporalPosition(i),
+                bewandtnis_links: vec![],
+            })
+            .collect();
+
+        // First call: must produce Some (cached is None).
+        let patterns = synth.synthesize_maybe_skip(&moments);
+        assert!(patterns.is_some(), "first call must rebuild patterns");
+
+        // Subsequent calls with stable state must return None (no allocation).
+        let mut rebuild_count = 1usize;
+
+        for i in 0..1_000 {
+            let moment = vec![RentionalMoment {
+                content: ExperientialContent {
+                    semantic: format!("noise_{i}"),
+                    action: None,
+                    perception: None,
+                    negation: None,
+                },
+                vividness: 0.8,
+                significance: 0.5,
+                affect: AffectTone::Neutral,
+                position: TemporalPosition(100 + i),
+                bewandtnis_links: vec![],
+            }];
+            if synth.synthesize_maybe_skip(&moment).is_some() {
+                rebuild_count += 1;
+            }
+        }
+
+        assert_eq!(
+            rebuild_count, 1,
+            "only the first call should rebuild; threshold already crossed"
+        );
+    }
+
+    /// After a public `synthesize` call crosses a threshold that was
+    /// previously unmet, the next internal call must rebuild the projection
+    /// and populate protention.  Once applied, dirty is cleared.
+    #[test]
+    fn threshold_crossing_after_public_synthesize_produces_some_and_populates_protention() {
+        let stream = TemporalStream::new(20, 0.95);
+
+        // Ingest "task" twice (below repetition threshold of 3).
+        for _ in 0..2 {
+            stream.ingest(
+                ExperientialContent {
+                    semantic: "task".to_string(),
+                    action: Some("review".into()),
+                    perception: None,
+                    negation: None,
+                },
+                Stimmung::Gelassenheit,
+            );
+        }
+
+        // Flush retention so the initial "task" moments are evicted.
+        for i in 0..25 {
+            stream.ingest(
+                ExperientialContent {
+                    semantic: format!("flush_{i}"),
+                    action: None,
+                    perception: None,
+                    negation: None,
+                },
+                Stimmung::Gelassenheit,
+            );
+        }
+
+        // First synthesis initialises the cache.
+        let _ = stream.passive_synthesize_and_update();
+
+        // Public synthesize: feed 3 "task" moments, crossing the
+        // repetition threshold.  This sets projection_dirty.
+        let cross_moments: Vec<_> = (0..3)
+            .map(|i| RentionalMoment {
+                content: ExperientialContent {
+                    semantic: "task".to_string(),
+                    action: Some("review".into()),
+                    perception: None,
+                    negation: None,
+                },
+                vividness: 0.8,
+                significance: 0.5,
+                affect: AffectTone::Neutral,
+                position: TemporalPosition(500 + i),
+                bewandtnis_links: vec![],
+            })
+            .collect();
+        {
+            let mut synth = stream.synthesizer.write();
+            let public_patterns = synth.synthesize(&cross_moments);
+            assert!(
+                !public_patterns.is_empty(),
+                "public call must see repetition pattern"
+            );
+            assert!(
+                synth.projection_dirty,
+                "public call must set projection_dirty"
+            );
+        }
+
+        // Advance retention so the next synthesis processes fresh data
+        // (flush events are shifted forward, avoiding duplicate counting).
+        for i in 0..22 {
+            stream.ingest(
+                ExperientialContent {
+                    semantic: format!("advance_{i}"),
+                    action: None,
+                    perception: None,
+                    negation: None,
+                },
+                Stimmung::Gelassenheit,
+            );
+        }
+
+        // Internal path must rebuild (projection_dirty is true) and
+        // populate protention.
+        let changed = stream.passive_synthesize_and_update();
+        assert!(changed, "internal path after public call must rebuild");
+
+        let protention = stream.protention.read();
+        assert!(
+            !protention.possibilities.is_empty(),
+            "protention must be populated after rebuild"
+        );
+        drop(protention);
+
+        // Verify dirty was cleared.
+        assert!(
+            !stream.synthesizer.read().projection_dirty,
+            "projection_dirty must be cleared after protention update"
+        );
     }
 }

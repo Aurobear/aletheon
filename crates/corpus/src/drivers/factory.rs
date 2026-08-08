@@ -55,6 +55,7 @@ impl DriverFactory {
             Ok(d) => return Some(Box::new(d)),
             Err(e) => tracing::warn!("TesseractOcrDriver failed: {e}"),
         }
+        None
     }
 
     /// Try to create a real window manager (EWMH via X11).

@@ -37,6 +37,7 @@ fn request() -> TurnRequest {
         process_id: ProcessId::new(),
         context: turn_request_support::context("session-1", PathBuf::from("/workspace")),
         input: "current request".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
@@ -132,7 +133,7 @@ async fn only_selected_labelled_memory_enters_model_context_with_durable_lineage
         .remove(0);
 
     let unselected = ContextAssembler::new(Arc::new(FixedSource(projection(None))))
-        .assemble(&request(), &[], 1_000)
+        .assemble(&request(), &[], 1_000.into(), &[])
         .await
         .unwrap();
     assert!(!unselected
@@ -161,7 +162,7 @@ async fn only_selected_labelled_memory_enters_model_context_with_durable_lineage
         .contains(&"broadcast:session-1:9".into()));
 
     let selected = ContextAssembler::new(Arc::new(FixedSource(projection(Some(broadcast)))))
-        .assemble(&request(), &[], 1_000)
+        .assemble(&request(), &[], 1_000.into(), &[])
         .await
         .unwrap();
     assert!(selected

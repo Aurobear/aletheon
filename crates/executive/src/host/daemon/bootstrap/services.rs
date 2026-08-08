@@ -349,7 +349,6 @@ pub(super) async fn build_turn_services(
     capability_resources: crate::host::daemon::handler::tool_executor::CapabilityResources,
     conscious_registry: Arc<crate::application::conscious_workspace::ConsciousWorkspaceRegistry>,
     context_assembler: Arc<crate::application::context_assembler::ContextAssembler>,
-    cached_prefix: Arc<Mutex<String>>,
     apply_objective_store: Arc<std::sync::Mutex<crate::application::goal::ObjectiveStore>>,
     param_registry: Arc<ParamRegistry>,
     agent_live_runs: Arc<crate::application::agent_control::LiveAgentRuns>,
@@ -577,15 +576,11 @@ pub(super) async fn build_turn_services(
             session_created_at: session_group.session_created_at.clone(),
             data_dir: session_group.data_dir.clone(),
             context_window: session_group.context_window,
-            cached_prefix,
             clock: clock.clone(),
             memory: memory_group.memory_service.clone(),
             config: turn_runtime_facades.config,
+            agent_admission: config.agent_admission.clone(),
             performance: debug_perf.clone(),
-            active_profile: Arc::new(super::turn_runtime::ProductionActiveAgentProfile::new(
-                active_profile.clone(),
-                agent_profile_registry.clone(),
-            )),
         },
     ));
     let lifecycle_registry =
@@ -603,7 +598,6 @@ pub(super) async fn build_turn_services(
             clock: clock.clone(),
             agora: Some(domains.agora()),
             kernel: kernel.clone(),
-            current_scope: Arc::new(Mutex::new(None)),
             daemon_cancel: Some(cancel_token.clone()),
             context: context_assembler,
             canonical_sessions: session_service.clone(),

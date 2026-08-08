@@ -3,19 +3,83 @@
 //! Kept out of `request.rs` so the request composition stage stays under its
 //! line budget. Holds the robot-specific tail of the bootstrap: building the
 //! embodiment execution port from the daemon config, and composing the
-//! `HarnessKind::Robot` cognitive-session factory with a production policy
+//! optional Robot cognitive-session factory with a production policy
 //! provider (fail closed — never a silent stub).
 
 use std::sync::Arc;
 
 use anyhow::Context;
 use cognit::ports::policy_provider::PolicyProviderPort;
-use fabric::types::embodiment::{DeviceId, EmbodimentExecutionPort};
+use fabric::types::embodiment::{
+    DeviceId, EmbodiedObservation, EmbodimentExecutionPort, SkillDescriptor, SkillDispatchError,
+    SkillRequest, SkillResult,
+};
 use fabric::Clock;
 
 use crate::application::embodiment_progress::{DeferredTurnEventSink, EventEmbodimentProgress};
-use crate::application::harness_factory::CognitiveSessionFactory;
+use crate::application::harness_factory::{
+    CognitiveSessionFactory, RobotSessionCapability, TargetRoutedCognitiveSessionFactory,
+};
 use crate::composition::config::{EmbodimentProviderConfig, ResolvedRobotIntegrationConfig};
+
+/// Fail-closed tool backend retained when an optional configured Robot bridge
+/// is unavailable during bootstrap. Keeping this port registered lets General
+/// turns retain a stable tool catalog while every Robot operation returns a
+/// typed provider error and the target router exposes no Robot capability.
+pub struct UnavailableEmbodimentPort {
+    reason: String,
+}
+
+impl UnavailableEmbodimentPort {
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+
+    fn unavailable(&self) -> SkillDispatchError {
+        SkillDispatchError::NoProvider(self.reason.clone())
+    }
+}
+
+#[async_trait::async_trait]
+impl EmbodimentExecutionPort for UnavailableEmbodimentPort {
+    async fn observe(
+        &self,
+        _device: &DeviceId,
+    ) -> Result<Vec<EmbodiedObservation>, SkillDispatchError> {
+        Err(self.unavailable())
+    }
+
+    async fn get_state(
+        &self,
+        _device: &DeviceId,
+    ) -> Result<Option<EmbodiedObservation>, SkillDispatchError> {
+        Err(self.unavailable())
+    }
+
+    async fn list_skills(
+        &self,
+        _device: &DeviceId,
+    ) -> Result<Vec<SkillDescriptor>, SkillDispatchError> {
+        Err(self.unavailable())
+    }
+
+    async fn execute_skill(
+        &self,
+        _request: SkillRequest,
+    ) -> Result<SkillResult, SkillDispatchError> {
+        Err(self.unavailable())
+    }
+
+    async fn cancel(&self, _operation_id: &fabric::OperationId) -> Result<(), SkillDispatchError> {
+        Err(self.unavailable())
+    }
+
+    async fn safe_stop(&self, _device: &DeviceId) -> Result<(), SkillDispatchError> {
+        Err(self.unavailable())
+    }
+}
 
 /// Build the embodiment execution port from the configured provider, together
 /// with its deferred progress sink.
@@ -55,6 +119,39 @@ pub async fn build_robot_embodiment_port(
     Ok((port, progress_sink))
 }
 
+/// Compose the optional bridge without making General daemon availability
+/// depend on Robot startup. A configured but unavailable bridge is represented
+/// by a fail-closed tool port and `available = false`; an unexpected failure in
+/// the default unconfigured simulator path remains a bootstrap error.
+pub async fn build_resilient_robot_embodiment_port(
+    clock: Arc<dyn Clock>,
+    admission: Arc<dyn fabric::AdmissionController>,
+    data_dir: &std::path::Path,
+    provider_config: &EmbodimentProviderConfig,
+    robot_config: Option<&ResolvedRobotIntegrationConfig>,
+) -> anyhow::Result<(
+    Arc<dyn EmbodimentExecutionPort>,
+    Arc<DeferredTurnEventSink>,
+    bool,
+)> {
+    match build_robot_embodiment_port(clock, admission, data_dir, provider_config, robot_config)
+        .await
+    {
+        Ok((port, progress)) => Ok((port, progress, true)),
+        Err(error) if robot_config.is_some() => {
+            tracing::warn!(%error, "Robot bridge unavailable; General turns remain enabled");
+            Ok((
+                Arc::new(UnavailableEmbodimentPort::new(
+                    "configured Robot bridge is unavailable",
+                )),
+                Arc::new(DeferredTurnEventSink::new()),
+                false,
+            ))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Bind the deferred robot progress sink to the session event spine. Call once
 /// the canonical spine exists in the bootstrap; robot turns only execute after
 /// the daemon is fully assembled, so no progress event is lost before this.
@@ -70,7 +167,7 @@ pub async fn bind_robot_progress_spine(
         .await;
 }
 
-/// Compose the robot cognitive-session factory (`HarnessKind::Robot` arm).
+/// Compose the optional robot cognitive-session factory.
 ///
 /// Policy selection: a production robot harness MUST have a real policy
 /// provider. A configured endpoint uses GrpcPolicyProvider (fail closed if
@@ -145,4 +242,80 @@ pub async fn build_robot_cognitive_session_factory(
     .await
     .map_err(anyhow::Error::msg)
     .context("robot harness composition failed")
+}
+
+/// Build the one per-turn cognition router while keeping every Robot startup
+/// dependency optional for General turns.
+#[allow(clippy::too_many_arguments)]
+pub async fn build_target_routed_cognition(
+    general: Arc<dyn CognitiveSessionFactory>,
+    provider_config: &EmbodimentProviderConfig,
+    robot_config: Option<&ResolvedRobotIntegrationConfig>,
+    robot_transport_available: bool,
+    embodiment_port: Arc<dyn EmbodimentExecutionPort>,
+    clock: Arc<dyn Clock>,
+    data_dir: &std::path::Path,
+    fact_use_cases: Arc<dyn mnemosyne::FactUseCases>,
+    legacy_harness_kind: cognit::harness::HarnessKind,
+) -> Arc<dyn CognitiveSessionFactory> {
+    let robot = if let Some(robot) = robot_config.filter(|_| robot_transport_available) {
+        let promoter = Some(Arc::new(
+            crate::application::robot_episode_promotion::MnemosyneEpisodePromoter::new(
+                fact_use_cases,
+            ),
+        )
+            as Arc<dyn cognit::harness::robot::EpisodePromotionPort>);
+        match build_robot_cognitive_session_factory(
+            provider_config,
+            robot,
+            embodiment_port,
+            clock,
+            data_dir,
+            promoter,
+        )
+        .await
+        {
+            Ok(factory) => Some(RobotSessionCapability::new(
+                factory,
+                DeviceId(robot.device_id.clone()),
+                robot.execution_environment,
+            )),
+            Err(error) => {
+                tracing::warn!(%error, "Robot capability unavailable; General turns remain enabled");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if legacy_harness_kind == cognit::harness::HarnessKind::Robot {
+        tracing::warn!(
+            "agent.harness_kind=robot is deprecated as a per-prompt default; it now enables only optional Robot capability and all turns default to General"
+        );
+    }
+    Arc::new(TargetRoutedCognitiveSessionFactory::new(general, robot))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn unavailable_port_fails_closed_for_reads_and_actuation() {
+        let port = UnavailableEmbodimentPort::new("bridge offline");
+        let device = DeviceId("robot-1".into());
+        assert!(matches!(
+            port.observe(&device).await,
+            Err(SkillDispatchError::NoProvider(reason)) if reason == "bridge offline"
+        ));
+        assert!(matches!(
+            port.execute_skill(SkillRequest {
+                skill: fabric::types::embodiment::SkillId("move".into()),
+                device,
+                parameters: serde_json::json!({}),
+            })
+            .await,
+            Err(SkillDispatchError::NoProvider(reason)) if reason == "bridge offline"
+        ));
+    }
 }

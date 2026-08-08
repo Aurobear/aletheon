@@ -1,0 +1,20 @@
+# BUG: Multi-stage Dockerfile with incorrect layer ordering.
+# Source is copied before pip install, so dependency installation
+# is not cached separately from source changes.
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# BUG: COPY source before requirements - invalidates pip cache
+COPY . /app
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Lint stage
+RUN pip install --no-cache-dir pylint
+
+FROM python:3.11-slim AS runtime
+WORKDIR /app
+COPY --from=builder /app /app
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+CMD ["python", "main.py"]

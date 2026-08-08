@@ -7,23 +7,40 @@ default:
 
 # ── 构建 ───────────────────────────────────────────────────────────────
 
-# 快速增量编译（debug 模式，日常开发用）
-dev:
-    bash scripts/cargo-agent.sh build -p aletheon
+# 快速增量类型检查（debug 模式，日常开发用，不支付链接成本）
+# 例如 `just dev executive` 只检查该 crate 及其依赖。
+dev package="aletheon":
+    bash scripts/cargo-agent.sh check -p {{package}}
+
+# 需要可执行文件时再做增量 debug 编译与链接
+dev-build package="aletheon":
+    bash scripts/cargo-agent.sh build -p {{package}}
 
 # 编译 + 测试 + lint 全部通过后才 build release
 build: test lint
     bash scripts/cargo-agent.sh build -p aletheon --release
 
 # 查看各 crate 编译耗时
-timings:
-    bash scripts/cargo-agent.sh build --timings
+timings package="aletheon":
+    bash scripts/cargo-agent.sh build -p {{package}} --timings
 
 # ── 验证 ───────────────────────────────────────────────────────────────
 
 # 运行所有测试
 test:
     bash scripts/cargo-agent.sh test --workspace
+
+# 只编译并运行一个 crate 的 lib 单元测试；不会枚举其集成测试二进制。
+test-lib package:
+    bash scripts/cargo-agent.sh test -p {{package}} --lib
+
+# 只编译并运行一个明确的集成测试目标。
+test-one package target:
+    bash scripts/cargo-agent.sh test -p {{package}} --test {{target}}
+
+# 只对一个 crate 做 all-targets 严格 lint。
+lint-one package:
+    bash scripts/cargo-agent.sh clippy -p {{package}} --all-targets -- -D warnings
 
 # clippy 严格模式
 lint:
@@ -54,8 +71,8 @@ architecture-check:
 # Deterministic cross-domain causal, isolation, replay and ablation evidence.
 acceptance: architecture-check
     python3 tools/acceptance_report.py --check
-    CARGO_INCREMENTAL=0 bash scripts/cargo-agent.sh test -j1 -p executive --test cross_domain_acceptance
-    CARGO_INCREMENTAL=0 bash scripts/cargo-agent.sh test -j1 -p executive --test functional_indicators
+    bash scripts/cargo-agent.sh test -j1 -p executive --test cross_domain_acceptance
+    bash scripts/cargo-agent.sh test -j1 -p executive --test functional_indicators
     python3 tools/acceptance_report.py
 
 # ── 部署 ───────────────────────────────────────────────────────────────

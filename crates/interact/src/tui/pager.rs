@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 
-use super::chat::ChatWidget;
+use super::{state::AppState, term_compat::TermCaps};
 
 /// Full-screen pager overlay for browsing conversation history.
 pub struct PagerOverlay {
@@ -32,9 +32,22 @@ impl PagerOverlay {
             title: title.into(),
         }
     }
-    /// Create a pager overlay from the current chat widget state.
-    pub fn from_chat(chat: &ChatWidget, title: &str) -> Self {
-        let lines = chat.all_lines_wrapped(0, 200); // wide enough to avoid wrapping in pager
+    /// Create a pager from the same reducer-owned items rendered by the Task
+    /// Console. The compatibility transcript is deliberately not consulted.
+    pub fn from_state(state: &AppState, caps: &TermCaps, title: &str) -> Self {
+        let mut items = state.items.values().collect::<Vec<_>>();
+        items.sort_by_key(|item| item.sequence);
+        let mut lines = Vec::new();
+        for item in items {
+            match item.kind.as_str() {
+                "user" => lines.push(Line::from(format!("> {}", item.content))),
+                "assistant" => {
+                    lines.extend(super::markdown::render_markdown(&item.content, 200, caps))
+                }
+                _ => {}
+            }
+            lines.push(Line::from(""));
+        }
         Self {
             lines,
             scroll_offset: 0,

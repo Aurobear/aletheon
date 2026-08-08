@@ -110,7 +110,7 @@ impl TurnService {
                     .load_items(&fabric::SessionId(request.context.thread_id.0.clone()), None)
                     .await?;
                 if history.last().is_some_and(|item| {
-                    matches!(&item.payload, ItemPayload::UserMessage { content } if content == &request.input)
+                    matches!(&item.payload, ItemPayload::UserMessage { content, .. } if content == &request.input)
                 }) {
                     history.pop();
                 }

@@ -41,6 +41,13 @@ impl Default for MemoryConfig {
     }
 }
 
+impl MemoryConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.policy.validate()?;
+        self.recall.validate()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct MemoryEmbeddingConfig {
@@ -223,6 +230,18 @@ pub struct MemoryRecallConfig {
     pub max_bytes: usize,
     #[serde(default = "default_recall_timeout_ms")]
     pub timeout_ms: u64,
+    /// Independently disable reuse while retaining authoritative recall.
+    #[serde(default = "default_recall_cache_enabled")]
+    pub cache_enabled: bool,
+    /// Recall-cache capacity (number of cache entries) and TTL in seconds.
+    /// Bounded with safe defaults so the cache cannot grow without a configurable
+    /// ceiling or serve stale recalls forever (C1-AUDIT-003).
+    #[serde(default = "default_recall_cache_capacity")]
+    #[schemars(range(min = 1, max = 4096))]
+    pub cache_capacity: usize,
+    #[serde(default = "default_recall_cache_ttl_seconds")]
+    #[schemars(range(min = 1, max = 3600))]
+    pub cache_ttl_seconds: u64,
 }
 
 impl Default for MemoryRecallConfig {
@@ -233,7 +252,24 @@ impl Default for MemoryRecallConfig {
             max_items: default_recall_max_items(),
             max_bytes: default_recall_max_bytes(),
             timeout_ms: default_recall_timeout_ms(),
+            cache_enabled: default_recall_cache_enabled(),
+            cache_capacity: default_recall_cache_capacity(),
+            cache_ttl_seconds: default_recall_cache_ttl_seconds(),
         }
+    }
+}
+
+impl MemoryRecallConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (1..=4096).contains(&self.cache_capacity),
+            "memory.recall.cache_capacity must be within 1..=4096"
+        );
+        anyhow::ensure!(
+            (1..=3600).contains(&self.cache_ttl_seconds),
+            "memory.recall.cache_ttl_seconds must be within 1..=3600"
+        );
+        Ok(())
     }
 }
 
@@ -298,6 +334,15 @@ fn default_recall_max_bytes() -> usize {
 fn default_recall_timeout_ms() -> u64 {
     500
 }
+fn default_recall_cache_enabled() -> bool {
+    true
+}
+fn default_recall_cache_capacity() -> usize {
+    512
+}
+fn default_recall_cache_ttl_seconds() -> u64 {
+    30
+}
 fn default_extraction_enabled() -> bool {
     true
 }
@@ -312,4 +357,40 @@ fn default_min_confidence() -> f64 {
 }
 fn default_max_promoted() -> usize {
     20
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recall_cache_defaults_are_enabled_and_bounded() {
+        let config = MemoryRecallConfig::default();
+        assert!(config.cache_enabled);
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn recall_cache_rejects_capacity_and_ttl_outside_governed_limits() {
+        for config in [
+            MemoryRecallConfig {
+                cache_capacity: 0,
+                ..MemoryRecallConfig::default()
+            },
+            MemoryRecallConfig {
+                cache_capacity: 4097,
+                ..MemoryRecallConfig::default()
+            },
+            MemoryRecallConfig {
+                cache_ttl_seconds: 0,
+                ..MemoryRecallConfig::default()
+            },
+            MemoryRecallConfig {
+                cache_ttl_seconds: 3601,
+                ..MemoryRecallConfig::default()
+            },
+        ] {
+            assert!(config.validate().is_err());
+        }
+    }
 }

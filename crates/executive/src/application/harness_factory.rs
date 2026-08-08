@@ -7,6 +7,16 @@ use tokio_util::sync::CancellationToken;
 use crate::application::turn_policy::TurnPolicy;
 use crate::composition::config::ExecutiveConfig;
 
+#[derive(Debug, thiserror::Error)]
+pub enum ExecutionTargetRoutingError {
+    #[error("execution_target_invalid: {0}")]
+    Invalid(String),
+    #[error("execution_target_unavailable: {0}")]
+    Unavailable(String),
+    #[error("execution_target_mismatch: {0}")]
+    Mismatch(String),
+}
+
 /// Stable operator-facing label for the typed harness selected at bootstrap.
 pub fn selected_harness_kind(kind: cognit::harness::HarnessKind) -> &'static str {
     match kind {
@@ -17,6 +27,21 @@ pub fn selected_harness_kind(kind: cognit::harness::HarnessKind) -> &'static str
 
 #[async_trait]
 pub trait CognitiveSessionFactory: Send + Sync {
+    fn validate_target(
+        &self,
+        target: &fabric::ExecutionTargetSelection,
+    ) -> Result<(), ExecutionTargetRoutingError> {
+        target
+            .validate()
+            .map_err(ExecutionTargetRoutingError::Invalid)?;
+        match &target.target {
+            fabric::ExecutionTarget::General => Ok(()),
+            fabric::ExecutionTarget::Robot { .. } => Err(ExecutionTargetRoutingError::Unavailable(
+                "robot capability is not configured".into(),
+            )),
+        }
+    }
+
     async fn create(
         &self,
         session: &SessionRecord,
@@ -44,6 +69,160 @@ pub trait CognitiveSessionFactory: Send + Sync {
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
         self.create_configured(session, policy, config, cancellation)
             .await
+    }
+
+    /// Per-turn target routing hook. Ordinary factories accept only General;
+    /// the production composite overrides this method to expose an optional,
+    /// exactly-bound Robot capability without creating another Turn Engine.
+    async fn create_configured_for_target(
+        &self,
+        session: &SessionRecord,
+        policy: &TurnPolicy,
+        target: &fabric::ExecutionTargetSelection,
+        config: HarnessConfig,
+        cancellation: CancellationToken,
+        batch_planner: Option<std::sync::Arc<dyn cognit::harness::BatchPlanner>>,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        self.validate_target(target).map_err(anyhow::Error::new)?;
+        match &target.target {
+            fabric::ExecutionTarget::General => {
+                self.create_configured_with_batch_planner(
+                    session,
+                    policy,
+                    config,
+                    cancellation,
+                    batch_planner,
+                )
+                .await
+            }
+            fabric::ExecutionTarget::Robot { .. } => {
+                anyhow::bail!("execution_target_unavailable: robot capability is not configured")
+            }
+        }
+    }
+}
+
+/// Single routing point used by the one authoritative Turn Engine.
+pub struct TargetRoutedCognitiveSessionFactory {
+    general: std::sync::Arc<dyn CognitiveSessionFactory>,
+    robot: Option<RobotSessionCapability>,
+}
+
+pub struct RobotSessionCapability {
+    factory: std::sync::Arc<dyn CognitiveSessionFactory>,
+    device_id: fabric::types::embodiment::DeviceId,
+    environment: fabric::types::embodiment::ExecutionEnvironment,
+}
+
+impl RobotSessionCapability {
+    pub fn new(
+        factory: std::sync::Arc<dyn CognitiveSessionFactory>,
+        device_id: fabric::types::embodiment::DeviceId,
+        environment: fabric::types::embodiment::ExecutionEnvironment,
+    ) -> Self {
+        Self {
+            factory,
+            device_id,
+            environment,
+        }
+    }
+}
+
+impl TargetRoutedCognitiveSessionFactory {
+    pub fn new(
+        general: std::sync::Arc<dyn CognitiveSessionFactory>,
+        robot: Option<RobotSessionCapability>,
+    ) -> Self {
+        Self { general, robot }
+    }
+}
+
+#[async_trait]
+impl CognitiveSessionFactory for TargetRoutedCognitiveSessionFactory {
+    fn validate_target(
+        &self,
+        target: &fabric::ExecutionTargetSelection,
+    ) -> Result<(), ExecutionTargetRoutingError> {
+        target
+            .validate()
+            .map_err(ExecutionTargetRoutingError::Invalid)?;
+        match &target.target {
+            fabric::ExecutionTarget::General => Ok(()),
+            fabric::ExecutionTarget::Robot {
+                device_id,
+                environment,
+            } => {
+                let capability = self.robot.as_ref().ok_or_else(|| {
+                    ExecutionTargetRoutingError::Unavailable(
+                        "robot capability is not configured".into(),
+                    )
+                })?;
+                if capability.device_id != *device_id {
+                    return Err(ExecutionTargetRoutingError::Mismatch(format!(
+                        "robot device '{}' is not configured",
+                        device_id.0
+                    )));
+                }
+                if capability.environment != *environment {
+                    return Err(ExecutionTargetRoutingError::Mismatch(format!(
+                        "robot environment '{}' is not configured for device '{}'",
+                        environment.as_str(),
+                        device_id.0
+                    )));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    async fn create(
+        &self,
+        session: &SessionRecord,
+        policy: &TurnPolicy,
+        cancellation: CancellationToken,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        self.general.create(session, policy, cancellation).await
+    }
+
+    async fn create_configured_for_target(
+        &self,
+        session: &SessionRecord,
+        policy: &TurnPolicy,
+        target: &fabric::ExecutionTargetSelection,
+        config: HarnessConfig,
+        cancellation: CancellationToken,
+        batch_planner: Option<std::sync::Arc<dyn cognit::harness::BatchPlanner>>,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        self.validate_target(target).map_err(anyhow::Error::new)?;
+        match &target.target {
+            fabric::ExecutionTarget::General => {
+                self.general
+                    .create_configured_with_batch_planner(
+                        session,
+                        policy,
+                        config,
+                        cancellation,
+                        batch_planner,
+                    )
+                    .await
+            }
+            fabric::ExecutionTarget::Robot { .. } => {
+                let capability = self
+                    .robot
+                    .as_ref()
+                    .expect("validated Robot target has a matching capability");
+                capability
+                    .factory
+                    .create_configured_with_batch_planner(
+                        session,
+                        policy,
+                        config,
+                        cancellation,
+                        batch_planner,
+                    )
+                    .await
+            }
+        }
     }
 }
 
@@ -261,6 +440,120 @@ pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct MarkerFactory(&'static str);
+
+    #[async_trait]
+    impl CognitiveSessionFactory for MarkerFactory {
+        async fn create(
+            &self,
+            _session: &SessionRecord,
+            _policy: &TurnPolicy,
+            _cancellation: CancellationToken,
+        ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+            anyhow::bail!(self.0)
+        }
+    }
+
+    fn session_record() -> SessionRecord {
+        SessionRecord {
+            schema_version: fabric::SESSION_SCHEMA_VERSION,
+            id: fabric::SessionId("target-routing".into()),
+            parent: None,
+            created_at_ms: 0,
+            status: fabric::SessionStatus::Active,
+        }
+    }
+
+    #[tokio::test]
+    async fn target_router_defaults_to_general_and_uses_robot_only_when_explicit() {
+        let router = TargetRoutedCognitiveSessionFactory::new(
+            std::sync::Arc::new(MarkerFactory("general factory selected")),
+            Some(RobotSessionCapability::new(
+                std::sync::Arc::new(MarkerFactory("robot factory selected")),
+                fabric::types::embodiment::DeviceId("robot-1".into()),
+                fabric::types::embodiment::ExecutionEnvironment::Simulation,
+            )),
+        );
+        let session = session_record();
+
+        let general = router
+            .create_configured_for_target(
+                &session,
+                &TurnPolicy::daemon(),
+                &fabric::ExecutionTargetSelection::default(),
+                HarnessConfig::default(),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .err()
+            .expect("marker factory must fail");
+        assert_eq!(general.to_string(), "general factory selected");
+
+        let robot = fabric::ExecutionTargetSelection::robot(
+            "robot-1",
+            fabric::types::embodiment::ExecutionEnvironment::Simulation,
+            fabric::ExecutionTargetSource::UserCommand,
+        )
+        .unwrap();
+        let selected = router
+            .create_configured_for_target(
+                &session,
+                &TurnPolicy::daemon(),
+                &robot,
+                HarnessConfig::default(),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .err()
+            .expect("marker factory must fail");
+        assert_eq!(selected.to_string(), "robot factory selected");
+    }
+
+    #[tokio::test]
+    async fn target_router_rejects_unconfigured_or_mismatched_robot_binding() {
+        let session = session_record();
+        let target = fabric::ExecutionTargetSelection::robot(
+            "other-robot",
+            fabric::types::embodiment::ExecutionEnvironment::Simulation,
+            fabric::ExecutionTargetSource::TrustedClient,
+        )
+        .unwrap();
+        let unavailable = TargetRoutedCognitiveSessionFactory::new(
+            std::sync::Arc::new(MarkerFactory("general factory selected")),
+            None,
+        )
+        .validate_target(&target)
+        .unwrap_err();
+        assert!(matches!(
+            unavailable,
+            ExecutionTargetRoutingError::Unavailable(_)
+        ));
+
+        let router = TargetRoutedCognitiveSessionFactory::new(
+            std::sync::Arc::new(MarkerFactory("general factory selected")),
+            Some(RobotSessionCapability::new(
+                std::sync::Arc::new(MarkerFactory("robot factory selected")),
+                fabric::types::embodiment::DeviceId("robot-1".into()),
+                fabric::types::embodiment::ExecutionEnvironment::Simulation,
+            )),
+        );
+        let error = router
+            .create_configured_for_target(
+                &session,
+                &TurnPolicy::daemon(),
+                &target,
+                HarnessConfig::default(),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .err()
+            .expect("mismatched device must fail");
+        assert!(error.to_string().contains("device 'other-robot'"));
+    }
 
     #[tokio::test]
     async fn evicted_callback_captures_session_scoped_observed_memory() {

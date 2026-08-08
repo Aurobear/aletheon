@@ -245,9 +245,7 @@ mod tests {
         // But in a typical single-user session this should round-trip.
         assert!(
             got.contains(test_text) || got.is_empty(),
-            "Expected clipboard to contain {:?}, got {:?}",
-            test_text,
-            got,
+            "Expected clipboard to contain {test_text:?}, got {got:?}",
         );
     }
 }

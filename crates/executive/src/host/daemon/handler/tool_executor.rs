@@ -398,6 +398,7 @@ impl ProductionCapabilityService {
                 context.cancel,
             )
             .with_agent_context(context.agent)
+            .with_execution_target(context.execution_target)
             .with_turn_event_sender(turn_event_sender),
         );
         CapabilityRuntimeFactory::build(resources.kernel.admission(), executor, authority)
@@ -547,6 +548,7 @@ impl CapabilityService for ProductionCapabilityService {
             connection_id: fabric::ConnectionId::new(),
             thread_id: fabric::ThreadId("external-capability".into()),
             turn_id: fabric::TurnId::new(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
             workspace: fabric::WorkspacePolicy::from_resolved_roots(
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/tmp")),
                 Vec::new(),

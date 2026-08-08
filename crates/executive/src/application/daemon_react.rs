@@ -95,9 +95,10 @@ where
     let harness_config =
         crate::application::harness_factory::harness_config_from_executive(&config);
     let mut session = sessions
-        .create_configured_with_batch_planner(
+        .create_configured_for_target(
             &session_record,
             &TurnPolicy::daemon(),
+            &request.execution_target,
             harness_config,
             cancel_token,
             batch_planner,

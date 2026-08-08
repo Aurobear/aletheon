@@ -4,6 +4,9 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 cd "$repo_root"
 
+grep -Fq 'ALETHEON_READINESS_TIMEOUT_SECONDS=${ALETHEON_READINESS_TIMEOUT_SECONDS:-120}' \
+  scripts/lib/aletheon/common.sh
+
 forbidden_root='/home/'"aurobear/Bear-ws"
 if grep -R "$forbidden_root" config/*.service config/*.socket; then
   echo 'deployment unit contains a developer-local path' >&2; exit 1

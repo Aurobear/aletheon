@@ -1,39 +1,29 @@
 //! Daemon adapter for the unified [`TurnEngine`] boundary.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::application::post_turn_projection::{PostTurnDispatch, PostTurnOutcome};
 use crate::application::turn_coordinator::TurnExecution;
 use crate::application::turn_engine::{
-    TurnEngine, TurnEngineContext, TurnEngineError, TurnEngineEventSink, TurnEngineRequest,
-    TurnEngineResult, TurnEngineStatus,
+    TurnEngine, TurnEngineContext, TurnEngineError, TurnEngineRequest, TurnEngineResult,
 };
 use crate::application::TurnPipeline;
 
-/// Pure compatibility mapping used by parity tests and protocol adapters.
-pub fn map_pipeline_response(
-    turn_id: fabric::TurnId,
-    response: &serde_json::Value,
-) -> TurnEngineResult {
-    let result = &response["result"];
-    let succeeded =
-        response.get("error").is_none() && result["succeeded"].as_bool().unwrap_or(false);
-    let metrics = &result["metrics"];
+/// Map the typed coordinator execution into the authoritative engine outcome.
+/// This is intentionally exhaustive over the existing `TurnStop` domain value:
+/// an adapter-local status must never reinterpret `Ok(TurnResult)` as success.
+pub fn map_turn_execution(turn_id: fabric::TurnId, execution: TurnExecution) -> TurnEngineResult {
     TurnEngineResult {
         turn_id,
-        output: result["response"].as_str().unwrap_or_default().to_owned(),
-        status: if succeeded {
-            TurnEngineStatus::Completed
-        } else {
-            TurnEngineStatus::Blocked
-        },
-        tool_calls: metrics["tool_calls_made"].as_u64().unwrap_or(0) as usize,
-        tokens_in: 0,
-        tokens_out: 0,
-        elapsed_ms: metrics["elapsed_ms"].as_u64().unwrap_or(0),
-        coordinator_execution: None,
+        output: execution.result.output.clone(),
+        stop: execution.result.stop.clone(),
+        failure: execution.result.failure.clone(),
+        tool_calls: execution.result.metrics.tool_calls_made,
+        usage: execution.result.usage.clone(),
+        elapsed_ms: execution.result.metrics.elapsed_ms,
+        coordinator_execution: Some(execution),
     }
 }
 
@@ -47,37 +37,30 @@ impl DaemonTurnEngine {
     }
 }
 
-/// Daemon lifecycle events are already persisted by
-/// [`TurnCoordinator`](crate::application::turn_coordinator::TurnCoordinator).
-pub struct NoopTurnEngineEventSink;
-
-#[async_trait]
-impl TurnEngineEventSink for NoopTurnEngineEventSink {
-    async fn on_turn_started(&self, _turn_id: fabric::TurnId) {}
-
-    async fn on_turn_settled(&self, _turn_id: fabric::TurnId, _outcome: &TurnEngineResult) {}
-}
-
 #[async_trait]
 impl TurnEngine for DaemonTurnEngine {
     async fn execute(
         &self,
         request: TurnEngineRequest,
         context: TurnEngineContext,
-        events: Arc<dyn TurnEngineEventSink>,
     ) -> Result<TurnEngineResult, TurnEngineError> {
-        let turn_id = fabric::TurnId::new();
-        events.on_turn_started(turn_id).await;
-        let evaluation_profile_name = context.profile.profile_name.clone();
-
-        let principal_context = context.principal_context.ok_or_else(|| {
-            TurnEngineError::InvalidContext("daemon principal context is missing".into())
+        self.pipeline
+            .cognitive_sessions
+            .validate_target(&request.execution_target)
+            .map_err(|error| TurnEngineError::Unavailable(error.to_string()))?;
+        // Fail closed before starting execution or exposing any capability.
+        // The coordinator persists this typed refusal on its error settlement
+        // path, so production denial remains auditable.
+        let principal_context = context.require_principal_context()?;
+        let turn_id = principal_context.turn_id.ok_or_else(|| {
+            TurnEngineError::InvalidContext("authoritative turn id is missing".into())
         })?;
         let turn_request = fabric::TurnRequest {
             operation_id: context.operation_id,
             process_id: context.process_id,
             context: principal_context,
             input: request.input,
+            execution_target: request.execution_target,
             model_policy: request
                 .model_policy
                 .or(context.profile.model_policy.clone()),
@@ -87,120 +70,82 @@ impl TurnEngine for DaemonTurnEngine {
             evaluation_contract: None,
         };
 
-        {
-            let mut guard = self.pipeline.current_scope.lock().await;
-            *guard = Some(kernel::operation::OperationScope::new(context.operation_id));
-        }
-        let turn_cancel = context.cancel_token.clone();
+        let mut scope = kernel::operation::OperationScope::with_cancellation(
+            context.operation_id,
+            context.cancel_token,
+        );
         let principal = turn_request.context.principal_id.clone();
-        let response = self
+        let coordinator_execution = match self
             .pipeline
             .run(
-                serde_json::Value::Null,
                 turn_request.input.clone(),
                 turn_request.clone(),
-                context.operation_id,
                 context.process_id,
-                context.cancel_token,
+                &mut scope,
                 principal,
                 context.notification_sender,
             )
-            .await?;
-        if let Some(error) = response.get("error") {
-            return Err(TurnEngineError::Internal(anyhow::anyhow!(
-                "{}",
-                error
-                    .get("message")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("daemon turn failed")
-            )));
-        }
-
-        let raw = &response["result"];
-        let output = raw["response"].as_str().unwrap_or_default().to_owned();
-        let items = serde_json::from_value(raw["canonical_items"].clone()).unwrap_or_default();
-        let succeeded = raw["succeeded"].as_bool().unwrap_or(false);
-        let metric = &raw["metrics"];
-        let metrics = fabric::TurnMetrics {
-            tool_calls_made: metric["tool_calls_made"].as_u64().unwrap_or(0) as usize,
-            tool_errors: metric["tool_errors"].as_u64().unwrap_or(0) as usize,
-            provider_retries: metric["provider_retries"].as_u64().unwrap_or(0),
-            elapsed_ms: metric["elapsed_ms"].as_u64().unwrap_or(0),
-            iterations: metric["iterations"].as_u64().unwrap_or(0) as usize,
-            completed_normally: metric["completed_normally"].as_bool().unwrap_or(false),
+            .await
+        {
+            Ok(crate::application::TurnPipelineOutcome::Completed(execution)) => *execution,
+            Ok(crate::application::TurnPipelineOutcome::Rejected(rejection)) => {
+                let cleanup = scope
+                    .abort_and_drain(self.pipeline.clock.as_ref(), Duration::from_secs(5))
+                    .await;
+                log_scope_cleanup(&cleanup);
+                return Err(TurnEngineError::Internal(anyhow::anyhow!(
+                    "{}",
+                    rejection.message()
+                )));
+            }
+            Err(error) => {
+                let cleanup = scope
+                    .abort_and_drain(self.pipeline.clock.as_ref(), Duration::from_secs(5))
+                    .await;
+                log_scope_cleanup(&cleanup);
+                return Err(error.into());
+            }
         };
-        let projection = PostTurnDispatch {
-            projector: self.pipeline.post_turn_projection.clone(),
-            outcome: PostTurnOutcome {
-                session_id: raw["projection"]["session_id"]
-                    .as_str()
-                    .unwrap_or(&turn_request.context.thread_id.0)
-                    .to_owned(),
-                principal_id: turn_request.context.principal_id.clone(),
-                input: turn_request.input.clone(),
-                output: output.clone(),
-                turn: raw["turn"].as_u64().unwrap_or(0) as usize,
-                succeeded,
-                tool_calls_made: metrics.tool_calls_made,
-                tool_errors: metrics.tool_errors,
-                elapsed_ms: metrics.elapsed_ms,
-                iterations: metrics.iterations,
-                completed_normally: metrics.completed_normally,
-                agora_start_version: raw["projection"]["agora_start_version"]
-                    .as_u64()
-                    .unwrap_or(0),
-            },
-        };
-        let context_projection =
-            serde_json::from_value(raw["projection"]["conscious_context"].clone()).ok();
-        let mut evaluation_artifacts = serde_json::from_value::<
-            crate::application::evaluation::TurnEvaluationArtifacts,
-        >(raw["evaluation_artifacts"].clone())
-        .unwrap_or_default();
-        evaluation_artifacts.workspace = Some((*context.workspace).clone());
-        evaluation_artifacts.profile_name = evaluation_profile_name;
-        evaluation_artifacts.session_id = turn_request.context.thread_id.0.clone();
-        evaluation_artifacts.runtime_id = "native-turn".into();
-        evaluation_artifacts.projection_metrics.elapsed_ms = Some(metrics.elapsed_ms);
-        evaluation_artifacts.projection_metrics.provider_retries = Some(metrics.provider_retries);
-        evaluation_artifacts.projection_metrics.tool_calls = Some(metrics.tool_calls_made as u64);
-        evaluation_artifacts.projection_metrics.tool_errors = Some(metrics.tool_errors as u64);
-        let status = if turn_cancel.is_cancelled() {
-            TurnEngineStatus::Cancelled
-        } else if succeeded {
-            TurnEngineStatus::Completed
+        let result = map_turn_execution(turn_id, coordinator_execution);
+        let cleanup = if matches!(
+            result.stop,
+            fabric::TurnStop::Cancelled | fabric::TurnStop::Failed
+        ) {
+            scope
+                .abort_and_drain(self.pipeline.clock.as_ref(), Duration::from_secs(5))
+                .await
         } else {
-            TurnEngineStatus::Blocked
+            scope
+                .settle_and_drain(self.pipeline.clock.as_ref(), Duration::from_secs(5))
+                .await
         };
-        let coordinator_execution = TurnExecution {
-            result: fabric::TurnResult {
-                output: output.clone(),
-                stop: match status {
-                    TurnEngineStatus::Cancelled => fabric::TurnStop::Cancelled,
-                    TurnEngineStatus::Completed => fabric::TurnStop::Completed,
-                    TurnEngineStatus::Blocked => fabric::TurnStop::Blocked,
-                    TurnEngineStatus::BudgetExhausted | TurnEngineStatus::DeadlineExceeded => {
-                        fabric::TurnStop::Failed
-                    }
-                },
-                metrics: metrics.clone(),
-            },
-            items,
-            projection: Some(projection),
-            context_projection,
-            evaluation_artifacts,
-        };
-        let result = TurnEngineResult {
-            turn_id,
-            output,
-            status,
-            tool_calls: metrics.tool_calls_made,
-            tokens_in: 0,
-            tokens_out: 0,
-            elapsed_ms: metrics.elapsed_ms,
-            coordinator_execution: Some(coordinator_execution),
-        };
-        events.on_turn_settled(turn_id, &result).await;
+        log_scope_cleanup(&cleanup);
         Ok(result)
+    }
+}
+
+fn log_scope_cleanup(report: &kernel::operation::OperationScopeCleanupReport) {
+    if report.forced_abort
+        || report.exits.iter().any(|exit| {
+            matches!(
+                exit.reason,
+                fabric::OperationExitReason::Failed(_) | fabric::OperationExitReason::Panic(_)
+            )
+        })
+    {
+        tracing::warn!(
+            operation = %report.operation_id.0,
+            kind = ?report.kind,
+            forced_abort = report.forced_abort,
+            exits = ?report.exits,
+            "turn operation scope required abnormal cleanup"
+        );
+    } else {
+        tracing::debug!(
+            operation = %report.operation_id.0,
+            kind = ?report.kind,
+            resources = report.exits.len(),
+            "turn operation scope drained"
+        );
     }
 }

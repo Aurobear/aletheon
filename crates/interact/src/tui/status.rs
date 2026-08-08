@@ -135,13 +135,13 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
 
         // Context
-        let ctx_color = if self.state.context.usage_percent() > 80.0 {
+        let ctx_color = if self.state.context_pressure_percent().unwrap_or_default() > 80.0 {
             Color::Red
         } else {
             Color::DarkGray
         };
         spans.push(Span::styled(
-            self.state.context.display(),
+            self.state.context_status(),
             Style::default().fg(ctx_color),
         ));
 
@@ -408,8 +408,8 @@ mod tests {
     fn state_widget_separates_context_from_active_turn_usage() {
         let status = StatusBar::new(TermCaps::detect());
         let mut state = AppState::default();
-        state.context.used = 8_000;
-        state.context.max = 1_000_000;
+        state.context.used = Some(8_000);
+        state.context.max = Some(1_000_000);
         state.turn_input_tokens = 300;
         state.turn_output_tokens = 30;
         state.total_tokens = 10_500;
@@ -425,8 +425,8 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
 
-        assert!(rendered.contains("ctx: 8k/1M (1%)"));
-        assert!(rendered.contains("turn 300 in/30 out"));
-        assert!(!rendered.contains("seen 10,500 tok"));
+        assert!(rendered.contains("ctx: 8k / 1,000k (1%)"), "{rendered}");
+        assert!(rendered.contains("turn 300 in/30 out"), "{rendered}");
+        assert!(!rendered.contains("seen 10,500 tok"), "{rendered}");
     }
 }

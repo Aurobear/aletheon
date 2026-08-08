@@ -455,8 +455,7 @@ impl DaseinStateEngine {
                 self.synthesize_mood(&mut emitted);
             }
             InterpretedExperience::ScheduledReflection => {
-                let patterns = self.temporality.passive_synthesize();
-                self.temporality.update_protentions_from_patterns(&patterns);
+                self.temporality.passive_synthesize_and_update();
                 let urgent_count = self.care.urgent_concerns(0.7).len();
                 self.care
                     .rhythm

@@ -164,8 +164,13 @@ pub enum TurnRecoveryClassification {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ItemPayload {
+    /// Authoritative per-turn start fact. The typed target is stored on the
+    /// existing durable start boundary so replay cannot inherit a prior turn's
+    /// target. Legacy items decode as General.
     UserMessage {
         content: String,
+        #[serde(default)]
+        execution_target: crate::ExecutionTargetSelection,
     },
     AssistantMessage {
         content: String,
@@ -199,6 +204,16 @@ pub enum ItemPayload {
     },
     ModelContextProjection {
         receipt: crate::model_projection::ModelContextProjectionReceipt,
+    },
+    /// Host-authoritative model/profile/history/rollout budget truth for this
+    /// turn. It is computed before inference from the selected model and the
+    /// exact prepared context.
+    ContextBudgetProjection {
+        projection: Box<crate::ContextBudgetProjection>,
+    },
+    /// Evidence for an applied history rewrite, including its triggering budget.
+    ContextCompactionProjection {
+        projection: Box<crate::ContextCompactionProjection>,
     },
     InferenceReceipt {
         receipt: crate::types::inference_receipt::InferenceTerminalReceipt,

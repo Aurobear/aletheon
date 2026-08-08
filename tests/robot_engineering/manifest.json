@@ -1,0 +1,1225 @@
+{
+  "canonical_digest": "448c0b5a4460f69e33b997799dc821898318161292b2a50cacb16c7297d2d12f",
+  "catalog_sha256": "160a038d4d3e788b5968284a64cc5d0cf0b3dc12c4a9b718256be2a679964021",
+  "category_counts": {
+    "can_ethercat_serial": 5,
+    "containers_build": 4,
+    "control_numerics": 5,
+    "multi_file_engineering": 3,
+    "ros2_lifecycle_launch": 6,
+    "safety_device_protocol": 3,
+    "sensing_logs": 4
+  },
+  "failure_classes": [
+    "clock_drift",
+    "device_rejection",
+    "endianness",
+    "latency",
+    "packet_loss",
+    "reordering",
+    "watchdog"
+  ],
+  "generator": "tests/robot_engineering/generate_e1_suite.py",
+  "schema_version": 2,
+  "suite": "E1",
+  "suite_version": "3.0.0",
+  "task_count": 30,
+  "tasks": [
+    {
+      "allowed_paths": [
+        "parser.py"
+      ],
+      "category": "can_ethercat_serial",
+      "cpu_seconds": 5,
+      "expected_failure_class": "endianness",
+      "fixture_path": "fixtures/tasks/e1_can_ethercat_serial_0001",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_can_ethercat_serial_0001",
+      "injected_failures": [
+        "endianness"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "b0356fcea5aa2078dc73c6f89f7284b502f7b2070897ccfc108957eb9809baed",
+      "oracle_path": "fixtures/oracles/e1_can_ethercat_serial_0001.py",
+      "permission": "device_action",
+      "provenance": "synthetic benchmark asset derived from public fieldbus protocol specifications",
+      "required_paths": [
+        "parser.py"
+      ],
+      "risk": "high",
+      "solution_digest": "4b4dd4fc336903607fd175e219cc9924f46773b662be240cd1ef68f930852758",
+      "solution_file_map": {
+        "parser.py": "bb66b6842d43c41b6e8ff8ccb17baa9fcac1555f73b6f3a5c2210761ddff2df8"
+      },
+      "solution_path": "fixtures/solutions/e1_can_ethercat_serial_0001",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "6f601c9a42f0b78a850c8052fed34444116f8095201fe41ca300966dd1223b35",
+      "workspace_file_map": {
+        "parser.py": "640c166e2cbd732f2efe1dfc85b2e854fcd316eb009d068f8be4c53b2b670568"
+      }
+    },
+    {
+      "allowed_paths": [
+        "can_timeout.py"
+      ],
+      "category": "can_ethercat_serial",
+      "cpu_seconds": 5,
+      "expected_failure_class": "clock_drift",
+      "fixture_path": "fixtures/tasks/e1_can_ethercat_serial_0002",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_can_ethercat_serial_0002",
+      "injected_failures": [
+        "clock_drift",
+        "latency"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "aaf1e62df34543ee91756c159240141ce2e98a0b0e3117305b0fec59d4be42ed",
+      "oracle_path": "fixtures/oracles/e1_can_ethercat_serial_0002.py",
+      "permission": "device_action",
+      "provenance": "synthetic benchmark asset derived from public fieldbus protocol specifications",
+      "required_paths": [
+        "can_timeout.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "1ccd50919a9f666f77428421f3a32ac38d55baa8c22b03f94d5636524b809de9",
+      "solution_file_map": {
+        "can_timeout.py": "97ed77edd06dcbb3576bcdfeddf72826973552a9ccaa4836840479f411dcb554"
+      },
+      "solution_path": "fixtures/solutions/e1_can_ethercat_serial_0002",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "de7e9f0a8af54a41cf01859deb6d2054bb8f710f8e65c596f31ebc7c066c9dfd",
+      "workspace_file_map": {
+        "can_timeout.py": "f102099b2747d951fe13885e076a29294990c48232e92936540b7e44d336b18d"
+      }
+    },
+    {
+      "allowed_paths": [
+        "serial_fsm.py"
+      ],
+      "category": "can_ethercat_serial",
+      "cpu_seconds": 5,
+      "expected_failure_class": "device_rejection",
+      "fixture_path": "fixtures/tasks/e1_can_ethercat_serial_0003",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_can_ethercat_serial_0003",
+      "injected_failures": [
+        "device_rejection"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "c8644016bbea8ff95e35ca5d5b90d8057bee5a25801fb25cc07717034cce7775",
+      "oracle_path": "fixtures/oracles/e1_can_ethercat_serial_0003.py",
+      "permission": "device_action",
+      "provenance": "synthetic benchmark asset derived from public fieldbus protocol specifications",
+      "required_paths": [
+        "serial_fsm.py"
+      ],
+      "risk": "high",
+      "solution_digest": "9624d7b2edfded258da03bea546f1a61cee8de8028bc69099b7e361c2d04945e",
+      "solution_file_map": {
+        "serial_fsm.py": "eecf6d606ad2ce5f9ed9dc7f13f41478c8114d6c027a1d66abcb0ef50f47fbbe"
+      },
+      "solution_path": "fixtures/solutions/e1_can_ethercat_serial_0003",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "d0acf67f1d7d80240d6a809c18bce2fb8ab78b88845b51dddad6c182e21a8f9a",
+      "workspace_file_map": {
+        "serial_fsm.py": "25851249de7c121352016925e4784c545d805113a8be8a83832b557e893c7380"
+      }
+    },
+    {
+      "allowed_paths": [
+        "sdo_abort.py"
+      ],
+      "category": "can_ethercat_serial",
+      "cpu_seconds": 5,
+      "expected_failure_class": "device_rejection",
+      "fixture_path": "fixtures/tasks/e1_can_ethercat_serial_0004",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_can_ethercat_serial_0004",
+      "injected_failures": [
+        "device_rejection"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "19e6a3455b1430850dbd0621929c5ac198eef96b57c6e4c87ed7382cbede2856",
+      "oracle_path": "fixtures/oracles/e1_can_ethercat_serial_0004.py",
+      "permission": "device_action",
+      "provenance": "synthetic benchmark asset derived from public fieldbus protocol specifications",
+      "required_paths": [
+        "sdo_abort.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "8f80cb2cb37787982caf8b702151635ea64178dbbfcd808959ff7ab07cdf196e",
+      "solution_file_map": {
+        "sdo_abort.py": "cfebe25c38f0f707dd1285e2582b6fcb56ead1b700b18a6df63cfbe07dcf40c2"
+      },
+      "solution_path": "fixtures/solutions/e1_can_ethercat_serial_0004",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "b2a4e4d148b8c21610d931f87c51f11db3cd7a02077c8bf9887203cce0af4093",
+      "workspace_file_map": {
+        "sdo_abort.py": "8a3a94678f3736db78e1acc107f0dc37f60752621f8c10e93c2bbcd4038f57b5"
+      }
+    },
+    {
+      "allowed_paths": [
+        "can_busoff.py"
+      ],
+      "category": "can_ethercat_serial",
+      "cpu_seconds": 5,
+      "expected_failure_class": "watchdog",
+      "fixture_path": "fixtures/tasks/e1_can_ethercat_serial_0005",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_can_ethercat_serial_0005",
+      "injected_failures": [
+        "watchdog",
+        "clock_drift"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "78a4b8ac65f18ed857438adc98a33c0ae72f09c267779549d31dfbef42445b6b",
+      "oracle_path": "fixtures/oracles/e1_can_ethercat_serial_0005.py",
+      "permission": "device_action",
+      "provenance": "synthetic benchmark asset derived from public fieldbus protocol specifications",
+      "required_paths": [
+        "can_busoff.py"
+      ],
+      "risk": "high",
+      "solution_digest": "b8b6c6b590725edd3f55a84f0c27872afc8fd36bf20733d058c15cbbbcff746b",
+      "solution_file_map": {
+        "can_busoff.py": "3db0c79b93fb5b5254aed804dd42f6cbba8c292255d0f8f9fafeeea35f7b4965"
+      },
+      "solution_path": "fixtures/solutions/e1_can_ethercat_serial_0005",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "1552dc7b68a68225d97d15336660e4136df03b49084f63cf5d52b7e394ff3870",
+      "workspace_file_map": {
+        "can_busoff.py": "6ed37eeec7ee541bfae7385bbd5fba7465e5817114c02e15589c66fd015f63a3"
+      }
+    },
+    {
+      "allowed_paths": [
+        "Dockerfile.multistage"
+      ],
+      "category": "containers_build",
+      "cpu_seconds": 5,
+      "expected_failure_class": "latency",
+      "fixture_path": "fixtures/tasks/e1_containers_build_0001",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_containers_build_0001",
+      "injected_failures": [
+        "latency"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "4ea64a377fbf27843c6ca1f6aec5b38bcea887d1979530ca95f64ea2ad6fb1c7",
+      "oracle_path": "fixtures/oracles/e1_containers_build_0001.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public container and build system patterns",
+      "required_paths": [
+        "Dockerfile.multistage"
+      ],
+      "risk": "low",
+      "solution_digest": "6cf69f8b8a4346889ed649ea2ce6db56e24adbbd13704840a32b8c31f9de3acf",
+      "solution_file_map": {
+        "Dockerfile.multistage": "ae4a6842d60dd8fcb92d3a02e87b7c6545ea85bd68c6132f59220423497dab8b"
+      },
+      "solution_path": "fixtures/solutions/e1_containers_build_0001",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "c79de1aa8cb84fbc8fb493921bf61d0ad327e24940b8e3bf4fc020b19cf8a853",
+      "workspace_file_map": {
+        "Dockerfile.multistage": "272629f4edae423b3a40cd3e8f96c2b081293147fc73196f73eabcc5646ba17b",
+        "main.py": "fbf6b5b9639286b0fd853b4e0bc9a52bce1a06d64cab7079fe4cca4b3fba7ecd",
+        "requirements.txt": "71983798d0a91770711b07e11d2cc384849c02e8670c8d74cc5966532f95c2a6"
+      }
+    },
+    {
+      "allowed_paths": [
+        "colcon_build_order.py"
+      ],
+      "category": "containers_build",
+      "cpu_seconds": 5,
+      "expected_failure_class": "reordering",
+      "fixture_path": "fixtures/tasks/e1_containers_build_0002",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_containers_build_0002",
+      "injected_failures": [
+        "reordering"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "bde54226a3e2047ecf150a83874ec40ddd3ed992b6f86aeaac4f94e055d5a12c",
+      "oracle_path": "fixtures/oracles/e1_containers_build_0002.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public container and build system patterns",
+      "required_paths": [
+        "colcon_build_order.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "a2d2b1722b7ee74b0841657b55be4610f3c1ef0dd0217d50fbce9f757043226a",
+      "solution_file_map": {
+        "colcon_build_order.py": "52118c060b3e2def1411cc11a8e669722ffacc81084502e2c70dfe7316199289"
+      },
+      "solution_path": "fixtures/solutions/e1_containers_build_0002",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "2ba0375812f1a13e0315b02c649562f678f62f9294f12b4eaa3768beac7e5eb0",
+      "workspace_file_map": {
+        "colcon_build_order.py": "fe669207e2c1310fd049000527c64b8e3cc218191fc44dfc907db2c2db98f389"
+      }
+    },
+    {
+      "allowed_paths": [
+        "cross_triplet.py"
+      ],
+      "category": "containers_build",
+      "cpu_seconds": 5,
+      "expected_failure_class": "endianness",
+      "fixture_path": "fixtures/tasks/e1_containers_build_0003",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_containers_build_0003",
+      "injected_failures": [
+        "endianness"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "5a72f20d5b17ea42b04d922e127285949a7993215fddf659d54dd75b6f77715f",
+      "oracle_path": "fixtures/oracles/e1_containers_build_0003.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public container and build system patterns",
+      "required_paths": [
+        "cross_triplet.py"
+      ],
+      "risk": "high",
+      "solution_digest": "b4fcb9261e8a88b46475fb33b6a6e14f9febf599bf10abcd9819cda25b6f4fb6",
+      "solution_file_map": {
+        "cross_triplet.py": "ea3a91f6db52f7ce8d9bd1e9f46fcaf4551412345244095a983775e3a001955a"
+      },
+      "solution_path": "fixtures/solutions/e1_containers_build_0003",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "ea412976780976b49b5236c14d648d581e33229d1c884d5cf6839b380ceb6353",
+      "workspace_file_map": {
+        "cross_triplet.py": "23b3d8f77cb51aa0ce1b3cc51e23a20f7603029809d728bdfa32672954e20fcd"
+      }
+    },
+    {
+      "allowed_paths": [
+        "build_flags.py"
+      ],
+      "category": "containers_build",
+      "cpu_seconds": 5,
+      "expected_failure_class": "packet_loss",
+      "fixture_path": "fixtures/tasks/e1_containers_build_0004",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_containers_build_0004",
+      "injected_failures": [
+        "packet_loss"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "a9c69ec08a01bab276178900b1263f7eb7c6980ef157f1471addd2fd9708f12f",
+      "oracle_path": "fixtures/oracles/e1_containers_build_0004.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public container and build system patterns",
+      "required_paths": [
+        "build_flags.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "b48f10086d419d6b280d5fef04de19fc9aef78cb321ecf592fd0e5c76678a0b1",
+      "solution_file_map": {
+        "build_flags.py": "9b08dc710c565d563566f6478afb8fa2a3fa9df9bd07f6edcc73e3dad0817c4b"
+      },
+      "solution_path": "fixtures/solutions/e1_containers_build_0004",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "ddfd266c6d74ad22afd275a59653cbc20ceae589d0d6c0df706e73fab15e882e",
+      "workspace_file_map": {
+        "build_flags.py": "aeceff3d9d9a2005e9860e8f173789f86a6a0cb56e5abeef8fecf298f1d1ae87"
+      }
+    },
+    {
+      "allowed_paths": [
+        "pid_controller.py"
+      ],
+      "category": "control_numerics",
+      "cpu_seconds": 5,
+      "expected_failure_class": "latency",
+      "fixture_path": "fixtures/tasks/e1_control_numerics_0001",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_control_numerics_0001",
+      "injected_failures": [
+        "latency"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "e9944b15001ed30f633e9cc58fea051905f1f1961351e5f9b992e40680d8b04a",
+      "oracle_path": "fixtures/oracles/e1_control_numerics_0001.py",
+      "permission": "simulation",
+      "provenance": "synthetic benchmark asset derived from public control theory and numerical methods",
+      "required_paths": [
+        "pid_controller.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "f5a6f80f51ed34fe14ea678f6e7035b94cb26216d4b1e142703414716d0140c1",
+      "solution_file_map": {
+        "pid_controller.py": "3ac865ba77b0538ccab8778eb44a61ec81a5ed97170eb8e49f78444e54da363f"
+      },
+      "solution_path": "fixtures/solutions/e1_control_numerics_0001",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "52fdf30cd8c7604018222abc6d671e6f8a8cac024ab85fd9a21d5dc679d28f10",
+      "workspace_file_map": {
+        "pid_controller.py": "33bec2f22e400cdb3a59e4b446b76ca5003a19f5fed9a2cbbb7d201dae0a95a7"
+      }
+    },
+    {
+      "allowed_paths": [
+        "trajectory_limiter.py"
+      ],
+      "category": "control_numerics",
+      "cpu_seconds": 5,
+      "expected_failure_class": "reordering",
+      "fixture_path": "fixtures/tasks/e1_control_numerics_0002",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_control_numerics_0002",
+      "injected_failures": [
+        "reordering"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "5464123f928ccbc72cddacea4e16cc8ff8dd0aec699134325648b160909450c3",
+      "oracle_path": "fixtures/oracles/e1_control_numerics_0002.py",
+      "permission": "simulation",
+      "provenance": "synthetic benchmark asset derived from public control theory and numerical methods",
+      "required_paths": [
+        "trajectory_limiter.py"
+      ],
+      "risk": "high",
+      "solution_digest": "bef2775638e88b3c5ad9c8ac5c8cab384447dc8e474cc7300227984070b1b3c2",
+      "solution_file_map": {
+        "trajectory_limiter.py": "0d5a1b89b2398ae8465fb456c20b498e72fb1b28caa70ebefd3e835dc4e010d4"
+      },
+      "solution_path": "fixtures/solutions/e1_control_numerics_0002",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "2369644493aee977bc48528fcceb6d76edcd2b28051289dce1572fc6f0f95b58",
+      "workspace_file_map": {
+        "trajectory_limiter.py": "2886d18c9b27e059949260076d64cc5df4cba9159124247da6824b49967cc857"
+      }
+    },
+    {
+      "allowed_paths": [
+        "angle_convert.py"
+      ],
+      "category": "control_numerics",
+      "cpu_seconds": 5,
+      "expected_failure_class": "endianness",
+      "fixture_path": "fixtures/tasks/e1_control_numerics_0003",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_control_numerics_0003",
+      "injected_failures": [
+        "endianness"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "63ad0234416588e6b6ca72ed75f6602beec0a2fb016039b93b5832cce690e595",
+      "oracle_path": "fixtures/oracles/e1_control_numerics_0003.py",
+      "permission": "simulation",
+      "provenance": "synthetic benchmark asset derived from public control theory and numerical methods",
+      "required_paths": [
+        "angle_convert.py"
+      ],
+      "risk": "low",
+      "solution_digest": "c5cc85377f417b5e58cb7e27ba06784f0a5fd674b204ca32b0f165434175c31c",
+      "solution_file_map": {
+        "angle_convert.py": "ba5fd95c198c5418caa52b4b8c009eefe0a81b60878ca6f66587419f550095b0"
+      },
+      "solution_path": "fixtures/solutions/e1_control_numerics_0003",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "49caa93f2986558ce69964f72679fe6ff3568b4a7fac51febc4d277fd04b901b",
+      "workspace_file_map": {
+        "angle_convert.py": "9d477c4c1c0b1bb313e107f46d72082d0b68e3299a7793bafa590ebf4f93a03c"
+      }
+    },
+    {
+      "allowed_paths": [
+        "iir_filter.py"
+      ],
+      "category": "control_numerics",
+      "cpu_seconds": 5,
+      "expected_failure_class": "reordering",
+      "fixture_path": "fixtures/tasks/e1_control_numerics_0004",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_control_numerics_0004",
+      "injected_failures": [
+        "reordering"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "3130ebd380b32a0e40484b1538148fff328ea1110bbce2f43b714c81ec713b27",
+      "oracle_path": "fixtures/oracles/e1_control_numerics_0004.py",
+      "permission": "simulation",
+      "provenance": "synthetic benchmark asset derived from public control theory and numerical methods",
+      "required_paths": [
+        "iir_filter.py"
+      ],
+      "risk": "high",
+      "solution_digest": "2c918042fafb58913203108d0e8aea47055c49f2e8c39a44716320db0565d100",
+      "solution_file_map": {
+        "iir_filter.py": "207c577308058bc2d2dbdbe73639fe42a4bde3c96f1429b9dac9a311f5701bf6"
+      },
+      "solution_path": "fixtures/solutions/e1_control_numerics_0004",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "9fb4e2cdc1ab1615f889c535328f040394acb8ef05540bcaa403e7218988c0c7",
+      "workspace_file_map": {
+        "iir_filter.py": "653cfafc9642f57813b0dc84fc61860bcd59b1ddb7a44e28db56858f19bf8707"
+      }
+    },
+    {
+      "allowed_paths": [
+        "deadband.py"
+      ],
+      "category": "control_numerics",
+      "cpu_seconds": 5,
+      "expected_failure_class": "packet_loss",
+      "fixture_path": "fixtures/tasks/e1_control_numerics_0005",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_control_numerics_0005",
+      "injected_failures": [
+        "latency",
+        "packet_loss"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "1cffc04d6a30703d3219c152cb5e98399816176aad70cfe0aa5c13a787cfd9df",
+      "oracle_path": "fixtures/oracles/e1_control_numerics_0005.py",
+      "permission": "simulation",
+      "provenance": "synthetic benchmark asset derived from public control theory and numerical methods",
+      "required_paths": [
+        "deadband.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "71e9bc2cbbcf4169b91adf32e676db261f26c2aab7b974a6cb4ca02feeb34387",
+      "solution_file_map": {
+        "deadband.py": "dbd6e93f61c3d402d72873114de29fd0f8e42b48203ca54c6faf9c9449eeb18c"
+      },
+      "solution_path": "fixtures/solutions/e1_control_numerics_0005",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "0892ee3ccc40df528a53f59d419cd6be488ccc5a8f6a810eb560f22bb01eb04d",
+      "workspace_file_map": {
+        "deadband.py": "72eb1151d43b40c0d4e4eaee49e0a5dd255ad4f2a5bb81a421dc4e8beaee5ae6"
+      }
+    },
+    {
+      "allowed_paths": [
+        "controller.py",
+        "diagnostics.py",
+        "sensor_hal.py"
+      ],
+      "category": "multi_file_engineering",
+      "cpu_seconds": 8,
+      "expected_failure_class": "device_rejection",
+      "fixture_path": "fixtures/tasks/e1_multi_file_engineering_0001",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_multi_file_engineering_0001",
+      "injected_failures": [
+        "device_rejection"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 384,
+      "network": "deny-all",
+      "oracle_digest": "e738cbbe3b1d4b6cd691728561e5615f2f923890692d3f59d5287e0801335a15",
+      "oracle_path": "fixtures/oracles/e1_multi_file_engineering_0001.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public software refactoring patterns",
+      "required_paths": [
+        "controller.py",
+        "diagnostics.py",
+        "sensor_hal.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "cb136032ee693ccffb96ff7c815f5acd5b526a306fbe6e06287ad38fc2a763a0",
+      "solution_file_map": {
+        "controller.py": "bc4ebacef99f6e47a0e68437fd0de1c7b5ad1430f85ac34a386f33c73c14d248",
+        "diagnostics.py": "00f27b00e7b53f94d030d81a8077fb86245f97adaa009986fc5189afa0957b63",
+        "sensor_hal.py": "7a4f6cde4c8f2b10f85afe24215dade22498c7d2e0d321830d4ed2284e802266"
+      },
+      "solution_path": "fixtures/solutions/e1_multi_file_engineering_0001",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "05aa1aa3a995de41c376e8fc985d0171a74c7a29c92e0a1795032084740cdd72",
+      "workspace_file_map": {
+        "controller.py": "5cfe2382a8d2ce1add7fb5165a43b24bb1cea31d0403f899a4c172c3e92a6ce1",
+        "diagnostics.py": "afb0e4c026a207829d125ab73f2103b58deec1674ac4df881bf81c577547573b",
+        "sensor_hal.py": "5e33a80822a8afeb3479ddd8344f80c1a46ba861f99643d9cdecdd01e82b121a"
+      }
+    },
+    {
+      "allowed_paths": [
+        "mathlib.py",
+        "test_mathlib.py"
+      ],
+      "category": "multi_file_engineering",
+      "cpu_seconds": 8,
+      "expected_failure_class": "packet_loss",
+      "fixture_path": "fixtures/tasks/e1_multi_file_engineering_0002",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_multi_file_engineering_0002",
+      "injected_failures": [
+        "packet_loss"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 384,
+      "network": "deny-all",
+      "oracle_digest": "9047f512764dfbfc500d5b160da03518afc540c06a6b5c842b4737ee683549ea",
+      "oracle_path": "fixtures/oracles/e1_multi_file_engineering_0002.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public software refactoring patterns",
+      "required_paths": [
+        "mathlib.py",
+        "test_mathlib.py"
+      ],
+      "risk": "low",
+      "solution_digest": "21b05d9a522bfc0f0202ae5cd2ee278775be4889b6616cbad587ed52ca920c5f",
+      "solution_file_map": {
+        "test_mathlib.py": "38c9aa7fd87734307bc956340495648ba8b1851aa93b6c1a42b8d20348a18a2c"
+      },
+      "solution_path": "fixtures/solutions/e1_multi_file_engineering_0002",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "e978f417904856fdac65a14c63d0f74e3bae8fe48e3fb8cc2fd263b207674a61",
+      "workspace_file_map": {
+        "mathlib.py": "49f2601cfc632cc9988522c7174353c541487e24095e8a41d0576634bb2e5493",
+        "test_mathlib.py": "1dbdf503b26d3a35bdeb66796f0afa0a319275f23d9d492dd09deed14f687646"
+      }
+    },
+    {
+      "allowed_paths": [
+        "__init__.py",
+        "kinematics.py",
+        "motion_planner.py"
+      ],
+      "category": "multi_file_engineering",
+      "cpu_seconds": 8,
+      "expected_failure_class": "latency",
+      "fixture_path": "fixtures/tasks/e1_multi_file_engineering_0003",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_multi_file_engineering_0003",
+      "injected_failures": [
+        "latency"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 384,
+      "network": "deny-all",
+      "oracle_digest": "684bbcce9482314e3703ab77faa969538adfa10863fd8e1c82feb962c1da0c9e",
+      "oracle_path": "fixtures/oracles/e1_multi_file_engineering_0003.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public software refactoring patterns",
+      "required_paths": [
+        "__init__.py",
+        "kinematics.py",
+        "motion_planner.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "0697732f2f79eab12a65fda4234cd78fcd1704e1c64baf7baaa50f91dc778ae9",
+      "solution_file_map": {
+        "__init__.py": "70d1113a0fa497933b1ab3ab65c76b103938bcffced525ed21cdb2e798f30f7f",
+        "motion_planner.py": "e532255ed351b2941dd135ffe3ec3d5820a8ba12730c9213ce9081de87b8ed9a"
+      },
+      "solution_path": "fixtures/solutions/e1_multi_file_engineering_0003",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "9bcf1c563b51842bc60e0005a3436e25b15dc21c4508fd3b6be3f872452b3f22",
+      "workspace_file_map": {
+        "__init__.py": "66a5492f164a82f1462fa90d6f350d5dd9da5d3bacb6c66c4683eec16c20ddaf",
+        "kinematics.py": "c64f8df013ac08c2ef4e27a6563855e128092378e0b4ee06626131a34be85d52",
+        "motion_planner.py": "e9ba56e8caad309e7118e643a1be67c1fb60e718e89f96143eb50b1569a75400"
+      }
+    },
+    {
+      "allowed_paths": [
+        "subscriber.py"
+      ],
+      "category": "ros2_lifecycle_launch",
+      "cpu_seconds": 5,
+      "expected_failure_class": "latency",
+      "fixture_path": "fixtures/tasks/e1_ros2_lifecycle_launch_0001",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_ros2_lifecycle_launch_0001",
+      "injected_failures": [
+        "latency",
+        "packet_loss"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "47a3de4efe158baca6189a66a7aba9ee43569105952e052e06fa95c375ad7378",
+      "oracle_path": "fixtures/oracles/e1_ros2_lifecycle_launch_0001.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public ROS 2 documentation and patterns",
+      "required_paths": [
+        "subscriber.py"
+      ],
+      "risk": "low",
+      "solution_digest": "3a199ae11d280439e6cb5f6eb8f7a764bb8a3418496f4948e33f2960c638a91b",
+      "solution_file_map": {
+        "subscriber.py": "37fc170dd47969ee9f85e6e2b6c18f9f96d512f14ae5dbb43c4b904305af2f11"
+      },
+      "solution_path": "fixtures/solutions/e1_ros2_lifecycle_launch_0001",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "bb01e99b25668fdb236c01adec5025e3af4263418764d7a005d64ef48673c0e2",
+      "workspace_file_map": {
+        "subscriber.py": "bc09b641dcfa65f0b5a9db3d8db43ebd044c257bcbfc183c242342dc4ded7734"
+      }
+    },
+    {
+      "allowed_paths": [
+        "lifecycle_fsm.py"
+      ],
+      "category": "ros2_lifecycle_launch",
+      "cpu_seconds": 5,
+      "expected_failure_class": "reordering",
+      "fixture_path": "fixtures/tasks/e1_ros2_lifecycle_launch_0002",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_ros2_lifecycle_launch_0002",
+      "injected_failures": [
+        "reordering"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "b99b9c77306a9eb15f386d172c59ce1e16eccfaf2c32a657ff85853f8fae7f79",
+      "oracle_path": "fixtures/oracles/e1_ros2_lifecycle_launch_0002.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public ROS 2 documentation and patterns",
+      "required_paths": [
+        "lifecycle_fsm.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "c13802bbc5d06781b37e0267c6e0f99fc40ed4dbea32d31f0dde4debb3cb42a4",
+      "solution_file_map": {
+        "lifecycle_fsm.py": "d8d321ce6ca4f92ee70730ff0495a72c6143a918f0f055aff4c426662ea1b5bd"
+      },
+      "solution_path": "fixtures/solutions/e1_ros2_lifecycle_launch_0002",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "d426f6258ad576dea5b32a0cbc2d503958688d9c0dd26efba5aa8f29e1fd748c",
+      "workspace_file_map": {
+        "lifecycle_fsm.py": "7bf2b5cfe56c99b4511ff4dc211f4e2bdc3defcae2d9dbfd905121d286db8e32"
+      }
+    },
+    {
+      "allowed_paths": [
+        "param_resolver.py"
+      ],
+      "category": "ros2_lifecycle_launch",
+      "cpu_seconds": 5,
+      "expected_failure_class": "reordering",
+      "fixture_path": "fixtures/tasks/e1_ros2_lifecycle_launch_0003",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_ros2_lifecycle_launch_0003",
+      "injected_failures": [
+        "reordering",
+        "clock_drift"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "4bec7d369201ada149478bd89e751e0d7c12bfc1894ec8fbea40012bb942a2d9",
+      "oracle_path": "fixtures/oracles/e1_ros2_lifecycle_launch_0003.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public ROS 2 documentation and patterns",
+      "required_paths": [
+        "param_resolver.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "3721c5d22395c40a835f3b8e8abfcba7e416a4ba994bbbc839850540ae001ec5",
+      "solution_file_map": {
+        "param_resolver.py": "442e17a8f6a2a79ba267a33a95da2da92c570ee8b89da2b6d35feed11702d882"
+      },
+      "solution_path": "fixtures/solutions/e1_ros2_lifecycle_launch_0003",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "2fc9ac39310713f267eef7778f12325fcac5a564f283d1fd35a7260f41f96c72",
+      "workspace_file_map": {
+        "param_resolver.py": "f4108bb3146a4cf5697321ff6f83ab629f946c92ddcfa1d03eecfdd7da6654fb"
+      }
+    },
+    {
+      "allowed_paths": [
+        "bag_index.py"
+      ],
+      "category": "ros2_lifecycle_launch",
+      "cpu_seconds": 5,
+      "expected_failure_class": "packet_loss",
+      "fixture_path": "fixtures/tasks/e1_ros2_lifecycle_launch_0004",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_ros2_lifecycle_launch_0004",
+      "injected_failures": [
+        "packet_loss"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "1607cb0ecb1726215a6c564b9fc86be7a6ac76be783d9e982d4d05486ff50f01",
+      "oracle_path": "fixtures/oracles/e1_ros2_lifecycle_launch_0004.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public ROS 2 documentation and patterns",
+      "required_paths": [
+        "bag_index.py"
+      ],
+      "risk": "high",
+      "solution_digest": "48fbf109c5e18385c7f2d0e4afe0a6a63b6e713825cf2c81e35d8cb6ad176a00",
+      "solution_file_map": {
+        "bag_index.py": "9a0687d16c69892272c0aeb392c0ce0728e0e675b88746a31cfd876f68b7d1fe"
+      },
+      "solution_path": "fixtures/solutions/e1_ros2_lifecycle_launch_0004",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "c69f56dca0bc07f4d47aadafcf077c2f6691437d8092cf8edd80624c89f0c755",
+      "workspace_file_map": {
+        "bag_index.py": "3d19a0b08d6a59f2a278902a345e6da35106c8393c39a5b3c5fbbf8c0cf1daae"
+      }
+    },
+    {
+      "allowed_paths": [
+        "node_discovery.py"
+      ],
+      "category": "ros2_lifecycle_launch",
+      "cpu_seconds": 5,
+      "expected_failure_class": "clock_drift",
+      "fixture_path": "fixtures/tasks/e1_ros2_lifecycle_launch_0005",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_ros2_lifecycle_launch_0005",
+      "injected_failures": [
+        "clock_drift",
+        "latency"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "1f0e4a597f9f90d4c10f1a4dbacf5239749e662cab3c9865d5571637fa2aa5a8",
+      "oracle_path": "fixtures/oracles/e1_ros2_lifecycle_launch_0005.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public ROS 2 documentation and patterns",
+      "required_paths": [
+        "node_discovery.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "d78ac70b81d32036161738d9bb6796d03d3c28108afa427dafff3227d89f9a48",
+      "solution_file_map": {
+        "node_discovery.py": "80ca889a2adaaa79ec0f86ce23e21c0a234719b8016dd8eb9a5dbc9f0ea95f4b"
+      },
+      "solution_path": "fixtures/solutions/e1_ros2_lifecycle_launch_0005",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "055b138278bb9b516a3654acfa47c470042a5608500c985b0aa2137526ece1ce",
+      "workspace_file_map": {
+        "node_discovery.py": "27683cdac9085b5fc143864edeef0658395b3a5eb890168a647021c050a6a15d"
+      }
+    },
+    {
+      "allowed_paths": [
+        "topic_remap.py"
+      ],
+      "category": "ros2_lifecycle_launch",
+      "cpu_seconds": 5,
+      "expected_failure_class": "device_rejection",
+      "fixture_path": "fixtures/tasks/e1_ros2_lifecycle_launch_0006",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_ros2_lifecycle_launch_0006",
+      "injected_failures": [
+        "device_rejection"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "6bf19a01149d7fe9b902d97732fd1c5b29d4b3b42c8b35ab621ab8fca5d5e1f1",
+      "oracle_path": "fixtures/oracles/e1_ros2_lifecycle_launch_0006.py",
+      "permission": "code_modification",
+      "provenance": "synthetic benchmark asset derived from public ROS 2 documentation and patterns",
+      "required_paths": [
+        "topic_remap.py"
+      ],
+      "risk": "high",
+      "solution_digest": "1722aa6b14bfa5981503a1d50e6c68529d5420505071c0bdfe4f5c8ffb7d3cf9",
+      "solution_file_map": {
+        "topic_remap.py": "c80ca78d3cc8455c8476cc3310575d013c6dfb5dfd88a1ac2a5dd0844f04b710"
+      },
+      "solution_path": "fixtures/solutions/e1_ros2_lifecycle_launch_0006",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "0f87356841497cfdb3f0374d503d7549ba24cf8baea2761c89d4e1ec0fae0142",
+      "workspace_file_map": {
+        "topic_remap.py": "b3d0ced4a3d20a9d4e28c4034233441b172a38d5a9af45f348e939157f4ad91c"
+      }
+    },
+    {
+      "allowed_paths": [
+        "watchdog.py"
+      ],
+      "category": "safety_device_protocol",
+      "cpu_seconds": 5,
+      "expected_failure_class": "watchdog",
+      "fixture_path": "fixtures/tasks/e1_safety_device_protocol_0001",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_safety_device_protocol_0001",
+      "injected_failures": [
+        "watchdog"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "04c4e693973e66e242bf58d3363ef2316a1e07ac942524d7465a1b4dc0ba4445",
+      "oracle_path": "fixtures/oracles/e1_safety_device_protocol_0001.py",
+      "permission": "device_action",
+      "provenance": "synthetic benchmark asset derived from public safety system design patterns",
+      "required_paths": [
+        "watchdog.py"
+      ],
+      "risk": "high",
+      "solution_digest": "ef02c78720367d8d70e3a6c9f3380b4c7ea67dcfe1834845eb0a4c479f7bde18",
+      "solution_file_map": {
+        "watchdog.py": "45c6a95785924a0a574cac55e432076e7cd6eb9b9d232ad7999ccf086da1bb26"
+      },
+      "solution_path": "fixtures/solutions/e1_safety_device_protocol_0001",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "a4e8dda59c0b106a8809084e8620412f6ccc30c7435e7bd064f5b4befb74faf3",
+      "workspace_file_map": {
+        "watchdog.py": "b955163c528283c418740c393401fb77d65d1592f70511d070ccfc951f1ff788"
+      }
+    },
+    {
+      "allowed_paths": [
+        "safe_stop.py"
+      ],
+      "category": "safety_device_protocol",
+      "cpu_seconds": 5,
+      "expected_failure_class": "reordering",
+      "fixture_path": "fixtures/tasks/e1_safety_device_protocol_0002",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_safety_device_protocol_0002",
+      "injected_failures": [
+        "reordering"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "7f2d817ee7979fdb6e17a783ff71a78ac91c03b4e37ef6f2c53657fbeddfc754",
+      "oracle_path": "fixtures/oracles/e1_safety_device_protocol_0002.py",
+      "permission": "device_action",
+      "provenance": "synthetic benchmark asset derived from public safety system design patterns",
+      "required_paths": [
+        "safe_stop.py"
+      ],
+      "risk": "high",
+      "solution_digest": "f5ef56cf4563d5d71069680957519880292936e18246a6b05d940f56e5f0f031",
+      "solution_file_map": {
+        "safe_stop.py": "d0183d9ebd6b6d034e8313d58e6a8b042e8885e13b86661eb874f82bf0919425"
+      },
+      "solution_path": "fixtures/solutions/e1_safety_device_protocol_0002",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "9e69d12d2f080c8ba8d65def9c8cc033415fb3fc2e12298c762da82da9cd517a",
+      "workspace_file_map": {
+        "safe_stop.py": "93ab8e452a783fc1f349d0108063a7cdf497cedf538bf88c43fdf9e7959bef97"
+      }
+    },
+    {
+      "allowed_paths": [
+        "attestation.py"
+      ],
+      "category": "safety_device_protocol",
+      "cpu_seconds": 5,
+      "expected_failure_class": "endianness",
+      "fixture_path": "fixtures/tasks/e1_safety_device_protocol_0003",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_safety_device_protocol_0003",
+      "injected_failures": [
+        "endianness"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "d40e813b32e16a73b082d5acc7d21fcb168a4f5feebec0135182a4d7ed97e286",
+      "oracle_path": "fixtures/oracles/e1_safety_device_protocol_0003.py",
+      "permission": "device_action",
+      "provenance": "synthetic benchmark asset derived from public safety system design patterns",
+      "required_paths": [
+        "attestation.py"
+      ],
+      "risk": "high",
+      "solution_digest": "5571aae61263f110a132f32123f702450638c8affbf52ec247a22237c50132b9",
+      "solution_file_map": {
+        "attestation.py": "9bd192abca05d3e974a1f8b0bd5466c5fe05353aa0df571061db8bb28e3e57c9"
+      },
+      "solution_path": "fixtures/solutions/e1_safety_device_protocol_0003",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "70ff45146d94514b9e4c0ea1b0e85b57e52840d325c101ab4f3ffd1677128bde",
+      "workspace_file_map": {
+        "attestation.py": "9d3c9cd4fcc3f64d5cbfa2386bacd07fe2d835bc5934e13f737b941fc61458e5"
+      }
+    },
+    {
+      "allowed_paths": [
+        "ts_align.py"
+      ],
+      "category": "sensing_logs",
+      "cpu_seconds": 5,
+      "expected_failure_class": "clock_drift",
+      "fixture_path": "fixtures/tasks/e1_sensing_logs_0001",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_sensing_logs_0001",
+      "injected_failures": [
+        "clock_drift"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "5e3842f9bced2aa7f61c6ba01a2e1eb83d3b32f5edb907ae21039f77361f22ee",
+      "oracle_path": "fixtures/oracles/e1_sensing_logs_0001.py",
+      "permission": "read_only",
+      "provenance": "synthetic benchmark asset derived from public sensor data processing patterns",
+      "required_paths": [
+        "ts_align.py"
+      ],
+      "risk": "high",
+      "solution_digest": "13def64c6ce74b4e7d10d62efd968fef62c8daba824e05af4d1847a57a8e4ec8",
+      "solution_file_map": {
+        "ts_align.py": "c140b7f03e90bbbc515b2d0ad1109bc41b9e723d8fc706efa1c1b3b95d917580"
+      },
+      "solution_path": "fixtures/solutions/e1_sensing_logs_0001",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "320006cb4c02ad4c4059906757cb42f465d280b4a2d49f50066ebe2146ae6fd2",
+      "workspace_file_map": {
+        "ts_align.py": "b7aabc265100aa8b0b9d1d286631e0566bcd10c83f836b27c2690282e962808a"
+      }
+    },
+    {
+      "allowed_paths": [
+        "drop_detect.py"
+      ],
+      "category": "sensing_logs",
+      "cpu_seconds": 5,
+      "expected_failure_class": "packet_loss",
+      "fixture_path": "fixtures/tasks/e1_sensing_logs_0002",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_sensing_logs_0002",
+      "injected_failures": [
+        "packet_loss"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "14d118e29e548c3cde8e89cd694dd1f31c2383a5ca4d02134b74dfdaf1b3d9f9",
+      "oracle_path": "fixtures/oracles/e1_sensing_logs_0002.py",
+      "permission": "read_only",
+      "provenance": "synthetic benchmark asset derived from public sensor data processing patterns",
+      "required_paths": [
+        "drop_detect.py"
+      ],
+      "risk": "medium",
+      "solution_digest": "96f2c9be4b81e53393d7dac915b541d05eef51b02c4afb0f51a19d52af8ca4d7",
+      "solution_file_map": {
+        "drop_detect.py": "a202aa1fc38b989bf33eb9f59b14315894b06956941f79b01a4ef46886e505b8"
+      },
+      "solution_path": "fixtures/solutions/e1_sensing_logs_0002",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "9bb4763910e6e773e6ea3bb68e63d825b4fecbac177963ebe88997c831fabba3",
+      "workspace_file_map": {
+        "drop_detect.py": "b1bc51e2309a2bb68f1bb9e15dd1cacd42ad9edd4d575af5497f6b515dbb3189"
+      }
+    },
+    {
+      "allowed_paths": [
+        "csv_stats.py"
+      ],
+      "category": "sensing_logs",
+      "cpu_seconds": 5,
+      "expected_failure_class": "reordering",
+      "fixture_path": "fixtures/tasks/e1_sensing_logs_0003",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_sensing_logs_0003",
+      "injected_failures": [
+        "reordering"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "f42a6c8bd9fad8466a050ef2ef6085c512349a395f21d32de23866d612a66920",
+      "oracle_path": "fixtures/oracles/e1_sensing_logs_0003.py",
+      "permission": "read_only",
+      "provenance": "synthetic benchmark asset derived from public sensor data processing patterns",
+      "required_paths": [
+        "csv_stats.py"
+      ],
+      "risk": "low",
+      "solution_digest": "729e5ecc19db11d473b027d1a7493dd82cb31801afb4c9afa1077ca77549ff2c",
+      "solution_file_map": {
+        "csv_stats.py": "c040fd22f970c3a64cb3175fc1022dd5e9f4eab0b1069ec68058c3cf5c1492a2"
+      },
+      "solution_path": "fixtures/solutions/e1_sensing_logs_0003",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "ea981ecf5ce7e81eeae121a8e1b32ba669305afa9206ae18fef2a169d265d7bd",
+      "workspace_file_map": {
+        "csv_stats.py": "e5744113d3f1495afc86fc99d4aa9bcbcfdae69db800eb8caafba751aa356a61"
+      }
+    },
+    {
+      "allowed_paths": [
+        "log_diag.py"
+      ],
+      "category": "sensing_logs",
+      "cpu_seconds": 5,
+      "expected_failure_class": "device_rejection",
+      "fixture_path": "fixtures/tasks/e1_sensing_logs_0004",
+      "forbidden_paths": [
+        "__pycache__",
+        "oracle.py"
+      ],
+      "id": "e1_sensing_logs_0004",
+      "injected_failures": [
+        "device_rejection"
+      ],
+      "license": "MIT (synthetic)",
+      "memory_mb": 256,
+      "network": "deny-all",
+      "oracle_digest": "b35627fdc57144c485125e8ec56d9ae97c6f3a86961a7813d52c292b6317e2cd",
+      "oracle_path": "fixtures/oracles/e1_sensing_logs_0004.py",
+      "permission": "read_only",
+      "provenance": "synthetic benchmark asset derived from public sensor data processing patterns",
+      "required_paths": [
+        "log_diag.py"
+      ],
+      "risk": "high",
+      "solution_digest": "8d93317092f7cd6d2513010445b5cd7153a0eca4a052dd6723087015faea1569",
+      "solution_file_map": {
+        "log_diag.py": "36a417ae2265ad95e349241ccaee71c3e5efe5d9626dff7cd5ecb258e2ccea4f"
+      },
+      "solution_path": "fixtures/solutions/e1_sensing_logs_0004",
+      "source_kind": "python",
+      "timeout": 60,
+      "workspace_digest": "36827aedd1c8055ab46f07e1d373e77555c4ff711efe9f2b0aca68e3b989b99a",
+      "workspace_file_map": {
+        "log_diag.py": "6e91bab826628eb88792c43dba7e4b3a27d73f90a8f6feba0b94d37e0f65789a"
+      }
+    }
+  ]
+}

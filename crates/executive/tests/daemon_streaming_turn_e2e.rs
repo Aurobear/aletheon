@@ -25,6 +25,7 @@ fn request(process_id: fabric::ProcessId, thread: &str) -> TurnRequest {
         process_id,
         context: turn_request_support::context(thread, std::env::temp_dir()),
         input: "hello daemon".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),

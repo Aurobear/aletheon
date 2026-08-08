@@ -109,6 +109,8 @@ pub struct CapabilityExecutionContext {
     pub connection_id: fabric::ConnectionId,
     pub thread_id: fabric::ThreadId,
     pub turn_id: fabric::TurnId,
+    /// Host-authenticated per-turn target. Model input cannot author this value.
+    pub execution_target: fabric::ExecutionTargetSelection,
     pub workspace: fabric::WorkspacePolicy,
     pub permission_mode: fabric::permission::HostPermissionMode,
     pub session_id: String,
@@ -561,6 +563,7 @@ pub struct RegistryAuthorityProvider {
     cancel: CancellationToken,
     turn_event_sender: Option<fabric::ipc::TurnEventSender>,
     permission_mode: fabric::permission::HostPermissionMode,
+    execution_target: fabric::ExecutionTargetSelection,
 }
 
 impl RegistryAuthorityProvider {
@@ -591,6 +594,7 @@ impl RegistryAuthorityProvider {
             cancel,
             turn_event_sender: None,
             permission_mode: fabric::permission::HostPermissionMode::Safe,
+            execution_target: fabric::ExecutionTargetSelection::default(),
         }
     }
 
@@ -611,6 +615,54 @@ impl RegistryAuthorityProvider {
         self.permission_mode = permission_mode;
         self
     }
+
+    pub fn with_execution_target(
+        mut self,
+        execution_target: fabric::ExecutionTargetSelection,
+    ) -> Self {
+        self.execution_target = execution_target;
+        self
+    }
+}
+
+fn validate_robot_tool_target(
+    call: &CapabilityCall,
+    selection: &fabric::ExecutionTargetSelection,
+) -> Result<()> {
+    #[derive(Deserialize)]
+    struct RobotToolTargetInput {
+        #[serde(default)]
+        device: Option<String>,
+    }
+
+    if !call.name.starts_with("robot_") {
+        return Ok(());
+    }
+    selection.validate().map_err(anyhow::Error::msg)?;
+    let fabric::ExecutionTarget::Robot { device_id, .. } = &selection.target else {
+        if matches!(
+            call.name.as_str(),
+            "robot_execute_skill" | "robot_cancel" | "robot_safe_stop"
+        ) {
+            anyhow::bail!(
+                "execution_target_required: robot actuation capability '{}' requires an explicit Robot target",
+                call.name
+            );
+        }
+        return Ok(());
+    };
+    let input = serde_json::from_value::<RobotToolTargetInput>(call.input.clone())
+        .map_err(|error| anyhow!("invalid robot capability target input: {error}"))?;
+    if let Some(requested_device) = input.device {
+        anyhow::ensure!(
+            requested_device == device_id.0,
+            "execution_target_mismatch: robot capability '{}' requested device '{}' but the turn is bound to '{}'",
+            call.name,
+            requested_device,
+            device_id.0
+        );
+    }
+    Ok(())
 }
 
 fn requested_scope_for_call(
@@ -692,6 +744,7 @@ fn requested_scope_for_call(
 #[async_trait]
 impl TurnAuthorityProvider for RegistryAuthorityProvider {
     async fn authorize(&self, call: &CapabilityCall) -> Result<AuthorizedInvocation> {
+        validate_robot_tool_target(call, &self.execution_target)?;
         let risk = *self
             .risk_by_tool
             .get(&call.name)
@@ -776,6 +829,51 @@ mod filesystem_scope_tests {
         assert!(!scope
             .allowed_paths
             .contains(&external_root.path().to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn general_target_cannot_authorize_robot_actuation_from_prompt_text() {
+        let execute = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: "robot_execute_skill".into(),
+            input: serde_json::json!({"device":"robot-1","skill":"move"}),
+            call_id: "robot-general".into(),
+            deadline: None,
+        };
+        let error =
+            validate_robot_tool_target(&execute, &fabric::ExecutionTargetSelection::default())
+                .unwrap_err();
+        assert!(error.to_string().contains("execution_target_required"));
+
+        let mut observe = execute.clone();
+        observe.name = "robot_observe".into();
+        assert!(
+            validate_robot_tool_target(&observe, &fabric::ExecutionTargetSelection::default())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn explicit_robot_target_enforces_exact_device_binding() {
+        let target = fabric::ExecutionTargetSelection::robot(
+            "robot-1",
+            fabric::types::embodiment::ExecutionEnvironment::Simulation,
+            fabric::ExecutionTargetSource::TrustedClient,
+        )
+        .unwrap();
+        let mut call = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: "robot_execute_skill".into(),
+            input: serde_json::json!({"device":"robot-1","skill":"move"}),
+            call_id: "robot-explicit".into(),
+            deadline: None,
+        };
+        assert!(validate_robot_tool_target(&call, &target).is_ok());
+        call.input["device"] = serde_json::json!("robot-2");
+        let error = validate_robot_tool_target(&call, &target).unwrap_err();
+        assert!(error.to_string().contains("execution_target_mismatch"));
     }
 
     #[test]

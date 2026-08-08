@@ -238,6 +238,17 @@ impl DaemonChannelTurnExecutor {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct LegacyTurnRpcResponse {
+    result: Option<crate::application::command_dispatcher::PromptCompletion>,
+    error: Option<LegacyTurnRpcError>,
+}
+
+#[derive(serde::Deserialize)]
+struct LegacyTurnRpcError {
+    message: String,
+}
+
 #[async_trait::async_trait]
 impl CommandUseCases for DaemonChannelTurnExecutor {
     async fn submit_prompt(
@@ -252,7 +263,7 @@ impl CommandUseCases for DaemonChannelTurnExecutor {
         );
         let resp = self
             .orchestrator
-            .execute_turn(
+            .execute_turn_targeted(
                 serde_json::Value::String(intent.correlation_id.clone()),
                 &prompt.content,
                 fabric::PrincipalContext::new(
@@ -277,26 +288,25 @@ impl CommandUseCases for DaemonChannelTurnExecutor {
                 ),
                 prompt.requirements.clone(),
                 prompt.task_kind,
+                prompt.execution_target.clone(),
                 None,
             )
             .await;
 
-        // Success shape:
-        //   {"jsonrpc": "2.0", "id": ..., "result": {"response": "...", "turn": N}}
-        // Error shape:
-        //   {"jsonrpc": "2.0", "id": ..., "error": {"code": ..., "message": "..."}}
-        if let Some(err) = resp.get("error") {
-            let msg = err
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown turn error");
-            anyhow::bail!("turn failed: {msg}");
+        // Sole legacy JSON-RPC adapter for the in-process orchestrator. Decode
+        // once into a typed response; no application code dynamically indexes
+        // the wire shape after this boundary.
+        let response: LegacyTurnRpcResponse = serde_json::from_value(resp)?;
+        if let Some(error) = response.error {
+            anyhow::bail!("turn failed: {}", error.message);
         }
-
-        Ok(CommandOutput::PromptCompleted {
-            correlation_id: intent.correlation_id.clone(),
-            result: resp.get("result").cloned().unwrap_or_default(),
-        })
+        let completion = response
+            .result
+            .ok_or_else(|| anyhow::anyhow!("turn response omitted both result and error"))?;
+        Ok(CommandOutput::new(
+            intent.correlation_id.clone(),
+            fabric::contract::command::CommandOutputV1::PromptCompleted(completion),
+        ))
     }
 
     async fn execute_shell(
@@ -318,6 +328,7 @@ impl CommandUseCases for DaemonChannelTurnExecutor {
                 }],
                 task_kind: None,
                 permission_mode: shell.permission_mode,
+                execution_target: fabric::ExecutionTargetSelection::default(),
             },
         )
         .await
@@ -338,17 +349,19 @@ impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
         let output = CommandDispatcher::new(Arc::new(self.clone()))
             .dispatch(intent.clone())
             .await?;
-        match output {
-            CommandOutput::PromptCompleted { result, .. } => Ok(result
-                .get("response")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_owned()),
-            CommandOutput::PromptAccepted { .. } => Ok(String::new()),
-            CommandOutput::Status { .. } | CommandOutput::StatusProjected { .. } => {
+        output.validate()?;
+        match output.output {
+            fabric::contract::command::CommandOutputV1::PromptCompleted(completion) => {
+                Ok(completion.response)
+            }
+            fabric::contract::command::CommandOutputV1::PromptAccepted => Ok(String::new()),
+            fabric::contract::command::CommandOutputV1::Status(_)
+            | fabric::contract::command::CommandOutputV1::StatusProjected(_) => {
                 anyhow::bail!("channel turn executor received a non-prompt command")
             }
-            CommandOutput::Rejected { message, .. } => anyhow::bail!(message),
+            fabric::contract::command::CommandOutputV1::Rejected(rejection) => {
+                anyhow::bail!(rejection.message)
+            }
         }
     }
 }

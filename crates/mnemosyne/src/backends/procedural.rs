@@ -182,17 +182,16 @@ impl MemoryBackend for ProceduralMemory {
 
             if let Some(ref text) = query.text {
                 sql += &format!(
-                    " AND (pe.skill_name LIKE ?{idx} OR pe.description LIKE ?{idx} OR CAST(m.content AS TEXT) LIKE ?{idx})",
-                    idx = param_idx
+                    " AND (pe.skill_name LIKE ?{param_idx} OR pe.description LIKE ?{param_idx} OR CAST(m.content AS TEXT) LIKE ?{param_idx})"
                 );
-                param_values.push(Box::new(format!("%{}%", text)));
+                param_values.push(Box::new(format!("%{text}%")));
                 param_idx += 1;
             }
 
             if let Some(ref tags) = query.tags {
                 for tag in tags {
-                    sql += &format!(" AND m.tags LIKE ?{idx}", idx = param_idx);
-                    param_values.push(Box::new(format!("%{}%", tag)));
+                    sql += &format!(" AND m.tags LIKE ?{param_idx}");
+                    param_values.push(Box::new(format!("%{tag}%")));
                     param_idx += 1;
                 }
             }
@@ -200,7 +199,7 @@ impl MemoryBackend for ProceduralMemory {
             // Fetch without ORDER BY — activation sort happens in Rust.
             // If a limit is set, fetch 2x to give re-ranking room.
             if query.limit > 0 {
-                sql += &format!(" LIMIT ?{idx}", idx = param_idx);
+                sql += &format!(" LIMIT ?{param_idx}");
                 param_values.push(Box::new((query.limit as i64) * 2));
             }
 
@@ -259,8 +258,8 @@ impl MemoryBackend for ProceduralMemory {
 
             if let Some(ref tags) = filter.tags {
                 for tag in tags {
-                    sql += &format!(" AND tags LIKE ?{idx}", idx = param_idx);
-                    param_values.push(Box::new(format!("%{}%", tag)));
+                    sql += &format!(" AND tags LIKE ?{param_idx}");
+                    param_values.push(Box::new(format!("%{tag}%")));
                     param_idx += 1;
                 }
             }
@@ -268,7 +267,7 @@ impl MemoryBackend for ProceduralMemory {
             sql += " ORDER BY importance DESC";
 
             if filter.limit > 0 {
-                sql += &format!(" LIMIT ?{idx}", idx = param_idx);
+                sql += &format!(" LIMIT ?{param_idx}");
                 param_values.push(Box::new(filter.limit as i64));
             }
 

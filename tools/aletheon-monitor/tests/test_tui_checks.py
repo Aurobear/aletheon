@@ -46,6 +46,11 @@ def test_dup_render_ignores_repeated_empty_ratatui_split_rows():
     assert check_dup_render(frame, min_block=3) == []
 
 
+def test_dup_render_ignores_vim_style_pager_filler_rows():
+    frame = "Context diagnostics\n~\n~\n~\n~\n~\n~\n100% q close"
+    assert check_dup_render(frame, min_block=3) == []
+
+
 import os
 from src.tui_checks import (
     check_raw_markdown,

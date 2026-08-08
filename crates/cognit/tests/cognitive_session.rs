@@ -40,6 +40,7 @@ fn request(input: &str) -> TurnRequest {
             fabric::ApprovalPolicy::OnRequest,
         ),
         input: input.into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),

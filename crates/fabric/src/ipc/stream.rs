@@ -322,7 +322,7 @@ pub enum TurnEventV1 {
 /// underlying mpsc channel.
 #[derive(Debug, Clone)]
 pub struct TurnEventSender {
-    tx: mpsc::Sender<crate::ipc::envelope_v2::EnvelopeV2>,
+    tx: mpsc::UnboundedSender<crate::ipc::envelope_v2::EnvelopeV2>,
 }
 
 impl TurnEventSender {
@@ -337,37 +337,43 @@ impl TurnEventSender {
             crate::types::process::NamespaceId("turn-events".into()),
             payload,
         );
-        self.tx.try_send(envelope).map_err(|error| match error {
-            mpsc::error::TrySendError::Full(_) => StreamSendError::Overflow,
-            mpsc::error::TrySendError::Closed(_) => StreamSendError::ReceiverClosed,
-        })
+        self.tx
+            .send(envelope)
+            .map_err(|_| StreamSendError::ReceiverClosed)
     }
 }
 
 /// Receiver half of a `TurnEventStream`.
 ///
-/// Wraps a `BoundedStream<EnvelopeV2>` and performs schema validation and
+/// Owns the lossless per-turn event queue and performs schema validation and
 /// deserialization on every received envelope.
+///
+/// The cognitive event sink is synchronous, so a bounded Tokio sender cannot
+/// wait for capacity without blocking an async runtime worker.  The previous
+/// `try_send` implementation silently lost authoritative tool results and
+/// terminal events when the queue filled.  Backpressure and coalescing belong
+/// at the high-volume producer boundary; this canonical lifecycle spine must
+/// preserve every accepted event until the receiver closes.
 pub struct TurnEventStream {
-    inner: BoundedStream<crate::ipc::envelope_v2::EnvelopeV2>,
+    rx: mpsc::UnboundedReceiver<crate::ipc::envelope_v2::EnvelopeV2>,
 }
 
 impl TurnEventStream {
     /// Create a new `TurnEventStream` and its paired `TurnEventSender`.
     pub fn new(config: StreamConfig) -> (Self, TurnEventSender) {
-        let spec = StreamSpec {
-            capacity: config.capacity,
-            overflow: config.overflow,
-            cancel: CancellationToken::new(),
-        };
-        let inner = BoundedStream::<crate::ipc::envelope_v2::EnvelopeV2>::new(spec);
-        let tx = inner.sender();
-        (Self { inner }, TurnEventSender { tx })
+        debug_assert!(config.capacity > 0, "turn event capacity must be non-zero");
+        debug_assert_eq!(
+            config.overflow,
+            OverflowPolicy::BlockProducer,
+            "canonical turn events require lossless delivery"
+        );
+        let (tx, rx) = mpsc::unbounded_channel();
+        (Self { rx }, TurnEventSender { tx })
     }
 
     /// Receive the next event, validating the schema and deserializing the payload.
     pub async fn recv(&mut self) -> Result<TurnEventV1, SchemaRejection> {
-        let envelope = self.inner.recv().await.ok_or_else(|| SchemaRejection {
+        let envelope = self.rx.recv().await.ok_or_else(|| SchemaRejection {
             expected: TURN_EVENT_SCHEMA.to_string(),
             actual: "stream closed".to_string(),
             payload_preview: String::new(),
@@ -378,7 +384,7 @@ impl TurnEventStream {
 
     /// Non-blocking receive of the next event.
     pub fn try_recv(&mut self) -> Option<Result<TurnEventV1, SchemaRejection>> {
-        self.inner.try_recv().map(Self::decode_envelope)
+        self.rx.try_recv().ok().map(Self::decode_envelope)
     }
 
     fn decode_envelope(
@@ -460,5 +466,36 @@ mod tests {
                 && operation == "update"
                 && error == "hunk did not match"
         ));
+    }
+
+    #[tokio::test]
+    async fn canonical_turn_stream_never_drops_authoritative_events_at_capacity() {
+        let (mut stream, sender) = TurnEventStream::new(StreamConfig::turn_events(1));
+
+        for index in 0..128 {
+            sender
+                .send(&TurnEventV1::ToolResult {
+                    name: "file_read".into(),
+                    call_id: format!("call-{index}"),
+                    content: format!("result-{index}"),
+                    is_error: false,
+                    execution_time_ms: 1,
+                    patch_delta: None,
+                })
+                .expect("an open canonical stream must accept every terminal event");
+        }
+
+        for index in 0..128 {
+            assert!(matches!(
+                stream.recv().await.unwrap(),
+                TurnEventV1::ToolResult {
+                    call_id,
+                    content,
+                    ..
+                } if call_id == format!("call-{index}")
+                    && content == format!("result-{index}")
+            ));
+        }
+        assert!(stream.try_recv().is_none());
     }
 }

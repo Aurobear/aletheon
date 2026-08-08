@@ -303,6 +303,7 @@ fn turn_request() -> TurnRequest {
         process_id: ProcessId::new(),
         context,
         input: "stand and stay stable".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: vec![],

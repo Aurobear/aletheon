@@ -508,6 +508,104 @@ impl SessionService {
         .await
     }
 
+    /// Persist the authoritative per-turn budget and any preflight compaction
+    /// evidence before inference starts, so a concurrent status read observes
+    /// the same snapshot used by context assembly.
+    pub async fn persist_turn_start_budget(
+        &self,
+        session_id: &SessionId,
+        turn_id: TurnId,
+        projection: fabric::ContextBudgetProjection,
+        compactions: Vec<fabric::ContextCompactionProjection>,
+    ) -> Result<usize> {
+        let items = self.items(session_id).await?;
+        let existing_budgets = items
+            .iter()
+            .filter_map(|item| match &item.payload {
+                ItemPayload::ContextBudgetProjection { projection } if item.turn_id == turn_id => {
+                    Some(projection.as_ref())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            existing_budgets.len() <= 1,
+            "turn has duplicate context budget projections"
+        );
+        if let Some(existing) = existing_budgets.first() {
+            anyhow::ensure!(
+                *existing == &projection,
+                "turn already has a different context budget projection"
+            );
+        }
+        let existing_compactions = items
+            .iter()
+            .filter_map(|item| match &item.payload {
+                ItemPayload::ContextCompactionProjection { projection }
+                    if item.turn_id == turn_id =>
+                {
+                    Some(projection.as_ref())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            existing_compactions.len() <= compactions.len(),
+            "turn has more context compaction projections than the retry"
+        );
+        anyhow::ensure!(
+            existing_compactions
+                .iter()
+                .zip(&compactions)
+                .all(|(existing, expected)| *existing == expected),
+            "turn already has different context compaction projections"
+        );
+        anyhow::ensure!(
+            !existing_budgets.is_empty() || existing_compactions.is_empty(),
+            "turn has context compaction evidence without its budget projection"
+        );
+
+        let mut sequence = items.last().map_or(1, |item| item.sequence + 1);
+        let mut created_at_ms = items
+            .last()
+            .map_or(0, |item| item.created_at_ms.saturating_add(1));
+        let mut payloads = Vec::with_capacity(1 + compactions.len());
+        if existing_budgets.is_empty() {
+            payloads.push(ItemPayload::ContextBudgetProjection {
+                projection: Box::new(projection),
+            });
+        }
+        payloads.extend(
+            compactions
+                .into_iter()
+                .skip(existing_compactions.len())
+                .map(|projection| ItemPayload::ContextCompactionProjection {
+                    projection: Box::new(projection),
+                }),
+        );
+        let count = payloads.len();
+        for payload in payloads {
+            self.store
+                .append(
+                    session_id,
+                    sequence,
+                    ItemRecord {
+                        schema_version: SESSION_SCHEMA_VERSION,
+                        id: ItemId::new(),
+                        session_id: session_id.clone(),
+                        turn_id,
+                        sequence,
+                        created_at_ms,
+                        payload,
+                    },
+                )
+                .await?;
+            sequence = sequence.saturating_add(1);
+            created_at_ms = created_at_ms.saturating_add(1);
+        }
+        Ok(count)
+    }
+
     /// Persist Host-authored Task projection inputs in the canonical Session
     /// history. The item participates in the same expected-sequence and
     /// idempotency rules as every other durable Session fact.
@@ -657,7 +755,7 @@ impl SessionService {
         let Some(active) = active else {
             return Ok(InterruptOutcome::AlreadyTerminal);
         };
-        active.cancel.cancel();
+        active.cancel(fabric::CancelReason::User);
         interrupted.insert(session_id.0.clone());
         Ok(InterruptOutcome::Interrupted)
     }
@@ -670,6 +768,7 @@ fn legacy_message_payloads(message: &Message) -> Vec<ItemPayload> {
             ContentBlock::Text { text } => match message.role {
                 Role::User => ItemPayload::UserMessage {
                     content: text.clone(),
+                    execution_target: fabric::ExecutionTargetSelection::default(),
                 },
                 Role::Assistant => ItemPayload::AssistantMessage {
                     content: text.clone(),
@@ -713,6 +812,192 @@ mod tests {
             crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
                 .unwrap(),
         ))
+    }
+
+    fn test_budget_projection() -> fabric::ContextBudgetProjection {
+        let agent_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::AgentRuntime,
+            "current Agent rollout scope",
+        );
+        fabric::ContextBudgetProjection {
+            model_spec: "deepseek/deepseek-v4-flash[1m]".into(),
+            model_context_tokens: 1_000_000.into(),
+            profile_input_limit_tokens: 1_000_000.into(),
+            reserved_output_tokens: 16_384.into(),
+            system_and_skill_tokens: 10_000.into(),
+            tool_schema_tokens: 8_000.into(),
+            pending_input_tokens: 1_000.into(),
+            safety_margin_tokens: 50_000.into(),
+            current_history_tokens: 83_000.into(),
+            admissible_history_tokens: 915_616.into(),
+            compaction_threshold_tokens: 801_164.into(),
+            model_source: fabric::ContextBudgetSource::new(
+                fabric::ContextBudgetSourceKind::RuntimeModelCapability,
+                "deepseek/deepseek-v4-flash[1m]",
+            ),
+            profile_source: fabric::ContextBudgetSource::new(
+                fabric::ContextBudgetSourceKind::ActiveAgentProfile,
+                "general",
+            ),
+            history_source: fabric::ContextBudgetSource::new(
+                fabric::ContextBudgetSourceKind::ContextBudgetPlanner,
+                "ContextBudgetPlanner",
+            ),
+            rollout: fabric::RolloutBudgetProjection {
+                root_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                    source: agent_source.clone(),
+                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                },
+                child_limit_tokens: fabric::RolloutBudgetValue::Known {
+                    value: 200_000.into(),
+                    source: fabric::ContextBudgetSource::new(
+                        fabric::ContextBudgetSourceKind::EffectiveAdmissionConfig,
+                        "agent.admission.max_child_tokens",
+                    ),
+                },
+                current_agent_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                    source: agent_source,
+                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                },
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn turn_start_budget_is_durable_visible_and_idempotent_before_terminal_items() {
+        let store = test_store();
+        let session_id = SessionId("turn-start-budget".into());
+        let turn_id = TurnId::new();
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 1,
+                status: SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        store
+            .append(
+                &session_id,
+                1,
+                ItemRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: ItemId::new(),
+                    session_id: session_id.clone(),
+                    turn_id,
+                    sequence: 1,
+                    created_at_ms: 1,
+                    payload: ItemPayload::UserMessage {
+                        content: "inspect".into(),
+                        execution_target: fabric::ExecutionTargetSelection::default(),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let service = SessionService::new(store, Arc::new(Mutex::new(Default::default())));
+        let projection = test_budget_projection();
+        let compaction = fabric::ContextCompactionProjection {
+            mode: fabric::ContextCompactionMode::Preflight,
+            trigger_threshold_tokens: projection.admissible_history_tokens,
+            tokens_before: 930_000.into(),
+            tokens_after: 80_000.into(),
+            budget_snapshot: projection.clone(),
+        };
+
+        assert_eq!(
+            service
+                .persist_turn_start_budget(
+                    &session_id,
+                    turn_id,
+                    projection.clone(),
+                    vec![compaction.clone()],
+                )
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            service
+                .persist_turn_start_budget(&session_id, turn_id, projection, vec![compaction],)
+                .await
+                .unwrap(),
+            0
+        );
+        let snapshot = service.protocol_read_snapshot(&session_id).await.unwrap();
+        assert_eq!(snapshot.items.len(), 3);
+        let budget = snapshot.tasks[0]
+            .runtime_facts
+            .as_ref()
+            .and_then(|facts| facts.context_budget.as_deref())
+            .expect("turn-start status budget");
+        assert_eq!(budget.model_context_tokens.get(), 1_000_000);
+    }
+
+    #[tokio::test]
+    async fn turn_start_budget_retry_completes_a_partially_persisted_compaction_prefix() {
+        let store = test_store();
+        let session_id = SessionId("turn-start-budget-partial".into());
+        let turn_id = TurnId::new();
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 1,
+                status: SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let projection = test_budget_projection();
+        store
+            .append(
+                &session_id,
+                1,
+                ItemRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: ItemId::new(),
+                    session_id: session_id.clone(),
+                    turn_id,
+                    sequence: 1,
+                    created_at_ms: 1,
+                    payload: ItemPayload::ContextBudgetProjection {
+                        projection: Box::new(projection.clone()),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let compaction = fabric::ContextCompactionProjection {
+            mode: fabric::ContextCompactionMode::Preflight,
+            trigger_threshold_tokens: projection.admissible_history_tokens,
+            tokens_before: 930_000.into(),
+            tokens_after: 80_000.into(),
+            budget_snapshot: projection.clone(),
+        };
+        let service = SessionService::new(store, Arc::new(Mutex::new(Default::default())));
+
+        assert_eq!(
+            service
+                .persist_turn_start_budget(
+                    &session_id,
+                    turn_id,
+                    projection,
+                    vec![compaction.clone()],
+                )
+                .await
+                .unwrap(),
+            1
+        );
+        let items = service.items(&session_id).await.unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(
+            &items[1].payload,
+            ItemPayload::ContextCompactionProjection { projection }
+                if projection.as_ref() == &compaction
+        ));
     }
 
     #[test]

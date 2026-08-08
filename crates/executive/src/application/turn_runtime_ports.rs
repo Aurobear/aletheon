@@ -36,7 +36,14 @@ pub trait SelfPolicyPort: Send + Sync {
 #[async_trait]
 pub trait TurnSessionStatePort: Send + Sync {
     async fn current(&self, session_id: &str) -> anyhow::Result<(String, usize)>;
-    async fn begin_user(&self, session_id: &str, message: &str) -> anyhow::Result<BeginUserResult>;
+    async fn begin_user(
+        &self,
+        session_id: &str,
+        message: &str,
+        model: Arc<dyn LlmProvider>,
+        profile: ResolvedTurnProfile,
+        context_costs: TurnContextBudgetCosts,
+    ) -> anyhow::Result<BeginUserResult>;
     async fn finish(
         &self,
         session_id: &str,
@@ -44,16 +51,41 @@ pub trait TurnSessionStatePort: Send + Sync {
         tool_calls: &[(String, String, serde_json::Value)],
         tool_results: &[(String, String, bool)],
         output: &str,
-    ) -> anyhow::Result<usize>;
+        model: Arc<dyn LlmProvider>,
+        profile: ResolvedTurnProfile,
+        context_costs: TurnContextBudgetCosts,
+    ) -> anyhow::Result<FinishUserResult>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnContextBudgetCosts {
+    pub system_and_skill_tokens: fabric::ContextCostTokens,
+    pub pending_input_tokens: fabric::HistoryTokens,
+}
+
+impl TurnContextBudgetCosts {
+    pub const fn without_pending_input(self) -> Self {
+        Self {
+            system_and_skill_tokens: self.system_and_skill_tokens,
+            pending_input_tokens: fabric::HistoryTokens::new(0),
+        }
+    }
 }
 
 pub struct BeginUserResult {
     pub session_id: String,
     pub turn_count: usize,
-    pub history_budget_tokens: usize,
+    pub history_budget_tokens: fabric::HistoryBudgetTokens,
+    pub context_budget: fabric::ContextBudgetProjection,
+    pub compactions: Vec<fabric::ContextCompactionProjection>,
     /// Monotonic process-local version of deliberate history compaction or
     /// rewrite for this canonical Session projection.
     pub rewrite_version: u64,
+}
+
+pub struct FinishUserResult {
+    pub turn_count: usize,
+    pub compactions: Vec<fabric::ContextCompactionProjection>,
 }
 
 #[async_trait]
@@ -78,6 +110,9 @@ pub struct ResolvedTurnProfile {
     pub max_iterations: usize,
     pub max_input_tokens: u64,
     pub max_output_tokens: u64,
+    /// Exact serialized tool-schema estimate resolved with this immutable
+    /// profile snapshot. It must not be read from mutable active-profile state.
+    pub tool_schema_tokens: fabric::ContextCostTokens,
     pub max_tool_calls: u32,
     pub max_elapsed_ms: u64,
     pub approval_policy: fabric::AgentApprovalPolicy,
@@ -87,15 +122,6 @@ pub struct ResolvedTurnProfile {
 #[async_trait]
 pub trait ActiveAgentProfilePort: Send + Sync {
     async fn snapshot(&self) -> anyhow::Result<ResolvedTurnProfile>;
-
-    /// Estimated token cost of the JSON tool schemas exposed to the model
-    /// for the active profile. Implementations with access to the resolved
-    /// `ToolDefinition`s (name + description + input_schema) should
-    /// serialize and estimate the real cost; ports without that access may
-    /// fall back to a conservative constant.
-    async fn tool_schema_tokens(&self) -> anyhow::Result<usize> {
-        Ok(0)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +149,7 @@ pub trait GovernedTurnCapabilityPort: Send + Sync {
     async fn prepare(
         &self,
         context: CapabilityExecutionContext,
+        profile: ResolvedTurnProfile,
     ) -> anyhow::Result<PreparedCapabilities>;
 }
 

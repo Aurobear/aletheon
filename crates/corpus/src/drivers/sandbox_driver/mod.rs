@@ -65,21 +65,45 @@ impl BpfProgram {
 }
 
 // ---------------------------------------------------------------------------
-// NamespaceSandbox — user+pid+mount namespace isolation via unshare(1)
+// NamespaceSandbox — user+pid+mount namespace isolation
 // ---------------------------------------------------------------------------
 
-/// Native namespace isolation (replaces shelling out to bubblewrap for simple
-/// cases). Uses `unshare --user --pid --mount --fork` to create a disposable
-/// execution environment.
+/// Namespace isolation for simple command execution. It prefers bubblewrap,
+/// whose packaged AppArmor profile permits unprivileged user namespaces on
+/// hardened Ubuntu hosts, and falls back to `unshare(1)` when bubblewrap is not
+/// installed.
 pub struct NamespaceSandbox;
 
 impl NamespaceSandbox {
     /// Execute `cmd` inside a new user+pid+mount namespace.
     ///
-    /// Returns the child's `ExitStatus`. The child is forked by `unshare`, so
-    /// the caller blocks until it exits.
+    /// Returns the isolated child's `ExitStatus` after it exits.
     pub fn exec(cmd: &str, args: &[&str]) -> Result<std::process::ExitStatus> {
         use std::process::Command;
+
+        match Command::new("bwrap")
+            .args([
+                "--unshare-user",
+                "--unshare-pid",
+                "--die-with-parent",
+                "--ro-bind",
+                "/",
+                "/",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--",
+            ])
+            .arg(cmd)
+            .args(args)
+            .status()
+        {
+            Ok(status) => return Ok(status),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("Failed to exec with bubblewrap"),
+        }
+
         let status = Command::new("unshare")
             .args(["--user", "--pid", "--mount", "--fork", "--"])
             .arg(cmd)

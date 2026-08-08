@@ -3,7 +3,7 @@
 //! Assembles the robot main chain: polling world state, deterministic verifier,
 //! durable episode sink, embodied-execution adapter and policy provider
 //! into a `cognit::harness::robot::RobotHarness`. Construction is explicit —
-//! `HarnessKind::Robot` configuration must supply every port or the build fails
+//! An explicit Robot turn target must have every port or the build fails
 //! closed; it never falls back to a Linear session that still claims to be a
 //! robot task.
 
@@ -128,7 +128,7 @@ impl CognitiveSessionFactory for RobotCognitiveSessionFactory {
 }
 
 /// Assemble the robot session factory from the daemon's embodied execution port.
-/// `HarnessKind::Robot` requires a configured provider; otherwise it fails closed.
+/// A Robot capability requires a configured provider; otherwise it fails closed.
 /// The policy provider is injected by the caller — production must supply a real
 /// `GrpcPolicyProvider` (or an explicitly chosen fallback), never a silent stub.
 pub async fn build_robot_session_factory(

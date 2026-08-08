@@ -1,6 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde_json::{self, Value};
+use std::process::Command;
+
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -88,5 +91,53 @@ fn u_cli_004_interact_cli_has_zero_production_callers() {
     assert!(
         root.join("crates/interact/src/single_message.rs").exists(),
         "the one-shot transport must remain as a parser-free adapter"
+    );
+}
+#[test]
+fn plain_version_test() {
+    let output = Command::new(env!("CARGO_BIN_EXE_aletheon"))
+        .arg("version")
+        .output()
+        .expect("aletheon binary should run");
+    assert!(output.status.success(), "status must be success");
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    let expected = format!("aletheon {}\n", env!("CARGO_PKG_VERSION"));
+    assert_eq!(stdout, expected, "stdout should be plain version string");
+    assert!(output.stderr.is_empty(), "stderr should be empty");
+}
+
+#[test]
+fn json_version_test() {
+    let output = Command::new(env!("CARGO_BIN_EXE_aletheon"))
+        .args(["version", "--json"])
+        .output()
+        .expect("aletheon binary should run");
+    assert!(output.status.success(), "status must be success");
+    assert!(output.stderr.is_empty(), "stderr must be empty");
+    let value: Value = serde_json::from_slice(&output.stdout).expect("stdout is valid JSON");
+    let obj = value.as_object().expect("must be a JSON object");
+    let expected_keys = ["name", "protocol_version", "schema_version", "version"];
+    let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, expected_keys, "exact key set must match sorted");
+    assert_eq!(
+        obj["schema_version"]
+            .as_u64()
+            .expect("schema_version must be u64"),
+        1u64
+    );
+    assert_eq!(
+        obj["name"].as_str().expect("name must be string"),
+        "aletheon"
+    );
+    assert_eq!(
+        obj["version"].as_str().expect("version must be string"),
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(
+        obj["protocol_version"]
+            .as_u64()
+            .expect("protocol_version must be u64"),
+        fabric::CLIENT_PROTOCOL_VERSION as u64
     );
 }

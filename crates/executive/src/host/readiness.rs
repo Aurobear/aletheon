@@ -34,6 +34,12 @@ struct FileLease {
 
 impl StartupLease for FileLease {}
 
+impl Drop for FileLease {
+    fn drop(&mut self) {
+        unlock_file(&self._file);
+    }
+}
+
 pub struct FileStartupLock {
     path: PathBuf,
 }
@@ -71,6 +77,12 @@ impl StartupLockPort for FileStartupLock {
 /// released automatically on crash, so stale lock files are harmless.
 pub struct DaemonAuthorityLease {
     _file: File,
+}
+
+impl Drop for DaemonAuthorityLease {
+    fn drop(&mut self) {
+        unlock_file(&self._file);
+    }
 }
 
 pub fn acquire_daemon_authority(path: &Path) -> anyhow::Result<DaemonAuthorityLease> {
@@ -125,6 +137,15 @@ fn try_file_lock(path: &Path) -> io::Result<Option<File>> {
     } else {
         Err(error)
     }
+}
+
+fn unlock_file(file: &File) {
+    // A daemon/test may fork while the lease is held. Closing only the parent
+    // descriptor can leave the inherited open-file description locked until
+    // the child exits; an explicit unlock releases the shared flock before the
+    // descriptor is closed and makes lease drop deterministic.
+    // SAFETY: flock only borrows this still-open descriptor.
+    let _ = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
 }
 
 pub struct ProcessDaemonLifecycleBackend {

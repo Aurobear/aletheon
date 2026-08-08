@@ -476,7 +476,7 @@ impl TaskWorker {
                 TaskAction::Hotkey { keys } => {
                     let parsed: Vec<Key> = keys.iter().filter_map(|k| parse_key(k)).collect();
                     if parsed.len() != keys.len() {
-                        anyhow::bail!("Failed to parse some hotkey names: {:?}", keys);
+                        anyhow::bail!("Failed to parse some hotkey names: {keys:?}");
                     }
                     self.aci.hotkey(&parsed)?;
                     Ok(format!("Hotkey: {}", keys.join("+")))

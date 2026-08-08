@@ -13,7 +13,8 @@ use crate::application::governed_capability::{
 use crate::application::turn_runtime_ports::{
     ActiveAgentProfilePort, ApprovalNotice, GovernedTurnCapabilityPort, ModelSelectionPort,
     PreparedCapabilities, ResolvedTurnProfile, SelfPolicyPort, StormStatePort, TurnApprovalPort,
-    TurnConfigPort, TurnHookPort, TurnObservabilityPort, TurnRuntimePorts, TurnSessionStatePort,
+    TurnConfigPort, TurnContextBudgetCosts, TurnHookPort, TurnObservabilityPort, TurnRuntimePorts,
+    TurnSessionStatePort,
 };
 use crate::host::daemon::handler::tool_executor::{prepare_corpus, TurnToolExecutor};
 use crate::host::daemon::model_router::ModelRouter;
@@ -88,12 +89,11 @@ pub(super) struct TurnRuntimeResources {
     pub(crate) session_created_at: Arc<Mutex<HashMap<String, fabric::MonoTime>>>,
     pub(crate) data_dir: std::path::PathBuf,
     pub(crate) context_window: usize,
-    pub(crate) cached_prefix: Arc<Mutex<String>>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) memory: Arc<dyn mnemosyne::MemoryService>,
     pub(crate) config: Arc<dyn TurnConfigPort>,
+    pub(crate) agent_admission: cognit::config::AgentAdmissionConfig,
     pub(crate) performance: Arc<fabric::kernel::debug_bus::PerfCounter>,
-    pub(crate) active_profile: Arc<dyn ActiveAgentProfilePort>,
 }
 
 pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRuntimePorts {
@@ -103,7 +103,6 @@ pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRunti
         Box::pin(async move { corpus.execute_hook(&context).await })
     });
     let hooks: Arc<dyn TurnHookPort> = Arc::new(ProductionTurnHooks { execute_hook });
-    let active_profile = resources.active_profile.clone();
     TurnRuntimePorts {
         hooks: hooks.clone(),
         storm: Arc::new(ProductionStormState {
@@ -122,7 +121,6 @@ pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRunti
             resources: resources.capabilities,
             admission: resources.admission,
             hooks: hooks.clone(),
-            active_profile: active_profile.clone(),
         }),
         sessions: Arc::new(ProductionTurnSessions {
             registry: resources.sessions,
@@ -130,10 +128,8 @@ pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRunti
             created_at: resources.session_created_at,
             data_dir: resources.data_dir,
             context_window: resources.context_window,
-            cached_prefix: resources.cached_prefix,
-            active_profile,
+            agent_admission: resources.agent_admission,
             clock: resources.clock,
-            llm: resources.default_llm,
             memory_service: resources.memory,
             hooks,
         }),
@@ -203,12 +199,15 @@ struct ProductionTurnSessions {
     created_at: Arc<Mutex<HashMap<String, fabric::MonoTime>>>,
     data_dir: std::path::PathBuf,
     context_window: usize,
-    cached_prefix: Arc<Mutex<String>>,
-    active_profile: Arc<dyn ActiveAgentProfilePort>,
+    agent_admission: cognit::config::AgentAdmissionConfig,
     clock: Arc<dyn Clock>,
-    llm: Arc<dyn LlmProvider>,
     memory_service: Arc<dyn mnemosyne::MemoryService>,
     hooks: Arc<dyn TurnHookPort>,
+}
+
+struct BudgetPlanningSnapshot {
+    plan: mnemosyne::runtime::ContextBudgetPlan,
+    projection: fabric::ContextBudgetProjection,
 }
 
 impl ProductionTurnSessions {
@@ -250,48 +249,125 @@ impl ProductionTurnSessions {
         Ok((session_id, manager))
     }
 
-    async fn budget_plan(
+    async fn budget_snapshot(
         &self,
         manager: &crate::host::daemon::session_manager::SessionManager,
-        pending_user: &str,
-    ) -> anyhow::Result<mnemosyne::runtime::ContextBudgetPlan> {
+        model: &dyn LlmProvider,
+        profile: &ResolvedTurnProfile,
+        context_costs: TurnContextBudgetCosts,
+    ) -> anyhow::Result<BudgetPlanningSnapshot> {
         use mnemosyne::runtime::{ContextBudgetInput, ContextBudgetPlanner};
 
-        let profile = self.active_profile.snapshot().await?;
-        let prefix_tokens = Message::system(self.cached_prefix.lock().await.clone())
-            .estimate_tokens()
-            .saturating_add(Message::system(profile.system_prompt).estimate_tokens());
+        let model_facts = model.runtime_facts();
+        let (model_context_tokens, profile_input_limit_tokens) =
+            validated_context_limits(model_facts.max_context_tokens, profile.max_input_tokens)?;
         // Real per-tool schema token estimate (name + description +
         // serialized JSON input_schema), not a fixed ~74 tokens/tool
         // placeholder — the provider sends the full schema for every
         // allowed tool, which for large toolsets is thousands of tokens.
-        let tool_schema_tokens = self.active_profile.tool_schema_tokens().await?;
-        let pending_user_input_tokens = if pending_user.is_empty() {
-            0
-        } else {
-            Message::user(pending_user).estimate_tokens()
-        };
-        let effective_context_window = self.context_window.min(profile.max_input_tokens as usize);
         let current_history_tokens = manager.estimate_tokens();
+        let tool_schema_tokens = profile.tool_schema_tokens;
+        let current_history_tokens = u64::try_from(current_history_tokens)
+            .map_err(|_| anyhow::anyhow!("history token estimate exceeds u64"))?;
+        let safety_margin_tokens = (profile_input_limit_tokens / 20).max(1_024);
         let plan = ContextBudgetPlanner::plan(ContextBudgetInput {
-            model_context_window: self.context_window,
-            profile_input_limit: profile.max_input_tokens as usize,
-            system_and_skill_prefix_tokens: prefix_tokens,
+            model_context_window: model_context_tokens.into(),
+            profile_input_limit: profile_input_limit_tokens.into(),
+            system_and_skill_prefix_tokens: context_costs.system_and_skill_tokens,
             tool_schema_tokens,
-            reserved_output_tokens: profile.max_output_tokens as usize,
-            pending_user_input_tokens,
-            safety_margin_tokens: (effective_context_window / 20).max(1_024),
-            current_history_tokens,
+            reserved_output_tokens: profile.max_output_tokens.into(),
+            pending_user_input_tokens: context_costs.pending_input_tokens,
+            safety_margin_tokens: safety_margin_tokens.into(),
+            current_history_tokens: current_history_tokens.into(),
         });
+        let model_label = match model_facts.provider_id.as_deref() {
+            Some(provider) => format!("{provider}/{}", model_facts.effective_model_id),
+            None => model_facts.effective_model_id.clone(),
+        };
+        let model_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::RuntimeModelCapability,
+            model_label,
+        );
+        let profile_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::ActiveAgentProfile,
+            profile.profile_name.clone(),
+        );
+        let history_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::ContextBudgetPlanner,
+            "ContextBudgetPlanner",
+        );
+        let agent_runtime_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::AgentRuntime,
+            "current Agent rollout scope",
+        );
+        let admission_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::EffectiveAdmissionConfig,
+            "agent.admission.max_child_tokens",
+        );
+        let projection = fabric::ContextBudgetProjection {
+            model_spec: model_facts.effective_model_id,
+            model_context_tokens: model_context_tokens.into(),
+            profile_input_limit_tokens: profile_input_limit_tokens.into(),
+            reserved_output_tokens: profile.max_output_tokens.into(),
+            system_and_skill_tokens: context_costs.system_and_skill_tokens,
+            tool_schema_tokens,
+            pending_input_tokens: context_costs.pending_input_tokens,
+            safety_margin_tokens: safety_margin_tokens.into(),
+            current_history_tokens: current_history_tokens.into(),
+            admissible_history_tokens: plan.history_budget,
+            compaction_threshold_tokens: plan.soft_watermark,
+            model_source,
+            profile_source,
+            history_source,
+            rollout: fabric::RolloutBudgetProjection {
+                root_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                    source: agent_runtime_source.clone(),
+                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                },
+                child_limit_tokens: fabric::RolloutBudgetValue::Known {
+                    value: self.agent_admission.max_child_tokens.into(),
+                    source: admission_source,
+                },
+                current_agent_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                    source: agent_runtime_source,
+                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                },
+            },
+        };
         tracing::info!(
-            history_budget = plan.history_budget,
+            provider = ?model_facts.provider_id,
+            model = %projection.model_spec,
+            model_context_tokens,
+            profile = %projection.profile_source.label,
+            profile_input_limit_tokens,
+            history_budget = plan.history_budget.get(),
             current_history_tokens,
-            projected_history_tokens = plan.projected_history_tokens,
+            projected_history_tokens = plan.projected_history_tokens.get(),
             budget_action = ?plan.action,
             "Context budget planned"
         );
-        Ok(plan)
+        Ok(BudgetPlanningSnapshot { plan, projection })
     }
+}
+
+fn validated_context_limits(
+    model_context_tokens: usize,
+    profile_input_limit_tokens: u64,
+) -> anyhow::Result<(u64, u64)> {
+    anyhow::ensure!(
+        model_context_tokens > 0,
+        "effective runtime model capability reported a zero context window"
+    );
+    anyhow::ensure!(
+        profile_input_limit_tokens > 0,
+        "active profile reported a zero input limit"
+    );
+    let model_context_tokens = u64::try_from(model_context_tokens)
+        .map_err(|_| anyhow::anyhow!("model context window exceeds u64"))?;
+    Ok((
+        model_context_tokens,
+        profile_input_limit_tokens.min(model_context_tokens),
+    ))
 }
 
 #[async_trait]
@@ -306,18 +382,28 @@ impl TurnSessionStatePort for ProductionTurnSessions {
         &self,
         requested_session_id: &str,
         message: &str,
+        model: Arc<dyn LlmProvider>,
+        profile: ResolvedTurnProfile,
+        context_costs: TurnContextBudgetCosts,
     ) -> anyhow::Result<crate::application::turn_runtime_ports::BeginUserResult> {
         let (session_id, manager) = self.manager(requested_session_id).await?;
-        let (turn_count, history_budget_tokens, rewrite_version) = {
+        let (turn_count, history_budget_tokens, rewrite_version, context_budget, compactions) = {
             let mut manager = manager.lock().await;
-            let mut plan = self.budget_plan(&manager, message).await?;
-            if plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
+            let mut snapshot = self
+                .budget_snapshot(&manager, &*model, &profile, context_costs)
+                .await?;
+            let mut compactions = Vec::new();
+            if snapshot.plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
                 tracing::warn!(
-                    projected_tokens = plan.projected_history_tokens,
-                    history_budget = plan.history_budget,
+                    projected_tokens = snapshot.plan.projected_history_tokens.get(),
+                    history_budget = snapshot.plan.history_budget.get(),
                     "Hard watermark exceeded — compacting before model call"
                 );
-                let first_applied = match manager.compact_to_budget(&*self.llm, &plan, false).await
+                let first_before = manager.estimate_tokens();
+                let first_budget = snapshot.projection.clone();
+                let first_applied = match manager
+                    .compact_to_budget(&*model, &snapshot.plan, false)
+                    .await
                 {
                     Ok(applied) => applied,
                     Err(error) => {
@@ -328,17 +414,45 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                         false
                     }
                 };
-                plan = self.budget_plan(&manager, message).await?;
-                if !first_applied || plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
-                    if let Err(error) = manager.compact_to_budget(&*self.llm, &plan, true).await {
-                        tracing::warn!(
-                            error = %error,
-                            "Aggressive hard-watermark compaction attempt was rejected"
-                        );
-                    }
-                    plan = self.budget_plan(&manager, message).await?;
+                if first_applied {
+                    compactions.push(context_compaction_projection(
+                        fabric::ContextCompactionMode::Preflight,
+                        first_before,
+                        manager.estimate_tokens(),
+                        first_budget,
+                    )?);
                 }
-                if plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
+                snapshot = self
+                    .budget_snapshot(&manager, &*model, &profile, context_costs)
+                    .await?;
+                if !first_applied
+                    || snapshot.plan.action == mnemosyne::runtime::BudgetAction::HardCompact
+                {
+                    let retry_before = manager.estimate_tokens();
+                    let retry_budget = snapshot.projection.clone();
+                    match manager
+                        .compact_to_budget(&*model, &snapshot.plan, true)
+                        .await
+                    {
+                        Ok(true) => compactions.push(context_compaction_projection(
+                            fabric::ContextCompactionMode::Preflight,
+                            retry_before,
+                            manager.estimate_tokens(),
+                            retry_budget,
+                        )?),
+                        Ok(false) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error,
+                                "Aggressive hard-watermark compaction attempt was rejected"
+                            );
+                        }
+                    }
+                    snapshot = self
+                        .budget_snapshot(&manager, &*model, &profile, context_costs)
+                        .await?;
+                }
+                if snapshot.plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
                     return Err(anyhow::anyhow!(
                         "Context cannot safely fit the request after two validated compaction \
                          attempts. Try /new, switch to a larger-window model, or export diagnostics."
@@ -351,8 +465,10 @@ impl TurnSessionStatePort for ProductionTurnSessions {
             manager.push_user(message).await;
             (
                 manager.turn_count(),
-                plan.history_budget,
+                snapshot.plan.history_budget,
                 manager.rewrite_version(),
+                snapshot.projection,
+                compactions,
             )
         };
         if let Err(error) = self
@@ -387,6 +503,8 @@ impl TurnSessionStatePort for ProductionTurnSessions {
             session_id,
             turn_count,
             history_budget_tokens,
+            context_budget,
+            compactions,
             rewrite_version,
         })
     }
@@ -398,107 +516,164 @@ impl TurnSessionStatePort for ProductionTurnSessions {
         tool_calls: &[(String, String, serde_json::Value)],
         tool_results: &[(String, String, bool)],
         output: &str,
-    ) -> anyhow::Result<usize> {
+        model: Arc<dyn LlmProvider>,
+        profile: ResolvedTurnProfile,
+        context_costs: TurnContextBudgetCosts,
+    ) -> anyhow::Result<crate::application::turn_runtime_ports::FinishUserResult> {
         let (session_id, manager_handle) = self.manager(requested_session_id).await?;
         let mut manager = manager_handle.lock().await;
-        if succeeded {
-            if !tool_calls.is_empty() {
-                manager
-                    .push_message(Message {
-                        role: Role::Assistant,
-                        content: tool_calls
-                            .iter()
-                            .map(|(id, name, input)| ContentBlock::ToolUse {
-                                id: id.clone(),
-                                name: name.clone(),
-                                input: input.clone(),
-                            })
-                            .collect(),
-                    })
-                    .await;
-                manager
-                    .push_message(Message {
-                        role: Role::User,
-                        content: tool_results
-                            .iter()
-                            .map(|(id, content, is_error)| ContentBlock::ToolResult {
-                                tool_use_id: id.clone(),
-                                content:
-                                    crate::application::session_projection::bounded_tool_result(
-                                        content,
-                                    ),
-                                is_error: *is_error,
-                            })
-                            .collect(),
-                    })
-                    .await;
-            }
-            manager.push_assistant(output).await;
-            let turn_count = manager.turn_count();
-
-            let plan = self.budget_plan(&manager, "").await?;
-            let tokens_before = manager.estimate_tokens();
-            if plan.action == mnemosyne::runtime::BudgetAction::None
-                || !manager.compaction_needed_for(&plan)
-            {
-                return Ok(turn_count);
-            }
-            drop(manager);
-            self.hooks
-                .execute(HookContext {
-                    point: fabric::hook::HookPoint::PreCompact,
-                    session_id: session_id.clone(),
-                    turn_count,
-                    tool_name: None,
-                    tool_input: None,
-                    tool_result: None,
-                    message: None,
-                    metadata: HashMap::from([
-                        ("mode".into(), "automatic".into()),
-                        ("tokens_before".into(), tokens_before.to_string()),
-                    ]),
+        if !succeeded {
+            return Ok(crate::application::turn_runtime_ports::FinishUserResult {
+                turn_count: manager.turn_count(),
+                compactions: Vec::new(),
+            });
+        }
+        if !tool_calls.is_empty() {
+            manager
+                .push_message(Message {
+                    role: Role::Assistant,
+                    content: tool_calls
+                        .iter()
+                        .map(|(id, name, input)| ContentBlock::ToolUse {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                        })
+                        .collect(),
                 })
                 .await;
-            let mut manager = manager_handle.lock().await;
-            let compacted = match manager.compact_to_budget(&*self.llm, &plan, false).await {
-                Ok(compacted) => compacted,
-                Err(error) => {
-                    // A soft-watermark pass is opportunistic. Validation
-                    // rejection leaves the projection untouched and must not
-                    // turn an otherwise successful model response into a
-                    // failed turn.
-                    tracing::warn!(
-                        error = %error,
-                        "Soft-watermark compaction was rejected; preserving current projection"
-                    );
-                    false
-                }
-            };
-            if compacted {
-                let tokens_after = manager.estimate_tokens();
-                drop(manager);
-                self.hooks
-                    .execute(HookContext {
-                        point: fabric::hook::HookPoint::PostCompact,
-                        session_id,
-                        turn_count,
-                        tool_name: None,
-                        tool_input: None,
-                        tool_result: None,
-                        message: None,
-                        metadata: HashMap::from([
-                            ("mode".into(), "automatic".into()),
-                            ("tokens_before".into(), tokens_before.to_string()),
-                            ("tokens_after".into(), tokens_after.to_string()),
-                        ]),
-                    })
-                    .await;
-                return Ok(turn_count);
-            }
-            return Ok(manager.turn_count());
+            manager
+                .push_message(Message {
+                    role: Role::User,
+                    content: tool_results
+                        .iter()
+                        .map(|(id, content, is_error)| ContentBlock::ToolResult {
+                            tool_use_id: id.clone(),
+                            content: crate::application::session_projection::bounded_tool_result(
+                                content,
+                            ),
+                            is_error: *is_error,
+                        })
+                        .collect(),
+                })
+                .await;
         }
-        Ok(manager.turn_count())
+        manager.push_assistant(output).await;
+        let turn_count = manager.turn_count();
+
+        let snapshot = self
+            .budget_snapshot(
+                &manager,
+                &*model,
+                &profile,
+                context_costs.without_pending_input(),
+            )
+            .await?;
+        let tokens_before = manager.estimate_tokens();
+        if snapshot.plan.action == mnemosyne::runtime::BudgetAction::None
+            || !manager.compaction_needed_for(&snapshot.plan)
+        {
+            return Ok(crate::application::turn_runtime_ports::FinishUserResult {
+                turn_count,
+                compactions: Vec::new(),
+            });
+        }
+        drop(manager);
+        self.hooks
+            .execute(HookContext {
+                point: fabric::hook::HookPoint::PreCompact,
+                session_id: session_id.clone(),
+                turn_count,
+                tool_name: None,
+                tool_input: None,
+                tool_result: None,
+                message: None,
+                metadata: HashMap::from([
+                    ("mode".into(), "automatic".into()),
+                    ("tokens_before".into(), tokens_before.to_string()),
+                    (
+                        "trigger_threshold_tokens".into(),
+                        snapshot.plan.soft_watermark.get().to_string(),
+                    ),
+                ]),
+            })
+            .await;
+        let mut manager = manager_handle.lock().await;
+        let compacted = match manager
+            .compact_to_budget(&*model, &snapshot.plan, false)
+            .await
+        {
+            Ok(compacted) => compacted,
+            Err(error) => {
+                // A soft-watermark pass is opportunistic. Validation rejection
+                // leaves the projection untouched and must not turn an otherwise
+                // successful model response into a failed turn.
+                tracing::warn!(
+                    error = %error,
+                    "Soft-watermark compaction was rejected; preserving current projection"
+                );
+                false
+            }
+        };
+        if !compacted {
+            return Ok(crate::application::turn_runtime_ports::FinishUserResult {
+                turn_count: manager.turn_count(),
+                compactions: Vec::new(),
+            });
+        }
+
+        let tokens_after = manager.estimate_tokens();
+        let compaction = context_compaction_projection(
+            fabric::ContextCompactionMode::Automatic,
+            tokens_before,
+            tokens_after,
+            snapshot.projection,
+        )?;
+        drop(manager);
+        self.hooks
+            .execute(HookContext {
+                point: fabric::hook::HookPoint::PostCompact,
+                session_id,
+                turn_count,
+                tool_name: None,
+                tool_input: None,
+                tool_result: None,
+                message: None,
+                metadata: HashMap::from([
+                    ("mode".into(), "automatic".into()),
+                    ("tokens_before".into(), tokens_before.to_string()),
+                    ("tokens_after".into(), tokens_after.to_string()),
+                ]),
+            })
+            .await;
+        Ok(crate::application::turn_runtime_ports::FinishUserResult {
+            turn_count,
+            compactions: vec![compaction],
+        })
     }
+}
+
+fn context_compaction_projection(
+    mode: fabric::ContextCompactionMode,
+    tokens_before: usize,
+    tokens_after: usize,
+    budget_snapshot: fabric::ContextBudgetProjection,
+) -> anyhow::Result<fabric::ContextCompactionProjection> {
+    let trigger_threshold_tokens = match mode {
+        fabric::ContextCompactionMode::Preflight => budget_snapshot.admissible_history_tokens,
+        fabric::ContextCompactionMode::Automatic => budget_snapshot.compaction_threshold_tokens,
+    };
+    Ok(fabric::ContextCompactionProjection {
+        mode,
+        trigger_threshold_tokens,
+        tokens_before: u64::try_from(tokens_before)
+            .map_err(|_| anyhow::anyhow!("pre-compaction token estimate exceeds u64"))?
+            .into(),
+        tokens_after: u64::try_from(tokens_after)
+            .map_err(|_| anyhow::anyhow!("post-compaction token estimate exceeds u64"))?
+            .into(),
+        budget_snapshot,
+    })
 }
 
 struct ProductionTurnObservability {
@@ -548,7 +723,6 @@ struct ProductionGovernedCapabilities {
     resources: crate::host::daemon::handler::tool_executor::CapabilityResources,
     admission: Arc<dyn AdmissionController>,
     hooks: Arc<dyn TurnHookPort>,
-    active_profile: Arc<dyn ActiveAgentProfilePort>,
 }
 
 pub(super) struct ProductionActiveAgentProfile {
@@ -576,6 +750,15 @@ impl ActiveAgentProfilePort for ProductionActiveAgentProfile {
             .resolve_by_name(&profile_name)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let p = &resolved.profile;
+        let tool_schema_tokens = resolved
+            .tools
+            .iter()
+            .map(|tool| {
+                let serialized_chars =
+                    tool.name.len() + tool.description.len() + tool.input_schema.to_string().len();
+                serialized_chars / 4 + 10
+            })
+            .sum::<usize>();
         Ok(ResolvedTurnProfile {
             profile_name: p.profile_name.clone(),
             allowed_tools: p.allowed_tools.iter().cloned().collect(),
@@ -585,32 +768,14 @@ impl ActiveAgentProfilePort for ProductionActiveAgentProfile {
             max_iterations: p.max_iterations,
             max_input_tokens: p.max_input_tokens,
             max_output_tokens: p.max_output_tokens,
+            tool_schema_tokens: u64::try_from(tool_schema_tokens)
+                .map_err(|_| anyhow::anyhow!("tool schema token estimate exceeds u64"))?
+                .into(),
             max_tool_calls: p.max_tool_calls,
             max_elapsed_ms: p.max_elapsed_ms,
             approval_policy: p.approval_policy,
             tool_timeout_ms: p.tool_timeout_ms,
         })
-    }
-
-    async fn tool_schema_tokens(&self) -> anyhow::Result<usize> {
-        let profile_name = self.current.lock().await.clone();
-        let resolved = self
-            .profiles
-            .resolve_by_name(&profile_name)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        // Estimate the real serialized cost of each tool's schema (name +
-        // description + JSON input_schema) using the same chars/4 + overhead
-        // heuristic as `Message::estimate_tokens`, instead of a fixed
-        // per-tool constant that ignores actual schema size.
-        Ok(resolved
-            .tools
-            .iter()
-            .map(|tool| {
-                let serialized_chars =
-                    tool.name.len() + tool.description.len() + tool.input_schema.to_string().len();
-                serialized_chars / 4 + 10
-            })
-            .sum())
     }
 }
 
@@ -628,14 +793,12 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
     async fn prepare(
         &self,
         context: CapabilityExecutionContext,
+        profile: ResolvedTurnProfile,
     ) -> anyhow::Result<PreparedCapabilities> {
         let stream_sender = context
             .streaming_tools
             .then(|| context.turn_event_sender.clone())
             .flatten();
-        // One immutable snapshot controls both disclosure and execution for
-        // the entire turn. A concurrent profile switch is observed next turn.
-        let profile = self.active_profile.snapshot().await?;
         let mut prepared = prepare_corpus(&self.resources, &context).await?;
         let mut definitions = prepared
             .snapshot
@@ -671,6 +834,7 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             )
             .with_agent_context(context.agent)
             .with_permission_mode(context.permission_mode)
+            .with_execution_target(context.execution_target)
             .with_turn_event_sender(stream_sender.clone()),
         );
         let action_loop = context.action_loop;
@@ -734,6 +898,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn one_million_model_and_main_profile_ignore_child_rollout_allowance() {
+        let admission = cognit::config::AgentAdmissionConfig::default();
+        assert_eq!(admission.max_child_tokens, 200_000);
+        let (model_window, profile_limit) = validated_context_limits(1_000_000, 1_000_000).unwrap();
+        assert_eq!(model_window, 1_000_000);
+        assert_eq!(profile_limit, 1_000_000);
+    }
+
+    #[test]
+    fn profile_override_does_not_relabel_or_shrink_model_window() {
+        let (model_window, profile_limit) = validated_context_limits(1_000_000, 200_000).unwrap();
+        assert_eq!(model_window, 1_000_000);
+        assert_eq!(profile_limit, 200_000);
+    }
+
+    #[test]
+    fn invalid_runtime_or_profile_capability_fails_closed() {
+        assert!(validated_context_limits(0, 200_000).is_err());
+        assert!(validated_context_limits(1_000_000, 0).is_err());
+    }
+
+    #[test]
     fn configured_hooks_join_the_authoritative_corpus_registry() {
         let mut registry =
             corpus::HookRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
@@ -768,6 +954,7 @@ mod tests {
             max_iterations: 0,
             max_input_tokens: 0,
             max_output_tokens: 0,
+            tool_schema_tokens: 0.into(),
             max_tool_calls: 0,
             max_elapsed_ms: 0,
             approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
@@ -820,6 +1007,7 @@ mod tests {
             max_iterations: 0,
             max_input_tokens: 0,
             max_output_tokens: 0,
+            tool_schema_tokens: 0.into(),
             max_tool_calls: 0,
             max_elapsed_ms: 0,
             approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
@@ -848,6 +1036,7 @@ mod tests {
             max_iterations: 20,
             max_input_tokens: 100_000,
             max_output_tokens: 16_384,
+            tool_schema_tokens: 12_345.into(),
             max_tool_calls: 64,
             max_elapsed_ms: 600_000,
             approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
@@ -861,6 +1050,7 @@ mod tests {
         assert_eq!(profile.max_iterations, 20);
         assert_eq!(profile.max_input_tokens, 100_000);
         assert_eq!(profile.max_output_tokens, 16_384);
+        assert_eq!(profile.tool_schema_tokens.get(), 12_345);
         assert_eq!(profile.max_tool_calls, 64);
         assert_eq!(profile.max_elapsed_ms, 600_000);
         assert_eq!(
@@ -881,6 +1071,7 @@ mod tests {
             max_iterations: 20,
             max_input_tokens: 100_000,
             max_output_tokens: 16_384,
+            tool_schema_tokens: 20_000.into(),
             max_tool_calls: 64,
             max_elapsed_ms: 600_000,
             approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
@@ -896,6 +1087,7 @@ mod tests {
             max_iterations: 10,
             max_input_tokens: 200_000,
             max_output_tokens: 8_192,
+            tool_schema_tokens: 8_000.into(),
             max_tool_calls: 32,
             max_elapsed_ms: 300_000,
             approval_policy: fabric::AgentApprovalPolicy::AutoDeny,

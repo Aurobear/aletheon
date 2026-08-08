@@ -7,8 +7,8 @@
 //! CLI/child execution through the real engine.
 
 use executive::application::turn_engine::{
-    TurnEngine, TurnEngineContext, TurnEngineError, TurnEngineEventSink, TurnEngineParitySnapshot,
-    TurnEngineRequest, TurnEngineResult, TurnEngineStatus,
+    TurnEngine, TurnEngineContext, TurnEngineError, TurnEngineParitySnapshot, TurnEngineRequest,
+    TurnEngineResult,
 };
 use executive::application::turn_runtime_ports::ResolvedTurnProfile;
 use fabric::{AgentApprovalPolicy, MonoDeadlineMillis};
@@ -31,22 +31,19 @@ impl TurnEngine for StubTurnEngine {
         &self,
         _request: TurnEngineRequest,
         _context: TurnEngineContext,
-        events: Arc<dyn TurnEngineEventSink>,
     ) -> Result<TurnEngineResult, TurnEngineError> {
         match &self.behaviour {
             StubBehaviour::Success(turn_id) => {
                 let result = TurnEngineResult {
                     turn_id: *turn_id,
                     output: "ok".into(),
-                    status: TurnEngineStatus::Completed,
+                    stop: fabric::TurnStop::Completed,
+                    failure: None,
                     tool_calls: 2,
-                    tokens_in: 500,
-                    tokens_out: 128,
+                    usage: fabric::InferenceUsage::reported(500, 128, Some(500), Some(0), Some(0)),
                     elapsed_ms: 1_200,
                     coordinator_execution: None,
                 };
-                events.on_turn_started(result.turn_id).await;
-                events.on_turn_settled(result.turn_id, &result).await;
                 Ok(result)
             }
             StubBehaviour::Reject => Err(TurnEngineError::AdmissionRejected("stub reject".into())),
@@ -70,6 +67,7 @@ fn test_profile() -> ResolvedTurnProfile {
         max_iterations: 20,
         max_input_tokens: 100_000,
         max_output_tokens: 16_384,
+        tool_schema_tokens: 0.into(),
         max_tool_calls: 64,
         max_elapsed_ms: 600_000,
         approval_policy: AgentApprovalPolicy::AutoApprove,
@@ -96,54 +94,31 @@ fn test_context() -> TurnEngineContext {
     }
 }
 
-struct CountingEventSink {
-    started: std::sync::Mutex<Vec<fabric::TurnId>>,
-}
-
-impl CountingEventSink {
-    fn new() -> Self {
-        Self {
-            started: std::sync::Mutex::new(Vec::new()),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl TurnEngineEventSink for CountingEventSink {
-    async fn on_turn_started(&self, turn_id: fabric::TurnId) {
-        self.started.lock().unwrap().push(turn_id);
-    }
-
-    async fn on_turn_settled(&self, _turn_id: fabric::TurnId, _outcome: &TurnEngineResult) {}
-}
-
 // ── Contract tests ─────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn stub_engine_emits_started_and_settled_on_success() {
+async fn stub_engine_returns_one_typed_outcome_on_success() {
     let turn_id = fabric::TurnId::new();
     let engine = StubTurnEngine {
         behaviour: StubBehaviour::Success(turn_id),
     };
-    let sink = Arc::new(CountingEventSink::new());
-
     let got = engine
         .execute(
             TurnEngineRequest {
                 input: "test".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
                 requested_task_kind: None,
             },
             test_context(),
-            sink.clone(),
         )
         .await
         .expect("stub engine should return Ok");
 
     assert_eq!(got.turn_id, turn_id);
-    assert!(sink.started.lock().unwrap().contains(&turn_id));
+    assert_eq!(got.stop, fabric::TurnStop::Completed);
 }
 
 fn snapshot_of(result: &TurnEngineResult) -> TurnEngineParitySnapshot {
@@ -151,32 +126,43 @@ fn snapshot_of(result: &TurnEngineResult) -> TurnEngineParitySnapshot {
         turn_id: result.turn_id,
         output_len: result.output.len(),
         tool_calls: result.tool_calls,
-        status: result.status.clone(),
-        tokens_in: result.tokens_in,
-        tokens_out: result.tokens_out,
+        stop: result.stop.clone(),
+        failure: result.failure.clone(),
+        usage: result.usage.clone(),
     }
 }
 
 #[test]
 fn daemon_mapping_matches_engine_result_snapshot() {
     let turn_id = fabric::TurnId::new();
-    let mapped = executive::application::daemon_turn_engine::map_pipeline_response(
+    let mapped = executive::application::daemon_turn_engine::map_turn_execution(
         turn_id,
-        &serde_json::json!({
-            "result": {
-                "response": "ok",
-                "succeeded": true,
-                "metrics": { "tool_calls_made": 2, "elapsed_ms": 5 }
-            }
-        }),
+        executive::application::turn_coordinator::TurnExecution {
+            result: fabric::TurnResult {
+                output: "ok".into(),
+                stop: fabric::TurnStop::Completed,
+                failure: None,
+                usage: Default::default(),
+                metrics: fabric::TurnMetrics {
+                    tool_calls_made: 2,
+                    elapsed_ms: 5,
+                    completed_normally: true,
+                    ..Default::default()
+                },
+            },
+            items: Vec::new(),
+            projection: None,
+            context_projection: None,
+            evaluation_artifacts: Default::default(),
+        },
     );
     let stub = TurnEngineResult {
         turn_id,
         output: "ok".into(),
-        status: TurnEngineStatus::Completed,
+        stop: fabric::TurnStop::Completed,
+        failure: None,
         tool_calls: 2,
-        tokens_in: 0,
-        tokens_out: 0,
+        usage: fabric::InferenceUsage::default(),
         elapsed_ms: 5,
         coordinator_execution: None,
     };
@@ -188,19 +174,17 @@ async fn stub_engine_rejects_on_error() {
     let engine = StubTurnEngine {
         behaviour: StubBehaviour::Reject,
     };
-    let sink: Arc<dyn TurnEngineEventSink> = Arc::new(CountingEventSink::new());
-
     let result = engine
         .execute(
             TurnEngineRequest {
                 input: "test".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
                 requested_task_kind: None,
             },
             test_context(),
-            sink,
         )
         .await;
 
@@ -211,6 +195,7 @@ async fn stub_engine_rejects_on_error() {
 fn turn_engine_request_round_trips_model_policy() {
     let request = TurnEngineRequest {
         input: "fix the bug".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: Some("claude-opus-review".into()),
         deadline: Some(MonoDeadlineMillis(30_000)),
         requirements: Vec::new(),
@@ -226,12 +211,13 @@ fn parity_snapshot_fields_exist() {
         turn_id: fabric::TurnId::new(),
         output_len: 42,
         tool_calls: 2,
-        status: TurnEngineStatus::Completed,
-        tokens_in: 1000,
-        tokens_out: 200,
+        stop: fabric::TurnStop::Completed,
+        failure: None,
+        usage: fabric::InferenceUsage::reported(1000, 200, None, None, None),
     };
     assert_eq!(snap.tool_calls, 2);
-    assert_eq!(snap.status, TurnEngineStatus::Completed);
+    assert_eq!(snap.stop, fabric::TurnStop::Completed);
+    assert_eq!(snap.usage.total_input_tokens, Some(1000));
 }
 
 #[test]
@@ -242,4 +228,14 @@ fn turn_engine_context_carries_profile() {
     assert!(profile.allowed_tools.contains("bash_exec"));
     assert_eq!(profile.max_iterations, 20);
     assert_eq!(profile.model_policy.as_deref(), Some("gpt-5-code"));
+}
+
+#[test]
+fn missing_authenticated_principal_context_fails_closed() {
+    let error = test_context()
+        .require_principal_context()
+        .expect_err("missing authenticated context must be rejected");
+    assert!(matches!(error, TurnEngineError::InvalidContext(_)));
+    assert_eq!(error.code(), "turn_context_invalid");
+    assert!(!error.retryable());
 }

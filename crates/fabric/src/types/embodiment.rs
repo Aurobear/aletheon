@@ -8,7 +8,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{types::frame::FrameRef, MonoDeadline, MonoTime, OperationId};
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct DeviceId(pub String);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

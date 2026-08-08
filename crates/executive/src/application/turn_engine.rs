@@ -18,7 +18,6 @@ pub trait TurnEngine: Send + Sync {
         &self,
         request: TurnEngineRequest,
         context: TurnEngineContext,
-        events: Arc<dyn TurnEngineEventSink>,
     ) -> Result<TurnEngineResult, TurnEngineError>;
 }
 
@@ -29,6 +28,7 @@ pub trait TurnEngine: Send + Sync {
 #[derive(Clone, Debug)]
 pub struct TurnEngineRequest {
     pub input: String,
+    pub execution_target: fabric::ExecutionTargetSelection,
     pub model_policy: Option<String>,
     pub deadline: Option<MonoDeadlineMillis>,
     pub requirements: Vec<fabric::TurnRequirement>,
@@ -49,19 +49,26 @@ pub struct TurnEngineContext {
     pub cancel_token: CancellationToken,
     /// Notification stream owned by the connection that admitted this Turn.
     pub notification_sender: Option<tokio::sync::mpsc::Sender<String>>,
-    /// Exact host-authenticated context when the caller already resolved one.
-    /// CLI callers may omit it and use the compatibility construction below.
+    /// Exact host-authenticated context resolved at the trusted transport edge.
+    /// Execution must fail closed when this is absent.
     pub principal_context: Option<fabric::PrincipalContext>,
 }
 
-// ---------------------------------------------------------------------------
-// Event sink
-// ---------------------------------------------------------------------------
-
-#[async_trait]
-pub trait TurnEngineEventSink: Send + Sync {
-    async fn on_turn_started(&self, turn_id: TurnId);
-    async fn on_turn_settled(&self, turn_id: TurnId, outcome: &TurnEngineResult);
+impl TurnEngineContext {
+    /// Return the host-authenticated authority context or reject execution
+    /// before any capability can be invoked. There is deliberately no local,
+    /// root, permission-profile, or approval-policy fallback.
+    pub fn require_principal_context(&self) -> Result<fabric::PrincipalContext, TurnEngineError> {
+        let context = self.principal_context.clone().ok_or_else(|| {
+            TurnEngineError::InvalidContext("authenticated principal context is missing".into())
+        })?;
+        if context.principal_id != self.principal_id {
+            return Err(TurnEngineError::InvalidContext(
+                "authenticated principal does not match engine principal".into(),
+            ));
+        }
+        Ok(context)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -71,23 +78,18 @@ pub trait TurnEngineEventSink: Send + Sync {
 pub struct TurnEngineResult {
     pub turn_id: TurnId,
     pub output: String,
-    pub status: TurnEngineStatus,
+    /// The existing domain stop value is the one authoritative outcome. Do not
+    /// introduce an adapter-local status that can drift from `TurnResult.stop`.
+    pub stop: fabric::TurnStop,
+    pub failure: Option<fabric::TurnFailure>,
     pub tool_calls: usize,
-    pub tokens_in: u64,
-    pub tokens_out: u64,
+    /// Provider-reported usage aggregated from durable inference receipts.
+    /// Missing provider telemetry remains `None`, never a fabricated zero.
+    pub usage: fabric::InferenceUsage,
     pub elapsed_ms: u64,
     /// Coordinator-owned durable artifacts produced by daemon execution.
     /// Non-daemon engines leave this empty.
     pub coordinator_execution: Option<crate::application::turn_coordinator::TurnExecution>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TurnEngineStatus {
-    Completed,
-    Cancelled,
-    BudgetExhausted,
-    DeadlineExceeded,
-    Blocked,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -104,96 +106,21 @@ pub enum TurnEngineError {
     Internal(#[from] anyhow::Error),
 }
 
-// ---------------------------------------------------------------------------
-// SessionTurnEngine — wraps TurnService for CLI exec paths
-// ---------------------------------------------------------------------------
-
-/// Adapter: wraps the existing `TurnService` behind the unified `TurnEngine`
-/// contract.  `TurnService` remains an internal detail and will be inlined
-/// when all three entry points have been migrated (W1-05).
-pub struct SessionTurnEngine {
-    inner: crate::composition::turn_service::TurnService,
-}
-
-impl SessionTurnEngine {
-    pub fn new(inner: crate::composition::turn_service::TurnService) -> Self {
-        Self { inner }
+impl TurnEngineError {
+    /// Stable machine-readable error identity used at the command boundary.
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Unavailable(_) => "execution_target_unavailable",
+            Self::ProfileNotFound(_) => "turn_profile_not_found",
+            Self::AdmissionRejected(_) => "turn_admission_rejected",
+            Self::InvalidContext(_) => "turn_context_invalid",
+            Self::Internal(_) => "turn_runtime_failed",
+        }
     }
-}
 
-struct FabricEventSink;
-
-#[async_trait]
-impl fabric::TurnEventSink for FabricEventSink {
-    async fn emit(&self, _event: fabric::TurnEvent) {}
-}
-
-#[async_trait]
-impl TurnEngine for SessionTurnEngine {
-    async fn execute(
-        &self,
-        request: TurnEngineRequest,
-        context: TurnEngineContext,
-        events: Arc<dyn TurnEngineEventSink>,
-    ) -> Result<TurnEngineResult, TurnEngineError> {
-        let turn_id = fabric::TurnId::new();
-        events.on_turn_started(turn_id).await;
-
-        let principal_id = context.principal_id.clone();
-        let workspace = (*context.workspace).clone();
-        let model_policy = request
-            .model_policy
-            .or(context.profile.model_policy.clone());
-
-        let principal_context = context.principal_context.unwrap_or_else(|| {
-            fabric::PrincipalContext::new(
-                principal_id.clone(),
-                fabric::LocalOsPrincipal { uid: 0, gid: 0 },
-                fabric::ConnectionId::default(),
-                fabric::ThreadId(principal_id.0.clone()),
-                workspace,
-                fabric::PermissionProfileId("exec".into()),
-                fabric::ApprovalPolicy::Never,
-            )
-        });
-        let turn_request = fabric::TurnRequest {
-            operation_id: context.operation_id,
-            process_id: context.process_id,
-            context: principal_context,
-            input: request.input.clone(),
-            model_policy,
-            deadline: request.deadline,
-            requirements: request.requirements,
-            requested_task_kind: request.requested_task_kind,
-            evaluation_contract: None,
-        };
-
-        let sink = FabricEventSink;
-        let result = match self.inner.submit(turn_request, &sink).await {
-            Ok(tr) => TurnEngineResult {
-                turn_id,
-                output: tr.output,
-                status: TurnEngineStatus::Completed,
-                tool_calls: tr.metrics.tool_calls_made,
-                tokens_in: 0,
-                tokens_out: 0,
-                elapsed_ms: tr.metrics.elapsed_ms,
-                coordinator_execution: None,
-            },
-            Err(_e) => TurnEngineResult {
-                turn_id,
-                output: String::new(),
-                status: TurnEngineStatus::Blocked,
-                tool_calls: 0,
-                tokens_in: 0,
-                tokens_out: 0,
-                elapsed_ms: 0,
-                coordinator_execution: None,
-            },
-        };
-
-        events.on_turn_settled(turn_id, &result).await;
-        Ok(result)
+    /// Whether the same typed request can be retried without correction.
+    pub const fn retryable(&self) -> bool {
+        matches!(self, Self::Unavailable(_))
     }
 }
 
@@ -206,7 +133,7 @@ pub struct TurnEngineParitySnapshot {
     pub turn_id: TurnId,
     pub output_len: usize,
     pub tool_calls: usize,
-    pub status: TurnEngineStatus,
-    pub tokens_in: u64,
-    pub tokens_out: u64,
+    pub stop: fabric::TurnStop,
+    pub failure: Option<fabric::TurnFailure>,
+    pub usage: fabric::InferenceUsage,
 }

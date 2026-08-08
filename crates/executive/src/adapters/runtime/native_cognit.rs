@@ -376,6 +376,7 @@ impl NativeCognitRuntime {
                 turn_id: principal_context
                     .turn_id
                     .expect("native turn id was assigned"),
+                execution_target: fabric::ExecutionTargetSelection::default(),
                 workspace: principal_context.workspace.clone(),
                 session_id: input.handle.agent_id.0.to_string(),
                 working_dir: principal_context.workspace.cwd().to_path_buf(),
@@ -402,6 +403,7 @@ impl NativeCognitRuntime {
             process_id: input.handle.process_id,
             context: principal_context.clone(),
             input: input.request.task.clone(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
             model_policy: Some(resolved.profile.model.clone()),
             deadline: None,
             requirements: Vec::new(),
@@ -471,6 +473,7 @@ impl NativeCognitRuntime {
                 process_id: input.handle.process_id,
                 context: principal_context.clone(),
                 input: next.content,
+                execution_target: fabric::ExecutionTargetSelection::default(),
                 model_policy: Some(resolved.profile.model.clone()),
                 deadline: None,
                 requirements: Vec::new(),

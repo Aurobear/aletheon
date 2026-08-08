@@ -116,6 +116,13 @@ impl DaemonTurnOrchestrator {
             .await
     }
 
+    /// Cancel exactly the active turns admitted by one transport connection.
+    pub async fn cancel_turns_for_connection(&self, connection_id: &fabric::ConnectionId) -> usize {
+        self.coordinator
+            .cancel_active_for_connection(connection_id)
+            .await
+    }
+
     pub async fn cancel_all_turns(&self) -> usize {
         self.coordinator.cancel_all_active().await
     }

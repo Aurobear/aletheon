@@ -114,8 +114,13 @@ mod tests {
 
     #[test]
     fn context_suffix_is_configuration_not_wire_identity() {
-        let resolved = resolve_spec("deepseek/deepseek-v4-flash[1m]", None).unwrap();
-        assert_eq!(resolved.wire_id, "deepseek/deepseek-v4-flash");
-        assert_eq!(resolved.context_window_tokens, 1_000_000);
+        for model in [
+            "deepseek/deepseek-v4-flash[1m]",
+            "deepseek/deepseek-v4-pro[1m]",
+        ] {
+            let resolved = resolve_spec(model, None).unwrap();
+            assert_eq!(resolved.context_window_tokens, 1_000_000);
+            assert!(!resolved.wire_id.contains("[1m]"));
+        }
     }
 }

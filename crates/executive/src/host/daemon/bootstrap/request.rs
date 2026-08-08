@@ -249,7 +249,8 @@ impl RequestHandler {
         };
 
         // Multi-session setup
-        let context_window = llm.max_context_length();
+        let (model_runtime_facts, context_window) =
+            super::inference::verify_runtime_context(llm.as_ref(), &config.model)?;
         let sessions_composition =
             super::sessions::compose(super::sessions::SessionCompositionInput {
                 data_dir: &data_dir,
@@ -260,8 +261,12 @@ impl RequestHandler {
             })
             .await?;
         info!(
-            model_spec = llm.name(),
-            display_name = llm.name(),
+            configured_model_spec = %config.model,
+            effective_model_id = %model_runtime_facts.effective_model_id,
+            display_name = %model_runtime_facts.display_name,
+            provider_id = ?model_runtime_facts.provider_id,
+            transport = ?model_runtime_facts.transport,
+            capability_source = "runtime_model_capability",
             max_context_tokens = context_window,
             "Session context window configured"
         );
@@ -769,14 +774,15 @@ impl RequestHandler {
             clock.clone(),
             durable_budget,
         ));
-        let (embodiment_port, progress_sink) = super::robot::build_robot_embodiment_port(
-            clock.clone(),
-            kernel.admission(),
-            &data_dir,
-            &config.embodiment_provider,
-            config.robot.as_ref(),
-        )
-        .await?;
+        let (embodiment_port, progress_sink, robot_transport_available) =
+            super::robot::build_resilient_robot_embodiment_port(
+                clock.clone(),
+                kernel.admission(),
+                &data_dir,
+                &config.embodiment_provider,
+                config.robot.as_ref(),
+            )
+            .await?;
         tools
             .lock()
             .await
@@ -811,27 +817,18 @@ impl RequestHandler {
             recall_memory.clone(),
             dasein_handle.clone(),
         );
-        let cognitive_sessions = match runtime_config_snapshot.harness_kind {
-            cognit::harness::HarnessKind::Linear => linear_cognitive_sessions.clone(),
-            cognit::harness::HarnessKind::Robot => {
-                let robot = config.robot.as_ref().context("Robot config is missing")?;
-                let promoter = Some(Arc::new(
-                    crate::application::robot_episode_promotion::MnemosyneEpisodePromoter::new(
-                        fact_use_cases.clone(),
-                    ),
-                )
-                    as Arc<dyn cognit::harness::robot::EpisodePromotionPort>);
-                super::robot::build_robot_cognitive_session_factory(
-                    &config.embodiment_provider,
-                    robot,
-                    embodiment_port.clone(),
-                    clock.clone(),
-                    &data_dir,
-                    promoter,
-                )
-                .await?
-            }
-        };
+        let cognitive_sessions = super::robot::build_target_routed_cognition(
+            linear_cognitive_sessions.clone(),
+            &config.embodiment_provider,
+            config.robot.as_ref(),
+            robot_transport_available,
+            embodiment_port.clone(),
+            clock.clone(),
+            &data_dir,
+            fact_use_cases.clone(),
+            runtime_config_snapshot.harness_kind,
+        )
+        .await;
         let conscious_registry = Arc::new(
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),
@@ -1185,7 +1182,6 @@ impl RequestHandler {
             capability_resources,
             conscious_registry.clone(),
             context_assembler,
-            cached_prefix.clone(),
             apply_objective_store,
             param_registry.clone(),
             agent_svc.agent_live_runs,

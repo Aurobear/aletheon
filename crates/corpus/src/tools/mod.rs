@@ -15,4 +15,5 @@ pub use tools::*;
 
 pub use capability_executor::{
     default_tool_registry, discover_tool_extensions, tool_risk_levels, CorpusToolExecutor,
+    ToolResultCacheConfig,
 };

@@ -1,0 +1,530 @@
+name: R8 Evidence Handoff
+
+# Operator-triggered two-job workflow that stages the exact release-
+# candidate binary on a self-hosted runner, then pauses for the operator
+# to execute live simulation tasks (positive completed + negative
+# safe-stop), produce official-client reports and a durable SQLite
+# database, and finally validates those reports through the installed
+# acceptance robot-r8 entrypoint.
+#
+# Job 1 (stage-rc): downloads the exact x86_64 RC archive from the
+#   specified build run, verifies source commit identity, extracts and
+#   deploys the binary, and exposes provenance outputs.
+#
+#   --- OPERATOR PAUSE ---
+#   The operator performs actual positive and negative Robot simulation
+#   tasks on the staged binary, saves official-client episode reports
+#   and the durable database at paths configured in the robot-r8-release
+#   GitHub Environment, then approves Job 2.
+#
+# Job 2 (validate-operator-produced-live-evidence): protected by the
+#   robot-r8-release environment. Re-downloads the exact RC (no rebuild),
+#   runs the installed acceptance robot-r8 entrypoint twice against the
+#   operator-produced report/database files, and uploads machine-readable
+#   receipts. Fails closed if environment protection is missing or any
+#   required evidence path is absent.
+#
+# Operational sequence for a tag release:
+#   1. Push tag -> release workflow reaches convergence-gate and fails
+#      closed (no R8 evidence artifact exists yet).
+#   2. Operator triggers this handoff workflow with
+#      rc_archive_run_id = the release GITHUB_RUN_ID.
+#   3. After Job 1 succeeds, operator performs live tasks, writes
+#      reports + DB, then approves Job 2.
+#   4. After Job 2 uploads evidence, re-run failed release jobs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Full commit SHA this evidence is bound to'
+        required: true
+        type: string
+      rc_archive_run_id:
+        description: 'GitHub Actions run ID that produced the RC archive'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  stage-rc:
+    name: Stage exact x86_64 RC
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    timeout-minutes: 15
+    outputs:
+      commit: ${{ steps.verify-sha.outputs.commit }}
+      source-run-id: ${{ steps.verify-sha.outputs.source-run-id }}
+      archive-digest: ${{ steps.install-rc.outputs.archive-digest }}
+      installed-digest: ${{ steps.install-rc.outputs.installed-digest }}
+      stage-completed-utc: ${{ steps.install-rc.outputs.stage-completed-utc }}
+      stage-completed-unix-ms: ${{ steps.install-rc.outputs.stage-completed-unix-ms }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Verify checkout matches requested SHA and record provenance
+        id: verify-sha
+        run: |
+          set -euo pipefail
+          ACTUAL=$(git rev-parse HEAD)
+          EXPECTED="${{ inputs.commit_sha }}"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ERROR: checkout SHA ${ACTUAL} != requested ${EXPECTED}" >&2
+            exit 1
+          fi
+          echo "commit=${ACTUAL}" >> "$GITHUB_OUTPUT"
+
+          # Do NOT trust inputs.rc_archive_run_id echoed to output.
+          # Use authenticated read-only gh run view to obtain the
+          # exact run's headSha and workflow identity.
+          SOURCE_RUN_ID="${{ inputs.rc_archive_run_id }}"
+          RUN_JSON=$(gh run view "$SOURCE_RUN_ID" --repo "${{ github.repository }}" --json headSha,workflowName,status)
+          if [[ -z "$RUN_JSON" ]]; then
+            echo "ERROR: gh run view ${SOURCE_RUN_ID} returned empty response" >&2
+            exit 1
+          fi
+          HEAD_SHA=$(echo "$RUN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['headSha'])")
+          WORKFLOW_NAME=$(echo "$RUN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['workflowName'])")
+          RUN_STATUS=$(echo "$RUN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['status'])")
+          if [[ "$HEAD_SHA" != "$EXPECTED" ]]; then
+            echo "ERROR: source run headSha ${HEAD_SHA} != inputs.commit_sha ${EXPECTED}" >&2
+            exit 1
+          fi
+          if [[ "$WORKFLOW_NAME" != "Release" ]]; then
+            echo "ERROR: rc_archive_run_id ${SOURCE_RUN_ID} is workflow '${WORKFLOW_NAME}', expected 'Release'" >&2
+            exit 1
+          fi
+          # The source Release run is normally still in progress while this
+          # handoff stages its completed build artifact. A completed failed run
+          # is also valid for a failed-gate rerun, but a queued/unknown run is
+          # not an authoritative artifact source.
+          if [[ "$RUN_STATUS" != "in_progress" && "$RUN_STATUS" != "completed" ]]; then
+            echo "ERROR: source Release run ${SOURCE_RUN_ID} has unusable status '${RUN_STATUS}'" >&2
+            exit 1
+          fi
+          echo "source-run-id=${SOURCE_RUN_ID}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download exact RC archive from build run
+        id: download-rc
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.rc_archive_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: aletheon-*-x86_64-unknown-linux-gnu.tar.gz
+          merge-multiple: true
+          path: ${{ runner.temp }}/rc-archive
+
+      - name: Install RC binary
+        id: install-rc
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP"/rc-archive/aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "expected exactly one x86_64 archive, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          archive_path="${archives[0]}"
+          archive_digest=$(sha256sum "$archive_path" | awk '{print $1}')
+          echo "archive-digest=${archive_digest}" >> "$GITHUB_OUTPUT"
+
+          mkdir -p target/release
+          ARCHIVE="$archive_path" OUTPUT=target/release/aletheon python3 - <<'PY'
+          import os, pathlib, shutil, tarfile
+          archive = pathlib.Path(os.environ["ARCHIVE"])
+          output = pathlib.Path(os.environ["OUTPUT"])
+          with tarfile.open(archive, "r:gz") as source:
+              members = [m for m in source.getmembers() if m.name.endswith("/aletheon")]
+              if len(members) != 1 or not members[0].isfile():
+                  raise SystemExit("release archive must contain exactly one regular aletheon binary")
+              stream = source.extractfile(members[0])
+              if stream is None:
+                  raise SystemExit("release candidate binary is unreadable")
+              descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+              with os.fdopen(descriptor, "wb") as destination:
+                  shutil.copyfileobj(stream, destination)
+          PY
+          chmod 0755 target/release/aletheon
+
+          sudo bash scripts/aletheon.sh deploy --no-build
+
+          installed_digest=$(sha256sum /usr/bin/aletheon | awk '{print $1}')
+          echo "installed-digest=${installed_digest}" >> "$GITHUB_OUTPUT"
+          echo "rc-archive-path=${archive_path}" >> "$GITHUB_OUTPUT"
+
+          # Capture both representations from one authoritative instant.
+          python3 - "$GITHUB_OUTPUT" <<'PY'
+          import datetime
+          import pathlib
+          import sys
+
+          now = datetime.datetime.now(datetime.timezone.utc)
+          with pathlib.Path(sys.argv[1]).open("a", encoding="utf-8") as output:
+              output.write(f"stage-completed-utc={now.isoformat()}\n")
+              output.write(f"stage-completed-unix-ms={int(now.timestamp() * 1000)}\n")
+          PY
+
+  # -----------------------------------------------------------------------
+  # Protected validation: operator performs live tasks between Job 1 and
+  # Job 2, writes official-client reports and the durable database, then
+  # approves this job.  If the robot-r8-release environment is not
+  # configured or any required evidence path is absent, fail closed.
+  # -----------------------------------------------------------------------
+  validate-operator-produced-live-evidence:
+    name: Validate operator-produced live evidence
+    needs: stage-rc
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    environment: robot-r8-release
+    timeout-minutes: 30
+    env:
+      ALETHEON_RELEASE_BINARY: ${{ runner.temp }}/rc-archive-extracted/aletheon
+      ALETHEON_R8_POSITIVE_REPORT: ${{ vars.ALETHEON_R8_POSITIVE_REPORT }}
+      ALETHEON_R8_NEGATIVE_REPORT: ${{ vars.ALETHEON_R8_NEGATIVE_REPORT }}
+      ALETHEON_R8_DATABASE: ${{ vars.ALETHEON_R8_DATABASE }}
+      ALETHEON_R8_EXPECTED_DEVICE: ${{ vars.ALETHEON_R8_EXPECTED_DEVICE }}
+      ALETHEON_R8_EXPECTED_SCENE: ${{ vars.ALETHEON_R8_EXPECTED_SCENE }}
+      ALETHEON_R8_EXPECTED_BRIDGE_DIGEST: ${{ vars.ALETHEON_R8_EXPECTED_BRIDGE_DIGEST }}
+      ALETHEON_R8_EXPECTED_SKILL_DIGEST: ${{ vars.ALETHEON_R8_EXPECTED_SKILL_DIGEST }}
+      ALETHEON_R8_EXPECTED_POLICY_PROVIDER: ${{ vars.ALETHEON_R8_EXPECTED_POLICY_PROVIDER }}
+      ALETHEON_R8_EXPECTED_POLICY_MODEL: ${{ vars.ALETHEON_R8_EXPECTED_POLICY_MODEL }}
+      ALETHEON_R8_EXPECTED_POLICY_VERSION: ${{ vars.ALETHEON_R8_EXPECTED_POLICY_VERSION }}
+      ALETHEON_R8_EXPECTED_POLICY_PROTOCOL: ${{ vars.ALETHEON_R8_EXPECTED_POLICY_PROTOCOL }}
+      ALETHEON_R8_EXPECTED_POLICY_DIGEST: ${{ vars.ALETHEON_R8_EXPECTED_POLICY_DIGEST }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Re-download exact RC archive (no rebuild)
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.rc_archive_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: aletheon-*-x86_64-unknown-linux-gnu.tar.gz
+          merge-multiple: true
+          path: ${{ runner.temp }}/rc-archive
+
+      - name: Safely extract exact RC binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/rc-archive-extracted"
+
+          # Re-download the exact same RC archive for independent
+          # verification; this job must not trust Job 1's filesystem
+          # state across the operator pause.
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP"/rc-archive/aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "expected exactly one x86_64 archive in rc-archive, found ${#archives[@]}" >&2
+            exit 1
+          fi
+
+          ARCHIVE="${archives[0]}" OUTPUT="$ALETHEON_RELEASE_BINARY" python3 - <<'PY'
+          import os, pathlib, shutil, tarfile
+          archive = pathlib.Path(os.environ["ARCHIVE"])
+          output = pathlib.Path(os.environ["OUTPUT"])
+          with tarfile.open(archive, "r:gz") as source:
+              members = [m for m in source.getmembers() if m.name.endswith("/aletheon")]
+              if len(members) != 1 or not members[0].isfile():
+                  raise SystemExit("release archive must contain exactly one regular aletheon binary")
+              stream = source.extractfile(members[0])
+              if stream is None:
+                  raise SystemExit("release candidate binary is unreadable")
+              descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+              with os.fdopen(descriptor, "wb") as destination:
+                  shutil.copyfileobj(stream, destination)
+          PY
+
+          actual_digest=$(sha256sum "$ALETHEON_RELEASE_BINARY" | awk '{print $1}')
+          expected_digest="${{ needs.stage-rc.outputs.installed-digest }}"
+          if [[ "$actual_digest" != "$expected_digest" ]]; then
+            echo "ERROR: re-extracted binary digest ${actual_digest} != installed ${expected_digest}" >&2
+            exit 1
+          fi
+          echo "extracted-digest=${actual_digest}" >> "$GITHUB_OUTPUT"
+
+          mkdir -p target/release
+          cp "$ALETHEON_RELEASE_BINARY" target/release/aletheon
+          chmod 0755 target/release/aletheon
+          sudo bash scripts/aletheon.sh deploy --no-build
+
+      - name: Require all environment evidence variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "ERROR: required environment variable $1 is not set" >&2; exit 1; }
+          # All paths/provenance values come from the GitHub Environment;
+          # no literal paths or workflow inputs expose private topology.
+          : ${ALETHEON_R8_POSITIVE_REPORT:?}
+          : ${ALETHEON_R8_NEGATIVE_REPORT:?}
+          : ${ALETHEON_R8_DATABASE:?}
+          : ${ALETHEON_R8_EXPECTED_DEVICE:?}
+          : ${ALETHEON_R8_EXPECTED_SCENE:?}
+          : ${ALETHEON_R8_EXPECTED_BRIDGE_DIGEST:?}
+          : ${ALETHEON_R8_EXPECTED_SKILL_DIGEST:?}
+          : ${ALETHEON_R8_EXPECTED_POLICY_PROVIDER:?}
+          : ${ALETHEON_R8_EXPECTED_POLICY_MODEL:?}
+          : ${ALETHEON_R8_EXPECTED_POLICY_VERSION:?}
+          : ${ALETHEON_R8_EXPECTED_POLICY_PROTOCOL:?}
+          : ${ALETHEON_R8_EXPECTED_POLICY_DIGEST:?}
+
+          # Verify every required file exists on disk.
+          # Print only variable names on failure, not private paths.
+          for path_var in ALETHEON_R8_POSITIVE_REPORT ALETHEON_R8_NEGATIVE_REPORT ALETHEON_R8_DATABASE; do
+            file_path="${!path_var}"
+            if [[ ! -f "$file_path" ]]; then
+              echo "ERROR: ${path_var} does not exist or is not a regular file" >&2
+              exit 1
+            fi
+          done
+          echo "All required environment evidence variables are set and files exist."
+
+      - name: Validate positive operator-produced live evidence
+        id: positive-r8
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVIDENCE_DIR="$RUNNER_TEMP/r8-evidence"
+          mkdir -p "$EVIDENCE_DIR"
+
+          echo "=== Positive R8 acceptance (settlement: completed) ==="
+
+          # The acceptance robot-r8 entrypoint runs the installed
+          # provenance/stability/official-socket gate before the
+          # report/SQLite checker.
+          bash scripts/aletheon.sh acceptance robot-r8 \
+            --report "$ALETHEON_R8_POSITIVE_REPORT" \
+            --database "$ALETHEON_R8_DATABASE" \
+            --expected-device "$ALETHEON_R8_EXPECTED_DEVICE" \
+            --expected-settlement completed \
+            --minimum-stable-window-ms 3000 \
+            --expected-scene "$ALETHEON_R8_EXPECTED_SCENE" \
+            --expected-bridge-digest "$ALETHEON_R8_EXPECTED_BRIDGE_DIGEST" \
+            --expected-skill-descriptor-digest "$ALETHEON_R8_EXPECTED_SKILL_DIGEST" \
+            --expected-policy-provider "$ALETHEON_R8_EXPECTED_POLICY_PROVIDER" \
+            --expected-policy-model "$ALETHEON_R8_EXPECTED_POLICY_MODEL" \
+            --expected-policy-version "$ALETHEON_R8_EXPECTED_POLICY_VERSION" \
+            --expected-policy-protocol "$ALETHEON_R8_EXPECTED_POLICY_PROTOCOL" \
+            --expected-policy-digest "$ALETHEON_R8_EXPECTED_POLICY_DIGEST" \
+            --output "$EVIDENCE_DIR/positive-receipt.json" \
+            || {
+              echo "ERROR: positive R8 acceptance failed" >&2
+              exit 1
+            }
+
+          echo "positive receipt:"
+          cat "$EVIDENCE_DIR/positive-receipt.json"
+          echo "positive-receipt=${EVIDENCE_DIR}/positive-receipt.json" >> "$GITHUB_OUTPUT"
+
+      - name: Validate negative operator-produced live evidence
+        id: negative-r8
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVIDENCE_DIR="$RUNNER_TEMP/r8-evidence"
+          mkdir -p "$EVIDENCE_DIR"
+
+          echo "=== Negative R8 acceptance (settlement: failed, safe-stop) ==="
+
+          bash scripts/aletheon.sh acceptance robot-r8 \
+            --report "$ALETHEON_R8_NEGATIVE_REPORT" \
+            --database "$ALETHEON_R8_DATABASE" \
+            --expected-device "$ALETHEON_R8_EXPECTED_DEVICE" \
+            --expected-settlement failed \
+            --minimum-stable-window-ms 3000 \
+            --require-safe-stop \
+            --expected-safe-stop-outcome succeeded \
+            --expected-scene "$ALETHEON_R8_EXPECTED_SCENE" \
+            --expected-bridge-digest "$ALETHEON_R8_EXPECTED_BRIDGE_DIGEST" \
+            --expected-skill-descriptor-digest "$ALETHEON_R8_EXPECTED_SKILL_DIGEST" \
+            --expected-policy-provider "$ALETHEON_R8_EXPECTED_POLICY_PROVIDER" \
+            --expected-policy-model "$ALETHEON_R8_EXPECTED_POLICY_MODEL" \
+            --expected-policy-version "$ALETHEON_R8_EXPECTED_POLICY_VERSION" \
+            --expected-policy-protocol "$ALETHEON_R8_EXPECTED_POLICY_PROTOCOL" \
+            --expected-policy-digest "$ALETHEON_R8_EXPECTED_POLICY_DIGEST" \
+            --output "$EVIDENCE_DIR/negative-receipt.json" \
+            || {
+              echo "ERROR: negative R8 acceptance failed" >&2
+              exit 1
+            }
+
+          echo "negative receipt:"
+          cat "$EVIDENCE_DIR/negative-receipt.json"
+          echo "negative-receipt=${EVIDENCE_DIR}/negative-receipt.json" >> "$GITHUB_OUTPUT"
+
+      - name: Verify durable SQLite settlement freshness
+        id: freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE_COMPLETED_UNIX_MS="${{ needs.stage-rc.outputs.stage-completed-unix-ms }}"
+          EVIDENCE_DIR="$RUNNER_TEMP/r8-evidence"
+
+          # Load each receipt episode_id, open configured SQLite ro,
+          # query episode_reports.settled_at_unix_ms, require each
+          # row exists and timestamp >= stage_completed_unix_ms.
+          # Require positive/negative IDs differ.
+          POS_EP_ID=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['episode_id'])" "$EVIDENCE_DIR/positive-receipt.json")
+          NEG_EP_ID=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['episode_id'])" "$EVIDENCE_DIR/negative-receipt.json")
+
+          if [[ "$POS_EP_ID" == "$NEG_EP_ID" ]]; then
+            echo "ERROR: positive and negative episode_id must differ: ${POS_EP_ID}" >&2
+            exit 1
+          fi
+
+          python3 - "$ALETHEON_R8_DATABASE" "$POS_EP_ID" "$NEG_EP_ID" \
+            "$STAGE_COMPLETED_UNIX_MS" "$GITHUB_OUTPUT" <<'PY'
+          import pathlib
+          import sqlite3
+          import sys
+
+          db_path = pathlib.Path(sys.argv[1]).resolve()
+          pos_ep = sys.argv[2]
+          neg_ep = sys.argv[3]
+          stage_ms = int(sys.argv[4])
+          output_path = pathlib.Path(sys.argv[5])
+
+          uri = f"{db_path.as_uri()}?mode=ro"
+          conn = sqlite3.connect(uri, uri=True)
+          conn.execute("PRAGMA query_only=ON")
+          try:
+              settled_by_label = {}
+              for ep_id, label in ((pos_ep, "positive"), (neg_ep, "negative")):
+                  row = conn.execute(
+                      "SELECT settled_at_unix_ms FROM episode_reports WHERE episode_id = ?",
+                      (ep_id,),
+                  ).fetchone()
+                  if row is None:
+                      print(f"ERROR: {label} episode_id {ep_id} not found in durable database", file=sys.stderr)
+                      sys.exit(1)
+                  settled = int(row[0])
+                  if settled < stage_ms:
+                      print(f"ERROR: {label} settlement timestamp {settled} < stage completed {stage_ms}", file=sys.stderr)
+                      sys.exit(1)
+                  settled_by_label[label] = settled
+              integrity = conn.execute("PRAGMA integrity_check").fetchone()
+              if integrity != ("ok",):
+                  print("ERROR: durable database integrity_check did not return ok", file=sys.stderr)
+                  sys.exit(1)
+          finally:
+              conn.close()
+
+          with output_path.open("a", encoding="utf-8") as output:
+              for label in ("positive", "negative"):
+                  output.write(
+                      f"{label}_settled_at_unix_ms={settled_by_label[label]}\n"
+                  )
+          PY
+
+      - name: Bind evidence metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVIDENCE_DIR="$RUNNER_TEMP/r8-evidence"
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP"/rc-archive/aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "ERROR: expected exactly one x86_64 RC archive for metadata" >&2
+            exit 1
+          fi
+          rc_archive_sha256=$(sha256sum "${archives[0]}" | awk '{print $1}')
+          installed_digest=$(sha256sum /usr/bin/aletheon | awk '{print $1}')
+          positive_digest=$(sha256sum "$EVIDENCE_DIR/positive-receipt.json" | awk '{print $1}')
+          negative_digest=$(sha256sum "$EVIDENCE_DIR/negative-receipt.json" | awk '{print $1}')
+
+          # Bind the exact timestamps validated by the prior read-only query;
+          # do not re-query the mutable database in a second step.
+          STAGE_COMPLETED_UTC="${{ needs.stage-rc.outputs.stage-completed-utc }}"
+          STAGE_COMPLETED_UNIX_MS="${{ needs.stage-rc.outputs.stage-completed-unix-ms }}"
+          POS_SETTLED_MS="${{ steps.freshness.outputs.positive_settled_at_unix_ms }}"
+          NEG_SETTLED_MS="${{ steps.freshness.outputs.negative_settled_at_unix_ms }}"
+          POS_EP_ID=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['episode_id'])" "$EVIDENCE_DIR/positive-receipt.json")
+          NEG_EP_ID=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['episode_id'])" "$EVIDENCE_DIR/negative-receipt.json")
+
+          python3 - "$EVIDENCE_DIR/r8-metadata.json" \
+            "${{ inputs.commit_sha }}" \
+            "${{ inputs.rc_archive_run_id }}" \
+            "$rc_archive_sha256" \
+            "$installed_digest" \
+            "$positive_digest" \
+            "$negative_digest" \
+            "$ALETHEON_R8_EXPECTED_DEVICE" \
+            "$STAGE_COMPLETED_UTC" \
+            "$STAGE_COMPLETED_UNIX_MS" \
+            "$POS_SETTLED_MS" \
+            "$NEG_SETTLED_MS" \
+            "$POS_EP_ID" \
+            "$NEG_EP_ID" <<'PY'
+          import json, sys, pathlib, datetime
+          meta_path = sys.argv[1]
+          meta = {
+              "schema_version": 1,
+              "commit_sha": sys.argv[2],
+              "rc_archive_run_id": sys.argv[3],
+              "rc_archive_sha256": sys.argv[4],
+              "installed_digest": sys.argv[5],
+              "positive_receipt_sha256": sys.argv[6],
+              "negative_receipt_sha256": sys.argv[7],
+              "device": sys.argv[8],
+              "generated_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "stage_completed_utc": sys.argv[9],
+              "stage_completed_unix_ms": int(sys.argv[10]),
+              "positive_settled_at_unix_ms": int(sys.argv[11]),
+              "negative_settled_at_unix_ms": int(sys.argv[12]),
+              "positive_episode_id": sys.argv[13],
+              "negative_episode_id": sys.argv[14],
+          }
+          pathlib.Path(meta_path).write_text(json.dumps(meta, sort_keys=True, indent=2) + "\n")
+          PY
+
+          echo "metadata written:"
+          cat "$EVIDENCE_DIR/r8-metadata.json"
+
+      - name: Run R8 evidence verifier on produced evidence
+        id: verify-evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          EVIDENCE_DIR="$RUNNER_TEMP/r8-evidence"
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP"/rc-archive/aletheon-*-x86_64-unknown-linux-gnu.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "ERROR: expected exactly one x86_64 RC archive for verification" >&2
+            exit 1
+          fi
+          rc_archive="${archives[0]}"
+          installed_digest=$(sha256sum /usr/bin/aletheon | awk '{print $1}')
+          expected_device="$ALETHEON_R8_EXPECTED_DEVICE"
+
+          python3 tests/coding/harness/r8_evidence_verifier.py \
+            --metadata "$EVIDENCE_DIR/r8-metadata.json" \
+            --positive-receipt "$EVIDENCE_DIR/positive-receipt.json" \
+            --negative-receipt "$EVIDENCE_DIR/negative-receipt.json" \
+            --expected-commit "${{ inputs.commit_sha }}" \
+            --expected-run-id "${{ inputs.rc_archive_run_id }}" \
+            --expected-rc-archive "$rc_archive" \
+            --expected-installed-digest "$installed_digest" \
+            --expected-device "$expected_device"
+
+      - name: Upload R8 evidence artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r8-evidence-${{ inputs.commit_sha }}
+          path: |
+            ${{ runner.temp }}/r8-evidence/positive-receipt.json
+            ${{ runner.temp }}/r8-evidence/negative-receipt.json
+            ${{ runner.temp }}/r8-evidence/r8-metadata.json
+          if-no-files-found: error
+          retention-days: 90

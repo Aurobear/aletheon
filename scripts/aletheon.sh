@@ -84,6 +84,7 @@ cmd_completion() {
 }
 
 cmd_deploy() {
+  local deploy_args=("$@")
   local build=1 restart=1 enable=1
   while (($#)); do
     case "$1" in
@@ -97,11 +98,18 @@ cmd_deploy() {
   # A deployment changes the installed binary and daemon generation. Hold an
   # exclusive machine-user lease for the complete build/install/restart/verify
   # transaction so installed acceptance suites can hold the matching shared
-  # lease and cannot be silently invalidated midway through a run.
+  # lease and cannot be silently invalidated midway through a run. Keep the
+  # descriptor in flock's supervisor and close it in the deployed command;
+  # otherwise a persistent child such as the sccache server can inherit the
+  # exclusive lock and block all later acceptance runs indefinitely.
   local runtime_lock=${ALETHEON_RUNTIME_LOCK_FILE:-${XDG_RUNTIME_DIR:-$HOME/.local/state}/aletheon/runtime-mutation.lock}
   install -d -m 0700 "$(dirname -- "$runtime_lock")"
-  exec {runtime_lock_fd}>"$runtime_lock"
-  flock -x "$runtime_lock_fd"
+  if [[ ${ALETHEON_RUNTIME_LOCK_GUARD:-0} != 1 ]]; then
+    exec flock -x -o "$runtime_lock" env \
+      ALETHEON_RUNTIME_LOCK_GUARD=1 \
+      bash "$SCRIPT_DIR/aletheon.sh" deploy "${deploy_args[@]}"
+  fi
+  unset ALETHEON_RUNTIME_LOCK_GUARD
   local install_args=()
   ((enable)) || install_args+=(--no-enable)
   ((build)) && cmd_build

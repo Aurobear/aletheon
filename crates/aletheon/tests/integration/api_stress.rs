@@ -10,8 +10,10 @@ mod api_stress {
     #[test]
     #[cfg_attr(not(feature = "integration-tests"), ignore)]
     fn daemon_responds_to_ping() {
-        let mut stream =
-            UnixStream::connect("/run/aletheon/aletheon.sock").expect("Should connect");
+        let _runtime_guard = crate::installed_runtime_lock();
+        let socket = crate::official_user_socket();
+        let mut stream = UnixStream::connect(&socket)
+            .unwrap_or_else(|error| panic!("should connect to {}: {error}", socket.display()));
 
         // Send a basic JSON-RPC ping/initialize
         let request = serde_json::json!({
@@ -43,9 +45,11 @@ mod api_stress {
     #[test]
     #[cfg_attr(not(feature = "integration-tests"), ignore)]
     fn rapid_connect_disconnect() {
+        let _runtime_guard = crate::installed_runtime_lock();
+        let socket = crate::official_user_socket();
         for _ in 0..10 {
-            let _stream =
-                UnixStream::connect("/run/aletheon/aletheon.sock").expect("Should connect");
+            let _stream = UnixStream::connect(&socket)
+                .unwrap_or_else(|error| panic!("should connect to {}: {error}", socket.display()));
             // Drop immediately — daemon shouldn't crash or leak
             std::thread::sleep(std::time::Duration::from_millis(10));
         }

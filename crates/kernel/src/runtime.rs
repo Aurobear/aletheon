@@ -633,7 +633,11 @@ impl KernelRuntime {
     async fn cleanup_process_resources(&self, id: ProcessId) -> anyhow::Result<()> {
         self.lifecycle_faults.before_process_cleanup(id)?;
         let snapshot = self.processes.inspect(id).await?;
-        for operation in self.operations.ids_for_owner(id).await {
+        let operations = self.operations.ids_for_owner(id).await;
+        for operation in &operations {
+            self.cleanup_operation_resources(*operation).await?;
+        }
+        for operation in operations {
             self.operations
                 .cancel(operation, CancelReason::Other("process_exit".into()))
                 .await?;
@@ -807,6 +811,8 @@ impl KernelRuntime {
     }
 
     pub async fn succeed_operation(&self, id: OperationId) -> anyhow::Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.cleanup_operation_resources(id).await?;
         self.operations.succeed(id).await
     }
 
@@ -815,6 +821,8 @@ impl KernelRuntime {
         id: OperationId,
         message: impl Into<String>,
     ) -> anyhow::Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.cleanup_operation_resources(id).await?;
         self.operations.fail(id, message).await
     }
 
@@ -823,6 +831,8 @@ impl KernelRuntime {
         id: OperationId,
         message: impl Into<String>,
     ) -> anyhow::Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.cleanup_operation_resources(id).await?;
         self.operations.panic(id, message).await
     }
 
@@ -831,7 +841,39 @@ impl KernelRuntime {
         id: OperationId,
         reason: CancelReason,
     ) -> anyhow::Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        for operation in self.operations.tree_ids(id).await {
+            self.cleanup_operation_resources(operation).await?;
+        }
         self.operations.cancel(id, reason).await
+    }
+
+    /// Revoke every turn-owned admission hold before publishing the Operation
+    /// terminal state. Each component is idempotent, so a persistence failure
+    /// can be retried without double release or double charging.
+    async fn cleanup_operation_resources(&self, id: OperationId) -> anyhow::Result<()> {
+        if let Some(admission) = &self.production_admission {
+            admission.revoke_operation_permits(id).await;
+        }
+        let scope = self
+            .budget_ownership
+            .lock()
+            .await
+            .operations
+            .get(&id)
+            .copied();
+        if let Some(scope) = scope {
+            self.budget
+                .revoke_scope_tree(scope)
+                .await
+                .map_err(|error| anyhow::anyhow!("operation budget cleanup failed: {error}"))?;
+            self.budget
+                .unbind_operation_scope(id)
+                .await
+                .map_err(|error| anyhow::anyhow!("operation budget unbind failed: {error}"))?;
+            self.budget_ownership.lock().await.operations.remove(&id);
+        }
+        Ok(())
     }
 
     pub async fn inspect_operation(&self, id: OperationId) -> anyhow::Result<OperationRecord> {
@@ -853,6 +895,13 @@ impl KernelRuntime {
     pub async fn active_permits_for_process(&self, process: ProcessId) -> usize {
         match &self.production_admission {
             Some(admission) => admission.active_for_process(process).await,
+            None => 0,
+        }
+    }
+
+    pub async fn active_permits_for_operation(&self, operation: OperationId) -> usize {
+        match &self.production_admission {
+            Some(admission) => admission.active_for_operation(operation).await,
             None => 0,
         }
     }

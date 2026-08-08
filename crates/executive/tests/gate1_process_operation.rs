@@ -163,6 +163,7 @@ async fn every_turn_has_operation_id() {
                 process_id: handle.id,
                 context: turn_request_support::context("gate-1-turn", PathBuf::from(".")),
                 input: "hello".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
@@ -345,7 +346,7 @@ async fn no_orphan_tasks_after_cancel_and_drain() {
     ));
 
     // Verify the scope's JoinSet is truly empty.
-    assert!(scope.tasks.is_empty());
+    assert!(scope.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -447,6 +448,7 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
                 process_id: process.id,
                 context: turn_request_support::context("deadline-gate1", PathBuf::from(".")),
                 input: "should timeout".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(50)),
                 requirements: Vec::new(),

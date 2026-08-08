@@ -1,6 +1,8 @@
 //! Canonical transactional Session/Turn/Item history store.
 
-use std::{path::Path, sync::Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -8,12 +10,22 @@ use fabric::{
     AppendOutcome, ItemId, ItemRecord, PrincipalId, SessionId, SessionReadStore, SessionRecord,
     SESSION_SCHEMA_VERSION,
 };
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use crate::adapters::session::projection_store::SessionProjectionStore;
 
 pub struct CanonicalSessionStore {
-    connection: Mutex<Connection>,
+    locator: DatabaseLocator,
+    /// Keeps a shared in-memory SQLite database alive. Production file-backed
+    /// operations never acquire this mutex; each operation opens its own
+    /// bounded-busy connection, so unrelated sessions have no application-wide
+    /// connection lock.
+    _memory_keeper: Option<Mutex<Connection>>,
+}
+
+enum DatabaseLocator {
+    File(PathBuf),
+    SharedMemory(String),
 }
 
 // Keep the database migration marker aligned with the newest record protocol
@@ -39,11 +51,38 @@ pub fn session_db_path(state_root: &Path) -> std::path::PathBuf {
 
 impl CanonicalSessionStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let connection = Connection::open(path)?;
-        migrate(&connection)?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+        let path = path.as_ref();
+        if path == Path::new(":memory:") {
+            let uri = format!(
+                "file:aletheon-session-{}?mode=memory&cache=shared",
+                uuid::Uuid::new_v4()
+            );
+            let connection = open_shared_memory(&uri)?;
+            configure_connection(&connection, false)?;
+            migrate(&connection)?;
+            Ok(Self {
+                locator: DatabaseLocator::SharedMemory(uri),
+                _memory_keeper: Some(Mutex::new(connection)),
+            })
+        } else {
+            let path = path.to_path_buf();
+            let connection = Connection::open(&path)?;
+            configure_connection(&connection, true)?;
+            migrate(&connection)?;
+            Ok(Self {
+                locator: DatabaseLocator::File(path),
+                _memory_keeper: None,
+            })
+        }
+    }
+
+    fn open_connection(&self) -> Result<Connection> {
+        let connection = match &self.locator {
+            DatabaseLocator::File(path) => Connection::open(path)?,
+            DatabaseLocator::SharedMemory(uri) => open_shared_memory(uri)?,
+        };
+        configure_connection(&connection, false)?;
+        Ok(connection)
     }
 
     fn validate_session(session: &SessionRecord) -> Result<()> {
@@ -79,6 +118,25 @@ impl CanonicalSessionStore {
         }
         Ok(())
     }
+}
+
+fn open_shared_memory(uri: &str) -> rusqlite::Result<Connection> {
+    Connection::open_with_flags(
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_URI,
+    )
+}
+
+fn configure_connection(connection: &Connection, file_backed: bool) -> Result<()> {
+    connection.busy_timeout(Duration::from_secs(2))?;
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    if file_backed {
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+    }
+    Ok(())
 }
 
 fn migrate(connection: &Connection) -> Result<()> {
@@ -178,7 +236,7 @@ impl SessionProjectionStore for CanonicalSessionStore {
     async fn create(&self, session: SessionRecord) -> Result<()> {
         Self::validate_session(&session)?;
         let json = serde_json::to_string(&session)?;
-        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let connection = self.open_connection()?;
         let existing = connection
             .query_row(
                 "SELECT record_json FROM sessions WHERE session_id=?1",
@@ -201,6 +259,37 @@ impl SessionProjectionStore for CanonicalSessionStore {
         Ok(())
     }
 
+    async fn next_sequence(&self, session: &SessionId) -> Result<Option<u64>> {
+        let connection = self.open_connection()?;
+        connection
+            .query_row(
+                "SELECT next_sequence FROM sessions WHERE session_id=?1",
+                params![session.0],
+                |row| row.get::<_, u64>(0),
+            )
+            .optional()
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn item_by_id(&self, session: &SessionId, id: &ItemId) -> Result<Option<ItemRecord>> {
+        let connection = self.open_connection()?;
+        let json = connection
+            .query_row(
+                "SELECT item_json FROM session_items WHERE item_id=?1 AND session_id=?2",
+                params![id.0.to_string(), session.0],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("read canonical session item by id")?;
+        match json {
+            Some(json) => {
+                let item: ItemRecord = serde_json::from_str(&json)?;
+                Ok(Some(item))
+            }
+            None => Ok(None),
+        }
+    }
+
     async fn append(
         &self,
         session: &SessionId,
@@ -218,9 +307,9 @@ impl SessionProjectionStore for CanonicalSessionStore {
             _ => None,
         };
         let item_json = serde_json::to_string(&item)?;
-        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let mut connection = self.open_connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(existing) = tx
+        if let Some(existing_json) = tx
             .query_row(
                 "SELECT item_json FROM session_items WHERE item_id=?1",
                 params![item.id.0.to_string()],
@@ -228,8 +317,34 @@ impl SessionProjectionStore for CanonicalSessionStore {
             )
             .optional()?
         {
-            if existing != item_json {
-                bail!("item id retry conflicts with persisted content");
+            // Compare the versioned record rather than its historical JSON
+            // spelling. Compatible protocol additions can deserialize a missing
+            // field to its typed default (for example execution_target=General),
+            // so byte comparison would reject an otherwise identical replay and
+            // keep the daemon in a restart loop. Rewrite successful retries to
+            // today's canonical JSON so subsequent reads no longer depend on the
+            // legacy representation.
+            let mut existing: ItemRecord = serde_json::from_str(&existing_json)
+                .with_context(|| format!("decode persisted Session item {}", item.id.0))?;
+            if !(1..=SESSION_SCHEMA_VERSION).contains(&existing.schema_version) {
+                bail!(
+                    "persisted item {} has unsupported schema version {}",
+                    item.id.0,
+                    existing.schema_version
+                );
+            }
+            existing.schema_version = SESSION_SCHEMA_VERSION;
+            if existing != item {
+                bail!(
+                    "item id {} retry conflicts with persisted content",
+                    item.id.0
+                );
+            }
+            if existing_json != item_json {
+                tx.execute(
+                    "UPDATE session_items SET item_json=?2 WHERE item_id=?1",
+                    params![item.id.0.to_string(), item_json],
+                )?;
             }
             tx.commit()?;
             return Ok(AppendOutcome::AlreadyPresent);
@@ -291,7 +406,7 @@ impl SessionProjectionStore for CanonicalSessionStore {
         {
             bail!("fork metadata does not match request");
         }
-        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let mut connection = self.open_connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let parent_next: u64 = tx.query_row(
             "SELECT next_sequence FROM sessions WHERE session_id=?1",
@@ -324,7 +439,7 @@ impl SessionProjectionStore for CanonicalSessionStore {
     }
 
     async fn bind_principal(&self, session: &SessionId, principal: &PrincipalId) -> Result<()> {
-        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let connection = self.open_connection()?;
         connection.execute(
             "INSERT INTO session_principals(session_id,principal_id) VALUES(?1,?2)
              ON CONFLICT(session_id) DO UPDATE SET principal_id=excluded.principal_id
@@ -346,10 +461,8 @@ impl SessionProjectionStore for CanonicalSessionStore {
 #[async_trait]
 impl SessionReadStore for CanonicalSessionStore {
     async fn load_session(&self, session: &SessionId) -> Result<Option<SessionRecord>> {
-        let json = self
-            .connection
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        let connection = self.open_connection()?;
+        let json = connection
             .query_row(
                 "SELECT record_json FROM sessions WHERE session_id=?1",
                 params![session.0],
@@ -361,7 +474,7 @@ impl SessionReadStore for CanonicalSessionStore {
     }
 
     async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>> {
-        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let connection = self.open_connection()?;
         let mut stmt = connection.prepare(
             "SELECT item_json FROM session_items WHERE session_id=?1 AND sequence>?2 ORDER BY sequence"
         )?;
@@ -375,7 +488,7 @@ impl SessionReadStore for CanonicalSessionStore {
     }
 
     async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
-        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let connection = self.open_connection()?;
         let mut statement =
             connection.prepare("SELECT record_json FROM sessions ORDER BY rowid DESC LIMIT ?1")?;
         let rows = statement
@@ -389,7 +502,7 @@ impl SessionReadStore for CanonicalSessionStore {
     }
 
     async fn list_session_ids(&self) -> Result<Vec<SessionId>> {
-        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let connection = self.open_connection()?;
         let mut statement =
             connection.prepare("SELECT session_id FROM sessions ORDER BY session_id")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
@@ -398,7 +511,7 @@ impl SessionReadStore for CanonicalSessionStore {
     }
 
     async fn principal_for(&self, session: &SessionId) -> Result<Option<PrincipalId>> {
-        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let connection = self.open_connection()?;
         let owner = connection
             .query_row(
                 "SELECT principal_id FROM session_principals WHERE session_id=?1",
@@ -475,8 +588,7 @@ mod tests {
             let reopened = CanonicalSessionStore::open(&path).unwrap();
             assert_eq!(
                 reopened
-                    .connection
-                    .lock()
+                    .open_connection()
                     .unwrap()
                     .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                     .unwrap(),
@@ -509,8 +621,7 @@ mod tests {
         let store = CanonicalSessionStore::open(&path).unwrap();
         assert_eq!(
             store
-                .connection
-                .lock()
+                .open_connection()
                 .unwrap()
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
@@ -571,6 +682,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compatible_defaulted_item_retry_is_idempotent_and_canonicalized() {
+        let store = CanonicalSessionStore::open(":memory:").unwrap();
+        let session_id = SessionId("defaulted-retry".into());
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 17,
+                status: fabric::SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let item = ItemRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: ItemId::new(),
+            session_id: session_id.clone(),
+            turn_id: fabric::TurnId::new(),
+            sequence: 1,
+            created_at_ms: 18,
+            payload: ItemPayload::UserMessage {
+                content: "legacy General turn".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
+            },
+        };
+        let mut legacy_json = serde_json::to_value(&item).unwrap();
+        legacy_json["payload"]["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("execution_target");
+        {
+            let connection = store.open_connection().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO session_items(session_id,sequence,item_id,turn_id,item_json) \
+                     VALUES(?1,1,?2,?3,?4)",
+                    params![
+                        session_id.0,
+                        item.id.0.to_string(),
+                        item.turn_id.0.to_string(),
+                        legacy_json.to_string()
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE sessions SET next_sequence=2 WHERE session_id=?1",
+                    params![session_id.0],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            store.append(&session_id, 1, item.clone()).await.unwrap(),
+            AppendOutcome::AlreadyPresent
+        );
+        let canonical_json: String = store
+            .open_connection()
+            .unwrap()
+            .query_row(
+                "SELECT item_json FROM session_items WHERE item_id=?1",
+                params![item.id.0.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<ItemRecord>(&canonical_json).unwrap(),
+            item
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&canonical_json)
+                .unwrap()
+                .pointer("/payload/data/execution_target")
+                .cloned(),
+            Some(serde_json::json!({
+                "target": {"kind": "general"},
+                "source": "default"
+            }))
+        );
+
+        let conflicting = ItemRecord {
+            payload: ItemPayload::UserMessage {
+                content: "different content".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
+            },
+            ..item
+        };
+        let error = store.append(&session_id, 1, conflicting).await.unwrap_err();
+        assert!(error.to_string().contains("retry conflicts"));
+    }
+
+    #[tokio::test]
     async fn record_schema_validation_remains_independent_from_database_version() {
         let store = CanonicalSessionStore::open(":memory:").unwrap();
         let session_id = SessionId("unsupported-record".into());
@@ -609,6 +812,7 @@ mod tests {
                     created_at_ms: 0,
                     payload: ItemPayload::UserMessage {
                         content: "unsupported".into(),
+                        execution_target: fabric::ExecutionTargetSelection::default(),
                     },
                 },
             )
@@ -672,6 +876,7 @@ mod tests {
                     created_at_ms: 0,
                     payload: ItemPayload::UserMessage {
                         content: "started".into(),
+                        execution_target: fabric::ExecutionTargetSelection::default(),
                     },
                 },
             )
@@ -792,6 +997,7 @@ mod tests {
         let turn_id = fabric::TurnId::new();
         let mut payloads = vec![ItemPayload::UserMessage {
             content: "started".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         }];
         match boundary {
             CrashBoundary::Streaming => {}

@@ -198,7 +198,7 @@ impl WindowManager for EwmhWindowManager {
         let child = Command::new(parts[0])
             .args(&parts[1..])
             .spawn()
-            .context(format!("Failed to launch '{}'", command))?;
+            .context(format!("Failed to launch '{command}'"))?;
 
         Ok(child.id())
     }

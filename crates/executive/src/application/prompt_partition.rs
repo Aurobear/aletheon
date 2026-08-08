@@ -7,7 +7,7 @@
 //! regions never carry per-turn fields (time, UUID, operation id, budget,
 //! device state, per-turn recall, attempt numbers).
 
-use fabric::{Message, Role};
+use fabric::{canonicalize_tool_definitions, tool_schema_digest, Message, Role, ToolDefinition};
 use sha2::{Digest, Sha256};
 
 /// The five regions of a turn's request context (see
@@ -134,16 +134,15 @@ fn partition_digest(region: PromptRegion, content: &[u8]) -> String {
 
 /// Build a typed partition profile from the rendered regions of one turn.
 ///
-/// `stable_tools` is a marker: tool definitions are canonicalized provider-side
-/// (`fabric::canonicalize_tool_definitions`) and hashed by
-/// `fabric::tool_schema_digest`; the daemon does not render them into the
-/// assembled messages, so this region carries no wire bytes here.
+/// `stable_tools` profiles the exact canonical definitions sent to the provider.
+/// Raw schemas are not retained in the profile; only count, encoded size, and a
+/// one-way schema digest survive.
 pub fn build_partitions(
     system_prefix: &str,
     history: &[Message],
     dynamic_context: &str,
     current_input: &str,
-    tool_count: usize,
+    tools: &[ToolDefinition],
 ) -> PromptConstructionProfile {
     let mut partitions = Vec::new();
 
@@ -189,13 +188,22 @@ pub fn build_partitions(
         0,
     ));
 
+    let tools_started = std::time::Instant::now();
+    let (tool_bytes, tool_digest) = canonicalize_tool_definitions(tools)
+        .and_then(|canonical| {
+            let bytes = serde_json::to_vec(&canonical).map_err(|error| {
+                fabric::ToolDefinitionCanonicalizationError::Serialization(error.to_string())
+            })?;
+            Ok((bytes.len() as u64, tool_schema_digest(&canonical)?))
+        })
+        .unwrap_or((0, "invalid-tool-schema".to_owned()));
     partitions.push(PromptPartition {
         region: PromptRegion::StableTools,
         wire_role: None,
-        chars: tool_count,
-        serialized_bytes: 0,
-        construction_ns: 0,
-        content_digest: None,
+        chars: tools.len(),
+        serialized_bytes: tool_bytes,
+        construction_ns: tools_started.elapsed().as_nanos() as u64,
+        content_digest: Some(tool_digest),
     });
 
     PromptConstructionProfile { partitions }
@@ -205,6 +213,16 @@ pub fn build_partitions(
 mod tests {
     use super::*;
 
+    fn tools() -> Vec<ToolDefinition> {
+        (0..3)
+            .map(|index| ToolDefinition {
+                name: format!("tool_{index}"),
+                description: format!("tool {index}"),
+                input_schema: serde_json::json!({"type": "object"}),
+            })
+            .collect()
+    }
+
     fn sample() -> PromptConstructionProfile {
         let history = vec![Message::user("prior one"), Message::assistant("prior two")];
         build_partitions(
@@ -212,7 +230,7 @@ mod tests {
             &history,
             "<memory-context>\nrecalled\n</memory-context>",
             "current input",
-            3,
+            &tools(),
         )
     }
 
@@ -227,7 +245,7 @@ mod tests {
         // DynamicContext + CurrentInput are rendered locally (bytes measured).
         assert!(profile.region_bytes(PromptRegion::DynamicContext) > 0);
         assert!(profile.region_bytes(PromptRegion::CurrentInput) > 0);
-        assert_eq!(profile.region_bytes(PromptRegion::StableTools), 0);
+        assert!(profile.region_bytes(PromptRegion::StableTools) > 0);
         // Total is the sum of the parts.
         assert_eq!(
             profile.total_bytes(),
@@ -280,7 +298,7 @@ mod tests {
             ]
         );
         assert!(summary[0].1 > 0);
-        assert_eq!(summary[1].1, 0);
+        assert!(summary[1].1 > 0);
     }
 
     #[test]

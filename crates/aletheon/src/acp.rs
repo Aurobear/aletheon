@@ -8,11 +8,14 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use executive::{core::runtime_core::RuntimeCore, host::daemon::server::ConnectionContext};
+use executive::{
+    core::runtime_core::RuntimeCore,
+    host::daemon::server::{ConnectionContext, ConnectionRole},
+};
 use fabric::{
     protocol::client::{ClientEvent, EventCursor, ItemEvent, ItemPhase, UiSnapshot},
     ApprovalPolicy, ConnectionId, ItemRecord, LocalOsPrincipal, PermissionProfileId,
-    PrincipalContext, PrincipalId, SessionAppendStore, SessionId, ThreadId, WorkspacePolicy,
+    PrincipalContext, PrincipalId, SessionId, SessionReadStore, ThreadId, WorkspacePolicy,
 };
 use interact::acp::{
     run_transport_loop, AcpAdapter, AcpBackend, AcpError, AcpEventSource, AcpSessionEvent,
@@ -124,7 +127,7 @@ impl AcpBackend for ExecutiveAcpBackend {
 struct ExecutiveEvents {
     receiver: mpsc::Receiver<String>,
     active_session: Arc<Mutex<Option<String>>>,
-    sessions: Arc<dyn SessionAppendStore>,
+    sessions: Arc<dyn SessionReadStore>,
     last_sequence: HashMap<String, u64>,
 }
 
@@ -268,6 +271,8 @@ pub async fn run(workspace: WorkspaceLaunch) -> Result<()> {
         principal_id: PrincipalId::local_uid(os_principal.uid),
         os_principal,
         connection_id: connection_id.clone(),
+        peer_pid: Some(std::process::id()),
+        role: ConnectionRole::Ordinary,
     };
     let principal = interact::acp::establish_principal(
         os_principal,
@@ -429,6 +434,8 @@ mod tests {
                 gid: 2000,
             },
             connection_id: principal.connection_id.clone(),
+            peer_pid: None,
+            role: ConnectionRole::Ordinary,
         };
         assert!(verify_principal(&principal, &connection).is_err());
     }

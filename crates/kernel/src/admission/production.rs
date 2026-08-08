@@ -124,6 +124,15 @@ impl ProductionAdmissionController {
             .count()
     }
 
+    pub async fn active_for_operation(&self, operation: fabric::OperationId) -> usize {
+        self.active
+            .lock()
+            .await
+            .values()
+            .filter(|record| record.operation_id == operation)
+            .count()
+    }
+
     pub async fn revoke_operation_permits(&self, operation: fabric::OperationId) {
         let permit_ids: Vec<_> = self
             .active
@@ -134,6 +143,20 @@ impl ProductionAdmissionController {
             .collect();
         for permit in permit_ids {
             let _ = self.revoke(permit, RevokeReason::OperationCancelled).await;
+        }
+    }
+
+    async fn release_unissued_reservations(
+        &self,
+        principal: &str,
+        budget_reservation: Option<BudgetReservationId>,
+        lease: Option<ResourceLeaseId>,
+    ) {
+        if let (Some(budget), Some(reservation)) = (&self.budget, budget_reservation) {
+            budget.revoke(principal, reservation).await;
+        }
+        if let (Some(leases), Some(lease)) = (&self.leases, lease) {
+            leases.release(lease).await;
         }
     }
 
@@ -232,6 +255,8 @@ impl AdmissionController for ProductionAdmissionController {
             // request rather than granting a permit that will silently noop.
             SandboxRequirement::Required | SandboxRequirement::RequiredThenPromote => {
                 if !self.sandbox_available {
+                    self.release_unissued_reservations(&principal, budget_reservation, lease)
+                        .await;
                     return Err(AdmissionError::SandboxRequiredUnavailable);
                 }
                 SandboxDecision::Required
@@ -368,6 +393,38 @@ mod tests {
             ctrl.admit(request).await,
             Err(AdmissionError::ApprovalRequired { .. })
         ));
+        assert!(ctrl.active.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sandbox_denial_releases_pre_admission_budget_and_lease() {
+        let clock = test_clock(0);
+        let budget = Arc::new(InMemoryBudgetController::new());
+        budget.set_budget("test-agent", Some(100), None).await;
+        let leases = Arc::new(InMemoryResourceLeaseManager::new());
+        let ctrl = ProductionAdmissionController::new(clock.clone())
+            .with_budget(budget.clone())
+            .with_leases(leases.clone())
+            .with_sandbox_available(false);
+        let request = AdmissionRequest {
+            budget: Some(BudgetRequest {
+                max_tokens: Some(10),
+                max_cost_micro: None,
+            }),
+            lease: Some(LeaseRequest {
+                resource: "sandbox-denied".into(),
+                duration_ms: 60_000,
+            }),
+            sandbox: SandboxRequirement::Required,
+            ..default_request()
+        };
+
+        assert!(matches!(
+            ctrl.admit(request).await,
+            Err(AdmissionError::SandboxRequiredUnavailable)
+        ));
+        assert_eq!(budget.active_reservation_count().await, 0);
+        assert_eq!(leases.active_count(0).await, 0);
         assert!(ctrl.active.lock().await.is_empty());
     }
 

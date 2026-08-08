@@ -285,10 +285,7 @@ fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
             });
         assert_eq!(official.base_url, "https://api.deepseek.com");
         assert_eq!(official.transport, Transport::Openai);
-        assert_eq!(
-            official.models,
-            ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
-        );
+        assert_eq!(official.models, ["deepseek-v4-flash[1m]"]);
         assert_eq!(official.max_context_length, None);
         assert_eq!(
             official.cache.reporting,

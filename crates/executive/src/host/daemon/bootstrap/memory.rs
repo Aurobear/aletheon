@@ -52,16 +52,22 @@ pub(super) fn with_recall_cache(
     config: &MemoryConfig,
 ) -> Arc<dyn mnemosyne::MemoryService> {
     let metrics = service.metrics().clone();
+    let service = Arc::new(service);
+    if !config.recall.cache_enabled {
+        return service;
+    }
+    let capacity = config.recall.cache_capacity.clamp(1, 4096);
+    let ttl_seconds = config.recall.cache_ttl_seconds.clamp(1, 3600);
     Arc::new(
         mnemosyne::CachingMemoryService::new(
-            Arc::new(service),
+            service,
             config.policy.version.clone(),
             config
                 .embedding
                 .enabled
                 .then(|| config.embedding.model.clone()),
-            512,
-            std::time::Duration::from_secs(30),
+            capacity,
+            std::time::Duration::from_secs(ttl_seconds),
         )
         .with_metrics(metrics),
     )

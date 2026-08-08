@@ -44,6 +44,7 @@ async fn append_is_transactional_idempotent_and_restart_durable() {
         1,
         ItemPayload::UserMessage {
             content: "hello".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
     );
     assert_eq!(
@@ -63,7 +64,8 @@ async fn append_is_transactional_idempotent_and_restart_durable() {
                 turn,
                 1,
                 ItemPayload::UserMessage {
-                    content: "other".into()
+                    content: "other".into(),
+                    execution_target: fabric::ExecutionTargetSelection::default(),
                 }
             )
         )
@@ -108,6 +110,7 @@ async fn fork_copies_bounded_history_with_new_item_identity() {
         1,
         ItemPayload::UserMessage {
             content: "hello".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
     );
     store.append(&parent, 1, original.clone()).await.unwrap();
@@ -147,6 +150,7 @@ fn projection_is_deterministic_ordered_and_correlated() {
             2,
             ItemPayload::UserMessage {
                 content: "user".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
             },
         ),
         item(
@@ -189,4 +193,169 @@ fn projection_is_deterministic_ordered_and_correlated() {
     let text = String::from_utf8(a).unwrap();
     assert!(text.contains("\"id\":\"call\""));
     assert!(text.contains("\"tool_use_id\":\"call\""));
+}
+
+#[tokio::test]
+async fn different_sessions_append_concurrently_with_contiguous_per_session_sequences() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = executive::testing::turn_coordinator::compose_session_store(
+        Arc::new(CanonicalSessionStore::open(dir.path().join("sessions.db")).unwrap()),
+        Arc::new(SqliteEventSpine::open(dir.path().join("events.db")).unwrap()),
+        Arc::new(DefaultEventProjectionSet::in_memory()),
+    );
+    let sessions = ["alpha", "beta", "gamma", "delta", "epsilon"];
+    for id in sessions {
+        store.create(session(id, None)).await.unwrap();
+    }
+
+    // Concurrently append 10 items per session; each session's sequences must
+    // be contiguous and conflict-free even though appends interleave.
+    let store = Arc::new(store);
+    let mut handles = Vec::new();
+    for session_id in sessions {
+        let store = store.clone();
+        handles.push(tokio::spawn(async move {
+            let sid = SessionId(session_id.into());
+            let turn = TurnId::new();
+            for sequence in 1..=10u64 {
+                store
+                    .append(
+                        &sid,
+                        sequence,
+                        item(
+                            session_id,
+                            turn,
+                            sequence,
+                            ItemPayload::UserMessage {
+                                content: format!("{session_id}-{sequence}"),
+                                execution_target: fabric::ExecutionTargetSelection::default(),
+                            },
+                        ),
+                    )
+                    .await
+                    .expect("append must not conflict within one session");
+            }
+        }));
+    }
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    for session_id in sessions {
+        let items = store
+            .load_items(&SessionId(session_id.into()), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            items.len(),
+            10,
+            "session {session_id} must hold all 10 items"
+        );
+        let sequences: Vec<u64> = items.iter().map(|item| item.sequence).collect();
+        assert_eq!(
+            sequences,
+            (1..=10).collect::<Vec<u64>>(),
+            "contiguous sequences for {session_id}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn same_session_concurrent_appends_retry_to_one_contiguous_sequence() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(executive::testing::turn_coordinator::compose_session_store(
+        Arc::new(CanonicalSessionStore::open(dir.path().join("sessions.db")).unwrap()),
+        Arc::new(SqliteEventSpine::open(dir.path().join("events.db")).unwrap()),
+        Arc::new(DefaultEventProjectionSet::in_memory()),
+    ));
+    let session_id = SessionId("contended".into());
+    store.create(session("contended", None)).await.unwrap();
+    let baseline = executive::runtime::session::event_sourced_store::session_append_metrics();
+    let barrier = Arc::new(tokio::sync::Barrier::new(32));
+    let turn = TurnId::new();
+    let mut tasks = Vec::new();
+    for sequence in 1..=32u64 {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .append(
+                    &SessionId("contended".into()),
+                    sequence,
+                    item(
+                        "contended",
+                        turn,
+                        sequence,
+                        ItemPayload::SystemNotice {
+                            content: format!("concurrent-{sequence}"),
+                        },
+                    ),
+                )
+                .await
+        }));
+    }
+    for task in tasks {
+        assert_eq!(task.await.unwrap().unwrap(), AppendOutcome::Appended);
+    }
+
+    let items = store.load_items(&session_id, None).await.unwrap();
+    assert_eq!(items.len(), 32);
+    assert_eq!(
+        items.iter().map(|item| item.sequence).collect::<Vec<_>>(),
+        (1..=32).collect::<Vec<_>>()
+    );
+    let metrics = executive::runtime::session::event_sourced_store::session_append_metrics();
+    assert!(metrics.sequence_retries > baseline.sequence_retries);
+}
+
+#[tokio::test]
+async fn append_admission_uses_the_head_not_a_full_history_scan() {
+    // The production append path now admits through the durable per-session
+    // `next_sequence` head and an O(1) `item_by_id` idempotency lookup, not a
+    // full-history `load_items` scan. This test asserts head-consistent
+    // admission: a stale expected sequence is rejected once the head advances.
+    let dir = tempfile::tempdir().unwrap();
+    let store = executive::testing::turn_coordinator::compose_session_store(
+        Arc::new(CanonicalSessionStore::open(dir.path().join("sessions.db")).unwrap()),
+        Arc::new(SqliteEventSpine::open(dir.path().join("events.db")).unwrap()),
+        Arc::new(DefaultEventProjectionSet::in_memory()),
+    );
+    store.create(session("head", None)).await.unwrap();
+    let turn = TurnId::new();
+    for sequence in 1..=5u64 {
+        store
+            .append(
+                &SessionId("head".into()),
+                sequence,
+                item(
+                    "head",
+                    turn,
+                    sequence,
+                    ItemPayload::UserMessage {
+                        content: format!("head-{sequence}"),
+                        execution_target: fabric::ExecutionTargetSelection::default(),
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    // A stale expected sequence must now be rejected (the head advanced past 5).
+    let stale = store
+        .append(
+            &SessionId("head".into()),
+            5,
+            item(
+                "head",
+                turn,
+                5,
+                ItemPayload::UserMessage {
+                    content: "stale".into(),
+                    execution_target: fabric::ExecutionTargetSelection::default(),
+                },
+            ),
+        )
+        .await;
+    assert!(stale.is_err(), "stale expected sequence must be rejected");
 }

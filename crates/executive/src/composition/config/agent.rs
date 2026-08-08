@@ -51,9 +51,9 @@ pub struct ExecutiveConfig {
     pub max_agent_depth: u16,
     #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
-    /// Which cognitive harness implementation to construct (see
-    /// the configured cognitive harness. Defaults to `Linear`.
-    /// preserving current behavior. TOML key: `harness_kind = "linear"`.
+    /// Deprecated deployment hint retained for configuration migration. It may
+    /// enable Robot capability composition but never selects a prompt target;
+    /// every turn defaults to General. TOML key: `harness_kind = "linear"`.
     #[serde(default)]
     pub harness_kind: HarnessKind,
 }

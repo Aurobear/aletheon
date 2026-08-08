@@ -218,7 +218,7 @@ impl Tool for ClickTool {
         let y = input["y"].as_i64().unwrap_or(0) as i32;
         match self.aci.click(x, y) {
             Ok(()) => ok(
-                format!("Clicked at ({}, {})", x, y),
+                format!("Clicked at ({x}, {y})"),
                 self.clock.mono_now().0 - start.0,
             ),
             Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
@@ -272,7 +272,7 @@ impl Tool for TypeTool {
         let text = input["text"].as_str().unwrap_or("");
         match self.aci.type_text(text) {
             Ok(()) => ok(
-                format!("Typed: {:?}", text),
+                format!("Typed: {text:?}"),
                 self.clock.mono_now().0 - start.0,
             ),
             Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
@@ -478,7 +478,7 @@ impl Tool for DragTool {
         let y2 = input["y2"].as_i64().unwrap_or(0) as i32;
         match self.aci.drag(x1, y1, x2, y2) {
             Ok(()) => ok(
-                format!("Dragged from ({}, {}) to ({}, {})", x1, y1, x2, y2),
+                format!("Dragged from ({x1}, {y1}) to ({x2}, {y2})"),
                 self.clock.mono_now().0 - start.0,
             ),
             Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
@@ -620,7 +620,7 @@ impl Tool for HotkeyTool {
                 Some(key) => parsed.push(key),
                 None => {
                     return err(
-                        format!("Unknown key: {:?}", k),
+                        format!("Unknown key: {k:?}"),
                         self.clock.mono_now().0 - start.0,
                     )
                 }
@@ -710,7 +710,7 @@ impl Tool for ScrollTool {
             Some(d) => d,
             None => {
                 return err(
-                    format!("Unknown scroll direction: {:?}", dir_str),
+                    format!("Unknown scroll direction: {dir_str:?}"),
                     self.clock.mono_now().0 - start.0,
                 )
             }
@@ -718,7 +718,7 @@ impl Tool for ScrollTool {
 
         match self.aci.scroll(x, y, direction, amount) {
             Ok(()) => ok(
-                format!("Scrolled {} x{} at ({}, {})", dir_str, amount, x, y),
+                format!("Scrolled {dir_str} x{amount} at ({x}, {y})"),
                 self.clock.mono_now().0 - start.0,
             ),
             Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),
@@ -774,7 +774,7 @@ impl Tool for RightClickTool {
         let y = input["y"].as_i64().unwrap_or(0) as i32;
         match self.aci.right_click(x, y) {
             Ok(()) => ok(
-                format!("Right-clicked at ({}, {})", x, y),
+                format!("Right-clicked at ({x}, {y})"),
                 self.clock.mono_now().0 - start.0,
             ),
             Err(e) => err(e.to_string(), self.clock.mono_now().0 - start.0),

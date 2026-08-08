@@ -91,3 +91,31 @@ fn handler_ports_cover_every_rpc_family() {
         );
     }
 }
+
+#[test]
+fn typed_prompt_target_reaches_the_targeted_turn_use_case() {
+    let handler = fs::read_to_string("src/host/daemon/handler/mod.rs").expect("handler source");
+    let submit_start = handler
+        .find("impl CommandUseCases for DaemonCommandUseCases")
+        .expect("daemon command use cases");
+    let submit_end = handler[submit_start..]
+        .find("async fn execute_shell")
+        .map(|offset| submit_start + offset)
+        .expect("submit_prompt end");
+    let submit_prompt = &handler[submit_start..submit_end];
+    assert!(
+        submit_prompt.contains("prompt.execution_target.clone()"),
+        "typed ClientIntent target was dropped before the explicit chat boundary"
+    );
+
+    let use_cases = fs::read_to_string("src/application/request_use_cases.rs")
+        .expect("request use case source");
+    assert!(
+        use_cases.contains("execution_target: fabric::ExecutionTargetSelection"),
+        "TurnUseCases no longer carries the typed target"
+    );
+    assert!(
+        use_cases.contains(".execute_turn_targeted("),
+        "production TurnUseCases silently restored the default General path"
+    );
+}

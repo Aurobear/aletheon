@@ -77,6 +77,7 @@ fn session_memory_debug_and_metrics_rebuild_from_the_same_events() {
                 1,
                 ItemPayload::UserMessage {
                     content: "secret user text".into(),
+                    execution_target: fabric::ExecutionTargetSelection::default(),
                 },
             ),
         },

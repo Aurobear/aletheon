@@ -102,7 +102,7 @@ pub use governed_capability::{
 };
 pub use post_turn::PostTurnPipeline;
 pub use pre_turn::PreTurnPipeline;
-pub use turn_pipeline::TurnPipeline;
+pub use turn_pipeline::{TurnPipeline, TurnPipelineOutcome, TurnPipelineRejection};
 
 pub mod post_turn_projection;
 
