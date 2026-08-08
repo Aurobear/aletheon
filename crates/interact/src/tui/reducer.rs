@@ -219,10 +219,13 @@ fn reduce_live_assistant_text(state: &mut AppState, text: String, sequence: u64)
 /// Remove the ephemeral live-assistant overlay once a durable assistant item
 /// commits, so the same text is atomically replaced rather than duplicated.
 fn clear_live_assistant_overlay(state: &mut AppState, record: &ItemRecord) {
-    state.items.remove(&format!(
+    let canonical_id = format!(
         "live:{}:{}:assistant",
         record.session_id.0, record.turn_id.0
-    ));
+    );
+    state.items.retain(|id, _| {
+        id != &canonical_id && !(id.starts_with("live:") && id.ends_with(":assistant"))
+    });
 }
 
 fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> Vec<UiEffect> {
