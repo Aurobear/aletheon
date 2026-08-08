@@ -158,6 +158,12 @@ bounded release build
   -> final provenance, stability, and health verification
 ```
 
+The release build reuses the bounded shared target under
+`$ALETHEON_CARGO_CACHE_ROOT/target` (or `CARGO_TARGET_DIR`). Only the completed
+executable is staged at `target/release/aletheon`, preserving the existing
+deployment provenance path without maintaining a second per-checkout compiler
+cache.
+
 The final request is intentionally made by the installed client. A successful
 debug binary, temporary daemon, alternative socket, direct provider probe, or
 direct bridge test is useful development evidence but is not deployment

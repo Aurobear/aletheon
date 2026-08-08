@@ -13,12 +13,14 @@ cmd_test() {
     operations)
       _run_test_script suites/operations/script_surface_test.sh
       _run_test_script suites/operations/cargo_agent_cache_scan_test.sh
+      _run_test_script suites/operations/build_incremental_test.sh
       _run_test_script suites/operations/cli_static_test.sh
       _run_test_script suites/operations/cli_test.sh
       _run_test_script suites/operations/installed_runtime_gate_test.sh
       python3 "$ALETHEON_ROOT/scripts/tests/test_robot_r8_evidence.py"
       _run_test_script suites/operations/completion_test.sh
       _run_test_script suites/operations/extension_runtime_test.sh
+      python3 "$ALETHEON_ROOT/scripts/tests/test_changed_validation.py"
       ;;
     architecture)
       _run_test_script suites/architecture/architecture_check.sh
@@ -38,12 +40,15 @@ cmd_test() {
     unit)
       bash "$ALETHEON_ROOT/scripts/cargo-agent.sh" test --workspace "$@"
       ;;
+    changed)
+      run_internal test-changed.py "$@"
+      ;;
     all)
       cmd_test operations
       cmd_test architecture
       cmd_test deployment
       cmd_test unit "$@"
       ;;
-    *) aletheon_die "usage: aletheon.sh test {unit|operations|deployment|architecture|all}" || return 2 ;;
+    *) aletheon_die "usage: aletheon.sh test {changed|unit|operations|deployment|architecture|all}" || return 2 ;;
   esac
 }

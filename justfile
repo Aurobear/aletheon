@@ -38,6 +38,10 @@ test-lib package:
 test-one package target:
     bash scripts/cargo-agent.sh test -p {{package}} --test {{target}}
 
+# 根据当前分支相对 origin/dev 的 diff 选择 crate、测试目标和直接下游。
+test-changed *args:
+    bash scripts/aletheon.sh test changed {{args}}
+
 # 只对一个 crate 做 all-targets 严格 lint。
 lint-one package:
     bash scripts/cargo-agent.sh clippy -p {{package}} --all-targets -- -D warnings
@@ -92,12 +96,7 @@ clean:
 # 安装 sccache 跨构建共享缓存（clean 后重编译快 50%+）
 setup-sccache:
     cargo install sccache --locked
-    @mkdir -p .cargo
-    @if ! grep -q 'rustc-wrapper' .cargo/config.toml 2>/dev/null; then \
-        echo '[build]' >> .cargo/config.toml; \
-        echo 'rustc-wrapper = "sccache"' >> .cargo/config.toml; \
-    fi
-    @echo "sccache configured in .cargo/config.toml"
+    @echo "sccache installed; scripts/cargo-agent.sh will detect it automatically"
 
 # V02: installed-host production migration, scenario, failure and rollback gate.
 # This invokes V01 through scripts/aletheon.sh acceptance release and fails closed when

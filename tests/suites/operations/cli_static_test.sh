@@ -27,6 +27,8 @@ for command in build install deploy configure status health restart logs verify 
   bash "$entry" help | grep -q "$command"
 done
 
+bash "$entry" help | grep -q 'test {changed|unit|operations|deployment|architecture|all}'
+
 grep -q 'scripts/cargo-agent.sh.*build -p aletheon --release' \
   "$root/scripts/lib/aletheon/build.sh"
 grep -q 'sudo env ALETHEON_BINARY=' "$root/scripts/lib/aletheon/install.sh"

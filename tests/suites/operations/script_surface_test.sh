@@ -11,8 +11,32 @@ expected=(aletheon.sh cargo-agent.sh)
   exit 1
 }
 [[ -x setup.sh && -x scripts/aletheon.sh && -x scripts/cargo-agent.sh ]]
+[[ -x scripts/libexec/aletheon/test-changed.py ]]
 ! grep -Eq '(^|[[:space:]])cargo (build|check|test|clippy|doc)' setup.sh
 grep -Fq 'scripts/cargo-agent.sh build -p aletheon --release' setup.sh
+grep -Fq 'run_internal test-changed.py "$@"' scripts/lib/aletheon/test.sh
+cmp .codex/skills/aletheon-tester/SKILL.md \
+  .claude/skills/aletheon-tester/SKILL.md
+grep -Fq '| `regression` |' .codex/skills/aletheon-tester/SKILL.md
+grep -Fq '| `soak` |' .codex/skills/aletheon-tester/SKILL.md
+grep -Fq -- '--rerun-failed "$report"' .codex/skills/aletheon-tester/SKILL.md
+grep -Fq -- '--resume "$report"' .codex/skills/aletheon-tester/SKILL.md
+if grep -Fq 'aletheon_ask(question=' .codex/skills/aletheon-tester/SKILL.md; then
+  echo 'aletheon-tester must not use introspection RPC as execution evidence' >&2
+  exit 1
+fi
+grep -Fq 'CARGO_TARGET_DIR="$ALETHEON_BUILD_TARGET_DIR"' \
+  scripts/lib/aletheon/build.sh
+grep -Fq 'ALETHEON_CARGO_STAGE_BINARY="$ALETHEON_RELEASE_BINARY"' \
+  scripts/lib/aletheon/build.sh
+grep -Fq '[[ ${1:-} == build || ${1:-} == deploy ]]' scripts/aletheon.sh
+grep -Fq 'install -D -m 0755 "$stage_source" "$ALETHEON_CARGO_STAGE_BINARY"' \
+  scripts/cargo-agent.sh
+if grep -Fq 'CARGO_TARGET_DIR="$ALETHEON_ROOT/target"' \
+    scripts/lib/aletheon/build.sh; then
+  echo 'canonical build bypasses the shared incremental target' >&2
+  exit 1
+fi
 
 # Fresh installs must not silently select or advertise the quota-expensive Pro
 # route. Pro may remain in the model catalog for explicit user selection, but

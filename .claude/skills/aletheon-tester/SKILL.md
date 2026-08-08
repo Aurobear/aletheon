@@ -1,41 +1,90 @@
 ---
 name: aletheon-tester
-description: End-to-end daemon testing loop for aletheon using MCP monitor tools. Sends tasks, watches execution, diagnoses issues, applies fixes, rebuilds, and retests until the agent completes complex tasks successfully. Triggers on "test aletheon", "aletheon test", "aletheon 测试", "test the daemon", "aletheon debug", "aletheon 调试".
-version: 1.1.0
+description: Layered development, debug, and installed-runtime validation for Aletheon. Selects the smallest applicable deterministic checks before escalating to real-TUI acceptance or soak testing.
+version: 2.0.0
 author: aurb
 triggers: ["test aletheon", "aletheon test", "aletheon 测试", "test the daemon", "压测 aletheon", "调试 aletheon", "aletheon debug", "aletheon 调试", "aletheon testing", "daemon test"]
 domain: general
 tags: ["aletheon", "testing", "daemon", "debug-loop", "mcp"]
 ---
 
-# Aletheon Tester — MCP-Powered Daemon Test Loop
+# Aletheon Tester
 
-## Mandatory execution contract
+Use the cheapest evidence that can answer the current question. Source
+regression, installed-runtime smoke, release acceptance, and model-behavior
+soak are separate modes. Do not silently escalate from one mode to another.
 
-Never report that Aletheon was tested from source inspection or an RPC-only
-response. A successful run must identify the deployed build and exercise the
-same client path the user reported.
+## Mode selection
 
-### Capability selection
+| Mode | Use when | Required work |
+|---|---|---|
+| `regression` | Iterating on source or reproducing a deterministic defect | Diff-derived checks and exact failed-test reruns; no deploy |
+| `smoke` | A runtime-facing candidate is ready | One deploy if provenance is stale, then one bounded real client/TUI scenario |
+| `acceptance` | The user requests final/pre-merge installed acceptance | Typed deployment gate plus all applicable deterministic and real-runtime assertions |
+| `soak` | Routing, model arguments, multi-turn state, cancellation, or performance is under test | Repeated fresh runs or sustained-session scenarios after acceptance is stable |
 
-1. Inspect the tools available in the current session for
-   `aletheon_check_install`, `aletheon_health`, and `aletheon_diagnose`.
-2. If all are present, use the monitor MCP track.
-3. Otherwise, if `tools/aletheon-monitor` exists in the active source tree,
-   run its pytest suite and use its tmux helpers directly.
-4. Otherwise fall back to `aletheon -m`, tmux, session JSONL, and journalctl.
-5. State which track was used. Missing MCP registration is not permission to
-   skip the real TUI test.
+Default to `regression` while files are changing. For runtime-facing changes,
+run `smoke` once after the candidate is stable. Three repetitions belong only
+to `soak` for model-controlled behavior; deterministic tests never require
+three repetitions.
 
-### Source and deployment preflight
+State the selected mode, comparison base, scenario, assertions, and time budget
+before execution. If the user asks for a broader mode, obey the request.
 
-Do not assume any historical checkout path is the source being deployed.
-Record all of the following before changing or testing anything:
+## Role boundary
+
+The Tester is verify-only. It may inspect source, run admitted validation, and
+return evidence. It must not edit production files. When a failure requires a
+repair:
+
+1. return the exact failed command, relevant output artifact, and classification;
+2. let the coding/debug role apply one scoped fix;
+3. rerun only the failed step against the new workspace version;
+4. run the remaining selected steps after the failure passes.
+
+Do not combine diagnosis, several speculative fixes, deployment, and acceptance
+inside one opaque loop. Stop after two unchanged failure signatures and report
+the blocker instead of consuming a fixed five-iteration budget.
+
+## Regression mode
+
+Use the repository-owned selector:
+
+```bash
+report=${TMPDIR:-/tmp}/aletheon-changed-validation.json
+bash scripts/aletheon.sh test changed --plan
+bash scripts/aletheon.sh test changed --report "$report"
+```
+
+The selector derives affected packages and direct workspace dependents from
+Cargo metadata. A changed integration-test entry selects only that target;
+shared integration support selects the package integration suite. It fails
+fast by default.
+
+After a repair, do not rerun successful steps:
+
+```bash
+bash scripts/aletheon.sh test changed --rerun-failed "$report"
+bash scripts/aletheon.sh test changed --resume "$report"
+```
+
+Use `--keep-going` only when a complete failure inventory is more useful than
+fast feedback. Use full workspace tests only for merge/release gates or when a
+workspace manifest change makes narrower evidence insufficient.
+
+The first command proves the repaired failure in isolation. The second keeps
+passed receipts and continues failed or not-yet-run steps. Preserve the report;
+it records changed paths, selected commands, selection
+reasons, status, exit code, and duration. Never execute a failed command from an
+old report unless it remains in the current diff-derived plan.
+
+## Installed runtime preflight
+
+`smoke`, `acceptance`, and `soak` must identify the source and installed build:
 
 ```bash
 pwd -P
 git rev-parse --show-toplevel
-git rev-parse --show-prefix
 git rev-parse HEAD
 git status --short --branch
 sha256sum "$(command -v aletheon)"
@@ -43,23 +92,54 @@ aletheon version
 systemctl show aletheon -p ActiveEnterTimestamp -p ExecStart -p FragmentPath
 ```
 
-If the active checkout and deployed binary provenance cannot be reconciled,
-stop and fix deployment before evaluating behavior. Never edit a different
-checkout merely because it is the historical default path.
+Inspect available monitor capabilities for `aletheon_check_install`,
+`aletheon_health`, and `aletheon_diagnose`. Prefer them when all are present;
+otherwise use `tools/aletheon-monitor`, then the installed CLI, tmux, session
+JSONL, and journal as a final fallback. State the track used.
 
-### Task assertions
+If checkout, staged release candidate, installed binary, and running daemon
+provenance cannot be reconciled, do not judge behavior. In `smoke` or above,
+deploy once through the canonical boundary:
 
-Define assertions before each run. Response length and tool count are
-diagnostic metrics, not success criteria. At minimum assert:
+```bash
+sudo bash scripts/aletheon.sh deploy
+```
 
-- required tool calls completed successfully;
-- forbidden infrastructure errors are absent;
-- a substantive final answer is visible in the real TUI;
-- the input prompt returned after the answer;
-- the TUI launch cwd matches the expected canonical cwd;
-- the model did not scan unrelated host roots to guess a project.
+Do not rebuild and redeploy after every deterministic failure. Stabilize the
+source candidate in `regression` first.
 
-Always forbid these strings unless the test explicitly targets them:
+## Real execution path
+
+`aletheon_ask` is introspection-only. It does not create a real ReAct turn, run
+tools, advance the turn count, or exercise TUI rendering. Never use it as
+agentic or user-facing acceptance evidence.
+
+Use one of these paths:
+
+```text
+aletheon exec --prompt "<task>" --output json
+aletheon_diagnose(task="<task>")
+aletheon_tui_start / aletheon_tui_send / aletheon_tui_capture
+```
+
+User-facing defects require the installed TUI and official user socket. Do not
+substitute a direct provider call, temporary daemon, source binary, or alternate
+socket for installed acceptance.
+
+## Assertions
+
+Define scenario-specific assertions before the run. Always require:
+
+- the expected tool/runtime actions reached authoritative terminal state;
+- forbidden infrastructure/provider errors are absent;
+- a substantive task-complete answer is visible through the exercised client;
+- the prompt returned and the rendered frame settled;
+- the launch cwd and active session match the requested workspace;
+- audit, session, rendered frame, and daemon journal agree.
+
+Do not use response length, a minimum tool-call count, or a fixed number of
+reflection events as a pass condition. They are diagnostic measurements only.
+Always reject rendered or logged occurrences of:
 
 ```text
 provider_unavailable
@@ -72,530 +152,76 @@ Permission denied
 Aletheon authorization failed
 ```
 
-For model-controlled tool arguments or routing, run the same real-TUI task
-three consecutive times. A single success is insufficient. Deterministic unit
-or contract tests do not require three repetitions.
-
-For long-running acceptance, also keep one fresh TUI session open for at least
-three user turns: a repository overview, a scoped follow-up grounded in the
-first answer, and a short unrelated prompt. Require every turn to return the
-input prompt without restarting the daemon or creating a new session. Record
-per-turn latency and cumulative context usage. This catches poisoned history,
-stuck busy state, broken cancellation, and limits that only appear after the
-first successful turn.
-
-### Repository-analysis efficiency assertions
-
-For repository overview tasks, require the agent to batch-read known entry files
-(`README`, root manifest, repository instructions, architecture status) before
-any broad discovery. Fail the run when it performs extension-by-extension
-inventory, alternates one inference round per independent file, or continues
-searching after sufficient evidence is available.
-
-Record these separately:
-
-- model inference rounds;
-- provider retry attempts;
-- tool calls per model round;
-- batched tool arguments (`file_read.paths`, `glob.patterns`).
-
-Also score answer correctness, not only execution:
-
-- every claimed file/module must exist;
-- claims such as “README/documentation is absent” must be checked against the
-  actual workspace;
-- architecture and maturity conclusions must cite content returned by
-  `file_read`, not filenames returned by `glob`;
-- compare token usage and latency with the previous accepted run, and fail a
-  material regression unless the task or evidence volume increased.
-
-A discovery-only run is not an analyzed repository. If the first batch is
-`glob`, require one bounded batched `file_read` round before synthesis.
-
-### Runtime-fact assertions
-
-Model prose is never evidence of model identity or runtime configuration. For
-questions about model identity, provider route, context capacity, session ID,
-selected subagent runtime, capabilities, or budgets:
-
-1. capture the rendered answer;
-2. compare it with daemon routing logs and the effective configuration;
-3. fail any answer that claims a different vendor/version or invents a value;
-4. repeat identity challenges in the same TUI session to detect history-driven
-   reversion to training priors;
-5. record effective model ID, display name, and context capacity separately.
-
-Use at least this sustained identity sequence when the change affects runtime
-facts:
-
-```text
-你是什么模型
-你确定你是 Claude？
-你不是当前 host 所报告的模型吗？
-```
-
-For asynchronous Agent tools, require a terminal `agent_wait` result or a
-durable terminal event before accepting any reported child status/output. A
-spawn handle plus plausible prose is a failed run.
-
-A provider error shown in the rendered frame is always a failed run, even when
-the monitor returns `verdict: pass`, the prompt returns, or tools succeeded.
-Recompute acceptance from the rendered frame, session evidence, and daemon logs;
-never trust the aggregate verdict without checking its assertions.
-
-Use the installed TUI itself as the canonical end-to-end repository-analysis
-scenario:
-
-```text
-你看看当前项目怎么样？请给出项目定位、架构概览、当前成熟度和三个主要风险。
-```
-
-Launch `/usr/bin/aletheon` from the active repository root, submit that task in
-the TUI, monitor the actual rendered session, and inspect its audit/log evidence.
-The scenario passes only when a substantive answer is visible before `❯`
-returns, no provider/infrastructure error is rendered, known entry files are
-read in a batch, and the analysis does not degrade into extension-by-extension
-inventory. This TUI scenario supplements focused deterministic tests; it does
-not replace them.
-
-### Completion and evidence
+For asynchronous Agent tools, require `agent_wait` or a durable terminal event.
+A spawn handle and plausible prose are not completion evidence. Runtime facts
+such as provider, model, context capacity, session, selected child runtime, and
+budgets must come from effective host state, never model self-identification.
 
-Do not use a fixed `sleep` as the completion condition. Poll normalized frames
-until all of these are true:
+## Scenario profiles
 
-1. the frame changed after input submission;
-2. the frame hash remained stable for the settle window;
-3. the input prompt (`❯`) returned.
+### Smoke
 
-Preserve the final frame, session ID, session JSONL path, tool inputs/results,
-journal errors since the daemon start timestamp, source commit, binary hash,
-and unit properties in the report.
+Run one short deterministic task that exercises the changed surface. A TUI
+change must use the real TUI; an IPC-only change may use `aletheon exec` when UI
+rendering is not part of the assertion. Capture latency and the final frame or
+JSON terminal result.
 
-A closed-loop testing skill for aletheon that uses MCP monitor tools to send complex tasks to the running daemon, observe execution in real time, diagnose failures, apply fixes, rebuild, and retest — all without leaving Claude Code.
+### Repository analysis
 
-## When to Use
+Require a bounded batch read of known entry files before scoped discovery.
+Reject extension-by-extension inventory, unsupported architecture claims, or
+continued searching after evidence coverage is sufficient. Record inference
+rounds, provider retries, tool calls per round, and batched arguments
+separately.
 
-- User wants to verify aletheon can handle complex tasks (code analysis, multi-file edits, debugging)
-- After deploying aletheon changes — run a quick smoke test to check nothing broke
-- User says "test aletheon", "aletheon 测试", "test the daemon", "压测 aletheon"
-- Debugging aletheon bugs where the agent returns empty/shorter-than-expected responses
-- Performance regression testing: does the agent still complete tasks within tool budget?
+### Model/runtime routing
 
-## Core Loop
+First prove the selected runtime from typed host events. In `soak`, run the same
+task three consecutive times and require the terminal runtime receipt each
+time. A single success is adequate for `smoke`, not for final routing
+acceptance.
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│              Aletheon Tester — MCP-Powered Loop                   │
-├──────────────────────────────────────────────────────────────────┤
-│  1. SETUP   — Health check + install check + define test goal    │
-│  2. TEST    — Send task via aletheon_ask, wait for response       │
-│  3. MONITOR — Watch real-time events: tool calls, errors, perf    │
-│  4. ANALYZE — Composite diagnostic: anomalies, journal, logs      │
-│  5. FIX     — Apply fixes to aletheon source, rebuild, restart    │
-│  6. VERIFY  — Re-test with same task, compare results             │
-│  LOOP       — Repeat until goal achieved or max 5 iterations      │
-└──────────────────────────────────────────────────────────────────┘
-```
+### Multi-turn and cancellation
 
-## Phase 1: Setup
+For sustained-session changes, keep one fresh TUI session for at least three
+turns: overview, grounded follow-up, and short unrelated prompt. For
+cancellation, require a typed cancelled terminal state, prompt recovery, and no
+empty outcome, schema mismatch, memory observation, or abnormal cleanup error.
 
-### 1.1 Define the Test Goal
+## Completion detection and evidence
 
-Ask the user or infer from context:
+Never use a fixed sleep as completion evidence. Poll normalized frames until:
 
-- **Task complexity** — Simple (file listing), Medium (code search + read), Hard (multi-file analysis/refactor)?
-- **Success criteria**:
-  - Agent produces a substantive, task-complete response
-  - No provider, timeout, authorization, sandbox, or rendering failure occurs
-  - Tool calls are necessary and batched; more tool calls are not evidence of quality
-- **Max iterations** — default: 5, ask user if the environment looks unstable
-- **Aletheon source path** — discover with `git rev-parse --show-toplevel`; never hard-code a checkout
-- **Example test tasks**:
-  - Simple: "List all Rust source files in crates/ and count them by crate"
-  - Medium: "Read crates/executive/src/composition/config/agent.rs and summarize the AgentLoopConfig struct"
-  - Hard: "Analyze the aletheon project: identify the 3 most complex modules and explain why"
+1. the frame changed after submission;
+2. the frame hash stayed stable for the settle window;
+3. the input prompt returned.
 
-### 1.2 Pre-Flight Checks
+Preserve only the evidence applicable to the selected mode:
 
-Run these MCP tools before starting the test loop:
+- regression report and exact failure output;
+- source commit and workspace version;
+- installed/staged/running binary hashes for installed modes;
+- session ID, final rendered frame, terminal tool receipts, and audit excerpt;
+- journal errors since daemon start;
+- inference rounds, retries, tool counts, latency, and context occupancy for soak.
 
-1. **Install check**: `aletheon_check_install` — verify setup.sh was run, socket exists, env file found.
-2. **Health check**: `aletheon_health` — daemon reachable, systemd active, no provider errors.
+Any aggregate PASS that disagrees with the rendered frame, persisted session,
+audit, or daemon logs is a monitor defect and a failed run.
 
-If either check fails:
-- Socket missing → Run `sudo systemctl restart aletheon`
-- Daemon unreachable after restart → **ESCALATE** to user (low-level system issue)
-- Provider unhealthy → Check `config/default.toml` for provider config, escalate if API key issue
+## Output
 
-### 1.3 Record Baseline
-
-Before testing, snapshot current state:
-
-1. `aletheon_snapshot(include_memory=false)` — record: version, session state, turn count, config
-2. `aletheon_sessions(action="list")` — note active session IDs for reference
-
-## Phase 2: Test
-
-### 2.1 Send the Test Task
-
-Use `aletheon_ask` to send the task to the running agent:
-
-```
-aletheon_ask(question="<task description>")
-```
-
-The response includes:
-- `question` — the task that was sent
-- `response` — the agent's answer text
-
-### 2.2 Evaluate Response Quality
-
-Check the response against these criteria:
-
-| Criterion | Check | Action if Failed |
-|-----------|-------|-----------------|
-| **Non-empty** | `len(response) > 10` | Phase 4 — investigate why agent stops early |
-| **Substantive** | `len(response) > 200` for medium/hard tasks | May be reflection limit — check Phase 4 |
-| **Not truncated** | Doesn't end with "stopping" or "BudgetExhausted" | Likely reflection tool_call_limit — raise it |
-| **On-topic** | Addresses the actual question | May be context pollution or wrong model routing |
-
-### 2.3 Quick Smoke Test
-
-For fast iteration, use a simple test:
-
-```
-aletheon_ask(question="Read the known repository entry files and summarize the project.")
-```
-
-Expected: returns a list of directories. If this fails, the daemon has fundamental issues.
-
-### 2.4 TUI Track — test what the USER actually sees
-
-`aletheon_ask` uses the `session.ask` RPC, which is **introspection-only**: it
-asks the LLM about the *current session context* and does **NOT** run the ReAct
-tool loop — no tools execute, no new turn is created, and `turn_count` does not
-advance. Do **NOT** use `aletheon_ask` to judge agentic capability (reasoning
-depth, tool use, task completion): it will answer "I cannot answer" from
-whatever stale context the session holds. To exercise real agentic execution
-use `aletheon exec --prompt "<task>" --output json` (non-interactive, runs the
-full loop with tools) or drive the real TUI. `aletheon_ask` also **bypasses the
-TUI entirely**, so it cannot see render bugs (duplicate drawing, unrendered
-markdown, `Reflection: Reflection:` double-prefix, `未知技能: /path` slash
-mis-parse). For anything user-facing, drive the real TUI instead:
-
-```
-aletheon_diagnose(task="<the task>")
-```
-
-This launches the real `aletheon` TUI in tmux, sends the task, waits for the
-frame to settle, and returns:
-- `rendered_frame` — what the user actually sees
-- `tui_checks` — render assertions that fired (dup_render / raw_markdown /
-  double_reflection / unknown_skill_path / permission_denied)
-- `daemon.analyze` + `daemon.logs` + `audit_tail` + `timeline`
-- `verdict` — pass/fail
-
-Lower-level control if you need it: `aletheon_tui_start` / `aletheon_tui_send`
-/ `aletheon_tui_capture` / `aletheon_tui_stop`.
-
-## Phase 3: Monitor
-
-### 3.1 Real-Time Event Watch
-
-Use `aletheon_watch` to subscribe to daemon events while the task runs:
-
-```
-aletheon_watch(topic="all", duration_seconds=60)
-```
-
-This captures:
-- **Tool calls** — which tools the agent invoked, in what order
-- **Errors** — tool failures, sandbox issues, provider timeouts
-- **Perf events** — LLM call latency, token usage
-- **Session events** — compaction, reflection triggers
-
-### 3.2 Key Metrics to Watch
-
-| Metric | Healthy Range | Red Flag |
-|--------|--------------|----------|
-| Tool calls per turn | 5–40 | 0 (agent didn't use tools) or >80 (infinite loop) |
-| Tool error rate | <10% | >25% per-tool error rate |
-| Reflection triggers | 1–3 per turn | 0 (no self-check) or >5 (constantly stopping) |
-| LLM latency | <30s per call | >60s (provider timeout risk) |
-| Context compaction events | 0–1 per turn | >3 (bloated context, Fix 3 regression) |
-
-### 3.3 Watch Command Variations
-
-```bash
-# Just tool call events (for debugging Storm Breaker / sandbox issues)
-aletheon_watch(topic="tool", duration_seconds=30)
-
-# Performance-only (for profiling)
-aletheon_watch(topic="perf", duration_seconds=45)
-
-# All events for comprehensive capture
-aletheon_watch(topic="all", duration_seconds=60)
-```
-
-## Phase 4: Analyze
-
-### 4.1 Composite Diagnostic
-
-Run `aletheon_analyze` which combines snapshot + performance + journal + anomaly scan in one call:
-
-```
-aletheon_analyze()
-```
-
-Returns:
-- `healthy` — boolean, True if no CRITICAL anomalies
-- `anomalies` — list of detected issues with severity (CRITICAL/WARN)
-- `snapshot` — current runtime state
-- `perf` — LLM and tool performance stats
-- `recent_journal` — last 20 session events
-
-### 4.2 Deep Dive — Journal
-
-If the response was truncated or short, check the journal:
-
-```
-aletheon_journal(last_n=50)
-```
-
-Look for:
-- `storm_breaker` events → excessive success/failure warnings (Fix 2 regression?)
-- `compaction` events → context bloat (Fix 3 regression?)
-- `reflection` events → tool call limit hit? what was the verdict?
-- `error` events → provider failures, sandbox errors, JSON parse failures
-
-### 4.3 Deep Dive — Logs
-
-If the daemon itself might be crashing:
-
-```
-aletheon_logs(last_n=100, level="ERROR")
-```
-
-Check for:
-- Panic messages in Rust code
-- Socket binding failures
-- Provider connection errors
-- Bubblewrap/sandbox setup failures
-
-### 4.4 Root Cause Classification
-
-Map symptoms to likely root causes:
-
-| Symptom | Likely Root Cause | Fix Direction |
-|---------|------------------|---------------|
-| Agent returns 0 tool calls | Provider auth failure, wrong model routing | Check provider config, check cognit logs |
-| Agent returns empty after 10 calls | reflection_tool_call_limit too low | Raise in config/default.toml |
-| "Permission denied" on /dev/null | Bubblewrap arg order (Fix 1 regression) | Check bubblewrap.rs |
-| Storm breaker spam | sb.reset() not called (Fix 2 regression) | Check chat.rs |
-| Context blows up in 2 turns | History seeding too much (Fix 3 regression) | Check chat.rs seed logic |
-| max_tokens: 4096 in API call | Provider not using config value (Fix 5 regression) | Check provider_registry.rs |
-| Agent stuck in infinite tool loop | ToolBudget/circuit breaker not working | Check react_loop/mod.rs |
-| Response truncated mid-sentence | LLM stopped by max_tokens or stop reason | Check provider max_tokens, check StopReason |
-| TUI shows duplicated blocks | Double draw: stream append + full-message | `crates/interact/src/tui/response.rs` + `chat.rs` |
-| `Reflection: Reflection:` double prefix | Prefix added twice | `crates/interact/src/tui/response.rs:212` |
-| `未知技能: /path` on an absolute path | Slash-command parser eats file paths | `crates/interact/src/tui/app/submit.rs:25` |
-| Markdown tables printed raw | No table rendering | `crates/interact/src/tui/markdown.rs` |
-
-## Phase 5: Fix
-
-### 5.1 Apply Fixes to Aletheon Source
-
-Based on the analysis, edit the relevant source files. Fixes belong in the checkout returned by `git rev-parse --show-toplevel`; never hard-code a historical checkout.
-
-Common fix locations:
-
-| Component | File Path |
-|-----------|-----------|
-| Sandbox (bubblewrap) | `crates/corpus/src/security/sandbox/bubblewrap.rs` |
-| Sandbox builder | `crates/corpus/src/security/sandbox/bwrap_builder.rs` |
-| ReAct loop | `crates/cognit/src/harness/linear/mod.rs` and `.../linear/step.rs` |
-| Reflection engine | `crates/cognit/src/harness/linear/reflection.rs` |
-| Harness config (limits) | `crates/cognit/src/harness/config.rs` (HarnessConfig) |
-| Agent loop / executive config | `crates/executive/src/composition/config/agent.rs` (AgentLoopConfig, ExecutiveConfig) |
-| Daemon turn pipeline | `crates/executive/src/application/daemon_turn/execute.rs` |
-| LLM scheduler (routing/failover) | `crates/cognit/src/adapters/inference/scheduler.rs` |
-| Context compressor | `crates/mnemosyne/src/application/compressor/mod.rs` |
-| Provider registry | `crates/cognit/src/composition/provider_registry.rs` |
-| Anthropic provider | `crates/cognit/src/adapters/inference/anthropic.rs` |
-| OpenAI provider | `crates/cognit/src/adapters/inference/openai_provider.rs` |
-| Storm breaker | `crates/executive/src/host/daemon/handler/tool_executor.rs` |
-
-### 5.2 Build and deploy the installed runtime
-
-```bash
-repo=$(git rev-parse --show-toplevel)
-cd "$repo"
-sudo bash scripts/aletheon.sh deploy
-```
-
-If build fails, fix compilation errors before proceeding. Common issues:
-- Missing imports after adding fields to structs
-- Type mismatches (usize vs u32)
-- Unused variable warnings that became errors
-
-The deploy command owns service restart and installed-runtime verification.
-Do not replace it with a source build plus a manual restart, and do not use a
-fixed sleep as readiness evidence.
-
-## Phase 6: Verify
-
-### 6.1 Re-run Same Test Task
-
-Send the exact same task from Phase 2 and compare results:
-
-```
-aletheon_ask(question="<same task as Phase 2>")
-```
-
-### 6.2 Acceptance Criteria
-
-For the fix to be considered successful:
-
-- [ ] Agent produces a substantive response (>200 chars for medium/hard tasks)
-- [ ] No CRITICAL anomalies in `aletheon_analyze`
-- [ ] Tool error rate < 10%
-- [ ] No "Permission denied" errors in tool calls
-- [ ] No storm breaker spam in recent journal
-- [ ] Context stays bounded across turns
-- [ ] `aletheon_diagnose` returns `verdict: pass`
-- [ ] `tui_checks` is empty (no dup_render / raw_markdown / double_reflection / unknown_skill_path / permission_denied)
-- [ ] TUI frame is `stable: true` (no runaway re-render)
-- [ ] TUI reports the canonical launch cwd and does not scan unrelated host roots
-- [ ] Source commit, deployed binary hash, service timestamp, session JSONL, and final frame are recorded
-- [ ] Model-controlled paths pass three consecutive real-TUI runs
-
-### 6.3 Regression Check
-
-If the task passed before, check that it still passes:
-
-- Compare `response` length and content to the previous baseline
-- Compare `tool_calls` count — significant drop may indicate new issues
-- Run the smoke test from Phase 2.3 to confirm basic functionality
-
-## Loop Control
-
-### Decision Matrix
-
-After each iteration:
-
-| Condition | Action |
-|-----------|--------|
-| All acceptance criteria met | **DONE** — Report success |
-| Max iterations (5) reached | **ESCALATE** — Report remaining issues to user |
-| Same issue 2 iterations in a row | **ESCALATE** — Fix direction is wrong, ask user |
-| Daemon fails to start after fix | **ESCALATE** — Fix broke daemon, revert and ask |
-| New issues found, previous fixed | **Continue** — Go to Phase 5 with new issues |
-| Minor regression only | **Continue** — Tune config values |
-
-### Iteration Tracking
-
-Maintain a running log:
-
-```markdown
-## Test Iteration Log
-
-**Task**: "<task description>"
-**Goal**: Agent produces substantive response with ≥10 tool calls
-
-| Iter | Response Len | Tool Calls | Healthy | Issues Found |
-|------|-------------|------------|---------|-------------|
-| 1    | 32          | 20         | ❌      | Reflection stops at 20, response empty |
-| 2    | 1,200       | 18         | ✅      | —                            |
-```
-
-## Special Scenarios
-
-### Provider Testing
-
-When testing provider configurations:
-
-1. `aletheon_snapshot(include_memory=false)` — check `providers` section for health status
-2. If provider is `unhealthy` — verify API key env var is set, network is reachable
-3. Switch provider via `config/default.toml` if needed
-
-### Sandbox / Bubblewrap Testing
-
-When testing sandbox permissions:
-
-1. Send task that requires `git`, `cargo`, `rustc`, or `/dev/null` access
-2. `aletheon_watch(topic="tool", duration_seconds=30)` — watch for Permission denied
-3. If sandbox blocks legitimate tools — check bubblewrap arg order (Fix 1)
-
-### Context / Memory Testing
-
-When testing context management:
-
-1. `aletheon_memory(query="<topic>")` — verify memory recall works
-2. Send multi-turn conversation and check `aletheon_analyze` for compaction events
-3. If >3 compaction events per turn — context is bloated, check Fix 3
-
-### Performance Regression Testing
-
-When checking for performance regressions:
-
-1. `aletheon_watch(topic="perf", duration_seconds=60)` — capture baseline
-2. Send identical task before and after code changes
-3. Compare: tool call count, total wall time, LLM calls, error rate
-4. >20% degradation in any metric → investigate
-
-## Guardrails
-
-- **Write scope**: Only modify files under the active `git rev-parse --show-toplevel` checkout. Do not touch unrelated projects.
-- **Config safety**: Do not modify `setup.sh`, `config/default.toml`, or provider config unless the analyze phase explicitly identifies a config-level issue. Changing config can break production deployments.
-- **Restart safety**: `systemctl restart aletheon` is allowed without user approval (it's a test daemon). Any other destructive system operations require user confirmation.
-- **Fix discipline**: One fix at a time. Don't batch unrelated changes — you can't isolate which fix worked if you apply 3 at once.
-- **Revert path**: Before applying a fix, note the original state. If the fix makes things worse, revert immediately and escalate.
-- **Memory hygiene**: After each iteration, record key findings to memory so context is preserved across sessions.
-
-## Output Format
-
-At the end of the test session, produce:
+Report:
 
 ```markdown
 ## Aletheon Test Report
 
-**Task**: <task description>
-**Iterations**: <number>
-**Status**: PASS / PARTIAL / ESCALATED
-
-### Issues Found and Fixed
-1. ✅ <issue> — Fixed in <file>:<line>
-2. ✅ <issue> — Fixed in <file>:<line>
-3. ❌ <issue> — Not fixed, <reason>
-
-### Files Changed
-- <file> — <what changed and why>
-
-### Daemon Health
-- Version: <version>
-- Socket: OK / MISSING
-- Systemd: active / inactive
-- Provider: healthy / unhealthy
-- Anomalies: <count> (CRITICAL: <n>, WARN: <n>)
-
-### Performance
-- Tool calls per turn: <avg>
-- Tool error rate: <percentage>
-- LLM calls: <count>
-- Context compaction events: <count>
-
-### Remaining Issues
-- <issue if any>
-
-### Recommendations
-- <suggestion for future improvements>
+- Mode / comparison base / time budget
+- Source and deployed provenance when applicable
+- Selected validation steps with reasons and durations
+- Passed, failed, skipped, and intentionally omitted assertions
+- Exact failed command and output artifact
+- Runtime/TUI evidence when applicable
+- Remaining blocker or next escalation mode
 ```
 
-## Tips
-
-1. **Start with a smoke test** — If `aletheon_ask(question="List top-level directories")` fails, don't bother with complex tasks.
-2. **Watch, don't poll** — Use `aletheon_watch` for real-time events rather than polling `aletheon_health` repeatedly.
-3. **Analyze before fixing** — Always run `aletheon_analyze` before jumping to code changes. The anomaly rules catch common patterns.
-4. **Compare baselines** — Record snapshot before and after each fix. A fix that improves one thing can break another.
-5. **One iteration per turn** — Don't try to do 3 fix-verify cycles in one turn. The daemon state changes between turns; re-check health each time.
-6. **Escalate early** — If the daemon won't start or the same issue persists, tell the user rather than burning all 5 iterations on a dead end.
+Never claim broader acceptance than the selected mode established.

@@ -34,6 +34,11 @@ recursive size scan does not delay every no-op incremental command. Set
 `ALETHEON_CARGO_TARGET_SCAN_INTERVAL_SEC` when operating under a tighter disk
 budget.
 
+The canonical `scripts/aletheon.sh build` path uses that shared target too. It
+stages only the finished executable at `target/release/aletheon`, the stable
+candidate path consumed by deployment and acceptance; incremental objects are
+not duplicated per worktree.
+
 Prefer crate- and target-scoped edit loops instead of enumerating every
 workspace integration binary:
 
@@ -41,8 +46,19 @@ workspace integration binary:
 just dev executive
 just test-lib executive
 just test-one executive daemon_turn_engine
+just test-changed
 just lint-one executive
 ```
+
+`just test-changed` compares the branch with `origin/dev`, includes staged,
+unstaged, and untracked paths, and selects package checks, library tests, exact
+integration targets, and direct workspace-dependent checks. Use
+`just test-changed --plan` to inspect the commands without executing them, or
+`just test-changed --base <revision>` when the comparison base is different.
+For a debug loop, persist timings and exit codes with `--report <file>` and use
+`--rerun-failed <file>` after a repair. Use `--resume <file>` to preserve passed
+receipts while running failed and not-yet-run steps. Reports whose selected
+commands no longer match the current diff-derived plan are rejected.
 
 Rust source modules within one crate are not separate Cargo compilation units;
 incremental rustc codegen handles changed units inside that crate. Use a new

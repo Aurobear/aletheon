@@ -10,9 +10,12 @@ aletheon_die() { printf '[%s] [ERROR] %s\n' "$(_aletheon_ts)" "$*" >&2; return 1
 require_command() { command -v "$1" >/dev/null 2>&1 || aletheon_die "required command is unavailable: $1"; }
 
 ALETHEON_CONFIG_FILE=${ALETHEON_CONFIG_FILE:-$HOME/.aletheon/config.toml}
+ALETHEON_CARGO_CACHE_ROOT=${ALETHEON_CARGO_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/aletheon-cargo}
+ALETHEON_BUILD_TARGET_DIR=${CARGO_TARGET_DIR:-$ALETHEON_CARGO_CACHE_ROOT/target}
 ALETHEON_USER_SOCKET=${ALETHEON_USER_SOCKET:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/aletheon/aletheon.sock}
 ALETHEON_CORE_SOCKET=${ALETHEON_CORE_SOCKET:-/run/aletheon/core.sock}
 ALETHEON_RELEASE_BINARY=${ALETHEON_RELEASE_BINARY:-$ALETHEON_ROOT/target/release/aletheon}
+ALETHEON_BUILD_BINARY=${ALETHEON_BUILD_BINARY:-$ALETHEON_BUILD_TARGET_DIR/release/aletheon}
 ALETHEON_INSTALLED_BINARY=${ALETHEON_INSTALLED_BINARY:-/usr/bin/aletheon}
 ALETHEON_PROC_ROOT=${ALETHEON_PROC_ROOT:-/proc}
 ALETHEON_CORE_UNIT=${ALETHEON_CORE_UNIT:-aletheon-core.service}
