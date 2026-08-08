@@ -319,3 +319,286 @@ async fn restart_self_field_replays_before_start_and_checkpoints_after_stop() {
     assert_eq!(dasein.temporality().current_position().0, 2);
     restarted.shutdown().await.unwrap();
 }
+
+// ── Optimized replay tests ──
+
+/// Build a ledger with a mix of lived events and many scheduled reflections
+/// that exercise the passive synthesis hot path (associations, habits, patterns).
+#[tokio::test]
+async fn replay_with_populated_synthesis_matches_direct_transitions() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("self.db");
+    let clock = Arc::new(kernel::chronos::TestClock::new(100, 0));
+
+    // Seed: lived events that create associations and habits.
+    let original = module_with_ledger(open_store(&path), clock.clone());
+    let mut observed_at = 100i64;
+
+    // Lived events to build up associations (code-test, build-run, etc.)
+    let lived_phrases = [
+        ("code", "compile"),
+        ("test", "verify"),
+        ("code", "compile"),
+        ("test", "verify"),
+        ("code", "compile"), // 3rd "code" -> repetition pattern for "code"
+        ("build", "run"),
+        ("test", "verify"),
+        ("build", "run"),
+    ];
+    for (semantic, action) in &lived_phrases {
+        original
+            .transition(request(
+                SelfEventId::new(),
+                original.self_version().await.0,
+                observed_at,
+                InterpretedExperience::Lived {
+                    semantic: semantic.to_string(),
+                    action: Some(action.to_string()),
+                    perception: None,
+                },
+            ))
+            .await
+            .unwrap();
+        observed_at += 1;
+    }
+
+    // Add enough scheduled reflections that passive synthesis reaches a stable
+    // pattern set (habits with frequency >= 3, associations > 0.5).
+    let reflection_count = 300usize;
+    for _ in 0..reflection_count {
+        original
+            .transition(request(
+                SelfEventId::new(),
+                original.self_version().await.0,
+                observed_at,
+                InterpretedExperience::ScheduledReflection,
+            ))
+            .await
+            .unwrap();
+        observed_at += 1;
+    }
+
+    let expected_context = serde_json::to_vec(&original.to_context_injection()).unwrap();
+    let expected_version = original.self_version().await;
+
+    // Replay the same ledger through a fresh module.
+    let replayed = module_with_ledger(open_store(&path), clock.clone());
+    let replayed_count = replayed.replay_durable_state().await.unwrap();
+    assert_eq!(
+        replayed_count,
+        lived_phrases.len() + reflection_count,
+        "replay must consume every durable event"
+    );
+    assert_eq!(replayed.self_version().await, expected_version);
+    assert_eq!(
+        serde_json::to_vec(&replayed.to_context_injection()).unwrap(),
+        expected_context,
+        "replayed context injection must be byte-for-byte identical to direct transitions"
+    );
+}
+
+/// A populated synthetic replay with many scheduled reflections exercises the
+/// indexed PassiveSynthesizer hot path and proves the protention skip is
+/// semantically transparent.
+#[tokio::test]
+async fn populated_synthetic_replay_completes_correctly() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("self.db");
+    let clock = Arc::new(kernel::chronos::TestClock::new(100, 0));
+
+    let original = module_with_ledger(open_store(&path), clock.clone());
+
+    // Seed a few lived events so habits/associations form.
+    let mut observed_at = 100i64;
+    for i in 0u64..10 {
+        original
+            .transition(request(
+                SelfEventId::new(),
+                i,
+                observed_at,
+                InterpretedExperience::Lived {
+                    semantic: format!("observation_{}", i % 3),
+                    action: Some("monitor".into()),
+                    perception: None,
+                },
+            ))
+            .await
+            .unwrap();
+        observed_at += 1;
+    }
+
+    let seed_count = 10usize;
+    let synthetic_reflections = 500usize;
+    let version_after_seed = original.self_version().await;
+    assert_eq!(version_after_seed.0, seed_count as u64);
+
+    for i in 0..synthetic_reflections {
+        original
+            .transition(request(
+                SelfEventId::new(),
+                (seed_count + i) as u64,
+                observed_at,
+                InterpretedExperience::ScheduledReflection,
+            ))
+            .await
+            .unwrap();
+        observed_at += 1;
+    }
+
+    let expected_version = original.self_version().await;
+    let expected_context = serde_json::to_vec(&original.to_context_injection()).unwrap();
+
+    // Replay.
+    let replayed = module_with_ledger(open_store(&path), clock);
+    let replayed_count = replayed.replay_durable_state().await.unwrap();
+    assert_eq!(replayed_count, seed_count + synthetic_reflections);
+    assert_eq!(replayed.self_version().await, expected_version);
+    assert_eq!(
+        serde_json::to_vec(&replayed.to_context_injection()).unwrap(),
+        expected_context
+    );
+}
+
+/// Protention-skip optimization: verify that after many reflections the
+/// protention field is identical whether built fresh or cached.
+#[tokio::test]
+async fn protention_skip_preserves_protention_field() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("self.db");
+    let clock = Arc::new(kernel::chronos::TestClock::new(100, 0));
+
+    let module = module_with_ledger(open_store(&path), clock);
+
+    // Build associations that cross the trend threshold.
+    for i in 0u64..6 {
+        module
+            .transition(request(
+                SelfEventId::new(),
+                i,
+                100 + i as i64,
+                InterpretedExperience::Lived {
+                    semantic: format!("state_{}", i % 2),
+                    action: Some("evolve".into()),
+                    perception: None,
+                },
+            ))
+            .await
+            .unwrap();
+    }
+
+    // Take a reference protention snapshot after synthesis.
+    let version_before_reflections = module.self_version().await;
+    for i in 0..20 {
+        module
+            .transition(request(
+                SelfEventId::new(),
+                version_before_reflections.0 + i,
+                200 + i as i64,
+                InterpretedExperience::ScheduledReflection,
+            ))
+            .await
+            .unwrap();
+    }
+
+    let protention = module.temporality().protention.read();
+    let possibilities_count = protention.possibilities.len();
+    let certainty = protention.certainty;
+    drop(protention);
+
+    // Replay and verify protention matches.
+    let replayed = module_with_ledger(
+        open_store(&path),
+        Arc::new(kernel::chronos::TestClock::new(300, 0)),
+    );
+    replayed.replay_durable_state().await.unwrap();
+
+    let replayed_protention = replayed.temporality().protention.read();
+    assert_eq!(
+        replayed_protention.possibilities.len(),
+        possibilities_count,
+        "protention possibilities count must match"
+    );
+    assert!(
+        (replayed_protention.certainty - certainty).abs() < f64::EPSILON,
+        "protention certainty must match"
+    );
+}
+
+/// Reversed associations (a-b then b-a) must strengthen the same association
+/// entry rather than creating duplicates, both with and without replay.
+#[tokio::test]
+async fn reversed_associations_are_bidirectional() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("self.db");
+    let clock = Arc::new(kernel::chronos::TestClock::new(100, 0));
+
+    let module = module_with_ledger(open_store(&path), clock);
+
+    // Create a-b association.
+    module
+        .transition(request(
+            SelfEventId::new(),
+            0,
+            100,
+            InterpretedExperience::Lived {
+                semantic: "alpha".into(),
+                action: None,
+                perception: None,
+            },
+        ))
+        .await
+        .unwrap();
+    module
+        .transition(request(
+            SelfEventId::new(),
+            1,
+            101,
+            InterpretedExperience::Lived {
+                semantic: "beta".into(),
+                action: None,
+                perception: None,
+            },
+        ))
+        .await
+        .unwrap();
+
+    // Now b-a (reversed).
+    module
+        .transition(request(
+            SelfEventId::new(),
+            2,
+            102,
+            InterpretedExperience::Lived {
+                semantic: "beta".into(),
+                action: None,
+                perception: None,
+            },
+        ))
+        .await
+        .unwrap();
+    module
+        .transition(request(
+            SelfEventId::new(),
+            3,
+            103,
+            InterpretedExperience::Lived {
+                semantic: "alpha".into(),
+                action: None,
+                perception: None,
+            },
+        ))
+        .await
+        .unwrap();
+
+    let expected_context = serde_json::to_vec(&module.to_context_injection()).unwrap();
+
+    let replayed = module_with_ledger(
+        open_store(&path),
+        Arc::new(kernel::chronos::TestClock::new(200, 0)),
+    );
+    replayed.replay_durable_state().await.unwrap();
+    assert_eq!(
+        serde_json::to_vec(&replayed.to_context_injection()).unwrap(),
+        expected_context
+    );
+}

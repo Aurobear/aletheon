@@ -194,6 +194,27 @@ impl UserRuntimeConfig {
     }
 }
 
+/// Returns a future that resolves when a process-shutdown signal is received.
+///
+/// On Unix this listens for both SIGINT (Ctrl+C) and SIGTERM (systemd stop),
+/// so that the per-user runtime can execute its graceful shutdown path
+/// regardless of how the process is stopped.  On non-Unix platforms only
+/// SIGINT (Ctrl+C) is supported.
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("failed to install SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = sigterm.recv() => {},
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 fn apply_execd_override(
     config: &mut crate::composition::config::GrokHardeningConfig,
     cli_enabled: bool,
@@ -288,12 +309,14 @@ impl UserRuntime {
     pub async fn run(mut self) -> anyhow::Result<()> {
         let mut server = self.server.take().context("user server already consumed")?;
         let cancel = self.cancel.clone();
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                cancel.cancel();
-            }
+        let shutdown_task = tokio::spawn(async move {
+            wait_for_shutdown_signal().await;
+            cancel.cancel();
         });
-        server.run().await?;
+        let server_result = server.run().await;
+        shutdown_task.abort();
+        let _ = shutdown_task.await;
+        server_result?;
         self.request_handler.cancel_current_turn().await;
         self.request_handler.shutdown_runtime().await?;
         Ok(())
@@ -308,6 +331,7 @@ fn tempfile_path(label: &str) -> PathBuf {
 mod tests {
     use super::apply_execd_override;
     use crate::composition::config::GrokHardeningConfig;
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn execd_cli_override_is_additive_over_layered_config() {
@@ -323,5 +347,25 @@ mod tests {
         };
         apply_execd_override(&mut configured, false);
         assert!(configured.execd);
+    }
+
+    /// Verify the shutdown-signal contract compiles and the CancellationToken
+    /// integration pattern works.  Real signals are not sent in this test.
+    #[tokio::test]
+    async fn shutdown_signal_cancellation_token_pattern() {
+        let cancel = CancellationToken::new();
+        assert!(!cancel.is_cancelled());
+        cancel.cancel();
+        assert!(cancel.is_cancelled());
+        // The spawned task in UserRuntime::run uses this same pattern:
+        //   tokio::spawn(async { wait_for_shutdown_signal().await; cancel.cancel(); });
+    }
+
+    /// The wait_for_shutdown_signal function must be reachable on all
+    /// platforms (Unix and non-Unix both have a definition).
+    #[test]
+    fn wait_for_shutdown_signal_function_exists() {
+        // Compile-time check: reference without calling.
+        let _ = super::wait_for_shutdown_signal;
     }
 }

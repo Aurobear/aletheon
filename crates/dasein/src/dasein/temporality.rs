@@ -11,7 +11,8 @@ use fabric::dasein::{
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 
 // ═══ RetentionField (Task 2.1) ═══
 
@@ -325,11 +326,71 @@ impl Tempo {
 
 /// Passive synthesizer — background meaning sedimentation.
 /// Husserl: passive synthesis operates before active consciousness.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PassiveSynthesizer {
     pub associations: Vec<(String, String, f64)>, // (a, b, strength)
+    /// Internal index: canonical sorted (min,max) pair -> position in associations Vec.
+    association_index: HashMap<(String, String), usize>,
     pub habits: Vec<HabitEntry>,
+    /// Internal index: pattern string -> position in habits Vec.
+    habit_index: HashMap<String, usize>,
     pub sediment_count: usize,
+    /// Signature of the last pattern set used for protention projection.
+    pub(crate) last_patterns_hash: Option<u64>,
+}
+
+impl Default for PassiveSynthesizer {
+    fn default() -> Self {
+        Self {
+            associations: Vec::new(),
+            association_index: HashMap::new(),
+            habits: Vec::new(),
+            habit_index: HashMap::new(),
+            sediment_count: 0,
+            last_patterns_hash: None,
+        }
+    }
+}
+
+/// Compute a content-signature of a pattern that determines its protention projection.
+/// Safe to skip protention rebuild when this signature is unchanged.
+fn hash_pattern_projection(
+    p: &TemporalPattern,
+    hasher: &mut std::collections::hash_map::DefaultHasher,
+) {
+    match p {
+        TemporalPattern::Repetition { what, interval: _ } => {
+            0u8.hash(hasher);
+            what.hash(hasher);
+        }
+        TemporalPattern::Trend { direction, toward } => {
+            1u8.hash(hasher);
+            direction.hash(hasher);
+            toward.hash(hasher);
+        }
+        TemporalPattern::Disruption { what } => {
+            2u8.hash(hasher);
+            what.hash(hasher);
+        }
+    }
+}
+
+fn patterns_projection_hash(patterns: &[TemporalPattern]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    patterns.len().hash(&mut hasher);
+    for p in patterns {
+        hash_pattern_projection(p, &mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Return a canonical sorted pair key for bidirectional association lookup.
+fn canonical_pair(a: &str, b: &str) -> (String, String) {
+    if a <= b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -344,46 +405,51 @@ impl PassiveSynthesizer {
     pub fn synthesize(&mut self, recent: &[RentionalMoment]) -> Vec<TemporalPattern> {
         self.sediment_count += 1;
 
-        // Detect associations: if two concepts appear close together, link them
+        // Detect associations: use index for O(1) lookup per window.
         for window in recent.windows(2) {
             let a = &window[0].content.semantic;
             let b = &window[1].content.semantic;
+            let key = canonical_pair(a, b);
 
-            // Check if association already exists
-            if let Some(entry) = self
-                .associations
-                .iter_mut()
-                .find(|(x, y, _)| (x == a && y == b) || (x == b && y == a))
-            {
-                entry.2 = (entry.2 + 0.1).min(1.0); // strengthen
+            if let Some(&idx) = self.association_index.get(&key) {
+                // Strengthen existing association.
+                self.associations[idx].2 = (self.associations[idx].2 + 0.1).min(1.0);
             } else {
+                let idx = self.associations.len();
                 self.associations.push((a.clone(), b.clone(), 0.1));
+                self.association_index.insert(key, idx);
             }
         }
 
-        // Detect habits: repeated patterns
+        // Detect habits: use index for O(1) lookup per moment.
         for moment in recent {
-            if let Some(habit) = self
-                .habits
-                .iter_mut()
-                .find(|h| h.pattern == moment.content.semantic)
-            {
-                habit.frequency += 1;
-                habit.last_seen = moment.position;
+            if let Some(&idx) = self.habit_index.get(&moment.content.semantic) {
+                self.habits[idx].frequency += 1;
+                self.habits[idx].last_seen = moment.position;
             } else {
+                let idx = self.habits.len();
                 self.habits.push(HabitEntry {
                     pattern: moment.content.semantic.clone(),
                     frequency: 1,
                     last_seen: moment.position,
                 });
+                self.habit_index
+                    .insert(moment.content.semantic.clone(), idx);
             }
         }
 
-        // Prune weak associations
+        // Prune weak associations and rebuild index when elements are removed.
+        let old_assoc_len = self.associations.len();
         self.associations
             .retain(|(_, _, strength)| *strength > 0.05);
+        if self.associations.len() != old_assoc_len {
+            self.association_index.clear();
+            for (i, (a, b, _)) in self.associations.iter().enumerate() {
+                self.association_index.insert(canonical_pair(a, b), i);
+            }
+        }
 
-        // Derive temporal patterns from accumulated state
+        // Derive temporal patterns from accumulated state (order-preserving).
         let mut patterns = Vec::new();
 
         // Repetition: habits with frequency >= 3
@@ -463,7 +529,18 @@ impl TemporalStream {
     }
 
     /// Feed detected patterns into the protention field to close the prediction loop.
+    ///
+    /// Skips the rebuild when the pattern set has not changed in ways that affect
+    /// the protention projection (habit frequency and association strength still
+    /// evolve independently).
     pub(crate) fn update_protentions_from_patterns(&self, patterns: &[TemporalPattern]) {
+        let current_hash = patterns_projection_hash(patterns);
+        let mut synth = self.synthesizer.write();
+        if synth.last_patterns_hash == Some(current_hash) {
+            return;
+        }
+        synth.last_patterns_hash = Some(current_hash);
+        drop(synth);
         self.protention.write().update_from_patterns(patterns);
     }
 
@@ -703,5 +780,21 @@ mod tests {
         assert_eq!(synth.associations[0].0, "code");
         assert_eq!(synth.associations[0].1, "test");
         assert_eq!(synth.habits.len(), 2);
+    }
+
+    #[test]
+    fn first_pattern_projection_is_not_skipped() {
+        let stream = TemporalStream::new(8, 0.95);
+        let patterns = vec![TemporalPattern::Repetition {
+            what: "code".to_string(),
+            interval: 3,
+        }];
+
+        stream.update_protentions_from_patterns(&patterns);
+
+        let protention = stream.protention.read();
+        assert_eq!(protention.possibilities.len(), 1);
+        assert_eq!(protention.possibilities[0].content, "code may repeat");
+        assert_eq!(protention.certainty, 0.7);
     }
 }
