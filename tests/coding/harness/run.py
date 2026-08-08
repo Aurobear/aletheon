@@ -571,8 +571,15 @@ def run_task(
                 "ALETHEON__SANDBOX_PROFILES__DEFAULT_PROFILE": "strict",
             }
         )
-        command = [
-            str(binary),
+        command = [str(binary)]
+        # Installed acceptance keeps each fixture's HOME and runtime directory
+        # isolated, but the client must still exercise the already-running
+        # official user daemon.  Capture the reviewed socket before replacing
+        # XDG_RUNTIME_DIR and pass it explicitly as a global CLI argument.
+        acceptance_socket = environment.get("ALETHEON_ACCEPTANCE_SOCKET")
+        if acceptance_socket:
+            command.extend(["--socket", acceptance_socket])
+        command.extend([
             "--cd",
             str(workspace),
             "exec",
@@ -582,7 +589,7 @@ def run_task(
             sandbox,
             "--output",
             "json",
-        ]
+        ])
         max_turns = task.setup.get("exec_max_turns")
         if isinstance(max_turns, int):
             command.extend(["--max-turns", str(max_turns)])

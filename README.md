@@ -271,6 +271,26 @@ Every `✅ Stable` capability above must keep a concrete code anchor, focused te
 - **Bubblewrap Sandbox** — Tool execution sandboxing via bubblewrap (bwrap) for filesystem and network isolation.
 - **Multi-agent Collaboration** — AgentControl owns bounded spawn, receipt settlement, generation fencing, and restart reconciliation.
 
+### 6.2a Known limitations and release acceptance
+
+Capability labels above describe implementation and focused tests; they are not
+a release claim. A tagged release is bound to the machine-generated acceptance
+scoreboard for the exact immutable release candidate, not to this matrix. The
+authoritative gate is recorded in `artifacts/acceptance/<run-id>/manifest.json`;
+`<run-id>` is replaced only by the release workflow after a fresh installed-run
+acceptance passes.
+
+The convergence branch implements and source-validates the typed command
+envelope (R3), canonical live/durable TUI reducer (U1), and indexed
+per-session append path plus the required 1k/10k/100k benchmark matrix (S1).
+Those facts do not make an unreleased branch a published capability claim:
+promotion still requires the exact installed-RC scoreboard and release gates
+defined by
+`docs/plans/Aletheon_Runtime_Product_Convergence_and_Engineering_Closure_Plan_2026-08-07.md`.
+
+**Robot/HIL (H1)** remains unperformed on physical hardware. Simulation
+evidence cannot be presented as physical-robot acceptance.
+
 ### 6.3 Experimental (exists behind feature flags or as examples)
 
 These have code but are gated behind features, environment variables, or exist only as examples:

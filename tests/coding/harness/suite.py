@@ -9,14 +9,156 @@ import json
 import math
 import os
 import pathlib
+import stat
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from datetime import datetime, timezone
 
+from acceptance_artifacts import write_run
+from acceptance_contract import ContractError as AcceptanceContractError
+from acceptance_provenance import ProvenanceCollectionError, collect_installed_provenance
 from contracts import BenchmarkTask, ContractError, load_catalog
 from receipt import FAILURE_CLASSES, METRIC_KEYS, digest, seal, verify_receipt
 from run import ROOT, run_task
 
 REPORT_SCHEMA_VERSION = 1
+
+# The only execution statuses allowed by the acceptance scoreboard
+# (A1-AUDIT-004 / plan spec:636-648). A `waived` entry additionally requires
+# approver/reason/expiry and must not be used to excuse a P0 failure.
+EXECUTION_STATUSES = ("not_run", "infra_blocked", "failed", "passed", "waived")
+
+
+def utc_now() -> str:
+    """Return current UTC time as ISO 8601 second-precision with Z suffix."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _entry_status(entry: Mapping[str, object]) -> str:
+    """Map an aggregated task entry to the canonical scoreboard status."""
+    if entry.get("receipt_valid") is False and entry.get("receipt_path") is not None:
+        return "failed"
+    if entry.get("failure_class") == "infrastructure_failure":
+        return "infra_blocked"
+    if bool(entry.get("outcome_passed")):
+        return "passed"
+    return "failed"
+
+
+def _is_p0_failure(entry: Mapping[str, object]) -> bool:
+    """A P0 semantic/safety failure must fail the whole release gate."""
+    if bool(entry.get("outcome_passed")):
+        return False
+    reasons = entry.get("reasons") or []
+    class_ = str(entry.get("failure_class", ""))
+    return (
+        bool(entry.get("scope_violation"))
+        or bool(entry.get("resource_leak"))
+        or bool(entry.get("false_success"))
+        or "scope" in " ".join(str(r) for r in reasons).lower()
+        or "permission" in " ".join(str(r) for r in reasons).lower()
+        or class_ in {"policy_denial", "scope_violation", "unsafe_success"}
+    )
+
+
+def _acceptance_task(
+    entry: Mapping[str, object],
+    receipt: dict | None,
+    receipt_path: str | None,
+    started_at: str | None,
+    ended_at: str | None,
+    generation_id: str,
+) -> dict[str, object]:
+    """Project an aggregated entry and optional receipt onto the acceptance scoreboard entry keys."""
+    outcome_passed = bool(entry.get("outcome_passed", False))
+    failure_class = str(entry.get("failure_class", ""))
+    reasons = list(entry.get("reasons", []) or [])
+    scope_violation_count = 1 if bool(entry.get("scope_violation", False)) else 0
+    resource_leak_count = 1 if bool(entry.get("resource_leak", False)) else 0
+    receipt_valid = bool(entry.get("receipt_valid", False))
+
+    if not receipt_valid or receipt is None:
+        execution_present = False
+        receipt_valid = False
+        outcome_passed = False
+        terminal_settlement_count = 0
+        retry_count = 0
+        exit_code = None
+        started_at = None
+        ended_at = None
+        evidence_paths = []
+    else:
+        execution_present = True
+        evidence_list = list(receipt.get("evidence", []) or [])
+        terminal_settlement_count = sum(
+            1
+            for e in evidence_list
+            if isinstance(e, dict) and e.get("kind") == "terminal_snapshot"
+        )
+        metrics = receipt.get("metrics", {}) or {}
+        retry_val = metrics.get("provider_retries")
+        if retry_val is None or isinstance(retry_val, bool) or not isinstance(retry_val, int) or retry_val < 0:
+            outcome_passed = False
+            reasons = reasons + ["retry_evidence_missing"]
+            retry_count = 0
+        else:
+            retry_count = retry_val
+        exit_code = receipt.get("execution", {}).get("exit_code")
+        if isinstance(receipt_path, str):
+            evidence_paths = [receipt_path]
+        else:
+            outcome_passed = False
+            reasons = reasons + ["receipt_evidence_path_missing"]
+            evidence_paths = []
+
+    p0 = _is_p0_failure(entry)
+    return {
+        "task_id": str(entry.get("task_id", "")),
+        "category": str(entry.get("category", "")),
+        "receipt_valid": receipt_valid,
+        "execution_present": execution_present,
+        "outcome_passed": outcome_passed,
+        "failure_class": failure_class,
+        "reasons": reasons,
+        "scope_violation_count": scope_violation_count,
+        "resource_leak_count": resource_leak_count,
+        "terminal_settlement_count": terminal_settlement_count,
+        "retry_count": retry_count,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "exit_code": exit_code,
+        "evidence_paths": evidence_paths,
+        "generation_id": generation_id,
+        "p0": p0,
+        "waiver": None,
+    }
+
+
+def _acceptance_report(
+    report: Mapping[str, object],
+    task_runtime: Mapping[str, object],
+    generation_id: str,
+) -> dict[str, object]:
+    """Deep-copy an aggregated report, replacing tasks with acceptance projections, and reseal."""
+    new_report = deepcopy(dict(report))
+    tasks = list(new_report.get("tasks", []))
+    new_tasks = []
+    for entry in tasks:
+        task_id = entry["task_id"]
+        runtime = task_runtime.get(task_id, {})
+        acc_task = _acceptance_task(
+            entry,
+            runtime.get("receipt"),
+            runtime.get("receipt_path"),
+            runtime.get("started_at"),
+            runtime.get("ended_at"),
+            generation_id,
+        )
+        new_tasks.append(acc_task)
+    new_report["tasks"] = new_tasks
+    return seal(new_report)
+
 
 
 @contextlib.contextmanager
@@ -39,6 +181,35 @@ def installed_runtime_lease(environ: Mapping[str, str]):
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
         yield
+
+
+def validate_official_acceptance_socket(environ: Mapping[str, str]) -> pathlib.Path:
+    """Require acceptance to use the invoking user's official Unix socket."""
+    runtime_dir = pathlib.Path(
+        environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    )
+    expected = pathlib.Path(os.path.abspath(runtime_dir / "aletheon/aletheon.sock"))
+    configured = environ.get("ALETHEON_ACCEPTANCE_SOCKET", "")
+    if not configured:
+        raise AcceptanceContractError(
+            "ALETHEON_ACCEPTANCE_SOCKET is required in acceptance mode"
+        )
+    actual = pathlib.Path(os.path.abspath(configured))
+    if actual != expected:
+        raise AcceptanceContractError(
+            "ALETHEON_ACCEPTANCE_SOCKET must name the official user socket"
+        )
+    try:
+        mode = actual.stat().st_mode
+    except OSError:
+        raise AcceptanceContractError(
+            "official acceptance socket is unavailable"
+        ) from None
+    if not stat.S_ISSOCK(mode):
+        raise AcceptanceContractError(
+            "official acceptance path is not a Unix socket"
+        )
+    return actual
 
 
 def _invalid_entry(task_id: str, reason: str = "receipt_invalid") -> dict[str, object]:
@@ -259,6 +430,9 @@ def _write_report(report: Mapping[str, object], path: pathlib.Path) -> None:
     )
 
 
+
+
+
 def execute_suite(
     catalog: pathlib.Path,
     receipts_directory: pathlib.Path,
@@ -266,6 +440,8 @@ def execute_suite(
     *,
     root: pathlib.Path = ROOT,
     environ: Mapping[str, str] | None = None,
+    acceptance_generation_id: str | None = None,
+    acceptance_runtime_out: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], int]:
     environment = dict(os.environ if environ is None else environ)
     with installed_runtime_lease(environment):
@@ -275,6 +451,8 @@ def execute_suite(
             report_path,
             root=root,
             environ=environment,
+            acceptance_generation_id=acceptance_generation_id,
+            acceptance_runtime_out=acceptance_runtime_out,
         )
 
 
@@ -285,6 +463,8 @@ def _execute_suite_locked(
     *,
     root: pathlib.Path = ROOT,
     environ: Mapping[str, str] | None = None,
+    acceptance_generation_id: str | None = None,
+    acceptance_runtime_out: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], int]:
     try:
         tasks = load_catalog(sorted(catalog.glob("*.toml")), root)
@@ -296,25 +476,89 @@ def _execute_suite_locked(
         return report, 2
 
     receipts_directory.mkdir(parents=True, exist_ok=True)
-    receipt_paths: list[pathlib.Path] = []
+    if acceptance_runtime_out is not None:
+        if not acceptance_generation_id or not isinstance(acceptance_generation_id, str) or not acceptance_generation_id.strip():
+            raise ContractError(
+                "acceptance_generation_id must be a non-empty string when acceptance_runtime_out is provided"
+            )
     runner_errors: list[BenchmarkTask] = []
+    task_run_info: list[dict[str, object]] = []
     for task in tasks:
-        path = receipts_directory / f"{task.id}.json"
-        path.unlink(missing_ok=True)
+        start = utc_now()
+        receipt_path = None
         try:
-            run_task(task.source, path, root=root, environ=environ)
-            receipt_paths.append(path)
+            path = receipts_directory / f"{task.id}.json"
+            path.unlink(missing_ok=True)
+            receipt = run_task(task.source, path, root=root, environ=environ)
+            receipt_path = path
         except Exception:
             runner_errors.append(task)
+            receipt = None
+        end = utc_now()
+        task_run_info.append(
+            {
+                "task_id": task.id,
+                "start": start,
+                "end": end,
+                "receipt_path": receipt_path,
+                "receipt": receipt,
+            }
+        )
 
-    loaded = [_load_receipt(path) for path in receipt_paths]
-    entries = [entry for entry, _ in loaded]
-    values = [value for _, value in loaded if value is not None]
+    entries = []
+    values = []
+    valid_receipts = {}
+    for info in task_run_info:
+        if info["receipt_path"] is not None:
+            entry, receipt_value = _load_receipt(info["receipt_path"])
+            entries.append(entry)
+            valid_receipts[info["task_id"]] = receipt_value
+            if receipt_value is not None:
+                values.append(receipt_value)
     for task in runner_errors:
         entry = _invalid_entry(task.id, "runner_exception")
         entry["category"] = task.category
         entry["expected_terminal"] = task.expected_terminal
         entries.append(entry)
+    if acceptance_runtime_out is not None:
+        runtime_dict: dict[str, object] = {}
+        for info in task_run_info:
+            tid = str(info["task_id"])
+            if info["receipt_path"] is None:
+                runtime_dict[tid] = {
+                    "receipt": None,
+                    "receipt_path": None,
+                    "started_at": None,
+                    "ended_at": None,
+                }
+            else:
+                receipt_val = valid_receipts.get(tid)
+                if receipt_val is None:
+                    runtime_dict[tid] = {
+                        "receipt": None,
+                        "receipt_path": None,
+                        "started_at": None,
+                        "ended_at": None,
+                    }
+                else:
+                    name = info["receipt_path"].name
+                    if "/" in name or "\\" in name or name.startswith(".") or any(
+                        ord(c) < 32 or ord(c) == 127 for c in name
+                    ):
+                        runtime_dict[tid] = {
+                            "receipt": None,
+                            "receipt_path": None,
+                            "started_at": None,
+                            "ended_at": None,
+                        }
+                    else:
+                        runtime_dict[tid] = {
+                            "receipt": receipt_val,
+                            "receipt_path": f"logs/{name}",
+                            "started_at": info["start"],
+                            "ended_at": info["end"],
+                        }
+        acceptance_runtime_out.update(runtime_dict)
     report = _build_report(entries, values)
     _write_report(report, report_path)
     return report, exit_code(report)
@@ -325,15 +569,71 @@ def main() -> None:
     parser.add_argument("--catalog", type=pathlib.Path, required=True)
     parser.add_argument("--receipts", type=pathlib.Path, required=True)
     parser.add_argument("--report", type=pathlib.Path, required=True)
-    arguments = parser.parse_args()
-    report, code = execute_suite(
-        arguments.catalog.resolve(),
-        arguments.receipts.resolve(),
-        arguments.report.resolve(),
-        environ=os.environ,
+    parser.add_argument("--run-id", type=str, default=None)
+    parser.add_argument("--generation-id", type=str, default=None)
+    parser.add_argument("--artifacts-root", type=pathlib.Path, default=None)
+    args = parser.parse_args()
+    has_acceptance = any(
+        [args.run_id is not None, args.generation_id is not None, args.artifacts_root is not None]
     )
-    print(arguments.report)
-    raise SystemExit(code)
+    if has_acceptance:
+        if not (args.run_id and args.generation_id and args.artifacts_root):
+            parser.error(
+                "--run-id, --generation-id, and --artifacts-root must all be supplied together"
+            )
+        if not isinstance(args.run_id, str) or not args.run_id.strip():
+            parser.error("--run-id must be a non-empty string")
+        if not isinstance(args.generation_id, str) or not args.generation_id.strip():
+            parser.error("--generation-id must be a non-empty string")
+        aletheon_bin = pathlib.Path(os.environ.get("ALETHEON_BIN", "")).resolve()
+        if aletheon_bin != pathlib.Path("/usr/bin/aletheon"):
+            parser.error(
+                "fatal: ALETHEON_BIN must resolve to /usr/bin/aletheon in acceptance mode"
+            )
+        try:
+            validate_official_acceptance_socket(os.environ)
+        except AcceptanceContractError as error:
+            parser.error(f"fatal: {error}")
+        generation_id = args.generation_id
+        runtime_out: dict[str, object] = {}
+        report, code = execute_suite(
+            args.catalog.resolve(),
+            args.receipts.resolve(),
+            args.report.resolve(),
+            environ=os.environ,
+            acceptance_generation_id=generation_id,
+            acceptance_runtime_out=runtime_out,
+        )
+        acceptance_report = _acceptance_report(report, runtime_out, generation_id)
+        catalog_digest = report.get("catalog", {}).get("digest")
+        if not isinstance(catalog_digest, str) or not catalog_digest.startswith("sha256:"):
+            parser.error("fatal: report catalog digest missing or malformed")
+        hex_digest = catalog_digest[len("sha256:"):]
+        if len(hex_digest) != 64 or not all(c in "0123456789abcdef" for c in hex_digest):
+            parser.error("fatal: report catalog digest must be sha256: + 64 lowercase hex")
+        try:
+            provenance = collect_installed_provenance(ROOT, hex_digest, generation_id)
+        except ProvenanceCollectionError:
+            parser.error("fatal: provenance collection failed")
+        try:
+            run_dir = write_run(
+                args.run_id, acceptance_report, provenance, args.artifacts_root,
+                evidence_root=args.receipts.resolve(),
+            )
+        except (OSError, AcceptanceContractError):
+            parser.error("fatal: acceptance artifact write failed")
+        print(args.report)
+        print(run_dir)
+        raise SystemExit(code)
+    else:
+        report, code = execute_suite(
+            args.catalog.resolve(),
+            args.receipts.resolve(),
+            args.report.resolve(),
+            environ=os.environ,
+        )
+        print(args.report)
+        raise SystemExit(code)
 
 
 if __name__ == "__main__":
