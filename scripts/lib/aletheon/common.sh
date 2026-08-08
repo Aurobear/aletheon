@@ -19,10 +19,10 @@ ALETHEON_CORE_UNIT=${ALETHEON_CORE_UNIT:-aletheon-core.service}
 ALETHEON_USER_UNIT=${ALETHEON_USER_UNIT:-aletheon.service}
 ALETHEON_MEMORY_AGENT_UNIT=${ALETHEON_MEMORY_AGENT_UNIT:-aletheon-memory-agent.service}
 ALETHEON_STABILITY_SECONDS=${ALETHEON_STABILITY_SECONDS:-7}
-# Durable Session/Dasein recovery can exceed the original 30s bound on a
-# populated installation; keep the readiness wait bounded while allowing the
-# installed daemon to finish replay before declaring deployment failure.
-ALETHEON_READINESS_TIMEOUT_SECONDS=${ALETHEON_READINESS_TIMEOUT_SECONDS:-60}
+# Durable Session/Dasein recovery can exceed one minute on a populated
+# installation; keep the readiness wait bounded while allowing the installed
+# daemon to finish replay before declaring deployment failure.
+ALETHEON_READINESS_TIMEOUT_SECONDS=${ALETHEON_READINESS_TIMEOUT_SECONDS:-120}
 ALETHEON_SMOKE_TIMEOUT_SECONDS=${ALETHEON_SMOKE_TIMEOUT_SECONDS:-60}
 ALETHEON_SMOKE_PROMPT=${ALETHEON_SMOKE_PROMPT:-Reply with exactly: ALETHEON_DEPLOYMENT_OK}
 ALETHEON_SMOKE_EXPECTED=${ALETHEON_SMOKE_EXPECTED:-ALETHEON_DEPLOYMENT_OK}
