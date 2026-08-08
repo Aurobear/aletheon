@@ -217,7 +217,11 @@ impl AgentProfile {
         for tool in &self.delegated_tools {
             ensure_text(tool, 512, "profile delegated tool")?;
         }
-        if self.allowed_tools.iter().collect::<std::collections::HashSet<_>>().len()
+        if self
+            .allowed_tools
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
             != self.allowed_tools.len()
         {
             return Err(AgentControlError::invalid(

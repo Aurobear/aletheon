@@ -269,10 +269,7 @@ impl AgentControlService {
         self
     }
 
-    pub fn with_agent_profiles(
-        mut self,
-        profiles: HashMap<String, fabric::AgentProfile>,
-    ) -> Self {
+    pub fn with_agent_profiles(mut self, profiles: HashMap<String, fabric::AgentProfile>) -> Self {
         self.agent_profiles = profiles
             .into_values()
             .map(|profile| (profile.id.clone(), profile))
@@ -288,10 +285,7 @@ impl AgentControlService {
         self
     }
 
-    fn resolve_agent_profile(
-        &self,
-        id: &fabric::AgentProfileId,
-    ) -> Option<fabric::AgentProfile> {
+    fn resolve_agent_profile(&self, id: &fabric::AgentProfileId) -> Option<fabric::AgentProfile> {
         self.agent_profile_catalog
             .as_ref()
             .and_then(|catalog| catalog.resolve_profile(&id.0).ok())
@@ -1049,51 +1043,50 @@ impl AgentControlPort for AgentControlService {
         }
         let context = context_builder.build()?;
         let identity = self.validated_parent(&request).await?;
-        let (attenuation_report, parent_delegation_authority) = if let Some(parent_agent_id) =
-            request.parent_agent_id
-        {
-            let parent_authority = if let Some(parent) = self.live.get(parent_agent_id).await {
-                parent.reparent_authority().clone()
-            } else {
-                request.delegator_authority.clone().ok_or_else(|| {
-                    control_error(
-                        AgentControlErrorKind::Forbidden,
-                        "non-root Agent spawn has no authenticated delegator authority",
-                    )
-                })?
-            };
-            let parent_profile = identity
-                .parent_profile
-                .as_ref()
-                .and_then(|id| self.resolve_agent_profile(id));
-            let child_profile = self.resolve_agent_profile(&request.profile_id);
-            if let (Some(parent_profile), Some(child_profile)) =
-                (parent_profile.as_ref(), child_profile.as_ref())
-            {
-                if !parent_profile.allows_child(child_profile) {
-                    return Err(control_error(
-                        AgentControlErrorKind::Forbidden,
-                        format!(
+        let (attenuation_report, parent_delegation_authority) =
+            if let Some(parent_agent_id) = request.parent_agent_id {
+                let parent_authority = if let Some(parent) = self.live.get(parent_agent_id).await {
+                    parent.reparent_authority().clone()
+                } else {
+                    request.delegator_authority.clone().ok_or_else(|| {
+                        control_error(
+                            AgentControlErrorKind::Forbidden,
+                            "non-root Agent spawn has no authenticated delegator authority",
+                        )
+                    })?
+                };
+                let parent_profile = identity
+                    .parent_profile
+                    .as_ref()
+                    .and_then(|id| self.resolve_agent_profile(id));
+                let child_profile = self.resolve_agent_profile(&request.profile_id);
+                if let (Some(parent_profile), Some(child_profile)) =
+                    (parent_profile.as_ref(), child_profile.as_ref())
+                {
+                    if !parent_profile.allows_child(child_profile) {
+                        return Err(control_error(
+                            AgentControlErrorKind::Forbidden,
+                            format!(
                             "child profile '{}' exceeds delegation policy of parent profile '{}'",
                             child_profile.id.0, parent_profile.id.0
                         ),
-                    ));
+                        ));
+                    }
                 }
-            }
-            let requested = fabric::AgentDelegationAuthority::new(
-                request.trusted_workspace.clone(),
-                request.allowed_tools.clone(),
-                request.budget.clone(),
-            );
-            let (effective, report) = parent_authority.attenuate(&requested)?;
-            request.trusted_workspace = effective.workspace;
-            request.allowed_tools = effective.allowed_tools;
-            request.budget = effective.budget;
-            request.validate()?;
-            (Some(report), Some(parent_authority))
-        } else {
-            (None, None)
-        };
+                let requested = fabric::AgentDelegationAuthority::new(
+                    request.trusted_workspace.clone(),
+                    request.allowed_tools.clone(),
+                    request.budget.clone(),
+                );
+                let (effective, report) = parent_authority.attenuate(&requested)?;
+                request.trusted_workspace = effective.workspace;
+                request.allowed_tools = effective.allowed_tools;
+                request.budget = effective.budget;
+                request.validate()?;
+                (Some(report), Some(parent_authority))
+            } else {
+                (None, None)
+            };
         admission::constrain_cognitive_workspace(&mut request)?;
         request.validate()?;
         // Derive re-delegation only after role-specific workspace narrowing.

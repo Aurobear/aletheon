@@ -202,6 +202,7 @@ crates/executive/src/application/turn_recovery.rs	application	executive	use-case
 crates/executive/src/application/turn_runtime_ports.rs	application	executive	use-case orchestration and ports
 crates/executive/src/composition/turn_service.rs	composition	executive	composition-owned compatibility runtime
 crates/executive/src/application/turn_services.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/turn_tool_projection.rs	application	executive	model-visible projection of authorized turn tools
 crates/executive/src/application/verification/checks.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/verification/command.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/verification/mod.rs	application	executive	use-case orchestration and ports

@@ -132,8 +132,7 @@ impl ContextSource for ProductionContextSource {
                         body: plugin.system_prompt.clone(),
                     })
                     .collect::<Vec<_>>();
-                corpus::skill::keyword_matcher::match_skills(&request.input, &keywords)
-                    .join("\n\n")
+                corpus::skill::keyword_matcher::match_skills(&request.input, &keywords).join("\n\n")
             };
             let suggestion = self
                 .skill_router

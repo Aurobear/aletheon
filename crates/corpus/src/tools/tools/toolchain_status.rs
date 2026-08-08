@@ -140,11 +140,7 @@ impl Tool for ToolchainStatusTool {
     }
 }
 
-fn error(
-    ctx: &ToolContext,
-    start: fabric::MonoTime,
-    message: impl Into<String>,
-) -> ToolResult {
+fn error(ctx: &ToolContext, start: fabric::MonoTime, message: impl Into<String>) -> ToolResult {
     ToolResult {
         content: serde_json::to_string(&json!({"error":message.into()}))
             .expect("toolchain error serializes"),

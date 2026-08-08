@@ -549,8 +549,7 @@ impl TurnPipeline {
         // Enforced evaluation settlement also addresses the canonical turn
         // root, even when no multi-Agent role graph is requested.
         let cognitive_root = if role_graph_needed || turn_request.evaluation_contract.is_some() {
-            self
-                .ensure_root_cognitive_task(&turn_request, &message, main_pid)
+            self.ensure_root_cognitive_task(&turn_request, &message, main_pid)
                 .await?
         } else {
             None
@@ -799,9 +798,11 @@ impl TurnPipeline {
             }
             Ok::<(), anyhow::Error>(())
         };
-        let history = self
-            .canonical_sessions
-            .resume(&fabric::SessionId(turn_request.context.thread_id.0.clone()));
+        // Bind the canonical SessionId so the resumed-history future can borrow
+        // it; an inline temporary would be dropped before the join below reads
+        // it (E0716).
+        let canonical_session = fabric::SessionId(turn_request.context.thread_id.0.clone());
+        let history = self.canonical_sessions.resume(&canonical_session);
         let (memory_observation, conscious_observation, history) =
             tokio::join!(memory_observation, conscious_observation, history);
         if let Err(error) = memory_observation {

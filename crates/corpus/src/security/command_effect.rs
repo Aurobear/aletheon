@@ -75,8 +75,7 @@ pub(crate) fn classify_command(command: &str) -> CommandEffect {
     if invokes_program(
         &lower,
         &["curl", "wget", "ssh", "scp", "nc", "ncat", "glab", "gh"],
-    )
-    {
+    ) {
         return CommandEffect::NetworkEgress;
     }
     if mutating_shell_syntax {
@@ -312,12 +311,7 @@ fn gh_is_read_only(args: &[&str]) -> bool {
     match args {
         ["version", ..] | ["--version", ..] | ["help", ..] => true,
         ["auth", "status", ..] => true,
-        ["pr", action, ..]
-            if matches!(
-                *action,
-                "list" | "view" | "status" | "checks" | "diff"
-            ) =>
-        {
+        ["pr", action, ..] if matches!(*action, "list" | "view" | "status" | "checks" | "diff") => {
             true
         }
         [group, action, ..]
@@ -350,8 +344,10 @@ fn gh_api_is_get(args: &[&str]) -> bool {
                 return false;
             }
             index += 1;
-        } else if matches!(argument, "-f" | "--raw-field" | "-F" | "--field" | "--input")
-            || argument.starts_with("-f")
+        } else if matches!(
+            argument,
+            "-f" | "--raw-field" | "-F" | "--field" | "--input"
+        ) || argument.starts_with("-f")
             || argument.starts_with("-F")
             || argument.starts_with("--raw-field=")
             || argument.starts_with("--field=")

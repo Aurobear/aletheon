@@ -350,13 +350,16 @@ fn tool_permission_level(name: &str) -> i32 {
         // L3 — Destructive
         "module_load" | "kernel_build" => 3,
         // L2 — System-level changes
-        "ebpf_compile" | "module_build" | "robot_execute_skill" | "robot_cancel"
+        "ebpf_compile"
+        | "module_build"
+        | "robot_execute_skill"
+        | "robot_cancel"
         | "robot_safe_stop" => 2,
         // L1 — Sandboxed write
         "file_write" | "bash_exec" | "exec_command" | "write_stdin" | "validation_run"
-        | "apply_patch" | "web_fetch" | "git_restore" | "git_stash" | "git_reset"
-        | "git_add" | "git_commit" | "git_branch" | "git_push" | "agent_spawn"
-        | "agent_wait" | "agent_send" | "agent_cancel" | "agent_list" => 1,
+        | "apply_patch" | "web_fetch" | "git_restore" | "git_stash" | "git_reset" | "git_add"
+        | "git_commit" | "git_branch" | "git_push" | "agent_spawn" | "agent_wait"
+        | "agent_send" | "agent_cancel" | "agent_list" => 1,
         // L0 — Read-only (default)
         _ => 0,
     }

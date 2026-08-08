@@ -486,11 +486,9 @@ fn managed_command(
     }
 
     let executor = crate::security::sandbox::executor::create_default_executor(preference, clock);
-    let backend = executor
-        .select_backend()
-        .ok_or_else(|| {
-            "managed command requires a sandbox backend, but none is available".to_string()
-        })?;
+    let backend = executor.select_backend().ok_or_else(|| {
+        "managed command requires a sandbox backend, but none is available".to_string()
+    })?;
     let scratch = tempfile::Builder::new()
         .prefix("aletheon-command-")
         .tempdir()

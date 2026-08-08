@@ -20,12 +20,7 @@ use kernel::KernelRuntime;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
-fn profile(
-    id: &str,
-    callable: &[&str],
-    delegated: &[&str],
-    risk_tier: RiskTier,
-) -> AgentProfile {
+fn profile(id: &str, callable: &[&str], delegated: &[&str], risk_tier: RiskTier) -> AgentProfile {
     AgentProfile {
         id: AgentProfileId(id.into()),
         system_prompt: format!("{id} fixture"),

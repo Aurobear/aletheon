@@ -360,6 +360,9 @@ mod tests {
             prefix_shape_digest: None,
             local_cache_miss_reason: tokio::sync::Mutex::new(None),
             provider_miss_inference_allowed: false,
+            activated_tool_definitions: tokio::sync::Mutex::new(Vec::new()),
+            initial_tool_schema_digest: None,
+            last_tool_schema_digest: tokio::sync::Mutex::new(None),
         };
 
         let mut next_call_messages = services.request_messages.clone();
@@ -412,6 +415,9 @@ mod tests {
             prefix_shape_digest: Some("sha256:shape".into()),
             local_cache_miss_reason: tokio::sync::Mutex::new(Some(LocalMissReason::SystemChanged)),
             provider_miss_inference_allowed: false,
+            activated_tool_definitions: tokio::sync::Mutex::new(Vec::new()),
+            initial_tool_schema_digest: Some("sha256:tools".into()),
+            last_tool_schema_digest: tokio::sync::Mutex::new(Some("sha256:tools".into())),
         };
         let receipt = fabric::CapabilityTerminalReceipt {
             invocation_id: "validation-1".into(),

@@ -157,7 +157,10 @@ mod tests {
             .find(|(name, _)| *name == "code-agent.md")
             .expect("bundled code-agent Markdown");
         for control in ["agent_spawn", "agent_wait", "agent_cancel", "agent_list"] {
-            assert!(markdown.contains(control), "code-agent is missing {control}");
+            assert!(
+                markdown.contains(control),
+                "code-agent is missing {control}"
+            );
         }
         assert!(markdown.contains("delegate_tools: [\"*\"]"));
     }

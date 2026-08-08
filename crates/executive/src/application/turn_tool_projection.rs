@@ -6,6 +6,7 @@
 //! snapshot during the turn.
 
 use fabric::{TaskKind, ToolDefinition, TurnRequirement};
+use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Small, stable starter surface for ordinary turns. These tools let the model
@@ -134,6 +135,17 @@ pub struct AuthorizedToolCatalog {
     by_name: BTreeMap<String, ToolDefinition>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ToolSearchOutput {
+    #[serde(default)]
+    matches: Vec<ToolSearchMatch>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolSearchMatch {
+    name: String,
+}
+
 impl AuthorizedToolCatalog {
     pub fn new(definitions: &[ToolDefinition]) -> Self {
         Self {
@@ -146,16 +158,13 @@ impl AuthorizedToolCatalog {
     }
 
     pub fn resolve_search_output(&self, output: &str) -> Vec<ToolDefinition> {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(output) else {
+        let Ok(output) = serde_json::from_str::<ToolSearchOutput>(output) else {
             return Vec::new();
         };
-        value
-            .get("matches")
-            .and_then(serde_json::Value::as_array)
+        output
+            .matches
             .into_iter()
-            .flatten()
-            .filter_map(|item| item.get("name").and_then(serde_json::Value::as_str))
-            .filter_map(|name| self.by_name.get(name).cloned())
+            .filter_map(|matched| self.by_name.get(&matched.name).cloned())
             .collect()
     }
 }
@@ -224,10 +233,7 @@ mod tests {
 
     #[test]
     fn search_activation_is_attenuated_by_authorized_catalog() {
-        let catalog = AuthorizedToolCatalog::new(&[
-            tool("file_read"),
-            tool("robot_episode_run"),
-        ]);
+        let catalog = AuthorizedToolCatalog::new(&[tool("file_read"), tool("robot_episode_run")]);
         let activated = catalog.resolve_search_output(
             &json!({
                 "matches": [

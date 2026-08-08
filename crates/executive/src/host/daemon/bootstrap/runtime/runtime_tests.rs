@@ -320,10 +320,7 @@ mod goal_runtime_tests {
         .unwrap();
         let profile = result.profiles.get("orchestrator").unwrap();
         assert_eq!(profile.allowed_tools, vec!["agent_spawn"]);
-        assert_eq!(
-            profile.delegated_tools,
-            vec!["agent_spawn", "file_write"]
-        );
+        assert_eq!(profile.delegated_tools, vec!["agent_spawn", "file_write"]);
     }
 
     #[tokio::test]
@@ -349,13 +346,13 @@ mod goal_runtime_tests {
             "task_create",
             "toolchain_status",
         ]
-            .into_iter()
-            .map(|name| fabric::ToolDefinition {
-                name: name.into(),
-                description: name.into(),
-                input_schema: serde_json::json!({"type":"object"}),
-            })
-            .collect::<Vec<_>>();
+        .into_iter()
+        .map(|name| fabric::ToolDefinition {
+            name: name.into(),
+            description: name.into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        })
+        .collect::<Vec<_>>();
         let result = super::load_agent_profiles(
             directory.path(),
             inference,

@@ -24,15 +24,12 @@ use corpus::hook::builtin::audit_hook;
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::security::storm_breaker::StormBreaker;
 use corpus::skill::plugin::register_skill;
-use corpus::HookRegistry;
-use corpus::SkillLoader;
-use corpus::SkillRouter;
+use corpus::{HookRegistry, SkillLoader, SkillRouter};
 use dasein::{SelfField, SelfFieldConfig};
 use fabric::{CanonicalEventBus, Clock, Registry, Subsystem};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
+use std::sync::{atomic::AtomicUsize, Arc};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -299,9 +296,7 @@ impl RequestHandler {
             clock: clock.clone(),
             tasks_db: Some(data_dir.join("tasks.db")),
             agora: agora_service.clone(),
-            sandbox_preference: fabric::SandboxPreference::from_str(
-                &config.sandbox_preference,
-            ),
+            sandbox_preference: fabric::SandboxPreference::from_str(&config.sandbox_preference),
         });
         let mut tools = tool_composition.registry;
         let core_memory = tool_composition.stores.core;
