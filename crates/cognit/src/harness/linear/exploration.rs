@@ -15,6 +15,24 @@ fn is_inspection_tool(name: &str) -> bool {
     matches!(name, "glob" | "grep" | "file_search")
 }
 
+/// Repository/configuration observation tools can produce new facts forever
+/// without advancing the task phase. Bound consecutive inspection so a model
+/// cannot evade the exact-call circuit breaker merely by changing paths or
+/// search terms.
+pub(super) fn is_repository_inspection(name: &str) -> bool {
+    matches!(
+        name,
+        "artifact_read"
+            | "code_graph"
+            | "file_read"
+            | "file_search"
+            | "glob"
+            | "grep"
+            | "repo_inspect"
+            | "tool_search"
+    )
+}
+
 /// Classify a single discovery call `(tool_name, JSON input)` as broad (repository-wide
 /// scan) or scoped (exact/leaf-only). Only broad calls consume the guarded counter;
 /// scoped discovery remains executable without contributing to the cut-off budget.

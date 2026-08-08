@@ -120,6 +120,10 @@ impl HelpOverlay {
             ("/plan", "Enter plan mode"),
             ("/approve", "Approve current plan"),
             ("/agents", "List active sub-agents"),
+            (
+                "/runtime <id|auto>",
+                "Select Agent runtime for the next turn",
+            ),
             ("/hooks", "List registered hooks"),
             ("/skills", "List available skills"),
             ("/interrupt", "Send interrupt signal"),

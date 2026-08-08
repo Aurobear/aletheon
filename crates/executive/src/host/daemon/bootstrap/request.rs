@@ -1316,6 +1316,7 @@ impl RequestHandler {
                     }),
                     memory_admin: Some(memory_admin_use_cases),
                     agent_runs: Some(agent_repository),
+                    agent_timeline: Some(canonical_event_spine.clone()),
                     agent_profiles: Some(agent_profile_registry),
                     current_profile: Some(active_profile),
                     profile_switch_events: Arc::new(

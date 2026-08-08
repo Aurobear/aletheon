@@ -92,7 +92,7 @@ impl TurnEngine for DaemonTurnEngine {
                 let cleanup = scope
                     .abort_and_drain(self.pipeline.clock.as_ref(), Duration::from_secs(5))
                     .await;
-                log_scope_cleanup(&cleanup);
+                log_scope_cleanup(&cleanup, false);
                 return Err(TurnEngineError::Internal(anyhow::anyhow!(
                     "{}",
                     rejection.message()
@@ -102,7 +102,7 @@ impl TurnEngine for DaemonTurnEngine {
                 let cleanup = scope
                     .abort_and_drain(self.pipeline.clock.as_ref(), Duration::from_secs(5))
                     .await;
-                log_scope_cleanup(&cleanup);
+                log_scope_cleanup(&cleanup, false);
                 return Err(error.into());
             }
         };
@@ -119,26 +119,36 @@ impl TurnEngine for DaemonTurnEngine {
                 .settle_and_drain(self.pipeline.clock.as_ref(), Duration::from_secs(5))
                 .await
         };
-        log_scope_cleanup(&cleanup);
+        log_scope_cleanup(&cleanup, result.stop == fabric::TurnStop::Cancelled);
         Ok(result)
     }
 }
 
-fn log_scope_cleanup(report: &kernel::operation::OperationScopeCleanupReport) {
-    if report.forced_abort
-        || report.exits.iter().any(|exit| {
-            matches!(
-                exit.reason,
-                fabric::OperationExitReason::Failed(_) | fabric::OperationExitReason::Panic(_)
-            )
-        })
-    {
+fn log_scope_cleanup(
+    report: &kernel::operation::OperationScopeCleanupReport,
+    expected_cancel: bool,
+) {
+    let failed = report.exits.iter().any(|exit| {
+        matches!(
+            exit.reason,
+            fabric::OperationExitReason::Failed(_) | fabric::OperationExitReason::Panic(_)
+        )
+    });
+    if failed || (report.forced_abort && !expected_cancel) {
         tracing::warn!(
             operation = %report.operation_id.0,
             kind = ?report.kind,
             forced_abort = report.forced_abort,
             exits = ?report.exits,
             "turn operation scope required abnormal cleanup"
+        );
+    } else if expected_cancel {
+        tracing::debug!(
+            operation = %report.operation_id.0,
+            kind = ?report.kind,
+            forced_abort = report.forced_abort,
+            resources = report.exits.len(),
+            "cancelled turn operation scope drained"
         );
     } else {
         tracing::debug!(

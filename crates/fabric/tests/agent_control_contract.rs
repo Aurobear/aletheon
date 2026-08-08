@@ -139,6 +139,13 @@ fn request_validation_enforces_all_bounds() {
     }
     .validate()
     .is_err());
+    assert!(AgentWaitRequest {
+        caller_root_agent_id: root,
+        agent_id: AgentId::new(),
+        timeout_ms: fabric::agent_control::MAX_AGENT_WAIT_MS + 1,
+    }
+    .validate()
+    .is_err());
     assert!(AgentSendRequest {
         caller_root_agent_id: root,
         sender_agent_id: None,

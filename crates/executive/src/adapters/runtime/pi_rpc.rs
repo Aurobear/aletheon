@@ -17,9 +17,9 @@ use fabric::{
     AttemptEvidence, AttemptUsage, WorkspacePolicy,
 };
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
 pub const PI_RPC_RUNTIME_ID: &str = "pi-rpc";
 const REQUIRED_ISOLATION_FLAGS: &[&str] = &[
@@ -95,7 +95,8 @@ impl PiRpcRuntime {
     async fn spawn(
         &self,
         workspace: &WorkspacePolicy,
-    ) -> Result<(Child, u32, ChildStdin, BufReader<ChildStdout>), AgentControlError> {
+    ) -> Result<(Child, u32, ChildStdin, BufReader<ChildStdout>, ChildStderr), AgentControlError>
+    {
         let policy = pi_sandbox_policy(workspace, self.config.network_enabled)
             .map_err(|error| runtime_error(format!("resolving Pi RPC sandbox policy: {error}")))?;
         let sandbox_config = SandboxConfig {
@@ -115,7 +116,7 @@ impl PiRpcRuntime {
             .current_dir(workspace.cwd())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
         #[cfg(unix)]
         command.process_group(0);
@@ -133,7 +134,11 @@ impl PiRpcRuntime {
             .stdout
             .take()
             .ok_or_else(|| runtime_error("Pi RPC stdout is unavailable"))?;
-        Ok((child, process_group, stdin, BufReader::new(stdout)))
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| runtime_error("Pi RPC stderr is unavailable"))?;
+        Ok((child, process_group, stdin, BufReader::new(stdout), stderr))
     }
 }
 
@@ -176,7 +181,9 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
                 ))
             })?
             .with_protected_paths(protected);
-        let (mut child, process_group, mut stdin, mut stdout) = self.spawn(&workspace).await?;
+        let (mut child, process_group, mut stdin, mut stdout, stderr) =
+            self.spawn(&workspace).await?;
+        let stderr_task = tokio::spawn(read_capped(stderr, 16 * 1024));
         let start_time_ticks = process_start_time_ticks(process_group)
             .map_err(|error| runtime_error(format!("reading Pi RPC process identity: {error}")));
         let runtime_identity = match start_time_ticks {
@@ -294,6 +301,30 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
 
         drop(stdin);
         terminate_process_tree(process_group, &mut child).await;
+        let stderr = stderr_task.await.unwrap_or_default();
+        let stderr = redact_runtime_diagnostic(&stderr, &self.credential_environment);
+        let mut outcome = outcome.map_err(|error| {
+            if stderr.is_empty() {
+                error
+            } else {
+                AgentControlError {
+                    kind: error.kind,
+                    message: format!("{}; Pi stderr: {stderr}", error.message),
+                }
+            }
+        });
+        if let Ok(result) = outcome.as_mut() {
+            if !stderr.is_empty() && result.evidence.len() < 128 {
+                result.evidence.push(
+                    AttemptEvidence {
+                        kind: "pi_rpc_diagnostic".into(),
+                        summary: "bounded Pi runtime diagnostic".into(),
+                        content: stderr,
+                    }
+                    .bounded_for_persistence(16 * 1024),
+                );
+            }
+        }
         if let Err(error) = input.runtime_process.clear(runtime_identity).await {
             return Err(runtime_error(format!(
                 "clearing Pi RPC process identity: {}",
@@ -499,6 +530,62 @@ async fn read_record(
     parse_rpc_record(&record).map_err(|error| runtime_error(error.to_string()))
 }
 
+async fn read_capped<R>(mut reader: R, max: usize) -> String
+where
+    R: AsyncRead + Unpin,
+{
+    let mut bytes = Vec::with_capacity(max.min(4096));
+    let mut chunk = [0_u8; 4096];
+    let mut truncated = false;
+    loop {
+        let Ok(read) = reader.read(&mut chunk).await else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        let remaining = max.saturating_sub(bytes.len());
+        bytes.extend_from_slice(&chunk[..read.min(remaining)]);
+        truncated |= read > remaining;
+        // Keep draining after reaching the evidence cap. Otherwise a noisy
+        // child can fill the OS pipe and deadlock before terminal settlement.
+    }
+    if truncated {
+        bytes.extend_from_slice(b"\n[stderr truncated]");
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn redact_runtime_diagnostic(value: &str, credentials: &BTreeMap<String, String>) -> String {
+    let mut redacted = value.replace(['\r', '\n'], " ");
+    for secret in credentials.values().filter(|value| value.len() >= 4) {
+        redacted = redacted.replace(secret, "[redacted]");
+    }
+    for marker in [
+        "api_key=",
+        "api-key:",
+        "api key:",
+        "apikey=",
+        "authorization: bearer ",
+        "secret=",
+        "token=",
+        "token:",
+    ] {
+        let mut search_from = 0;
+        while let Some(offset) = redacted[search_from..].to_ascii_lowercase().find(marker) {
+            let start = search_from + offset;
+            let value_start = start + marker.len();
+            let value_end = redacted[value_start..]
+                .find(char::is_whitespace)
+                .map(|offset| value_start + offset)
+                .unwrap_or(redacted.len());
+            redacted.replace_range(value_start..value_end, "[redacted]");
+            search_from = value_start + "[redacted]".len();
+        }
+    }
+    redacted.trim().chars().take(4096).collect()
+}
+
 fn replace_mode_with_rpc(args: &mut [String]) -> Result<(), AgentControlError> {
     let positions: Vec<_> = args
         .iter()
@@ -679,7 +766,9 @@ pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
 
 #[cfg(test)]
 mod tests {
-    use super::configured_roots;
+    use super::{configured_roots, read_capped, redact_runtime_diagnostic};
+    use std::collections::BTreeMap;
+    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn missing_configured_writable_path_degrades_to_read_only() {
@@ -689,5 +778,30 @@ mod tests {
             configured_roots(workspace.path(), &[std::path::PathBuf::from("missing.rs")]).unwrap();
 
         assert!(roots.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stderr_capture_is_bounded_but_drains_to_eof() {
+        let (reader, mut writer) = tokio::io::duplex(8);
+        let write = tokio::spawn(async move {
+            writer.write_all(b"0123456789abcdef").await.unwrap();
+        });
+
+        let captured = read_capped(reader, 8).await;
+        write.await.unwrap();
+        assert_eq!(captured, "01234567\n[stderr truncated]");
+    }
+
+    #[test]
+    fn stderr_diagnostic_redacts_configured_and_inline_credentials() {
+        let environment = BTreeMap::from([("OPENAI_API_KEY".into(), "sk-test-secret".into())]);
+        let diagnostic = redact_runtime_diagnostic(
+            "provider failed sk-test-secret\nAuthorization: Bearer another-secret",
+            &environment,
+        );
+
+        assert!(!diagnostic.contains("sk-test-secret"));
+        assert!(!diagnostic.contains("another-secret"));
+        assert!(diagnostic.contains("[redacted]"));
     }
 }

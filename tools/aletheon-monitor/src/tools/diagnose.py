@@ -17,6 +17,30 @@ from . import tui as tui_tools
 from .health import systemd_user_environment
 
 
+def _session_ids(sessions: list[dict]) -> set[str]:
+    return {
+        value
+        for session in sessions
+        if isinstance(session, dict)
+        and isinstance((value := session.get("id", session.get("session_id"))), str)
+    }
+
+
+async def _wait_for_new_canonical_session(client, previous: set[str]) -> str | None:
+    if client is None:
+        return None
+    for _ in range(40):
+        sessions, error = await analyze_mod.canonical_sessions(client)
+        if error is None:
+            created = _session_ids(sessions) - previous
+            if len(created) == 1:
+                return next(iter(created))
+            if len(created) > 1:
+                return None
+        await asyncio.sleep(0.25)
+    return None
+
+
 def _audit_path() -> str:
     return os.environ.get(
         "ALETHEON_AUDIT",
@@ -466,6 +490,13 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     if not started.get("ok"):
         return {"error": "tui_start failed", "detail": started}
 
+    selected_session_id = None
+    sessions_before: set[str] = set()
+    if client is not None:
+        sessions, error = await analyze_mod.canonical_sessions(client)
+        if error is None:
+            sessions_before = _session_ids(sessions)
+
     try:
         # Test runs must not inherit a previously failed or structurally
         # incomplete conversation. The production TUI resumes the most recent
@@ -474,6 +505,9 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         await tui_tools.tui_send("/new", submit=True)
         await tui_tools.tui_capture(
             scrollback=True, wait_stable=True, stable_secs=0.8, timeout=20.0,
+        )
+        selected_session_id = await _wait_for_new_canonical_session(
+            client, sessions_before
         )
 
         # Phase 1: submit the task and let the input echo settle -> baseline.
@@ -493,7 +527,12 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     finally:
         await tui_tools.tui_stop()
 
-    daemon_analyze = await analyze_mod.analyze(client)
+    if selected_session_id:
+        daemon_analyze = await analyze_mod.analyze(
+            client, session_id=selected_session_id
+        )
+    else:
+        daemon_analyze = await analyze_mod.analyze(client)
     daemon_logs = await logs_mod.logs(client, last_n=50)
     audit_tail = _audit_tail()
 
@@ -561,6 +600,7 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
 
     return {
         "task": task,
+        "session_id": selected_session_id,
         "rendered_frame": cap.get("frame", ""),
         "stable": cap.get("stable"),
         "prompt_visible": cap.get("prompt_visible"),

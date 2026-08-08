@@ -9,6 +9,7 @@ pub mod session_protocol;
 pub mod test_infra;
 
 pub mod activity_detail;
+pub mod agent_inspector;
 pub mod approval_dialog;
 pub mod awareness;
 pub mod chat;
@@ -303,6 +304,8 @@ struct App {
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
     requested_task_kind: Option<fabric::TaskKind>,
+    /// Explicit runtime requirement consumed by the next submitted turn.
+    next_agent_runtime: Option<String>,
     /// Compatibility-only V0 transcript recorder. It is never rendered and is
     /// never consulted for durable conversation, tool, or terminal truth; all
     /// visible state is projected into `app_state` through the reducer.
@@ -379,6 +382,8 @@ struct App {
     pager: Option<pager::PagerOverlay>,
     /// Canonical session list with keyboard navigation and resume action.
     session_picker: Option<session_picker::SessionPicker>,
+    /// Read-only navigator over canonical child Agent sessions.
+    agent_inspector: Option<agent_inspector::AgentInspector>,
     /// Local selection cursor over the daemon-owned checkpoint list.
     checkpoint_picker: Option<checkpoint_picker::CheckpointPicker>,
     /// Transaction awaiting a second explicit rollback keypress because the
@@ -424,6 +429,7 @@ impl App {
             workspace,
             turn_requirements,
             requested_task_kind: None,
+            next_agent_runtime: None,
             compat_transcript: ChatWidget::new(caps.clone()),
             input_buf: draft,
             cursor,
@@ -465,6 +471,7 @@ impl App {
             completion: CompletionPopup::new(),
             pager: None,
             session_picker: None,
+            agent_inspector: None,
             checkpoint_picker: None,
             review_risk_confirmation: None,
             frame_counter: 0,
@@ -584,6 +591,9 @@ enum PendingCommand {
         clear_screen: bool,
     },
     OpenSessionPicker,
+    OpenAgentInspector {
+        focus: Option<String>,
+    },
     OpenCheckpointPicker,
     CheckpointFork {
         parent_session_id: String,

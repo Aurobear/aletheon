@@ -289,6 +289,12 @@ async fn wait_list_send_and_cancel_are_root_scoped_and_structured() {
     let ctx = context(root, AgentId::new(), ProcessId::new());
     let agent = AgentId::new();
 
+    assert_eq!(
+        find(&tools, "agent_wait")
+            .execution_timeout(&serde_json::json!({"agent_id":agent,"timeout_ms":600_000})),
+        std::time::Duration::from_millis(605_000)
+    );
+
     let wait = find(&tools, "agent_wait")
         .execute(serde_json::json!({"agent_id":agent,"timeout_ms":500}), &ctx)
         .await;

@@ -1,3 +1,4 @@
+mod agent_timeline;
 pub mod agent_tree_projection;
 pub mod debug_projection;
 pub mod memory_job_projection;

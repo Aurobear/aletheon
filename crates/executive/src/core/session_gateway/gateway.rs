@@ -574,6 +574,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn journal_limit_returns_the_most_recent_entries_in_order() {
+        let f = make_gateway().await;
+        let gw = f.gw;
+        gw.canonical_sessions
+            .ensure_legacy_projection(
+                &fabric::SessionId("recent-session".into()),
+                &[
+                    fabric::Message::user("first"),
+                    fabric::Message::assistant("second"),
+                    fabric::Message::user("third"),
+                ],
+                0,
+            )
+            .await
+            .unwrap();
+
+        let resp = gw
+            .handle_method(
+                "session.journal",
+                &json!("1"),
+                &json!({"session_id": "recent-session", "limit": 2}),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp["result"]["count"], 2);
+        assert_eq!(
+            resp["result"]["entries"][0]["event_type"],
+            "assistant_message"
+        );
+        assert_eq!(resp["result"]["entries"][1]["event_type"], "user_message");
+    }
+
+    #[tokio::test]
     async fn stream_methods_delegate() {
         let f = make_gateway().await;
         let gw = f.gw;

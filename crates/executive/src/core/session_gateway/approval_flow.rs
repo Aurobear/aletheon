@@ -106,7 +106,9 @@ impl SessionGateway {
                     })
                     .collect();
                 if let Some(limit) = limit {
-                    rendered.truncate(limit);
+                    if rendered.len() > limit {
+                        rendered.drain(..rendered.len() - limit);
+                    }
                 }
 
                 json!({

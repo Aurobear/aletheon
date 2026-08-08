@@ -12,6 +12,7 @@ use super::workspace::{BroadcastEpoch, ContentId};
 pub const MAX_AGENT_TASK_BYTES: usize = 64 * 1024;
 pub const MAX_AGENT_MESSAGE_BYTES: usize = 64 * 1024;
 pub const MAX_AGENT_OUTPUT_BYTES: usize = 1024 * 1024;
+pub const MAX_AGENT_WAIT_MS: u64 = 24 * 60 * 60 * 1_000;
 pub const MAX_CONTEXT_ITEMS: usize = 64;
 pub const MAX_EVIDENCE_ITEMS: usize = 128;
 pub const MAX_ARTIFACTS: usize = 128;
@@ -703,9 +704,9 @@ pub struct AgentWaitRequest {
 
 impl AgentWaitRequest {
     pub fn validate(&self) -> Result<(), AgentControlError> {
-        if self.timeout_ms == 0 {
+        if self.timeout_ms == 0 || self.timeout_ms > MAX_AGENT_WAIT_MS {
             return Err(AgentControlError::invalid(
-                "Agent wait timeout must be nonzero",
+                "Agent wait timeout is outside the supported range",
             ));
         }
         Ok(())

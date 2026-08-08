@@ -1306,6 +1306,7 @@ impl TurnPipeline {
         let mut cache_write_complete = true;
         let mut active_context_tokens: Option<u64> = None;
         let mut terminal_events = TerminalEventBuffer::default();
+        let mut turn_stream_open = true;
 
         let text = loop {
             tokio::select! {
@@ -1314,7 +1315,12 @@ impl TurnPipeline {
                         "react task terminated without returning a result"
                     )));
                 }
-                event_result = turn_stream.recv() => {
+                event_result = turn_stream.recv_optional(), if turn_stream_open => {
+                    let Some(event_result) = event_result else {
+                        turn_stream_open = false;
+                        debug!("Turn event stream closed after its producer settled");
+                        continue;
+                    };
                     let event = match event_result {
                         Ok(ev) => ev,
                         Err(rejection) => {
@@ -1595,7 +1601,7 @@ impl TurnPipeline {
             Err(error) => {
                 let (stop, failure) = classify_runtime_turn_failure(&error);
                 let output = if stop == fabric::TurnStop::Cancelled {
-                    String::new()
+                    "Cancelled by user. The cancelled turn objective is closed.".to_string()
                 } else {
                     format!("error: {error}")
                 };
@@ -1674,10 +1680,12 @@ impl TurnPipeline {
                 .await;
         }
 
-        let outcome_status = if turn_succeeded {
-            fabric::dasein::OutcomeStatus::Succeeded
-        } else {
-            fabric::dasein::OutcomeStatus::Failed
+        let outcome_status = match result.stop {
+            fabric::TurnStop::Completed if turn_succeeded => {
+                fabric::dasein::OutcomeStatus::Succeeded
+            }
+            fabric::TurnStop::Cancelled => fabric::dasein::OutcomeStatus::Cancelled,
+            _ => fabric::dasein::OutcomeStatus::Failed,
         };
         self.runtime_ports
             .self_policy

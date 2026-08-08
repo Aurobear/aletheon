@@ -430,34 +430,51 @@ pub async fn submit_message(app: &mut App, text: String) {
                 }
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
-                if app.sub_agents.is_empty() {
-                    app.compat_transcript
-                        .add_text(ChatRole::System, "No active sub-agents".to_string());
-                } else {
-                    let lines: Vec<String> = app
-                        .sub_agents
-                        .iter()
-                        .map(|a| format!("  {} - {:?}: {}", a.id, a.status, a.task))
-                        .collect();
+            Some(CommandType::Builtin(BuiltinCommand::Runtime { value })) => {
+                if app.turn_active {
+                    app.app_state.last_error =
+                        Some("agent runtime cannot change while a turn is active".into());
+                    return;
+                }
+                let value = value.trim();
+                if value.eq_ignore_ascii_case("auto") || value.eq_ignore_ascii_case("clear") {
+                    app.next_agent_runtime = None;
                     app.compat_transcript.add_text(
                         ChatRole::System,
-                        format!("Active sub-agents:\n{}", lines.join("\n")),
+                        "Agent runtime selection reset to auto for the next turn".to_string(),
+                    );
+                } else if value.is_empty()
+                    || value.len() > 128
+                    || value.chars().any(char::is_whitespace)
+                {
+                    app.app_state.last_error = Some("usage: /runtime <runtime-id|auto>".into());
+                } else {
+                    app.next_agent_runtime = Some(value.to_owned());
+                    app.compat_transcript.add_text(
+                        ChatRole::System,
+                        format!(
+                            "Agent runtime {value} is required for the next turn; completion requires its terminal receipt"
+                        ),
                     );
                 }
                 return;
             }
+            Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
+                let request_id = write_request(app, ClientRpcRequest::SubAgents).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::OpenAgentInspector { focus: None },
+                );
+                app.pending_non_turn.insert(request_id);
+                return;
+            }
             Some(CommandType::Builtin(BuiltinCommand::AgentDetail { id })) => {
-                if let Some(agent) = app.sub_agents.iter().find(|a| a.id == id) {
-                    let msg = format!(
-                        "Agent: {}\nTask: {}\nStatus: {:?}\nParent: {}",
-                        agent.id, agent.task, agent.status, agent.parent_turn_id
-                    );
-                    app.compat_transcript.add_text(ChatRole::System, msg);
-                } else {
-                    app.compat_transcript
-                        .add_text(ChatRole::System, format!("Agent not found: {id}"));
-                }
+                let request_id = write_request(app, ClientRpcRequest::SubAgents).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::OpenAgentInspector { focus: Some(id) },
+                );
+                app.pending_non_turn.insert(request_id);
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
@@ -660,14 +677,25 @@ async fn send_shell_to_daemon(app: &mut App, command: &str) {
 pub async fn send_to_daemon(app: &mut App, text: &str) {
     let request_id = app.next_request_id;
     app.next_request_id = app.next_request_id.saturating_add(1);
+    let mut requirements = app.turn_requirements.clone();
+    if let Some(runtime_id) = app.next_agent_runtime.as_ref() {
+        requirements.push(fabric::TurnRequirement::InvokeAgentRuntime {
+            runtime_id: runtime_id.clone(),
+        });
+    }
+    let task_kind = app
+        .next_agent_runtime
+        .as_ref()
+        .map(|_| fabric::TaskKind::Coding)
+        .or(app.requested_task_kind);
     let request = crate::intent::rpc(crate::intent::submit_prompt(crate::intent::PromptIntent {
         surface: ClientSurface::Tui,
         correlation_id: format!("tui:{request_id}"),
         content: text,
         session_id: app.app_state.session_id.clone().map(fabric::SessionId),
         workspace: &app.workspace,
-        requirements: app.turn_requirements.clone(),
-        task_kind: app.requested_task_kind,
+        requirements,
+        task_kind,
         permission_mode: crate::host::permission_mode_from_environment(),
         execution_target: app.app_state.execution_target_for_submission().clone(),
     }));
@@ -682,7 +710,12 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
             .add_text(ChatRole::System, "发送失败，请检查 daemon".to_string());
         return;
     }
-    let _ = app.stream.flush().await;
+    if app.stream.flush().await.is_err() {
+        app.compat_transcript
+            .add_text(ChatRole::System, "发送失败，请检查 daemon".to_string());
+        return;
+    }
+    app.next_agent_runtime = None;
     app.streaming = true;
     app.response_buf.clear();
     app.status.waiting = true;
@@ -808,6 +841,42 @@ mod secure_shell_tests {
         assert_eq!(selection["target"]["environment"], "simulation");
         assert_eq!(selection["source"], "user_command");
         assert_eq!(app.app_state.execution_target_for_submission(), &robot);
+    }
+
+    #[tokio::test]
+    async fn next_runtime_becomes_typed_coding_requirement_and_is_consumed() {
+        let (stream, mut peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test-model".into(),
+            std::sync::Arc::new(ClientClock::default()),
+            workspace,
+            vec![],
+        );
+        app.next_agent_runtime = Some("pi-rpc".into());
+
+        send_to_daemon(&mut app, "review the repository").await;
+
+        let mut bytes = vec![0; 4096];
+        let read = peer.read(&mut bytes).await.unwrap();
+        let request: serde_json::Value =
+            serde_json::from_slice(bytes[..read].strip_suffix(b"\n").unwrap()).unwrap();
+        let arguments = &request["params"]["command"]["arguments"];
+        assert_eq!(arguments["task_kind"], "coding");
+        assert_eq!(
+            arguments["requirements"][0]["InvokeAgentRuntime"]["runtime_id"],
+            "pi-rpc"
+        );
+        assert!(app.next_agent_runtime.is_none());
     }
 }
 

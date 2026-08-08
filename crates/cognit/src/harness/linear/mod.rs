@@ -18,7 +18,10 @@ pub use compaction_observability::{compaction_metrics, CompactionMetrics};
 pub use metrics::TurnMetrics;
 
 use compaction_observability::{record_degenerate, record_evicted, record_sampler_error};
-use exploration::{exploration_input_token_budget, is_broad_discovery, should_close_exploration};
+use exploration::{
+    exploration_input_token_budget, is_broad_discovery, is_repository_inspection,
+    should_close_exploration,
+};
 
 /// Minimum length (trimmed chars) an answer must have before a
 /// reflection-triggered stop is treated as terminal. Below this, both run loops
@@ -30,6 +33,15 @@ pub(super) const MIN_SUBSTANTIVE_ANSWER_CHARS: usize = 40;
 /// try a different approach" nudge so the loop re-plans instead of repeating a
 /// failing call. The counter resets on any tool success or after the nudge.
 pub(super) const REPLAN_ON_CONSECUTIVE_ERRORS: usize = 3;
+
+/// A host-required Agent runtime is an execution obligation, not a suggestion.
+/// Six unrelated calls are enough to prove that the current strategy has
+/// stalled; repeated stalls narrow the available actions and eventually stop.
+pub(super) const REQUIRED_AGENT_STALL_CALLS: usize = 6;
+
+/// Consecutive observation calls before the Host requires synthesis. A second
+/// stall removes inspection capabilities for the rest of the turn.
+pub(super) const REPOSITORY_INSPECTION_STALL_CALLS: usize = 12;
 
 use async_trait::async_trait;
 use circuit_breaker::CircuitBreaker;
@@ -167,6 +179,12 @@ pub struct ReActLoop {
     /// satisfy a required-agent obligation only for one of these instances;
     /// stale receipts from earlier turns are deliberately ineligible.
     spawned_agents: std::collections::BTreeMap<String, AgentRuntimeId>,
+    /// Deterministic spawn/terminal progress for host-required Agent runtimes.
+    required_agent_progress: Option<String>,
+    required_agent_calls_without_progress: usize,
+    required_agent_stalls: usize,
+    repository_inspection_calls: usize,
+    repository_inspection_stalls: usize,
     /// Latest deterministic completion audit. Initially observed in shadow mode.
     latest_completion_audit: Option<ProgressDecision>,
     completion_gate_mode: CompletionGateMode,
@@ -220,6 +238,11 @@ impl ReActLoop {
             cognitive_state: None,
             evidence_ledger: EvidenceLedger::default(),
             spawned_agents: std::collections::BTreeMap::new(),
+            required_agent_progress: None,
+            required_agent_calls_without_progress: 0,
+            required_agent_stalls: 0,
+            repository_inspection_calls: 0,
+            repository_inspection_stalls: 0,
             latest_completion_audit: None,
             completion_gate_mode: CompletionGateMode::Shadow,
             max_completion_retries: 2,
@@ -363,6 +386,11 @@ impl ReActLoop {
         self.goal_tracker.reset();
         self.reflection_engine.reset();
         self.latest_completion_audit = None;
+        self.required_agent_progress = None;
+        self.required_agent_calls_without_progress = 0;
+        self.required_agent_stalls = 0;
+        self.repository_inspection_calls = 0;
+        self.repository_inspection_stalls = 0;
         // Note: plan_mode persists across resets (user choice)
         // Note: system_prompt never resets (immutable after construction)
     }
@@ -442,6 +470,11 @@ impl ReActLoop {
         self.evidence_ledger = EvidenceLedger::default();
         self.spawned_agents.clear();
         self.latest_completion_audit = None;
+        self.required_agent_progress = None;
+        self.required_agent_calls_without_progress = 0;
+        self.required_agent_stalls = 0;
+        self.repository_inspection_calls = 0;
+        self.repository_inspection_stalls = 0;
     }
 
     pub fn clear_cognitive_state(&mut self) {
@@ -449,6 +482,11 @@ impl ReActLoop {
         self.evidence_ledger = EvidenceLedger::default();
         self.spawned_agents.clear();
         self.latest_completion_audit = None;
+        self.required_agent_progress = None;
+        self.required_agent_calls_without_progress = 0;
+        self.required_agent_stalls = 0;
+        self.repository_inspection_calls = 0;
+        self.repository_inspection_stalls = 0;
         self.completion_gate_mode = CompletionGateMode::Shadow;
     }
 
@@ -504,6 +542,25 @@ impl ReActLoop {
 mod exploration_budget_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn repository_inspection_classifier_covers_variable_search_and_read_calls() {
+        for name in [
+            "artifact_read",
+            "code_graph",
+            "file_read",
+            "file_search",
+            "glob",
+            "grep",
+            "repo_inspect",
+            "tool_search",
+        ] {
+            assert!(is_repository_inspection(name), "missing {name}");
+        }
+        for name in ["agent_spawn", "apply_patch", "git_diff", "validation_run"] {
+            assert!(!is_repository_inspection(name), "misclassified {name}");
+        }
+    }
 
     // --- typed input helpers ---
     fn broad_grep() -> serde_json::Value {

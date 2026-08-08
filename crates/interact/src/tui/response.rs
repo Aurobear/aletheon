@@ -155,6 +155,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     super::reducer::LiveActivityEvent::ToolStarted {
                         call_id: call_id.clone(),
                         tool: tool.clone(),
+                        args: public_tool_args(&args),
                         observed_at,
                     },
                 ),
@@ -171,6 +172,17 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             tool: _,
             args,
         } => {
+            let observed_at = app.clock.mono_now().0;
+            let _ = super::reducer::reduce(
+                &mut app.app_state,
+                super::reducer::UiAction::LiveActivity(
+                    super::reducer::LiveActivityEvent::ToolArguments {
+                        call_id: call_id.clone(),
+                        args: public_tool_args(&args),
+                        observed_at,
+                    },
+                ),
+            );
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.compat_transcript.update_exec_args(&call_id, &args_str);
         }
@@ -438,6 +450,86 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             // goal set — update app state
         }
     }
+}
+
+fn public_tool_args(value: &serde_json::Value) -> serde_json::Value {
+    fn redact_inline_secrets(value: &str) -> String {
+        let mut redacted = value.to_owned();
+        for marker in [
+            "anthropic_api_key=",
+            "openai_api_key=",
+            "google_api_key=",
+            "api_key=",
+            "authorization: bearer ",
+            "secret=",
+            "token=",
+        ] {
+            let mut search_from = 0;
+            while let Some(offset) = redacted[search_from..].to_ascii_lowercase().find(marker) {
+                let start = search_from + offset;
+                let value_start = start + marker.len();
+                let value_end = redacted[value_start..]
+                    .find(char::is_whitespace)
+                    .map(|offset| value_start + offset)
+                    .unwrap_or(redacted.len());
+                redacted.replace_range(value_start..value_end, "[redacted]");
+                search_from = value_start + "[redacted]".len();
+            }
+        }
+        redacted
+    }
+
+    fn redact(value: &serde_json::Value, depth: usize) -> serde_json::Value {
+        if depth >= 3 {
+            return serde_json::json!("…");
+        }
+        match value {
+            serde_json::Value::Object(map) => serde_json::Value::Object(
+                map.iter()
+                    .take(8)
+                    .map(|(key, value)| {
+                        let sensitive = [
+                            "token",
+                            "secret",
+                            "password",
+                            "credential",
+                            "api_key",
+                            "authorization",
+                            "bearer",
+                        ]
+                        .iter()
+                        .any(|needle| key.to_ascii_lowercase().contains(needle));
+                        (
+                            key.clone(),
+                            if sensitive {
+                                serde_json::json!("[redacted]")
+                            } else {
+                                redact(value, depth + 1)
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            serde_json::Value::Array(values) => serde_json::Value::Array(
+                values
+                    .iter()
+                    .take(8)
+                    .map(|value| redact(value, depth + 1))
+                    .collect(),
+            ),
+            serde_json::Value::String(value) => {
+                let value = redact_inline_secrets(value);
+                let bounded = value.chars().take(160).collect::<String>();
+                serde_json::Value::String(if value.chars().count() > 160 {
+                    format!("{bounded}…")
+                } else {
+                    bounded
+                })
+            }
+            value => value.clone(),
+        }
+    }
+    redact(value, 0)
 }
 
 pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
@@ -725,6 +817,22 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 Err(error) => app
                     .compat_transcript
                     .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
+            }
+        }
+        (super::PendingCommand::OpenAgentInspector { focus }, Some(result), None) => {
+            let agents = result.get("agents").unwrap_or(&serde_json::Value::Null);
+            let parsed = if let Some(inspector) = app.agent_inspector.as_mut() {
+                inspector.replace(agents)
+            } else {
+                super::agent_inspector::AgentInspector::from_json(agents, focus.as_deref())
+                    .map(|inspector| app.agent_inspector = Some(inspector))
+            };
+            if let Err(error) = parsed {
+                app.agent_inspector = None;
+                app.compat_transcript.add_text(
+                    ChatRole::System,
+                    format!("无法打开 Agent sessions：{error}"),
+                );
             }
         }
         (super::PendingCommand::OpenCheckpointPicker, Some(result), None) => {
@@ -1363,6 +1471,7 @@ pub fn format_memory_status(memory: &serde_json::Value) -> String {
 mod tests {
     use super::{
         deduplicate_consecutive_text, format_memory_status, handle_event, process_response,
+        public_tool_args,
     };
     use crate::tui::{
         chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App, PendingCommand,
@@ -1374,6 +1483,24 @@ mod tests {
     };
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn public_tool_arguments_are_bounded_and_redacted() {
+        let value = public_tool_args(&serde_json::json!({
+            "path": "/workspace/src/lib.rs",
+            "authorization": "Bearer visible-secret",
+            "nested": {"api_key": "sk-secret"},
+            "command": "run OPENAI_API_KEY=inline-secret tool",
+            "query": "x".repeat(300),
+        }));
+
+        assert_eq!(value["authorization"], "[redacted]");
+        assert_eq!(value["nested"]["api_key"], "[redacted]");
+        assert!(!value.to_string().contains("visible-secret"));
+        assert!(!value.to_string().contains("sk-secret"));
+        assert!(!value.to_string().contains("inline-secret"));
+        assert!(value["query"].as_str().unwrap().ends_with('…'));
+    }
 
     #[test]
     fn deduplicates_only_an_exact_repeated_response() {

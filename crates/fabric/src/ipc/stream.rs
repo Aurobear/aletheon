@@ -373,13 +373,20 @@ impl TurnEventStream {
 
     /// Receive the next event, validating the schema and deserializing the payload.
     pub async fn recv(&mut self) -> Result<TurnEventV1, SchemaRejection> {
-        let envelope = self.rx.recv().await.ok_or_else(|| SchemaRejection {
-            expected: TURN_EVENT_SCHEMA.to_string(),
-            actual: "stream closed".to_string(),
-            payload_preview: String::new(),
-        })?;
+        self.recv_optional().await.unwrap_or_else(|| {
+            Err(SchemaRejection {
+                expected: TURN_EVENT_SCHEMA.to_string(),
+                actual: "stream closed".to_string(),
+                payload_preview: String::new(),
+            })
+        })
+    }
 
-        Self::decode_envelope(envelope)
+    /// Receive while keeping normal producer closure distinct from a malformed
+    /// event. Long-lived pumps use this method so cancellation does not turn an
+    /// ordinary closed channel into a schema-mismatch warning.
+    pub async fn recv_optional(&mut self) -> Option<Result<TurnEventV1, SchemaRejection>> {
+        self.rx.recv().await.map(Self::decode_envelope)
     }
 
     /// Non-blocking receive of the next event.
@@ -497,5 +504,13 @@ mod tests {
             ));
         }
         assert!(stream.try_recv().is_none());
+    }
+
+    #[tokio::test]
+    async fn optional_receive_treats_normal_sender_close_as_end_of_stream() {
+        let (mut stream, sender) = TurnEventStream::new(StreamConfig::turn_events(1));
+        drop(sender);
+
+        assert!(stream.recv_optional().await.is_none());
     }
 }

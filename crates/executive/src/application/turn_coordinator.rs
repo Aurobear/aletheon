@@ -988,7 +988,12 @@ impl TurnCoordinator {
                     }
                 } else {
                     ItemPayload::SystemNotice {
-                        content: format!("turn stopped: {:?}", result.stop),
+                        content: if result.stop == TurnStop::Cancelled {
+                            "Previous turn was cancelled. Its objective is closed. Do not resume that objective unless the current user explicitly asks to continue it; reconcile only the new user input."
+                                .to_string()
+                        } else {
+                            format!("turn stopped: {:?}", result.stop)
+                        },
                     }
                 };
                 self.append_tracked(
@@ -1068,7 +1073,9 @@ impl TurnCoordinator {
             turn_id,
             &mut sequence,
             ItemPayload::SystemNotice {
-                content: format!("turn cancelled: {reason:?}"),
+                content: format!(
+                    "Previous turn was cancelled ({reason:?}). Its objective is closed. Do not resume that objective unless the current user explicitly asks to continue it; reconcile only the new user input."
+                ),
             },
             WritePhase::TerminalFlush,
             write_tracker,
@@ -1175,7 +1182,7 @@ impl TurnCoordinator {
 
 pub fn cancelled_result() -> TurnResult {
     TurnResult {
-        output: String::new(),
+        output: "Cancelled by user. The cancelled turn objective is closed.".into(),
         stop: TurnStop::Cancelled,
         failure: None,
         usage: Default::default(),
@@ -1189,6 +1196,14 @@ pub fn cancelled_result() -> TurnResult {
 #[cfg(test)]
 mod durable_failure_tests {
     use super::*;
+
+    #[test]
+    fn cancelled_result_is_typed_and_never_empty() {
+        let result = cancelled_result();
+        assert_eq!(result.stop, TurnStop::Cancelled);
+        assert!(!result.output.trim().is_empty());
+        assert!(!result.metrics.completed_normally);
+    }
 
     #[test]
     fn active_retention_only_recognizes_terminal_durable_write_failure() {

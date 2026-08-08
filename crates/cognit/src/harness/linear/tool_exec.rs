@@ -325,16 +325,18 @@ impl ReActLoop {
                 content: content_blocks,
             });
 
-            if super::should_close_exploration(
-                self.iteration,
-                self.turn_input_tokens,
-                self.config.context_window_tokens,
-                self.repository_context_seen,
-                self.broad_discovery_batches,
-                ordered_calls
-                    .iter()
-                    .map(|(_, name, input)| (name.as_str(), input)),
-            ) {
+            if !self.required_agent_obligation_outstanding()
+                && super::should_close_exploration(
+                    self.iteration,
+                    self.turn_input_tokens,
+                    self.config.context_window_tokens,
+                    self.repository_context_seen,
+                    self.broad_discovery_batches,
+                    ordered_calls
+                        .iter()
+                        .map(|(_, name, input)| (name.as_str(), input)),
+                )
+            {
                 let budget =
                     super::exploration_input_token_budget(self.config.context_window_tokens);
                 let content = format!(
@@ -402,6 +404,7 @@ impl ReActLoop {
             // assistant(tool_use) message to be in ONE subsequent user message.
             let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
             let mut clarification_requested: Option<String> = None;
+            let calls_before_batch = tool_calls_made;
 
             let result_budget = per_result_budget(ordered_calls.len());
             for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
@@ -738,6 +741,98 @@ impl ReActLoop {
                     content: tool_result_blocks,
                 });
             }
+            let executed_in_batch = tool_calls_made.saturating_sub(calls_before_batch);
+            if let Some(guard) = self.observe_required_agent_progress(executed_in_batch) {
+                let summary = guard.message().to_owned();
+                event_sink.emit(Event::Reflection {
+                    summary: summary.clone(),
+                    recommendation: guard.recommendation().to_owned(),
+                });
+                match guard {
+                    RequiredAgentGuard::Recover(message) => {
+                        self.messages.push(Message::user(message));
+                    }
+                    RequiredAgentGuard::Restrict(message) => {
+                        visible_tool_defs.retain(|tool| {
+                            matches!(
+                                tool.name.as_str(),
+                                "agent_spawn" | "agent_wait" | "agent_list" | "agent_send"
+                            )
+                        });
+                        if visible_tool_defs.is_empty() {
+                            let outcome = format!(
+                                "Required Agent runtime cannot progress: no Agent control capabilities are projected. {message}"
+                            );
+                            event_sink.emit(Event::TextDelta {
+                                delta: outcome.clone(),
+                            });
+                            event_sink.emit(Event::TurnDone {
+                                result: Ok(outcome.clone()),
+                            });
+                            return Ok((
+                                outcome,
+                                TurnMetrics {
+                                    tool_calls_made,
+                                    tool_errors,
+                                    provider_retries,
+                                    elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
+                                    iterations: self.iteration,
+                                    completed_normally: false,
+                                    stop: fabric::TurnStop::Blocked,
+                                },
+                            ));
+                        }
+                        self.messages.push(Message::user(message));
+                    }
+                    RequiredAgentGuard::Block(message) => {
+                        event_sink.emit(Event::TextDelta {
+                            delta: message.clone(),
+                        });
+                        event_sink.emit(Event::TurnDone {
+                            result: Ok(message.clone()),
+                        });
+                        return Ok((
+                            message,
+                            TurnMetrics {
+                                tool_calls_made,
+                                tool_errors,
+                                provider_retries,
+                                elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
+                                iterations: self.iteration,
+                                completed_normally: false,
+                                stop: fabric::TurnStop::Blocked,
+                            },
+                        ));
+                    }
+                }
+            }
+            let repository_inspection_calls = ordered_calls
+                .iter()
+                .take(executed_in_batch)
+                .filter(|(_, name, _)| super::is_repository_inspection(name))
+                .count();
+            let all_repository_inspection =
+                executed_in_batch > 0 && repository_inspection_calls == executed_in_batch;
+            if let Some(guard) = self.observe_repository_inspection_progress(
+                executed_in_batch,
+                all_repository_inspection,
+            ) {
+                let summary = guard.message().to_owned();
+                event_sink.emit(Event::Reflection {
+                    summary,
+                    recommendation: guard.recommendation().to_owned(),
+                });
+                match guard {
+                    RepositoryInspectionGuard::Recover(message) => {
+                        self.messages.push(Message::user(message));
+                    }
+                    RepositoryInspectionGuard::Synthesize(message) => {
+                        visible_tool_defs
+                            .retain(|tool| !super::is_repository_inspection(&tool.name));
+                        self.messages.push(Message::user(message));
+                    }
+                }
+            }
             // Only broad-discovery batches (contains at least one repository-wide
             // scan) count toward the cut-off allowance. Scoped/exact discovery
             // calls do not consume the counter. Any read-only tool (including
@@ -917,6 +1012,50 @@ impl ReActLoop {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RequiredAgentGuard {
+    Recover(String),
+    Restrict(String),
+    Block(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RepositoryInspectionGuard {
+    Recover(String),
+    Synthesize(String),
+}
+
+impl RepositoryInspectionGuard {
+    fn message(&self) -> &str {
+        match self {
+            Self::Recover(message) | Self::Synthesize(message) => message,
+        }
+    }
+
+    fn recommendation(&self) -> &'static str {
+        match self {
+            Self::Recover(_) => "SynthesizeEvidence",
+            Self::Synthesize(_) => "InspectionClosed",
+        }
+    }
+}
+
+impl RequiredAgentGuard {
+    fn message(&self) -> &str {
+        match self {
+            Self::Recover(message) | Self::Restrict(message) | Self::Block(message) => message,
+        }
+    }
+
+    fn recommendation(&self) -> &'static str {
+        match self {
+            Self::Recover(_) => "AdjustStrategy",
+            Self::Restrict(_) => "RequiredActionOnly",
+            Self::Block(_) => "StopNoProgress",
+        }
+    }
+}
+
 fn authoritative_policy_block(content: &str, is_error: bool) -> Option<String> {
     if !is_error {
         return None;
@@ -954,6 +1093,129 @@ enum ChangeTransactionObservation {
 }
 
 impl ReActLoop {
+    fn observe_repository_inspection_progress(
+        &mut self,
+        executed_calls: usize,
+        all_repository_inspection: bool,
+    ) -> Option<RepositoryInspectionGuard> {
+        if self.required_agent_obligation_outstanding() {
+            self.repository_inspection_calls = 0;
+            self.repository_inspection_stalls = 0;
+            return None;
+        }
+        if executed_calls == 0 {
+            return None;
+        }
+        if !all_repository_inspection {
+            self.repository_inspection_calls = 0;
+            self.repository_inspection_stalls = 0;
+            return None;
+        }
+        self.repository_inspection_calls = self
+            .repository_inspection_calls
+            .saturating_add(executed_calls);
+        if self.repository_inspection_calls < super::REPOSITORY_INSPECTION_STALL_CALLS {
+            return None;
+        }
+        self.repository_inspection_calls = 0;
+        self.repository_inspection_stalls = self.repository_inspection_stalls.saturating_add(1);
+        if self.repository_inspection_stalls == 1 {
+            Some(RepositoryInspectionGuard::Recover(format!(
+                "[inspection_no_progress] {} consecutive repository/configuration inspection calls have not advanced the task phase. Stop expanding the search; synthesize the strongest evidence already collected and perform only a specifically justified missing action.",
+                super::REPOSITORY_INSPECTION_STALL_CALLS
+            )))
+        } else {
+            Some(RepositoryInspectionGuard::Synthesize(
+                "[inspection_closed] Repeated inspection continued after deterministic recovery. Repository inspection tools are closed for this turn; produce the user-facing answer now from collected evidence, clearly stating any remaining uncertainty."
+                    .to_string(),
+            ))
+        }
+    }
+
+    fn required_agent_obligation_outstanding(&self) -> bool {
+        self.required_agent_snapshot().is_some()
+    }
+
+    fn required_agent_snapshot(&self) -> Option<(String, String)> {
+        let state = self.cognitive_state.as_ref()?;
+        let mut stages = Vec::new();
+        let mut instructions = Vec::new();
+        for action in &state.contract.required_actions {
+            let RequiredAction::InvokeAgent { runtime } = action else {
+                continue;
+            };
+            let subject = EvidenceSubject::AgentInvocation {
+                runtime: runtime.clone(),
+            };
+            let terminal = self
+                .evidence_ledger
+                .records()
+                .filter(|record| record.subject == subject && record.terminal_status.is_terminal())
+                .collect::<Vec<_>>();
+            if terminal.iter().any(|record| record.proves_success()) {
+                continue;
+            }
+            let spawned = self
+                .spawned_agents
+                .values()
+                .filter(|observed| *observed == runtime)
+                .count();
+            let failed = terminal.len();
+            stages.push(format!("{}:{spawned}:{failed}", runtime.0));
+            if spawned == 0 || failed >= spawned {
+                instructions.push(format!(
+                    "call `agent_spawn` with runtime exactly `{}`",
+                    runtime.0
+                ));
+            } else {
+                instructions.push(format!(
+                    "call `agent_wait` for the spawned `{}` Agent and obtain its authoritative terminal snapshot",
+                    runtime.0
+                ));
+            }
+        }
+        (!stages.is_empty()).then(|| (stages.join("|"), instructions.join("; then ")))
+    }
+
+    fn observe_required_agent_progress(
+        &mut self,
+        executed_calls: usize,
+    ) -> Option<RequiredAgentGuard> {
+        let Some((fingerprint, instruction)) = self.required_agent_snapshot() else {
+            self.required_agent_progress = None;
+            self.required_agent_calls_without_progress = 0;
+            self.required_agent_stalls = 0;
+            return None;
+        };
+        if self.required_agent_progress.as_deref() != Some(fingerprint.as_str()) {
+            self.required_agent_progress = Some(fingerprint);
+            self.required_agent_calls_without_progress = executed_calls;
+            self.required_agent_stalls = 0;
+        } else {
+            self.required_agent_calls_without_progress = self
+                .required_agent_calls_without_progress
+                .saturating_add(executed_calls);
+        }
+        if self.required_agent_calls_without_progress < super::REQUIRED_AGENT_STALL_CALLS {
+            return None;
+        }
+        self.required_agent_calls_without_progress = 0;
+        self.required_agent_stalls = self.required_agent_stalls.saturating_add(1);
+        let message = format!(
+            "[required_action_no_progress] The host-required Agent runtime has not advanced after {} tool calls. Do not inspect runtime/configuration or continue unrelated repository searches; {instruction}.",
+            super::REQUIRED_AGENT_STALL_CALLS
+        );
+        match self.required_agent_stalls {
+            1 => Some(RequiredAgentGuard::Recover(message)),
+            2 => Some(RequiredAgentGuard::Restrict(format!(
+                "{message} Only Agent control tools remain available until this typed obligation advances."
+            ))),
+            _ => Some(RequiredAgentGuard::Block(format!(
+                "Required Agent runtime made no progress after repeated deterministic recovery attempts. {instruction}. The turn was stopped instead of continuing an unrelated tool loop."
+            ))),
+        }
+    }
+
     fn observe_managed_command(
         &mut self,
         capability: &str,
@@ -1500,6 +1762,102 @@ mod change_transaction_tests {
             ),
             ProgressDecision::Complete
         );
+    }
+
+    #[test]
+    fn required_agent_guard_recovers_restricts_then_blocks_unrelated_work() {
+        let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        let runtime = AgentRuntimeId("pi-rpc".into());
+        loop_state.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "review with Pi".into(),
+            task_kind: CognitiveTaskKind::CodeChange,
+            required_actions: vec![RequiredAction::InvokeAgent {
+                runtime: runtime.clone(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+
+        assert!(matches!(
+            loop_state.observe_required_agent_progress(6),
+            Some(RequiredAgentGuard::Recover(message))
+                if message.contains("agent_spawn") && message.contains("pi-rpc")
+        ));
+        assert!(matches!(
+            loop_state.observe_required_agent_progress(6),
+            Some(RequiredAgentGuard::Restrict(message))
+                if message.contains("Only Agent control tools")
+        ));
+        assert!(matches!(
+            loop_state.observe_required_agent_progress(6),
+            Some(RequiredAgentGuard::Block(message))
+                if message.contains("stopped")
+        ));
+    }
+
+    #[test]
+    fn required_agent_guard_tracks_spawn_and_authoritative_terminal_receipt() {
+        let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        let runtime = AgentRuntimeId("pi-rpc".into());
+        loop_state.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "review with Pi".into(),
+            task_kind: CognitiveTaskKind::CodeChange,
+            required_actions: vec![RequiredAction::InvokeAgent {
+                runtime: runtime.clone(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        loop_state
+            .spawned_agents
+            .insert("agent-1".into(), runtime.clone());
+
+        assert!(loop_state.observe_required_agent_progress(5).is_none());
+        assert!(matches!(
+            loop_state.observe_required_agent_progress(1),
+            Some(RequiredAgentGuard::Recover(message)) if message.contains("agent_wait")
+        ));
+
+        loop_state.evidence_ledger.record(EvidenceRecord {
+            id: EvidenceId("agent:terminal".into()),
+            subject: EvidenceSubject::AgentInvocation {
+                runtime: runtime.clone(),
+            },
+            source: EvidenceSource::AgentRuntime { runtime },
+            level: EvidenceLevel::RuntimeVerified,
+            terminal_status: TerminalStatus::Succeeded,
+            locator: EvidenceLocator::DurableReceipt {
+                receipt_id: "terminal".into(),
+            },
+            digest: None,
+        });
+        assert!(loop_state.observe_required_agent_progress(50).is_none());
+        assert!(!loop_state.required_agent_obligation_outstanding());
+    }
+
+    #[test]
+    fn repository_inspection_guard_requires_synthesis_then_closes_inspection() {
+        let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+
+        assert!(loop_state
+            .observe_repository_inspection_progress(11, true)
+            .is_none());
+        assert!(matches!(
+            loop_state.observe_repository_inspection_progress(1, true),
+            Some(RepositoryInspectionGuard::Recover(message))
+                if message.contains("synthesize")
+        ));
+        assert!(matches!(
+            loop_state.observe_repository_inspection_progress(12, true),
+            Some(RepositoryInspectionGuard::Synthesize(message))
+                if message.contains("closed")
+        ));
+
+        assert!(loop_state
+            .observe_repository_inspection_progress(1, false)
+            .is_none());
+        assert_eq!(loop_state.repository_inspection_calls, 0);
+        assert_eq!(loop_state.repository_inspection_stalls, 0);
     }
 }
 

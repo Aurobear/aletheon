@@ -320,6 +320,13 @@ pub trait Tool: Send + Sync {
     fn input_schema(&self) -> serde_json::Value;
     fn permission_level(&self) -> PermissionLevel;
 
+    /// Host-side bound for one structured invocation. Most tools keep the
+    /// conservative 60-second default; tools with a typed timeout contract may
+    /// derive a longer bound from already validated input.
+    fn execution_timeout(&self, _input: &serde_json::Value) -> std::time::Duration {
+        std::time::Duration::from_secs(60)
+    }
+
     /// Explicit cache policy for this tool's results. Defaults to `Never`.
     /// Only read-only tools (`permission_level() == L0`) that declare a
     /// non-`Never` policy are ever served from the result cache, and the cache

@@ -117,6 +117,7 @@ fn live_tool_overlay_is_visible_then_atomically_replaced_by_durable_activity() {
         UiAction::LiveActivity(LiveActivityEvent::ToolStarted {
             call_id: "call-1".into(),
             tool: "file_read".into(),
+            args: serde_json::json!({"path":"src/lib.rs"}),
             observed_at: 10,
         }),
     );

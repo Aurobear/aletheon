@@ -137,7 +137,12 @@ TOOLS = [
         description="COMPOSITE diagnostic: parallel snapshot + perf + journal + anomaly scan. The primary diagnostic tool for proactive monitoring.",
         inputSchema={
             "type": "object",
-            "properties": {},
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Canonical session ID. Required when no unique active session exists.",
+                },
+            },
             "required": [],
         },
     ),
@@ -155,6 +160,10 @@ TOOLS = [
                 "event_type": {
                     "type": "string",
                     "description": "Filter: tool_use, user_message, error, compacted, checkpoint",
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Canonical session ID; avoids querying an unrelated compatibility session",
                 },
             },
         },
@@ -249,6 +258,10 @@ TOOLS = [
                     "description": "How long to collect (default: 10, max: 60)",
                     "default": 10,
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": "Canonical session ID; required when no unique active session exists",
+                },
             },
         },
     ),
@@ -317,11 +330,14 @@ _HANDLERS = {
     "aletheon_snapshot": lambda client, args: snapshot_mod.snapshot(
         client, include_memory=args.get("include_memory", False)
     ),
-    "aletheon_analyze": lambda client, args: analyze_mod.analyze(client),
+    "aletheon_analyze": lambda client, args: analyze_mod.analyze(
+        client, session_id=args.get("session_id", "")
+    ),
     "aletheon_journal": lambda client, args: journal_mod.journal(
         client,
         last_n=args.get("last_n", 20),
         event_type=args.get("event_type", ""),
+        session_id=args.get("session_id", ""),
     ),
     "aletheon_logs": lambda client, args: logs_mod.logs(
         client,
@@ -346,6 +362,7 @@ _HANDLERS = {
         client,
         topic=args.get("topic", "perf"),
         duration_seconds=args.get("duration_seconds", 10),
+        session_id=args.get("session_id", ""),
     ),
     "aletheon_tui_start": lambda client, args: tui_mod.tui_start(
         task=args.get("task", ""),

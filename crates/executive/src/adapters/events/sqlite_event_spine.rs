@@ -157,6 +157,48 @@ impl SqliteEventSpine {
             .collect()
     }
 
+    /// Read the newest bounded page while returning it in canonical ascending
+    /// tree order. Interactive diagnostics use this instead of silently
+    /// showing the oldest events from a long-lived Agent tree.
+    pub(crate) fn read_tree_tail(
+        &self,
+        tree_id: fabric::EventTreeId,
+        filter: EventReadFilter,
+    ) -> Result<Vec<SpineEvent>> {
+        let limit = filter.limit.clamp(1, 10_000);
+        let from = filter.from_sequence.map_or(1, |value| value.0);
+        let through = filter
+            .through_sequence
+            .map_or(i64::MAX as u64, |value| value.0.min(i64::MAX as u64));
+        let schema = filter.schema.map(|value| value.0);
+        let visibility = filter.visibility.map(visibility_name);
+        let connection = self.open_connection()?;
+        let mut statement = connection.prepare(
+            "SELECT event_json FROM spine_events
+             WHERE tree_id=?1 AND sequence>=?2 AND sequence<=?3
+               AND (?4 IS NULL OR schema_id=?4)
+               AND (?5 IS NULL OR visibility=?5)
+             ORDER BY sequence DESC LIMIT ?6",
+        )?;
+        let mut rows = statement
+            .query_map(
+                params![
+                    tree_id.to_string(),
+                    from,
+                    through,
+                    schema,
+                    visibility,
+                    limit
+                ],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.reverse();
+        rows.into_iter()
+            .map(|json| serde_json::from_str(&json).context("decode persisted spine event"))
+            .collect()
+    }
+
     /// Capture the committed prefix used by bounded startup reconciliation.
     /// Events appended after this watermark belong to the live writer path.
     fn committed_row_watermark(&self) -> Result<u64> {
