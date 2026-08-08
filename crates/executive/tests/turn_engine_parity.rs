@@ -62,6 +62,9 @@ fn test_profile() -> ResolvedTurnProfile {
         allowed_tools: ["file_read".to_owned(), "bash_exec".to_owned()]
             .into_iter()
             .collect(),
+        delegated_tools: ["file_read".to_owned(), "bash_exec".to_owned()]
+            .into_iter()
+            .collect(),
         system_prompt: "Parity test agent.".into(),
         model_policy: Some("gpt-5-code".into()),
         max_iterations: 20,

@@ -139,7 +139,8 @@ impl TurnPipeline {
         workspace: fabric::WorkspacePolicy,
     ) -> anyhow::Result<fabric::AgentDelegationAuthority> {
         let profile = self.active_profile.snapshot().await?;
-        let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
+        let config = self.runtime_ports.config.config().await;
+        let mut allowed_tools = profile.delegated_tools.iter().cloned().collect::<Vec<_>>();
         allowed_tools.sort();
         Ok(fabric::AgentDelegationAuthority::new(
             Some(workspace),
@@ -150,7 +151,7 @@ impl TurnPipeline {
                 max_tool_calls: profile.max_tool_calls,
                 max_elapsed_ms: profile.max_elapsed_ms,
                 max_cost_usd: None,
-                max_depth: 1,
+                max_depth: config.max_agent_depth,
             },
         ))
     }
@@ -350,9 +351,9 @@ impl TurnPipeline {
             max_tool_calls: profile.max_tool_calls,
             max_elapsed_ms: profile.max_elapsed_ms,
             max_cost_usd: None,
-            max_depth: 1,
+            max_depth: config.max_agent_depth,
         };
-        let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
+        let mut allowed_tools = profile.delegated_tools.iter().cloned().collect::<Vec<_>>();
         allowed_tools.sort();
         let authority = fabric::AgentDelegationAuthority::new(
             Some(request.context.workspace.clone()),

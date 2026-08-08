@@ -48,7 +48,10 @@ pub async fn discover_tool_extensions(
     registry: &Arc<tokio::sync::Mutex<ToolRegistry>>,
 ) -> Result<Vec<ExtensionDescriptor>, CorpusError> {
     let registry = registry.lock().await;
-    let definitions = registry.definitions();
+    // Corpus activation and the active Agent profile provide the real
+    // disclosure boundary. Index every non-hidden tool here so a profile that
+    // explicitly grants a deferred tool can actually receive and invoke it.
+    let definitions = registry.profile_definitions();
     definitions
         .into_iter()
         .map(|definition| {
@@ -482,5 +485,22 @@ impl ToolExecutor for CorpusToolExecutor {
                 Self::error_result(request, permit, message, report.audit_id)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn discovery_includes_deferred_non_hidden_tools() {
+        let descriptors = discover_tool_extensions(&default_tool_registry())
+            .await
+            .unwrap();
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor
+                .primary_capability()
+                .is_some_and(|capability| capability.0.as_str() == "artifact_read")
+        }));
     }
 }

@@ -35,7 +35,7 @@ use fabric::{
 /// Keep this list about process/toolchain identity only; provider credentials,
 /// agent secrets, wrapper hooks, and mutation-oriented build variables are not
 /// forwarded.
-fn sandbox_command_environment(
+pub(crate) fn sandbox_command_environment(
     trusted_working_dir: String,
     scratch: Option<&std::path::Path>,
 ) -> std::collections::BTreeMap<String, String> {
@@ -545,13 +545,13 @@ impl ToolRunnerWithGuard {
         // D1-T12: shell networking is an explicit, per-call capability. It is
         // intentionally independent of the ordinary permission mode and of
         // session-wide tool grants: neither BypassAll nor an earlier approval
-        // for `bash_exec` may silently turn networking on for a later command.
-        let bash_network_requested = tool_name == "bash_exec"
+        // for one shell tool may silently turn networking on for a later call.
+        let shell_network_requested = matches!(tool_name, "bash_exec" | "exec_command")
             && input
                 .get("network_enabled")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
-        if bash_network_requested && !unrestricted {
+        if shell_network_requested && !unrestricted {
             let Some(authority) = ctx.approval_authority.as_ref() else {
                 self.log_audit(
                     audit_id,
@@ -567,7 +567,7 @@ impl ToolRunnerWithGuard {
                 .await
                 .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::PolicyDenied {
-                    reason: "bash network access requires an authenticated approval authority"
+                    reason: "shell network access requires an authenticated approval authority"
                         .into(),
                 });
             };
@@ -585,7 +585,7 @@ impl ToolRunnerWithGuard {
                 call_id: authority.call_id.clone(),
                 workspace: authority.workspace.clone(),
                 tool: tool_name.to_owned(),
-                action_summary: format!("bash network access: {command}"),
+                action_summary: format!("shell network access: {command}"),
                 risk_level: "network".into(),
                 detail: Some(input.to_string()),
                 scope_subject: None,
@@ -610,7 +610,7 @@ impl ToolRunnerWithGuard {
                 .await
                 .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::PolicyDenied {
-                    reason: "bash network access was denied by the approval gate".into(),
+                    reason: "shell network access was denied by the approval gate".into(),
                 });
             }
         }
@@ -809,14 +809,14 @@ impl ToolRunnerWithGuard {
                         );
                     }
                     if let Some(policy) = policy.as_mut() {
-                        policy.restrict_network = !bash_network_requested;
+                        policy.restrict_network = !shell_network_requested;
                     }
                 }
 
                 // A denied-network bash command must not degrade onto a
                 // backend that cannot actually isolate the network. This is
                 // stricter than the generic BestEffort profile behavior.
-                if tool_name == "bash_exec" && !bash_network_requested {
+                if tool_name == "bash_exec" && !shell_network_requested {
                     let backend = self.sandbox.select_backend().ok_or_else(|| {
                         ToolError::ExecutionFailed(
                             "no sandbox backend is available for bash network isolation".into(),

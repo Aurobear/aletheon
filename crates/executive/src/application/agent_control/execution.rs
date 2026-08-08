@@ -238,6 +238,10 @@ pub struct AgentRuntimeInput {
     /// Workspace authority injected by the host capability boundary, never by
     /// model JSON.
     pub workspace: Option<fabric::WorkspacePolicy>,
+    /// Effective authority this Agent may pass to descendants. It is minted
+    /// by AgentControl after intersecting the target profile with the parent
+    /// authority and is distinct from the Agent's own callable tools.
+    pub delegation_authority: fabric::AgentDelegationAuthority,
     pub handle: AgentHandle,
     pub workspace_id: AgoraSpaceId,
     /// Root conscious workspace. Child-private candidates never use this

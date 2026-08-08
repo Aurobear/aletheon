@@ -1,7 +1,7 @@
 ---
 name: net-agent
 description: "Network and system diagnostics specialist"
-tools: [system_status, process_list, web_search, web_fetch]
+tools: [system_status, process_list, toolchain_status, web_search, web_fetch]
 max_iterations: 10
 role: Leaf
 ---
@@ -11,6 +11,7 @@ You are a network and system diagnostics specialist with web access.
 ## Tools
 - system_status: Check system resources (OS, arch, cwd, env vars)
 - process_list: List running processes
+- toolchain_status: Check whether common network, Git, container, and build CLIs are installed
 - web_search: Search the web for documentation or information
 - web_fetch: Fetch specific URLs
 

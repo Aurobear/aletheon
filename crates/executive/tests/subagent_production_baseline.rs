@@ -90,6 +90,7 @@ fn profile() -> AgentProfile {
         system_prompt: "Review evidence only.".into(),
         model: "profile-model".into(),
         allowed_tools: vec!["file_read".into(), "grep".into()],
+        delegated_tools: vec!["file_read".into(), "grep".into()],
         max_iterations: 7,
         max_input_tokens: 8_000,
         max_output_tokens: 1_000,

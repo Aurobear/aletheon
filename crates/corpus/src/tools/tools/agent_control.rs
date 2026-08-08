@@ -67,7 +67,7 @@ impl AgentControlTools {
                     "required_capabilities":{"type":"array","maxItems":10,"uniqueItems":true,"items":{"type":"string","enum":["code_read","code_search","code_edit","shell","test","git","diagnostics","browser","device_observe","device_command"]}},
                     "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Provider-neutral natural-language task for the child Agent."},
                     "context":{"type":"object"},
-                    "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512}},
+                    "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512},"description":"Optional narrower callable subset. Omit to let the Host resolve the target profile, then attenuate it against the parent delegation authority."},
                     "budget":{
                         "type":"object","additionalProperties":false,
                         "properties":{
@@ -221,7 +221,7 @@ impl Tool for AgentControlTool {
                     "required_capabilities":{"type":"array","maxItems":10,"uniqueItems":true,"items":{"type":"string","enum":["code_read","code_search","code_edit","shell","test","git","diagnostics","browser","device_observe","device_command"]}},
                     "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Provider-neutral natural-language task for the child Agent."},
                     "context":{"type":"object"},
-                    "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512}},
+                    "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512},"description":"Optional narrower callable subset. Omit to let the Host resolve the target profile, then attenuate it against the parent delegation authority."},
                     "budget":{
                         "type":"object","additionalProperties":false,
                         "properties":{

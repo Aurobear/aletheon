@@ -299,6 +299,9 @@ impl RequestHandler {
             clock: clock.clone(),
             tasks_db: Some(data_dir.join("tasks.db")),
             agora: agora_service.clone(),
+            sandbox_preference: fabric::SandboxPreference::from_str(
+                &config.sandbox_preference,
+            ),
         });
         let mut tools = tool_composition.registry;
         let core_memory = tool_composition.stores.core;
@@ -465,6 +468,7 @@ impl RequestHandler {
             compaction_threshold_percent: config.agent_compaction_threshold_percent,
             harness_kind: config.harness_kind,
             multi_agent: config.multi_agent.clone(),
+            max_agent_depth: config.agent_admission.max_depth,
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
@@ -1132,6 +1136,7 @@ impl RequestHandler {
             agent_runtimes,
             corpus_group.tools.clone(),
             agent_profiles_for_tools,
+            agent_profile_registry.clone(),
             runtime_profile_requirements,
             granted_capabilities.clone(),
             memory_group.memory_service.clone(),

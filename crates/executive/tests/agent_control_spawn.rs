@@ -10,13 +10,41 @@ use executive::application::agent_control::{
 };
 use executive::testing::agent_control::SqliteAgentRunRepository;
 use fabric::{
-    AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind, AgentControlPort,
-    AgentId, AgentProfileId, AgentRunStatus, AgentRuntimeCapability, AgentSpawnIntent,
-    AgentWaitRequest, RuntimeId, SettlementReceipt,
+    AgentApprovalPolicy, AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind,
+    AgentControlPort, AgentId, AgentProfile, AgentProfileId, AgentRunStatus,
+    AgentRuntimeCapability, AgentSpawnIntent, AgentWaitRequest, ParentRestriction, RiskTier,
+    RuntimeId, SettlementReceipt,
 };
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
+
+fn profile(
+    id: &str,
+    callable: &[&str],
+    delegated: &[&str],
+    risk_tier: RiskTier,
+) -> AgentProfile {
+    AgentProfile {
+        id: AgentProfileId(id.into()),
+        system_prompt: format!("{id} fixture"),
+        model: "fixture-model".into(),
+        allowed_tools: callable.iter().map(|tool| (*tool).into()).collect(),
+        delegated_tools: delegated.iter().map(|tool| (*tool).into()).collect(),
+        max_iterations: 4,
+        max_input_tokens: 8_000,
+        max_output_tokens: 1_000,
+        max_tool_calls: 8,
+        max_elapsed_ms: 60_000,
+        profile_name: id.into(),
+        risk_tier,
+        approval_policy: AgentApprovalPolicy::PromptUser,
+        tool_timeout_ms: 30_000,
+        inheritable: true,
+        parent_restriction: ParentRestriction::SameOrSafer,
+    }
+}
 
 struct RejectingSettlementStore;
 
@@ -303,4 +331,112 @@ async fn explicit_only_runtime_remains_available_without_capability_bypass() {
     launcher.wait_started().await;
     assert_eq!(launcher.calls(), 1);
     fixture.port.cancel(root, handle.agent_id).await.unwrap();
+}
+
+#[tokio::test]
+async fn host_resolves_child_profile_tools_and_preserves_separate_delegation_authority() {
+    let launcher = TestLauncher::blocked();
+    let clock = Arc::new(TestClock::new(1_700_000_000_000, 0));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+    let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
+    let runtimes = Arc::new(AgentRuntimeRegistry::default());
+    runtimes
+        .register(RuntimeId(TEST_RUNTIME.into()), launcher.clone())
+        .unwrap();
+    let profiles = HashMap::from([
+        (
+            "orchestrator".into(),
+            profile(
+                "orchestrator",
+                &["agent_spawn"],
+                &["file_read", "exec_command"],
+                RiskTier::Sandboxed,
+            ),
+        ),
+        (
+            "code".into(),
+            profile(
+                "code",
+                &["file_read", "exec_command"],
+                &["file_read"],
+                RiskTier::Sandboxed,
+            ),
+        ),
+    ]);
+    let service = Arc::new(
+        AgentControlService::new(
+            kernel,
+            clock,
+            repository,
+            Arc::new(BoundedAgentAdmission::new(3).unwrap()),
+            runtimes,
+            Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap()),
+        )
+        .with_agent_profiles(profiles),
+    );
+
+    let root = AgentId::new();
+    let mut root_request = spawn_request(root, None);
+    root_request.profile_id = AgentProfileId("orchestrator".into());
+    root_request.allowed_tools = vec!["agent_spawn".into()];
+    let root_handle = service.spawn(root_request).await.unwrap();
+    launcher.wait_started().await;
+
+    let child = service
+        .spawn_intent(AgentSpawnIntent {
+            root_agent_id: root,
+            parent_agent_id: Some(root_handle.agent_id),
+            parent_process_id: Some(root_handle.process_id),
+            profile_id: AgentProfileId("code".into()),
+            runtime_override: Some(TEST_RUNTIME.into()),
+            required_capabilities: vec![],
+            trusted_workspace: None,
+            delegator_authority: None,
+            task: "implement the bounded change".into(),
+            context: AgentContextFork::None,
+            allowed_tools: vec![],
+            budget: AgentBudget {
+                max_input_tokens: 1_000,
+                max_output_tokens: 500,
+                max_tool_calls: 8,
+                max_elapsed_ms: 60_000,
+                max_cost_usd: None,
+                max_depth: 3,
+            },
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while launcher.calls() < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let inputs = launcher.inputs();
+    let child_input = inputs
+        .iter()
+        .find(|input| input.handle.agent_id == child.agent_id)
+        .unwrap();
+    assert_eq!(
+        child_input.request.allowed_tools,
+        vec!["file_read", "exec_command"]
+    );
+    assert_eq!(
+        child_input.delegation_authority.allowed_tools,
+        vec!["file_read"]
+    );
+    assert_eq!(
+        inputs
+            .iter()
+            .find(|input| input.handle.agent_id == root_handle.agent_id)
+            .unwrap()
+            .request
+            .allowed_tools,
+        vec!["agent_spawn"]
+    );
+
+    service.cancel(root, child.agent_id).await.unwrap();
+    service.cancel(root, root_handle.agent_id).await.unwrap();
 }

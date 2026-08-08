@@ -125,6 +125,7 @@ impl ActiveAgentProfilePort for StubActiveAgentProfile {
         Ok(ResolvedTurnProfile {
             profile_name: "stub".into(),
             allowed_tools: Default::default(),
+            delegated_tools: Default::default(),
             system_prompt: String::new(),
             model_policy: None,
             max_iterations: 0,

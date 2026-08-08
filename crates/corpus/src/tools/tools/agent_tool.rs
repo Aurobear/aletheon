@@ -100,6 +100,11 @@ impl Tool for AgentTool {
         let Some(profile) = self.profiles.get(agent_type) else {
             return tool_error("Unknown Agent profile");
         };
+        let max_depth = trusted
+            .delegator_authority
+            .as_ref()
+            .map(|authority| authority.budget.max_depth)
+            .unwrap_or(1);
         let request = AgentSpawnRequest {
             root_agent_id: trusted.caller_root_agent_id,
             parent_agent_id: Some(trusted.parent_agent_id),
@@ -123,7 +128,7 @@ impl Tool for AgentTool {
                 max_tool_calls: profile.max_tool_calls,
                 max_elapsed_ms: profile.max_elapsed_ms,
                 max_cost_usd: None,
-                max_depth: 4,
+                max_depth,
             },
         };
         if let Err(error) = request.validate() {

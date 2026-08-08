@@ -222,6 +222,7 @@ fn profile(role: CognitiveRole, tools: Vec<String>) -> AgentProfile {
         id: AgentProfileId(id.clone()),
         system_prompt: format!("Strict {role:?} boundary fixture"),
         model: "scripted/role-boundary".into(),
+        delegated_tools: tools.clone(),
         allowed_tools: tools,
         max_iterations: 8,
         max_input_tokens: 16_000,

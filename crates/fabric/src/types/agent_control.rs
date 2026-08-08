@@ -173,6 +173,11 @@ pub struct AgentProfile {
     pub system_prompt: String,
     pub model: String,
     pub allowed_tools: Vec<String>,
+    /// Tools this profile may grant to a child Agent. This can be broader than
+    /// `allowed_tools` for a pure orchestrator, but it never grants the parent
+    /// permission to invoke those tools directly.
+    #[serde(default)]
+    pub delegated_tools: Vec<String>,
     pub max_iterations: usize,
     pub max_input_tokens: u64,
     pub max_output_tokens: u64,
@@ -182,7 +187,7 @@ pub struct AgentProfile {
     // ── Phase 2 profile metadata ──────────────────────────────────────────
     /// Human-readable name (e.g. "code-agent", "safe-agent").
     pub profile_name: String,
-    /// Risk tier derived from allowed tools.
+    /// Risk tier derived from both callable and delegable tools.
     pub risk_tier: RiskTier,
     /// Per-profile tool approval policy.
     pub approval_policy: AgentApprovalPolicy,
@@ -207,6 +212,28 @@ impl AgentProfile {
         ensure_count(self.allowed_tools.len(), 256, "profile tools")?;
         for tool in &self.allowed_tools {
             ensure_text(tool, 512, "profile tool")?;
+        }
+        ensure_count(self.delegated_tools.len(), 256, "profile delegated tools")?;
+        for tool in &self.delegated_tools {
+            ensure_text(tool, 512, "profile delegated tool")?;
+        }
+        if self.allowed_tools.iter().collect::<std::collections::HashSet<_>>().len()
+            != self.allowed_tools.len()
+        {
+            return Err(AgentControlError::invalid(
+                "Agent profile callable tools must be unique",
+            ));
+        }
+        if self
+            .delegated_tools
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != self.delegated_tools.len()
+        {
+            return Err(AgentControlError::invalid(
+                "Agent profile delegated tools must be unique",
+            ));
         }
         if self.max_iterations == 0
             || self.max_input_tokens == 0
@@ -234,7 +261,7 @@ impl AgentProfile {
                     return false;
                 }
                 for tool in &child.allowed_tools {
-                    if !self.allowed_tools.contains(tool) {
+                    if !self.delegated_tools.contains(tool) {
                         return false;
                     }
                 }

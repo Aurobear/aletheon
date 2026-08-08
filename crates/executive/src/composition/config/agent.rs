@@ -44,6 +44,11 @@ pub struct ExecutiveConfig {
     pub agent_loop: AgentLoopConfig,
     #[serde(default)]
     pub multi_agent: MultiAgentConfig,
+    /// Maximum absolute depth the foreground Agent may authorize in its
+    /// descendant tree. This mirrors host admission instead of silently
+    /// limiting every tree to one child level.
+    #[serde(default = "default_max_agent_depth")]
+    pub max_agent_depth: u16,
     #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
     /// Which cognitive harness implementation to construct (see
@@ -69,10 +74,15 @@ impl Default for ExecutiveConfig {
             conscious_arbitration_mode: fabric::ConsciousArbitrationMode::Observe,
             agent_loop: AgentLoopConfig::default(),
             multi_agent: MultiAgentConfig::default(),
+            max_agent_depth: default_max_agent_depth(),
             circuit_breaker: CircuitBreakerConfig::default(),
             harness_kind: HarnessKind::default(),
         }
     }
+}
+
+fn default_max_agent_depth() -> u16 {
+    4
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]

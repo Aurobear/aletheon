@@ -72,6 +72,7 @@ pub trait TurnObservabilityPort: Send + Sync {
 pub struct ResolvedTurnProfile {
     pub profile_name: String,
     pub allowed_tools: HashSet<String>,
+    pub delegated_tools: HashSet<String>,
     pub system_prompt: String,
     pub model_policy: Option<String>,
     pub max_iterations: usize,

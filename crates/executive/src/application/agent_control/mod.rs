@@ -137,6 +137,9 @@ pub struct AgentControlService {
     settlement_metrics: Arc<SettlementMetrics>,
     budget_controller: Option<Arc<dyn fabric::BudgetController>>,
     lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
+    agent_profiles: HashMap<fabric::AgentProfileId, fabric::AgentProfile>,
+    agent_profile_catalog:
+        Option<Arc<dyn crate::application::admin_service::AgentProfileCatalogPort>>,
     runtime_profile_requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
     cognitive_task_admission: Option<Arc<dyn CognitiveTaskAdmissionPort>>,
     capability_history:
@@ -249,6 +252,8 @@ impl AgentControlService {
             settlement_metrics: Arc::new(SettlementMetrics::default()),
             budget_controller: None,
             lifecycle_hooks: Arc::new(NoopAgentLifecycleHookSink),
+            agent_profiles: HashMap::new(),
+            agent_profile_catalog: None,
             runtime_profile_requirements: HashMap::new(),
             cognitive_task_admission: None,
             capability_history: None,
@@ -262,6 +267,35 @@ impl AgentControlService {
     ) -> Self {
         self.runtime_profile_requirements = requirements;
         self
+    }
+
+    pub fn with_agent_profiles(
+        mut self,
+        profiles: HashMap<String, fabric::AgentProfile>,
+    ) -> Self {
+        self.agent_profiles = profiles
+            .into_values()
+            .map(|profile| (profile.id.clone(), profile))
+            .collect();
+        self
+    }
+
+    pub fn with_agent_profile_catalog(
+        mut self,
+        catalog: Arc<dyn crate::application::admin_service::AgentProfileCatalogPort>,
+    ) -> Self {
+        self.agent_profile_catalog = Some(catalog);
+        self
+    }
+
+    fn resolve_agent_profile(
+        &self,
+        id: &fabric::AgentProfileId,
+    ) -> Option<fabric::AgentProfile> {
+        self.agent_profile_catalog
+            .as_ref()
+            .and_then(|catalog| catalog.resolve_profile(&id.0).ok())
+            .or_else(|| self.agent_profiles.get(id).cloned())
     }
 
     pub fn with_cognitive_task_admission(
@@ -863,8 +897,29 @@ impl AgentControlService {
 impl AgentControlPort for AgentControlService {
     async fn spawn_intent(
         &self,
-        intent: AgentSpawnIntent,
+        mut intent: AgentSpawnIntent,
     ) -> Result<AgentHandle, AgentControlError> {
+        intent.validate()?;
+        if let Some(profile) = self.resolve_agent_profile(&intent.profile_id) {
+            if intent.allowed_tools.is_empty() {
+                // The host, not the model, resolves the target profile's
+                // callable set. This prevents the common "child started with
+                // zero tools" failure while preserving parent attenuation.
+                intent.allowed_tools = profile.allowed_tools.clone();
+            } else if let Some(tool) = intent
+                .allowed_tools
+                .iter()
+                .find(|tool| !profile.allowed_tools.contains(*tool))
+            {
+                return Err(control_error(
+                    AgentControlErrorKind::Forbidden,
+                    format!(
+                        "requested child tool '{tool}' is outside profile '{}'",
+                        intent.profile_id.0
+                    ),
+                ));
+            }
+        }
         intent.validate()?;
         let mut required_capabilities = self
             .runtime_profile_requirements
@@ -994,7 +1049,9 @@ impl AgentControlPort for AgentControlService {
         }
         let context = context_builder.build()?;
         let identity = self.validated_parent(&request).await?;
-        let attenuation_report = if let Some(parent_agent_id) = request.parent_agent_id {
+        let (attenuation_report, parent_delegation_authority) = if let Some(parent_agent_id) =
+            request.parent_agent_id
+        {
             let parent_authority = if let Some(parent) = self.live.get(parent_agent_id).await {
                 parent.reparent_authority().clone()
             } else {
@@ -1005,6 +1062,24 @@ impl AgentControlPort for AgentControlService {
                     )
                 })?
             };
+            let parent_profile = identity
+                .parent_profile
+                .as_ref()
+                .and_then(|id| self.resolve_agent_profile(id));
+            let child_profile = self.resolve_agent_profile(&request.profile_id);
+            if let (Some(parent_profile), Some(child_profile)) =
+                (parent_profile.as_ref(), child_profile.as_ref())
+            {
+                if !parent_profile.allows_child(child_profile) {
+                    return Err(control_error(
+                        AgentControlErrorKind::Forbidden,
+                        format!(
+                            "child profile '{}' exceeds delegation policy of parent profile '{}'",
+                            child_profile.id.0, parent_profile.id.0
+                        ),
+                    ));
+                }
+            }
             let requested = fabric::AgentDelegationAuthority::new(
                 request.trusted_workspace.clone(),
                 request.allowed_tools.clone(),
@@ -1015,12 +1090,28 @@ impl AgentControlPort for AgentControlService {
             request.allowed_tools = effective.allowed_tools;
             request.budget = effective.budget;
             request.validate()?;
-            Some(report)
+            (Some(report), Some(parent_authority))
         } else {
-            None
+            (None, None)
         };
         admission::constrain_cognitive_workspace(&mut request)?;
         request.validate()?;
+        // Derive re-delegation only after role-specific workspace narrowing.
+        // Otherwise a cognitively scoped child could retain authority to mint
+        // descendants against its parent's broader workspace.
+        let delegated_tools = self
+            .resolve_agent_profile(&request.profile_id)
+            .map(|profile| profile.delegated_tools.clone())
+            .unwrap_or_else(|| request.allowed_tools.clone());
+        let requested_delegation = fabric::AgentDelegationAuthority::new(
+            request.trusted_workspace.clone(),
+            delegated_tools,
+            request.budget.clone(),
+        );
+        let child_delegation_authority = match parent_delegation_authority {
+            Some(parent) => parent.attenuate(&requested_delegation)?.0,
+            None => requested_delegation,
+        };
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
         let request_hash = agent_spawn_request_hash(&request)?;
@@ -1236,9 +1327,9 @@ impl AgentControlPort for AgentControlService {
             cancellation.clone(),
             request.background_decls.clone(),
             ReparentAuthority::new(
-                request.trusted_workspace.clone(),
-                request.allowed_tools.clone(),
-                request.budget.clone(),
+                child_delegation_authority.workspace.clone(),
+                child_delegation_authority.allowed_tools.clone(),
+                child_delegation_authority.budget.clone(),
             ),
         )?;
         let mut background_cancellations = std::collections::HashMap::new();
@@ -1322,6 +1413,7 @@ impl AgentControlPort for AgentControlService {
         let lifecycle_hooks = self.lifecycle_hooks.clone();
         let runtime_input = AgentRuntimeInput {
             workspace: request.trusted_workspace.clone(),
+            delegation_authority: child_delegation_authority,
             request,
             handle: handle.clone(),
             workspace_id,

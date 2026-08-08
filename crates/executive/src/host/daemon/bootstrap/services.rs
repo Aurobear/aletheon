@@ -133,6 +133,7 @@ pub(super) async fn build_agent_services(
     agent_runtimes: Arc<crate::application::agent_control::AgentRuntimeRegistry>,
     tools: Arc<Mutex<corpus::tools::tools::ToolRegistry>>,
     agent_profiles_for_tools: HashMap<String, fabric::AgentProfile>,
+    agent_profile_catalog: Arc<crate::adapters::runtime::AgentProfileRegistry>,
     runtime_profile_requirements: HashMap<
         fabric::AgentProfileId,
         Vec<fabric::AgentRuntimeCapability>,
@@ -187,6 +188,8 @@ pub(super) async fn build_agent_services(
             agent_runtimes.clone(),
             canonical_event_spine.clone(),
         )
+        .with_agent_profiles(agent_profiles_for_tools.clone())
+        .with_agent_profile_catalog(agent_profile_catalog)
         .with_runtime_profile_requirements(runtime_profile_requirements)
         .with_capability_history(capability_rollups.clone())
         .with_cognitive_task_admission(Arc::new(
