@@ -27,6 +27,13 @@ if grep -Fq 'deepseek-v4-pro' <<<"$setup_config"; then
   echo 'fresh-install defaults must not contain a DeepSeek Pro route' >&2
   exit 1
 fi
+for config in config/default.toml config/production.toml.example; do
+  grep -Fq 'deepseek-v4-flash[1m]' "$config"
+  if grep -Fq 'deepseek-v4-pro' "$config"; then
+    echo "configured defaults must not contain a DeepSeek Pro route: $config" >&2
+    exit 1
+  fi
+done
 
 # Every local edit/verify profile preserves rustc incremental state. Only the
 # tagged distributable release job may opt out for its clean artifact lane.

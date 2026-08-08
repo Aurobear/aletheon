@@ -30,7 +30,7 @@ name = "deepseek"
 base_url = "https://api.deepseek.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
+models = ["deepseek-v4-flash[1m]"]
 
 [providers.cache]
 reporting = "auto"
