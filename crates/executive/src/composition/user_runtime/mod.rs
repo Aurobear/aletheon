@@ -200,19 +200,28 @@ impl UserRuntimeConfig {
 /// so that the per-user runtime can execute its graceful shutdown path
 /// regardless of how the process is stopped.  On non-Unix platforms only
 /// SIGINT (Ctrl+C) is supported.
+///
+/// Errors (e.g. OS registration failure) are propagated rather than panicking.
 #[cfg(unix)]
-async fn wait_for_shutdown_signal() {
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("failed to install SIGTERM handler");
+async fn wait_for_shutdown_signal() -> std::io::Result<()> {
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {},
-        _ = sigterm.recv() => {},
+        res = tokio::signal::ctrl_c() => res,
+        opt = sigterm.recv() => {
+            match opt {
+                Some(()) => Ok(()),
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "SIGTERM signal stream closed unexpectedly",
+                )),
+            }
+        }
     }
 }
 
 #[cfg(not(unix))]
-async fn wait_for_shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+async fn wait_for_shutdown_signal() -> std::io::Result<()> {
+    tokio::signal::ctrl_c().await
 }
 
 fn apply_execd_override(
@@ -227,6 +236,38 @@ pub struct UserRuntime {
     server: Option<UnixServer>,
     paths: UserRuntimePaths,
     cancel: CancellationToken,
+}
+
+/// Orchestrate a server future with graceful shutdown via an injected
+/// shutdown-signal future.
+///
+/// Returns `Ok(true)` when the shutdown signal arrived first (the server
+/// was cancelled and drained).  Returns `Ok(false)` when the server exited
+/// first without cancellation.  Server errors and signal errors are
+/// propagated.
+async fn shutdown_orchestrator<F>(
+    server: F,
+    shutdown_signal: impl std::future::Future<Output = std::io::Result<()>>,
+    cancel: CancellationToken,
+) -> anyhow::Result<bool>
+where
+    F: std::future::Future<Output = anyhow::Result<()>>,
+{
+    tokio::pin!(let server = server;);
+    tokio::pin!(let shutdown = shutdown_signal;);
+
+    tokio::select! {
+        server_result = &mut server => {
+            server_result?;
+            Ok(false)
+        }
+        shutdown_result = &mut shutdown => {
+            shutdown_result.context("shutdown signal error")?;
+            cancel.cancel();
+            server.await?;
+            Ok(true)
+        }
+    }
 }
 
 impl UserRuntime {
@@ -309,17 +350,23 @@ impl UserRuntime {
     pub async fn run(mut self) -> anyhow::Result<()> {
         let mut server = self.server.take().context("user server already consumed")?;
         let cancel = self.cancel.clone();
-        let shutdown_task = tokio::spawn(async move {
-            wait_for_shutdown_signal().await;
-            cancel.cancel();
-        });
-        let server_result = server.run().await;
-        shutdown_task.abort();
-        let _ = shutdown_task.await;
-        server_result?;
+
+        let server_result =
+            shutdown_orchestrator(server.run(), wait_for_shutdown_signal(), cancel).await;
+
+        // Always attempt cleanup regardless of how the server exited.
         self.request_handler.cancel_current_turn().await;
-        self.request_handler.shutdown_runtime().await?;
-        Ok(())
+        let cleanup_result = self.request_handler.shutdown_runtime().await;
+
+        match server_result {
+            Ok(_) => cleanup_result.context("runtime cleanup after server exit"),
+            Err(server_err) => {
+                if let Err(e) = &cleanup_result {
+                    tracing::warn!(error = %e, "runtime cleanup also failed after server error");
+                }
+                Err(server_err)
+            }
+        }
     }
 }
 
@@ -329,8 +376,9 @@ fn tempfile_path(label: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_execd_override;
+    use super::*;
     use crate::composition::config::GrokHardeningConfig;
+    use std::time::Duration;
     use tokio_util::sync::CancellationToken;
 
     #[test]
@@ -349,23 +397,176 @@ mod tests {
         assert!(configured.execd);
     }
 
-    /// Verify the shutdown-signal contract compiles and the CancellationToken
-    /// integration pattern works.  Real signals are not sent in this test.
+    /// Shutdown signal arriving first: token is cancelled, server is drained,
+    /// and `was_signalled = true`.
     #[tokio::test]
-    async fn shutdown_signal_cancellation_token_pattern() {
+    async fn shutdown_first_cancels_and_drains_server() {
         let cancel = CancellationToken::new();
-        assert!(!cancel.is_cancelled());
-        cancel.cancel();
+        let server = {
+            let cancel = cancel.clone();
+            async move {
+                cancel.cancelled().await;
+                Ok(())
+            }
+        };
+        let shutdown = async { Ok::<_, std::io::Error>(()) }; // immediate
+
+        let was_signalled = shutdown_orchestrator(server, shutdown, cancel.clone())
+            .await
+            .unwrap();
+        assert!(was_signalled);
         assert!(cancel.is_cancelled());
-        // The spawned task in UserRuntime::run uses this same pattern:
-        //   tokio::spawn(async { wait_for_shutdown_signal().await; cancel.cancel(); });
     }
 
-    /// The wait_for_shutdown_signal function must be reachable on all
-    /// platforms (Unix and non-Unix both have a definition).
+    /// Server exiting first: returns without cancellation or leak.
+    #[tokio::test]
+    async fn server_first_returns_without_cancellation() {
+        let cancel = CancellationToken::new();
+        let server = async { Ok::<(), anyhow::Error>(()) }; // immediate
+        let shutdown = std::future::pending::<std::io::Result<()>>(); // never
+
+        let was_signalled = tokio::time::timeout(
+            Duration::from_millis(500),
+            shutdown_orchestrator(server, shutdown, cancel.clone()),
+        )
+        .await
+        .expect("must not hang")
+        .unwrap();
+        assert!(!was_signalled);
+        assert!(!cancel.is_cancelled());
+    }
+
+    /// Signal error is propagated without panic.
+    #[tokio::test]
+    async fn signal_error_propagates_without_panic() {
+        let cancel = CancellationToken::new();
+        let server = std::future::pending::<anyhow::Result<()>>(); // never resolves
+        let shutdown = async {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "signal error",
+            ))
+        };
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            shutdown_orchestrator(server, shutdown, cancel),
+        )
+        .await
+        .expect("must not hang");
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("signal error"),
+            "signal error must propagate"
+        );
+    }
+
+    /// Server error remains authoritative over a pending shutdown signal.
+    #[tokio::test]
+    async fn server_error_remains_authoritative() {
+        let cancel = CancellationToken::new();
+        let server = async { Err(anyhow::anyhow!("server fault")) };
+        let shutdown = std::future::pending::<std::io::Result<()>>();
+
+        let result = shutdown_orchestrator(server, shutdown, cancel).await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("server fault"),
+            "server error must be authoritative"
+        );
+    }
+
+    /// wait_for_shutdown_signal is reachable on all platforms.
     #[test]
     fn wait_for_shutdown_signal_function_exists() {
-        // Compile-time check: reference without calling.
         let _ = super::wait_for_shutdown_signal;
+    }
+
+    // ── Cleanup semantics tests ──
+
+    /// Simulates the `UserRuntime::run` cleanup pattern so we can prove
+    /// cleanup always executes and error precedence is correct without
+    /// constructing a full RequestHandler.
+    async fn run_with_cleanup<F, G>(
+        server: F,
+        shutdown_signal: G,
+        cancel: CancellationToken,
+        cleanup: impl std::future::Future<Output = anyhow::Result<()>>,
+    ) -> anyhow::Result<bool>
+    where
+        F: std::future::Future<Output = anyhow::Result<()>>,
+        G: std::future::Future<Output = std::io::Result<()>>,
+    {
+        let server_result = shutdown_orchestrator(server, shutdown_signal, cancel).await;
+        let cleanup_result = cleanup.await;
+        match server_result {
+            Ok(was_signalled) => {
+                cleanup_result?;
+                Ok(was_signalled)
+            }
+            Err(server_err) => {
+                // Server error is authoritative; acknowledge but discard
+                // the cleanup failure.
+                let _ = &cleanup_result;
+                Err(server_err)
+            }
+        }
+    }
+
+    /// When the server exits first (successfully), cleanup must still run
+    /// and its error must propagate.
+    #[tokio::test]
+    async fn cleanup_runs_after_server_first_exit() {
+        let cancel = CancellationToken::new();
+        let server = async { Ok::<(), anyhow::Error>(()) };
+        let shutdown = std::future::pending::<std::io::Result<()>>();
+        let cleanup = async { Err(anyhow::anyhow!("cleanup fault")) };
+
+        let result = run_with_cleanup(server, shutdown, cancel, cleanup).await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("cleanup fault"),
+            "cleanup error must propagate when server succeeds"
+        );
+    }
+
+    /// When the shutdown signal arrives first, cleanup must still run.
+    #[tokio::test]
+    async fn cleanup_runs_after_signal_first_drain() {
+        let cancel = CancellationToken::new();
+        let server = {
+            let cancel = cancel.clone();
+            async move {
+                cancel.cancelled().await;
+                Ok(())
+            }
+        };
+        let shutdown = async { Ok::<_, std::io::Error>(()) };
+        let cleanup = async { Ok::<(), anyhow::Error>(()) };
+
+        let result = run_with_cleanup(server, shutdown, cancel, cleanup).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "signal arrived first");
+    }
+
+    /// Server error must remain authoritative even when cleanup also fails.
+    #[tokio::test]
+    async fn server_error_hides_cleanup_error() {
+        let cancel = CancellationToken::new();
+        let server = async { Err(anyhow::anyhow!("server fault")) };
+        let shutdown = std::future::pending::<std::io::Result<()>>();
+        let cleanup = async { Err(anyhow::anyhow!("cleanup fault")) };
+
+        let result = run_with_cleanup(server, shutdown, cancel, cleanup).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("server fault"),
+            "server error must be authoritative, got: {msg}"
+        );
+        assert!(
+            !msg.contains("cleanup fault"),
+            "cleanup error must not hide server error, got: {msg}"
+        );
     }
 }
