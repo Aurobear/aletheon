@@ -93,7 +93,7 @@ lib_filters = [
   "types::session::tests::",
   "types::tool::tests::",
 ]
-integration_targets = ["agent_control_contract"]
+integration_targets = ["agent_control_contract", "session_contract"]
 
 [[changed_validation.rust_test_groups]]
 package = "interact"
