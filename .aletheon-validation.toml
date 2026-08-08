@@ -15,3 +15,87 @@ affected_path_prefixes = [
   "crates/gateway",
   "scripts",
 ]
+
+[changed_validation]
+schema_version = 1
+
+[[changed_validation.rust_test_groups]]
+package = "cognit"
+source_paths = [
+  "crates/cognit/src/harness/linear/exploration.rs",
+  "crates/cognit/src/harness/linear/mod.rs",
+  "crates/cognit/src/harness/linear/tool_exec.rs",
+]
+lib_filters = ["harness::linear::"]
+
+[[changed_validation.rust_test_groups]]
+package = "corpus"
+source_paths = [
+  "crates/corpus/src/security/runner.rs",
+  "crates/corpus/src/security/sandbox/bubblewrap.rs",
+  "crates/corpus/src/security/sandbox/bwrap_builder.rs",
+  "crates/corpus/src/tools/tools/agent_control.rs",
+]
+lib_filters = ["security::"]
+integration_targets = ["agent_control_tools"]
+
+[[changed_validation.rust_test_groups]]
+package = "executive"
+source_paths = [
+  "crates/executive/src/adapters/events/agent_timeline.rs",
+  "crates/executive/src/adapters/events/mod.rs",
+  "crates/executive/src/adapters/events/sqlite_event_spine.rs",
+  "crates/executive/src/adapters/runtime/pi_rpc.rs",
+  "crates/executive/src/application/admin_service.rs",
+  "crates/executive/src/application/daemon_turn_engine.rs",
+  "crates/executive/src/application/turn_coordinator.rs",
+  "crates/executive/src/application/turn_pipeline.rs",
+  "crates/executive/src/core/session_gateway/approval_flow.rs",
+  "crates/executive/src/core/session_gateway/gateway.rs",
+  "crates/executive/src/host/daemon/bootstrap/request.rs",
+]
+lib_filters = [
+  "adapters::runtime::pi_rpc::tests::",
+  "application::admin_service::",
+  "application::turn_coordinator::",
+  "application::turn_pipeline::",
+  "core::session_gateway::gateway::tests::",
+  "host::daemon::bootstrap::request::tests::",
+]
+integration_targets = ["admin_service", "memory_forget_admin"]
+
+[[changed_validation.rust_test_groups]]
+package = "fabric"
+source_paths = [
+  "crates/fabric/src/ipc/stream.rs",
+  "crates/fabric/src/protocol/client.rs",
+  "crates/fabric/src/types/agent_control.rs",
+  "crates/fabric/src/types/tool.rs",
+]
+lib_filters = [
+  "ipc::stream::tests::",
+  "protocol::client::request_tests::",
+  "types::agent_control::delegation_tests::",
+  "types::tool::tests::",
+]
+integration_targets = ["agent_control_contract"]
+
+[[changed_validation.rust_test_groups]]
+package = "interact"
+source_paths = [
+  "crates/interact/src/tui/agent_inspector.rs",
+  "crates/interact/src/tui/app/key_handler.rs",
+  "crates/interact/src/tui/app/submit.rs",
+  "crates/interact/src/tui/command.rs",
+  "crates/interact/src/tui/help_overlay.rs",
+  "crates/interact/src/tui/mod.rs",
+  "crates/interact/src/tui/reducer.rs",
+  "crates/interact/src/tui/registry.rs",
+  "crates/interact/src/tui/render/draw.rs",
+  "crates/interact/src/tui/render/renderable.rs",
+  "crates/interact/src/tui/response.rs",
+  "crates/interact/src/tui/status.rs",
+  "crates/interact/src/tui/task_console.rs",
+]
+lib_filters = ["tui::"]
+integration_targets = ["tui_reducer"]

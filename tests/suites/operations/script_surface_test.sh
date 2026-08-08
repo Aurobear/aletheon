@@ -12,6 +12,8 @@ expected=(aletheon.sh cargo-agent.sh)
 }
 [[ -x setup.sh && -x scripts/aletheon.sh && -x scripts/cargo-agent.sh ]]
 [[ -x scripts/libexec/aletheon/test-changed.py ]]
+[[ -x scripts/libexec/aletheon/test-filtered.py ]]
+[[ -x scripts/libexec/aletheon/test-monitor.py ]]
 ! grep -Eq '(^|[[:space:]])cargo (build|check|test|clippy|doc)' setup.sh
 grep -Fq 'scripts/cargo-agent.sh build -p aletheon --release' setup.sh
 grep -Fq 'run_internal test-changed.py "$@"' scripts/lib/aletheon/test.sh

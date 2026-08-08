@@ -59,7 +59,11 @@ bash scripts/aletheon.sh test changed --report "$report"
 The selector derives affected packages and direct workspace dependents from
 Cargo metadata. A changed integration-test entry selects only that target;
 shared integration support selects the package integration suite. It fails
-fast by default.
+fast by default. Repository-owned `changed_validation.rust_test_groups` may
+map production sources to narrower library filters and integration targets.
+Mapped packages are compiled together once, every filter must match at least
+one real test, and any unmapped source or manifest change falls back to the
+package's complete library or binary tests.
 
 After a repair, do not rerun successful steps:
 

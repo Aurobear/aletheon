@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import sys
 import time
+import tomllib
 from typing import Iterable
 
 
@@ -21,6 +22,14 @@ class Step:
     kind: str
     command: tuple[str, ...]
     reason: str
+
+
+@dataclass(frozen=True)
+class RustTestGroup:
+    package: str
+    source_paths: frozenset[str]
+    lib_filters: tuple[str, ...]
+    integration_targets: tuple[str, ...]
 
 
 def git_lines(root: Path, *args: str, check: bool = True) -> list[str]:
@@ -98,6 +107,80 @@ def append_unique(steps: list[Step], step: Step) -> None:
         steps.append(step)
 
 
+def load_rust_test_groups(root: Path) -> dict[str, RustTestGroup]:
+    config_path = root / ".aletheon-validation.toml"
+    if not config_path.is_file():
+        return {}
+    with config_path.open("rb") as handle:
+        payload = tomllib.load(handle)
+    changed_validation = payload.get("changed_validation")
+    if changed_validation is None:
+        return {}
+    if not isinstance(changed_validation, dict):
+        raise ValueError("changed_validation must be a TOML table")
+    if changed_validation.get("schema_version") != 1:
+        raise ValueError("changed_validation.schema_version must be 1")
+    raw_groups = changed_validation.get("rust_test_groups", [])
+    if not isinstance(raw_groups, list):
+        raise ValueError("changed_validation.rust_test_groups must be an array")
+
+    groups: dict[str, RustTestGroup] = {}
+    claimed_paths: set[str] = set()
+    for index, raw in enumerate(raw_groups, 1):
+        if not isinstance(raw, dict):
+            raise ValueError(f"rust_test_groups[{index}] must be a table")
+        package = raw.get("package")
+        source_paths = raw.get("source_paths")
+        lib_filters = raw.get("lib_filters", [])
+        integration_targets = raw.get("integration_targets", [])
+        if not isinstance(package, str) or not package:
+            raise ValueError(f"rust_test_groups[{index}].package must be non-empty")
+        if package in groups:
+            raise ValueError(f"duplicate rust test group for package {package}")
+        for field, values in (
+            ("source_paths", source_paths),
+            ("lib_filters", lib_filters),
+            ("integration_targets", integration_targets),
+        ):
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) and value for value in values
+            ):
+                raise ValueError(
+                    f"rust_test_groups[{index}].{field} must be a non-empty string array"
+                    if field == "source_paths"
+                    else f"rust_test_groups[{index}].{field} must be a string array"
+                )
+        if not source_paths:
+            raise ValueError(f"rust_test_groups[{index}].source_paths cannot be empty")
+        if not lib_filters and not integration_targets:
+            raise ValueError(
+                f"rust_test_groups[{index}] must select a lib filter or integration target"
+            )
+        package_prefix = f"crates/{package}/src/"
+        invalid_paths = [
+            path
+            for path in source_paths
+            if not path.startswith(package_prefix) or not path.endswith(".rs")
+        ]
+        if invalid_paths:
+            raise ValueError(
+                f"rust test group {package} has source paths outside {package_prefix}"
+            )
+        duplicates = claimed_paths.intersection(source_paths)
+        if duplicates:
+            raise ValueError(
+                f"rust source path mapped more than once: {sorted(duplicates)[0]}"
+            )
+        claimed_paths.update(source_paths)
+        groups[package] = RustTestGroup(
+            package=package,
+            source_paths=frozenset(source_paths),
+            lib_filters=tuple(sorted(set(lib_filters))),
+            integration_targets=tuple(sorted(set(integration_targets))),
+        )
+    return groups
+
+
 def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]:
     changed = set(paths)
     cargo = ("bash", "scripts/cargo-agent.sh")
@@ -114,7 +197,17 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
         for name, package_root in package_roots.items()
         if any(path == package_root or path.startswith(f"{package_root}/") for path in changed)
     }
+    groups = load_rust_test_groups(root)
+    unknown_group_packages = sorted(set(groups) - names)
+    if unknown_group_packages:
+        raise ValueError(
+            "rust test groups reference unknown workspace packages: "
+            + ", ".join(unknown_group_packages)
+        )
     steps: list[Step] = []
+    test_steps: list[Step] = []
+    check_packages: set[str] = set()
+    mapped_test_packages: set[str] = set()
 
     if "Cargo.toml" in changed or "Cargo.lock" in changed:
         append_unique(
@@ -136,10 +229,7 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
             for path in changed
             if path == package_root or path.startswith(f"{package_root}/")
         }
-        append_unique(
-            steps,
-            Step("check", cargo + ("check", "-p", name), f"package {name} changed"),
-        )
+        check_packages.add(name)
         rust_or_manifest_changed = any(
             path.endswith(".rs") and f"{package_root}/tests/" not in path
             for path in package_paths
@@ -162,13 +252,36 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
         else:
             unit_args = ()
             unit_reason = ""
-        if unit_args:
+        mapped_group = groups.get(name)
+        production_rust_paths = {
+            path
+            for path in package_paths
+            if path.endswith(".rs") and f"{package_root}/tests/" not in path
+        }
+        manifest_changed = any(path.endswith("Cargo.toml") for path in package_paths)
+        mapped_sources = (
+            bool(production_rust_paths)
+            and mapped_group is not None
+            and production_rust_paths <= mapped_group.source_paths
+            and all((root / path).is_file() for path in production_rust_paths)
+            and unit_args == ("--lib",)
+        )
+        mapped_integration_targets: set[str] = set()
+        if unit_args and mapped_sources and not manifest_changed:
+            mapped_test_packages.add(name)
+            mapped_integration_targets.update(mapped_group.integration_targets)
+        elif unit_args:
             append_unique(
-                steps,
+                test_steps,
                 Step(
                     "test",
                     cargo + ("test", "-p", name) + unit_args,
-                    unit_reason,
+                    unit_reason
+                    + (
+                        "; safe fallback because at least one source lacks a test mapping"
+                        if production_rust_paths and not manifest_changed
+                        else ""
+                    ),
                 ),
             )
 
@@ -187,9 +300,9 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
                 exact_targets.add(target)
             else:
                 broad_integration = True
-        for target in sorted(exact_targets):
+        for target in sorted(exact_targets - mapped_integration_targets):
             append_unique(
-                steps,
+                test_steps,
                 Step(
                     "test",
                     cargo + ("test", "-p", name, "--test", target),
@@ -198,7 +311,7 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
             )
         if broad_integration:
             append_unique(
-                steps,
+                test_steps,
                 Step(
                     "test",
                     cargo + ("test", "-p", name, "--tests"),
@@ -217,14 +330,76 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
         }
         impacted = sorted(dependencies & affected)
         if impacted:
-            append_unique(
-                steps,
-                Step(
-                    "check",
-                    cargo + ("check", "-p", name),
-                    f"direct dependency changed: {', '.join(impacted)}",
-                ),
-            )
+            check_packages.add(name)
+
+    if check_packages and not any("--workspace" in step.command for step in steps):
+        check_command = cargo + ("check",)
+        for name in sorted(check_packages):
+            check_command += ("-p", name)
+        append_unique(
+            steps,
+            Step(
+                "check",
+                check_command,
+                "affected packages and direct workspace dependents",
+            ),
+        )
+
+    if mapped_test_packages:
+        helper = ("python3", "scripts/libexec/aletheon/test-filtered.py")
+        for name in sorted(mapped_test_packages):
+            helper += ("--package", name)
+        test_steps.insert(
+            0,
+            Step(
+                "test",
+                helper,
+                "all changed sources in these packages have explicit test mappings",
+            ),
+        )
+
+    steps.extend(test_steps)
+
+    monitor_root = "tools/aletheon-monitor/"
+    monitor_paths = {path for path in changed if path.startswith(monitor_root)}
+    if monitor_paths:
+        monitor_test_prefix = f"{monitor_root}tests/"
+        changed_monitor_tests = sorted(
+            path
+            for path in monitor_paths
+            if path.startswith(monitor_test_prefix)
+            and Path(path).name.startswith("test_")
+            and path.endswith(".py")
+            and (root / path).is_file()
+        )
+        only_test_entries = changed_monitor_tests and all(
+            path in changed_monitor_tests for path in monitor_paths
+        )
+        command = ("python3", "scripts/libexec/aletheon/test-monitor.py")
+        if only_test_entries:
+            command += tuple(changed_monitor_tests)
+            reason = "only monitor test entries changed"
+        else:
+            command += ("tools/aletheon-monitor/tests",)
+            reason = "monitor source or shared test support changed"
+        append_unique(steps, Step("test", command, reason))
+
+    if ".aletheon-validation.toml" in changed or any(
+        path in {
+            "scripts/libexec/aletheon/test-changed.py",
+            "scripts/libexec/aletheon/test-filtered.py",
+            "scripts/libexec/aletheon/test-monitor.py",
+        }
+        for path in changed
+    ):
+        append_unique(
+            steps,
+            Step(
+                "script",
+                ("python3", "-m", "unittest", "scripts/tests/test_changed_validation.py"),
+                "changed-validation policy or implementation changed",
+            ),
+        )
 
     if any(path == "scripts/aletheon.sh" or path.startswith("scripts/lib/aletheon/") for path in changed):
         append_unique(
