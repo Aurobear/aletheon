@@ -34,5 +34,8 @@ backup-staging/
 # Host-verified production scenario artifacts
 .scenario-runs/
 
+# External continuous-engineering state, evidence and disposable worktrees
+.aletheon-lab/
+
 # Local agent worktrees must never be committed as gitlinks
 .claude/worktrees/
