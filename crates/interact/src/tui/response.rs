@@ -1717,6 +1717,10 @@ mod tests {
             .activities
             .iter()
             .all(|activity| activity.state != fabric::ActivityState::Running));
+        assert!(app.app_state.activities.iter().any(|activity| {
+            activity.kind == fabric::ActivityKind::Runtime
+                && activity.state == fabric::ActivityState::Cancelled
+        }));
         assert!(app.app_state.items.values().any(|item| {
             item.kind == "assistant" && item.content.starts_with("Cancelled by user")
         }));

@@ -765,7 +765,6 @@ pub fn finish_live_turn(state: &mut AppState, status: fabric::TurnTerminalStatus
             activity.state = activity_state;
         }
     }
-    state.live_activity_ids.clear();
     state.last_terminal_status = Some(status);
     state.streaming = false;
     state.turn_active = false;
