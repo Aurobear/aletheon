@@ -312,8 +312,10 @@ impl ReActLoop {
                 self.turn_input_tokens,
                 self.config.context_window_tokens,
                 self.repository_context_seen,
-                self.repository_followup_read_batches,
-                ordered_calls.iter().map(|(_, name, _)| name.as_str()),
+                self.broad_discovery_batches,
+                ordered_calls
+                    .iter()
+                    .map(|(_, name, input)| (name.as_str(), input)),
             ) {
                 let budget =
                     super::exploration_input_token_budget(self.config.context_window_tokens);
@@ -698,13 +700,22 @@ impl ReActLoop {
                     content: tool_result_blocks,
                 });
             }
+            // Only broad-discovery batches (contains at least one repository-wide
+            // scan) count toward the cut-off allowance. Scoped/exact discovery
+            // calls do not consume the counter. Any read-only tool (including
+            // file_read) mixed with a broad scan does not hide the scan from
+            // the counter; any non-inspection tool prevents both increment and
+            // closure via the all_inspection gate in should_close_exploration.
             if self.repository_context_seen
-                && ordered_calls.iter().any(|(_, name, _)| {
-                    matches!(name.as_str(), "file_read" | "glob" | "grep" | "file_search")
+                && !ordered_calls.is_empty()
+                && ordered_calls
+                    .iter()
+                    .any(|(_, name, input)| super::is_broad_discovery(name, input))
+                && ordered_calls.iter().all(|(_, name, _)| {
+                    matches!(name.as_str(), "glob" | "grep" | "file_search" | "file_read")
                 })
             {
-                self.repository_followup_read_batches =
-                    self.repository_followup_read_batches.saturating_add(1);
+                self.broad_discovery_batches = self.broad_discovery_batches.saturating_add(1);
             }
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {

@@ -18,7 +18,7 @@ pub use compaction_observability::{compaction_metrics, CompactionMetrics};
 pub use metrics::TurnMetrics;
 
 use compaction_observability::{record_degenerate, record_evicted, record_sampler_error};
-use exploration::{exploration_input_token_budget, should_close_exploration};
+use exploration::{exploration_input_token_budget, is_broad_discovery, should_close_exploration};
 
 /// Minimum length (trimmed chars) an answer must have before a
 /// reflection-triggered stop is treated as terminal. Below this, both run loops
@@ -126,8 +126,11 @@ pub struct ReActLoop {
     turn_input_tokens: u64,
     /// A successful typed repository overview result was observed this turn.
     repository_context_seen: bool,
-    /// Exact read/discovery batches completed after the repository overview.
-    repository_followup_read_batches: usize,
+    /// Broad-discovery batches completed after the repository overview.
+    /// Only batches containing at least one repository-wide scan (recursive
+    /// glob, wildcard-directory glob, or un-scoped grep/file_search) count.
+    /// Scoped/exact discovery calls do not consume this allowance.
+    broad_discovery_batches: usize,
     /// Consecutive tool errors for impasse detection.
     consecutive_errors: usize,
     /// Interrupt flag for canceling the loop externally.
@@ -200,7 +203,7 @@ impl ReActLoop {
             recent_tools: Vec::new(),
             turn_input_tokens: 0,
             repository_context_seen: false,
-            repository_followup_read_batches: 0,
+            broad_discovery_batches: 0,
             consecutive_errors: 0,
             interrupt_flag: None,
             tool_budget,
@@ -353,7 +356,7 @@ impl ReActLoop {
         self.recent_tools.clear();
         self.turn_input_tokens = 0;
         self.repository_context_seen = false;
-        self.repository_followup_read_batches = 0;
+        self.broad_discovery_batches = 0;
         self.consecutive_errors = 0;
         self.tool_budget.reset();
         self.circuit_breaker.reset();
@@ -500,6 +503,256 @@ impl ReActLoop {
 #[cfg(test)]
 mod exploration_budget_tests {
     use super::*;
+    use serde_json::json;
+
+    // --- typed input helpers ---
+    fn broad_grep() -> serde_json::Value {
+        json!({"pattern": "foo"})
+    }
+    fn scoped_grep() -> serde_json::Value {
+        json!({"pattern": "foo", "path": "src/"})
+    }
+    fn broad_glob() -> serde_json::Value {
+        json!({"pattern": "**/*.rs"})
+    }
+    fn wildcard_dir_glob() -> serde_json::Value {
+        json!({"pattern": "crates/*/Cargo.toml"})
+    }
+    fn exact_glob() -> serde_json::Value {
+        json!({"pattern": "docs/architecture.md"})
+    }
+    fn leaf_wildcard_glob() -> serde_json::Value {
+        json!({"pattern": "schema/*.json"})
+    }
+    fn broad_file_search() -> serde_json::Value {
+        json!({"query": "fn main"})
+    }
+    fn scoped_file_search() -> serde_json::Value {
+        json!({"query": "fn main", "path": "crates/cognit/"})
+    }
+    fn file_read_input() -> serde_json::Value {
+        json!({"path": "src/main.rs"})
+    }
+    fn shell_input() -> serde_json::Value {
+        json!({"command": "ls"})
+    }
+    fn glob_root_absolute() -> serde_json::Value {
+        json!({"root": "/tmp", "pattern": "*.rs"})
+    }
+    fn glob_root_parent() -> serde_json::Value {
+        json!({"root": "../outside", "pattern": "*.rs"})
+    }
+    fn glob_root_scoped() -> serde_json::Value {
+        json!({"root": "schema", "pattern": "*.json"})
+    }
+    fn glob_root_current_dir() -> serde_json::Value {
+        json!({"root": ".", "pattern": "*.rs"})
+    }
+    fn glob_root_non_string() -> serde_json::Value {
+        json!({"root": 42, "pattern": "*.rs"})
+    }
+
+    // --- is_broad_discovery unit tests ---
+
+    #[test]
+    fn exact_glob_is_scoped() {
+        assert!(!is_broad_discovery("glob", &exact_glob()));
+    }
+
+    #[test]
+    fn leaf_only_wildcard_glob_is_scoped() {
+        assert!(!is_broad_discovery("glob", &leaf_wildcard_glob()));
+    }
+
+    #[test]
+    fn recursive_glob_is_broad() {
+        assert!(is_broad_discovery("glob", &broad_glob()));
+    }
+
+    #[test]
+    fn wildcard_directory_glob_is_broad() {
+        assert!(is_broad_discovery("glob", &wildcard_dir_glob()));
+    }
+
+    #[test]
+    fn glob_with_absolute_root_is_broad() {
+        assert!(is_broad_discovery("glob", &glob_root_absolute()));
+    }
+
+    #[test]
+    fn glob_with_parent_root_is_broad() {
+        assert!(is_broad_discovery("glob", &glob_root_parent()));
+    }
+
+    #[test]
+    fn glob_with_non_string_root_is_broad() {
+        assert!(is_broad_discovery("glob", &glob_root_non_string()));
+    }
+
+    #[test]
+    fn glob_with_scoped_root_is_not_broad() {
+        // Safe relative root + scoped leaf pattern → scoped.
+        assert!(!is_broad_discovery("glob", &glob_root_scoped()));
+    }
+
+    #[test]
+    fn glob_with_current_dir_root_is_not_broad() {
+        // "." root is neutral; breadth is determined by pattern.
+        assert!(!is_broad_discovery("glob", &glob_root_current_dir()));
+    }
+
+    #[test]
+    fn grep_with_omitted_path_is_broad() {
+        assert!(is_broad_discovery("grep", &broad_grep()));
+    }
+
+    #[test]
+    fn grep_with_root_path_is_broad() {
+        assert!(is_broad_discovery(
+            "grep",
+            &json!({"pattern": "foo", "path": "."})
+        ));
+        assert!(is_broad_discovery(
+            "grep",
+            &json!({"pattern": "foo", "path": "./"})
+        ));
+    }
+
+    #[test]
+    fn grep_with_safe_subpath_is_scoped() {
+        assert!(!is_broad_discovery("grep", &scoped_grep()));
+    }
+
+    #[test]
+    fn grep_with_path_traversal_is_broad() {
+        assert!(is_broad_discovery(
+            "grep",
+            &json!({"pattern": "foo", "path": "../etc"})
+        ));
+    }
+
+    #[test]
+    fn grep_with_absolute_path_is_broad() {
+        assert!(is_broad_discovery(
+            "grep",
+            &json!({"pattern": "foo", "path": "/tmp"})
+        ));
+    }
+
+    #[test]
+    fn file_search_omitted_path_is_broad() {
+        assert!(is_broad_discovery("file_search", &broad_file_search()));
+    }
+
+    #[test]
+    fn file_search_safe_subpath_is_scoped() {
+        assert!(!is_broad_discovery("file_search", &scoped_file_search()));
+    }
+
+    // ── fail-closed path scope classification (audit 2025) ──
+
+    #[test]
+    fn absolute_tmp_path_is_broad() {
+        // `/tmp/...` is absolute and must be broad, not scoped.
+        assert!(is_broad_discovery(
+            "grep",
+            &json!({"pattern": "secret", "path": "/tmp/logs"})
+        ));
+        assert!(is_broad_discovery(
+            "file_search",
+            &json!({"query": "secret", "path": "/tmp/logs"})
+        ));
+    }
+
+    #[test]
+    fn parent_dir_component_is_broad() {
+        // `../...` is a parent traversal and must be broad.
+        assert!(is_broad_discovery(
+            "grep",
+            &json!({"pattern": "x", "path": "../outside"})
+        ));
+        assert!(is_broad_discovery(
+            "file_search",
+            &json!({"query": "x", "path": "sub/../../etc"})
+        ));
+    }
+
+    #[test]
+    fn double_dot_inside_filename_is_scoped() {
+        // `src/foo..bar` is a safe normal filename containing two dots,
+        // not a parent-dir component. Must remain scoped.
+        assert!(!is_broad_discovery(
+            "grep",
+            &json!({"pattern": "x", "path": "src/foo..bar"})
+        ));
+        assert!(!is_broad_discovery(
+            "file_search",
+            &json!({"query": "x", "path": "src/foo..bar"})
+        ));
+        // Single-component filename with double dots is also scoped.
+        assert!(!is_broad_discovery(
+            "grep",
+            &json!({"pattern": "x", "path": "foo..bar"})
+        ));
+    }
+
+    #[test]
+    fn glob_absolute_root_is_broad() {
+        // `/etc/**` — absolute root must be broad before wildcard semantics.
+        assert!(is_broad_discovery("glob", &json!({"pattern": "/etc/**"})));
+        assert!(is_broad_discovery(
+            "glob",
+            &json!({"pattern": "/tmp/*.log"})
+        ));
+        // Exact absolute path without wildcards is still broad.
+        assert!(is_broad_discovery(
+            "glob",
+            &json!({"pattern": "/etc/passwd"})
+        ));
+    }
+
+    #[test]
+    fn glob_parent_traversal_pattern_is_broad() {
+        // `../*.rs` — parent-dir component must be broad.
+        assert!(is_broad_discovery("glob", &json!({"pattern": "../*.rs"})));
+        assert!(is_broad_discovery(
+            "glob",
+            &json!({"pattern": "src/../../*.toml"})
+        ));
+        // Patterns array with one unsafe entry makes the whole call broad.
+        assert!(is_broad_discovery(
+            "glob",
+            &json!({"patterns": ["src/*.rs", "../escape.rs"]})
+        ));
+    }
+
+    #[test]
+    fn glob_safe_relative_root_remains_scoped() {
+        // Leaf-only wildcard under a safe relative root is scoped.
+        assert!(!is_broad_discovery("glob", &json!({"pattern": "src/*.rs"})));
+        // Exact relative path is scoped.
+        assert!(!is_broad_discovery(
+            "glob",
+            &json!({"pattern": "docs/architecture.md"})
+        ));
+        // Wildcard only in leaf position with a safe multi-segment root is scoped.
+        assert!(!is_broad_discovery(
+            "glob",
+            &json!({"pattern": "crates/cognit/src/*.rs"})
+        ));
+    }
+
+    #[test]
+    fn file_read_is_not_discovery() {
+        assert!(!is_broad_discovery("file_read", &file_read_input()));
+    }
+
+    #[test]
+    fn shell_is_not_discovery() {
+        assert!(!is_broad_discovery("shell", &shell_input()));
+    }
+
+    // --- should_close_exploration integration tests ---
 
     #[test]
     fn budget_scales_with_context_but_remains_bounded() {
@@ -511,6 +764,11 @@ mod exploration_budget_tests {
 
     #[test]
     fn closes_only_later_pure_inspection_batches_over_budget() {
+        let bg = broad_grep();
+        let bgl = broad_glob();
+        let si = shell_input();
+        let fr = file_read_input();
+
         // Iteration 1 never closes, regardless of tools.
         assert!(!should_close_exploration(
             1,
@@ -518,7 +776,7 @@ mod exploration_budget_tests {
             1_000_000,
             false,
             0,
-            ["grep"]
+            [("grep", &bg)]
         ));
         // Under budget never closes.
         assert!(!should_close_exploration(
@@ -527,16 +785,16 @@ mod exploration_budget_tests {
             1_000_000,
             false,
             0,
-            ["grep", "glob"]
+            [("grep", &bg), ("glob", &bgl)]
         ));
-        // Later, over-budget, pure breadth-scanning batch closes.
+        // Later, over-budget, broad-scanning batch closes.
         assert!(should_close_exploration(
             2,
             10_000,
             1_000_000,
             false,
             0,
-            ["grep", "glob"]
+            [("grep", &bg), ("glob", &bgl)]
         ));
         // A batch containing a non-inspection tool never closes.
         assert!(!should_close_exploration(
@@ -545,82 +803,168 @@ mod exploration_budget_tests {
             1_000_000,
             false,
             0,
-            ["grep", "shell"]
+            [("grep", &bg), ("shell", &si)]
         ));
         // `file_read` is deliberately NOT inspection: reading a specific file is
-        // always allowed and must not trip the exploration cutoff, even when a
-        // batch is otherwise pure breadth-scanning and over budget.
+        // always allowed and must not trip the exploration cutoff.
         assert!(!should_close_exploration(
             2,
             20_000,
             1_000_000,
             false,
             0,
-            ["file_read"]
+            [("file_read", &fr)]
         ));
-        // Exact file reads remain available after repo_inspect even when an
-        // earlier exact batch was truncated. The breadth guard must not turn a
-        // coding task into synthesis before the named edit targets are read.
+        // Exact file reads remain available after repo_inspect.
         assert!(!should_close_exploration(
             3,
             50_000,
             1_000_000,
             true,
             1,
-            ["file_read"]
+            [("file_read", &fr)]
         ));
-        // Repeated discovery after repo_inspect still closes once over budget.
+        // After repo_inspect, broad-discovery batches over budget close at
+        // the third batch (counter >= 2).
+        assert!(!should_close_exploration(
+            3,
+            50_000,
+            1_000_000,
+            true,
+            1,
+            [("glob", &bgl), ("grep", &bg)]
+        ));
         assert!(should_close_exploration(
-            3,
+            4,
             50_000,
             1_000_000,
             true,
-            1,
-            ["glob", "grep"]
+            2,
+            [("glob", &bgl), ("grep", &bg)]
         ));
+        // Mixed batch with file_read never closes.
         assert!(!should_close_exploration(
             2,
             20_000,
             1_000_000,
             false,
             0,
-            ["file_read", "glob"]
+            [("file_read", &fr), ("glob", &bgl)]
         ));
     }
 
     #[test]
-    fn repository_overview_keeps_exact_reads_but_closes_repeated_discovery() {
+    fn repository_overview_keeps_exact_reads_and_allows_scoped_discovery() {
+        let fr = file_read_input();
+        let bgl = broad_glob();
+        let sg = exact_glob();
+        let bfs = broad_file_search();
+        let si = shell_input();
+
+        // file_read after repo_inspect never closes.
         assert!(!should_close_exploration(
             2,
             20_000,
             1_000_000,
             true,
             0,
-            ["file_read"]
+            [("file_read", &fr)]
         ));
+        // A broad glob batch after repo_inspect + 0 prior is still allowed.
+        assert!(!should_close_exploration(
+            3,
+            20_000,
+            1_000_000,
+            true,
+            0,
+            [("glob", &bgl)]
+        ));
+        // After 1 prior broad batch, a second broad batch is still allowed.
         assert!(!should_close_exploration(
             3,
             20_000,
             1_000_000,
             true,
             1,
-            ["file_read"]
+            [("glob", &bgl)]
         ));
+        // A third broad-discovery batch over budget closes.
         assert!(should_close_exploration(
-            3,
+            4,
             20_000,
             1_000_000,
             true,
-            1,
-            ["file_search"]
+            2,
+            [("file_search", &bfs)]
         ));
+        // Mixed batch with file_read never closes.
         assert!(!should_close_exploration(
             3,
             20_000,
             1_000_000,
             true,
-            1,
-            ["file_read", "shell"]
+            0,
+            [("file_read", &fr), ("glob", &bgl)]
+        ));
+        // Non-discovery tool in batch prevents closure.
+        assert!(!should_close_exploration(
+            3,
+            20_000,
+            1_000_000,
+            true,
+            2,
+            [("file_read", &fr), ("shell", &si)]
+        ));
+        // Scoped glob batches do NOT close, even after prior broad batches.
+        // They do not consume the broad counter.
+        assert!(!should_close_exploration(
+            5,
+            20_000,
+            1_000_000,
+            true,
+            3,
+            [("glob", &sg)]
+        ));
+        // Scoped grep with explicit subpath does NOT close.
+        let sgrep = scoped_grep();
+        assert!(!should_close_exploration(
+            5,
+            20_000,
+            1_000_000,
+            true,
+            3,
+            [("grep", &sgrep)]
+        ));
+    }
+
+    #[test]
+    fn file_read_with_broad_glob_does_not_evade_counter() {
+        // When tool_exec increments the counter after a mixed batch
+        // [file_read, broad_glob], the batch itself does NOT close
+        // (file_read is not an inspection tool), but the counter
+        // advances. A subsequent pure broad-inspection batch then
+        // closes at counter >= 2.
+        let fr = file_read_input();
+        let bgl = broad_glob();
+
+        // Mixed batch with file_read never closes (all_inspection is false).
+        assert!(!should_close_exploration(
+            3,
+            20_000,
+            1_000_000,
+            true,
+            1, // counter was already incremented by tool_exec for this batch
+            [("file_read", &fr), ("glob", &bgl)]
+        ));
+        // But the counter still advanced to 2 after the mixed batch,
+        // so the next pure broad-inspection batch closes.
+        assert!(should_close_exploration(
+            4,
+            20_000,
+            1_000_000,
+            true,
+            2,
+            [("glob", &bgl)]
         ));
     }
 }

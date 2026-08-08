@@ -559,6 +559,75 @@ mod tests {
     }
 
     #[test]
+    fn inspection_returns_root_package_main_rs_when_lib_absent() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "repo-root-main-test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let result = inspect(json!({}), &context).unwrap();
+
+        assert_eq!(result.exact_follow_up_paths, ["src/main.rs"]);
+    }
+
+    #[test]
+    fn inspection_combines_workspace_members_and_root_package_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("crates/demo/src")).unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname='root'\nversion='0.1.0'\n\n[workspace]\nmembers=['crates/*']\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("crates/demo/Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn root() {}\n").unwrap();
+        std::fs::write(
+            temp.path().join("crates/demo/src/lib.rs"),
+            "pub fn demo() {}\n",
+        )
+        .unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "repo-mixed-test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let result = inspect(json!({}), &context).unwrap();
+
+        // Root package src/lib.rs + workspace member paths (Cargo.toml + src/lib.rs)
+        assert!(result
+            .exact_follow_up_paths
+            .contains(&"src/lib.rs".to_string()));
+        assert!(result
+            .exact_follow_up_paths
+            .contains(&"crates/demo/Cargo.toml".to_string()));
+        assert!(result
+            .exact_follow_up_paths
+            .contains(&"crates/demo/src/lib.rs".to_string()));
+        assert_eq!(result.exact_follow_up_paths.len(), 3);
+    }
+
+    #[test]
     fn inspection_does_not_report_missing_alternative_when_category_is_present() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("README.md"), "# Present\n").unwrap();

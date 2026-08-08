@@ -901,7 +901,10 @@ mod tests {
              parent, sibling, host-runtime, or hidden-acceptance paths to discover an expected answer. Do not \
              stage or commit repository changes unless the user explicitly asks. For repository edits, make \
              the smallest scoped change, run only the requested or declared validation, review the resulting \
-             diff, and then stop rather than performing extra exploratory or version-control operations. For a \
+             diff, and then stop rather than performing extra exploratory or version-control operations. \
+             Preserve existing public interfaces and update the implementation used by current callers \
+             unless the request explicitly asks for a new or breaking API. Do not add a parallel API that \
+             bypasses existing callers. For a \
              version-bound repository edit, keep using the host-minted transaction ID through all scoped mutations; \
              after the final mutation call `git_diff` once for the current transaction version, then call \
              `validation_run` only for applicable required steps returned by that transaction's validation plan. \

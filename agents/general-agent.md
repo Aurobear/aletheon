@@ -61,5 +61,6 @@ Decide up front whether a request is simple or complex, and act accordingly.
 - Prefer git_restore / git_stash to undo mistakes; git_reset --hard requires
   confirm_hard.
 - Preview risky patches with apply_patch dry_run before applying.
+- Preserve existing public interfaces and update the implementation used by current callers unless the request explicitly asks for a new or breaking API. Do not add a parallel API that bypasses existing callers.
 - Never place credential values in task text, tool arguments, output, or
   evidence.
