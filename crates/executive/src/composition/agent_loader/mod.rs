@@ -17,6 +17,11 @@ pub struct AgentRole {
     pub description: String,
     /// Tool names this agent is allowed to use (e.g. ["Read", "Grep", "Glob"]).
     pub tools: Vec<String>,
+    /// Tool names this agent may delegate to children. This is deliberately
+    /// separate from `tools`: an orchestrator can delegate coding work without
+    /// gaining direct write or shell authority itself. When omitted, the
+    /// callable tool set is used for backward compatibility.
+    pub delegate_tools: Option<Vec<String>>,
     /// Optional model override (e.g. "sonnet", "opus").
     pub model: Option<String>,
     pub max_iterations: usize,
@@ -187,6 +192,7 @@ fn parse_agent_md(content: &str, path: &Path) -> Option<AgentRole> {
     let mut name = String::new();
     let mut description = String::new();
     let mut tools: Vec<String> = Vec::new();
+    let mut delegate_tools: Option<Vec<String>> = None;
     let mut model: Option<String> = None;
     let mut max_iterations = 20;
 
@@ -208,6 +214,18 @@ fn parse_agent_md(content: &str, path: &Path) -> Option<AgentRole> {
                         .map(|s| unquote(s.trim()))
                         .filter(|s| !s.is_empty())
                         .collect();
+                }
+                "delegate_tools" => {
+                    let list = value_trimmed
+                        .strip_prefix('[')
+                        .and_then(|value| value.strip_suffix(']'))
+                        .unwrap_or(value_trimmed);
+                    delegate_tools = Some(
+                        list.split(',')
+                            .map(|s| unquote(s.trim()))
+                            .filter(|s| !s.is_empty())
+                            .collect(),
+                    );
                 }
                 "model" => {
                     let v = unquote(value_trimmed);
@@ -231,6 +249,7 @@ fn parse_agent_md(content: &str, path: &Path) -> Option<AgentRole> {
         name,
         description,
         tools,
+        delegate_tools,
         model,
         max_iterations,
         body: body.to_string(),
@@ -300,6 +319,7 @@ You are a planning agent. Your job is to break tasks into subtasks.
         assert_eq!(agent.name, "planner");
         assert_eq!(agent.description, "Task decomposition, planning");
         assert_eq!(agent.tools, vec!["Read", "Grep", "Glob"]);
+        assert!(agent.delegate_tools.is_none());
         assert_eq!(agent.model.as_deref(), Some("sonnet"));
         assert!(agent.body.contains("You are a planning agent"));
         assert!(agent.body.contains("## Rules"));
@@ -319,7 +339,24 @@ Review the code."#;
         let agent = parse_agent_md(content, Path::new("/fake/reviewer.md")).unwrap();
         assert_eq!(agent.name, "reviewer");
         assert_eq!(agent.tools, vec!["Read"]);
+        assert!(agent.delegate_tools.is_none());
         assert!(agent.model.is_none());
+    }
+
+    #[test]
+    fn test_parse_separate_delegation_tools() {
+        let content = r#"---
+name: orchestrator
+description: Delegate bounded work
+tools: [agent_spawn, agent_wait]
+delegate_tools: ["*"]
+---
+
+Delegate only."#;
+
+        let agent = parse_agent_md(content, Path::new("/fake/orchestrator.md")).unwrap();
+        assert_eq!(agent.tools, vec!["agent_spawn", "agent_wait"]);
+        assert_eq!(agent.delegate_tools, Some(vec!["*".into()]));
     }
 
     #[test]

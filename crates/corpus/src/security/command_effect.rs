@@ -59,24 +59,30 @@ pub(crate) fn classify_command(command: &str) -> CommandEffect {
             return CommandEffect::SystemChange;
         }
     }
-    if is_read_only_glab_command(&normalized) {
+    if is_read_only_remote_cli_command(&normalized, "glab")
+        || is_read_only_remote_cli_command(&normalized, "gh")
+    {
         return CommandEffect::ReadOnlyNetwork;
     }
-    if invokes_program(&lower, &["curl", "wget", "ssh", "scp", "nc", "ncat"])
-        || lower.contains("glab api ")
+    let mutating_shell_syntax = has_mutating_shell_syntax(&lower);
+    let segments = split_shell_segments(&normalized);
+    if !mutating_shell_syntax
+        && !segments.is_empty()
+        && segments.iter().all(|segment| is_read_only_segment(segment))
     {
+        return CommandEffect::ReadOnly;
+    }
+    if invokes_program(
+        &lower,
+        &["curl", "wget", "ssh", "scp", "nc", "ncat", "glab", "gh"],
+    ) {
         return CommandEffect::NetworkEgress;
     }
-    if has_mutating_shell_syntax(&lower) {
+    if mutating_shell_syntax {
         return CommandEffect::WorkspaceMutation;
     }
 
-    let segments = split_shell_segments(&normalized);
-    if !segments.is_empty() && segments.iter().all(|segment| is_read_only_segment(segment)) {
-        CommandEffect::ReadOnly
-    } else {
-        CommandEffect::WorkspaceMutation
-    }
+    CommandEffect::WorkspaceMutation
 }
 
 fn strip_safe_redirections(command: &str) -> String {
@@ -87,13 +93,17 @@ fn strip_safe_redirections(command: &str) -> String {
         .replace("2>&1", "")
 }
 
-fn is_read_only_glab_command(command: &str) -> bool {
+fn is_read_only_remote_cli_command(command: &str, program: &str) -> bool {
     let segments = split_shell_segments(command);
-    segments.iter().any(|segment| segment.starts_with("glab "))
+    let prefix = format!("{program} ");
+    segments.iter().any(|segment| segment.starts_with(&prefix))
         && segments.iter().all(|segment| is_read_only_segment(segment))
-        && !segments
-            .iter()
-            .any(|segment| matches!(segment.as_str(), "glab --version" | "glab version"))
+        && !segments.iter().any(|segment| {
+            matches!(
+                segment.as_str(),
+                "glab --version" | "glab version" | "gh --version" | "gh version"
+            )
+        })
 }
 
 fn invokes_program(command: &str, programs: &[&str]) -> bool {
@@ -196,6 +206,7 @@ fn is_read_only_segment(segment: &str) -> bool {
             )
         ),
         "glab" => glab_is_read_only(&words[1..]),
+        "gh" => gh_is_read_only(&words[1..]),
         "systemctl" => systemctl_is_read_only(&words[1..]),
         other => is_help_or_version_probe(other, &words[1..]),
     }
@@ -296,6 +307,62 @@ fn glab_api_is_get(args: &[&str]) -> bool {
     true
 }
 
+fn gh_is_read_only(args: &[&str]) -> bool {
+    match args {
+        ["version", ..] | ["--version", ..] | ["help", ..] => true,
+        ["auth", "status", ..] => true,
+        ["pr", action, ..] if matches!(*action, "list" | "view" | "status" | "checks" | "diff") => {
+            true
+        }
+        [group, action, ..]
+            if matches!(*group, "issue" | "repo" | "run" | "release")
+                && matches!(*action, "list" | "view" | "status") =>
+        {
+            true
+        }
+        ["api", rest @ ..] => gh_api_is_get(rest),
+        _ => false,
+    }
+}
+
+fn gh_api_is_get(args: &[&str]) -> bool {
+    let mut index = 0;
+    while index < args.len() {
+        let argument = args[index];
+        let inline_method = argument
+            .strip_prefix("--method=")
+            .or_else(|| argument.strip_prefix("-X"));
+        if let Some(method) = inline_method {
+            if !method.eq_ignore_ascii_case("GET") {
+                return false;
+            }
+        } else if matches!(argument, "--method" | "-X") {
+            let Some(method) = args.get(index + 1) else {
+                return false;
+            };
+            if !method.eq_ignore_ascii_case("GET") {
+                return false;
+            }
+            index += 1;
+        } else if matches!(
+            argument,
+            "-f" | "--raw-field" | "-F" | "--field" | "--input"
+        ) || argument.starts_with("-f")
+            || argument.starts_with("-F")
+            || argument.starts_with("--raw-field=")
+            || argument.starts_with("--field=")
+            || argument.starts_with("--input=")
+        {
+            // gh defaults `api` requests containing fields or input to a
+            // mutating method. Keep the read-only fast path conservative even
+            // when other flags might force GET instead of inferring intent.
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,6 +385,36 @@ mod tests {
             classify_command("glab api --method GET projects/1"),
             CommandEffect::ReadOnlyNetwork
         );
+    }
+
+    #[test]
+    fn github_cli_reads_are_network_reads_and_writes_fail_closed() {
+        for command in [
+            "gh pr view 22 --repo owner/project",
+            "gh pr checks 22 --repo owner/project",
+            "gh issue list --repo owner/project",
+            "gh auth status",
+            "gh api --method GET repos/owner/project",
+        ] {
+            assert_eq!(
+                classify_command(command),
+                CommandEffect::ReadOnlyNetwork,
+                "{command}"
+            );
+        }
+        assert_eq!(classify_command("gh --version"), CommandEffect::ReadOnly);
+        for command in [
+            "gh pr create --title fix",
+            "gh issue close 22",
+            "gh api -X POST repos/owner/project/issues",
+            "gh api -f title=fix repos/owner/project/issues",
+        ] {
+            assert_eq!(
+                classify_command(command),
+                CommandEffect::NetworkEgress,
+                "{command}"
+            );
+        }
     }
 
     #[test]

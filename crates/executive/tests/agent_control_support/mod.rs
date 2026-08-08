@@ -4,6 +4,7 @@ use executive::testing::agent_control::SqliteAgentRunRepository;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 
 use async_trait::async_trait;
 use executive::application::agent_control::{
@@ -26,6 +27,7 @@ pub struct TestLauncher {
     started_notify: Notify,
     release: Notify,
     fail: Option<String>,
+    inputs: StdMutex<Vec<AgentRuntimeInput>>,
 }
 
 impl TestLauncher {
@@ -36,6 +38,7 @@ impl TestLauncher {
             started_notify: Notify::new(),
             release: Notify::new(),
             fail: None,
+            inputs: StdMutex::new(Vec::new()),
         })
     }
 
@@ -46,6 +49,7 @@ impl TestLauncher {
             started_notify: Notify::new(),
             release: Notify::new(),
             fail: Some(message.into()),
+            inputs: StdMutex::new(Vec::new()),
         })
     }
 
@@ -62,6 +66,10 @@ impl TestLauncher {
     pub fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
+
+    pub fn inputs(&self) -> Vec<AgentRuntimeInput> {
+        self.inputs.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -71,6 +79,7 @@ impl AgentRuntimeLauncher for TestLauncher {
         input: AgentRuntimeInput,
         _events: Arc<dyn AgentEventSink>,
     ) -> Result<AgentResult, AgentControlError> {
+        self.inputs.lock().unwrap().push(input.clone());
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.started.store(true, Ordering::SeqCst);
         self.started_notify.notify_waiters();

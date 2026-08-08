@@ -163,7 +163,12 @@ fn input_with_inbox(
         },
     };
     let input = AgentRuntimeInput {
-        workspace: Some(policy),
+        workspace: Some(policy.clone()),
+        delegation_authority: fabric::AgentDelegationAuthority::new(
+            Some(policy),
+            request.allowed_tools.clone(),
+            request.budget.clone(),
+        ),
         context: AgentContextProjection::from_fork(&request.context).unwrap(),
         memory_context: mnemosyne::AgentMemoryContext::verified(
             process,

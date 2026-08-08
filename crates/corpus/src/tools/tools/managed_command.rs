@@ -1,6 +1,7 @@
 //! Persistent, steerable command sessions for multi-turn practical work.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,10 +24,11 @@ const MAX_YIELD_MS: u64 = 30_000;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const MAX_TIMEOUT_SECS: u64 = 3_600;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ManagedCommandSessions {
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<CommandSession>>>>>,
     change_transactions: Option<ChangeTransactionRegistry>,
+    sandbox_preference: fabric::SandboxPreference,
 }
 
 struct CommandSession {
@@ -45,6 +47,8 @@ struct CommandSession {
     terminal: Option<CommandTerminal>,
     output_artifact_ref: Option<String>,
     validation_recorded: bool,
+    /// Keeps a sandbox bind source alive until the command reaches terminal.
+    sandbox_scratch: Option<tempfile::TempDir>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +66,7 @@ enum CommandPurpose {
     Shell {
         transaction_id: Option<fabric::change_transaction::ChangeTransactionId>,
         starting_workspace_version: Option<String>,
+        workspace_root: String,
     },
     Validation {
         validation_kind: ValidationKind,
@@ -133,9 +138,20 @@ struct CommandSnapshot {
 
 impl ManagedCommandSessions {
     pub fn with_change_transactions(change_transactions: ChangeTransactionRegistry) -> Self {
+        Self::with_change_transactions_and_sandbox(
+            change_transactions,
+            fabric::SandboxPreference::Forbid,
+        )
+    }
+
+    pub fn with_change_transactions_and_sandbox(
+        change_transactions: ChangeTransactionRegistry,
+        sandbox_preference: fabric::SandboxPreference,
+    ) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             change_transactions: Some(change_transactions),
+            sandbox_preference,
         }
     }
 
@@ -147,17 +163,27 @@ impl ManagedCommandSessions {
         cwd: String,
         purpose: CommandPurpose,
         timeout: Duration,
+        workspace: fabric::WorkspacePolicy,
+        clock: Arc<dyn fabric::Clock>,
+        network_enabled: bool,
     ) -> Result<String, String> {
-        let mut command = Command::new("bash");
+        let (mut command, sandbox_scratch) = managed_command(
+            &command_text,
+            &cwd,
+            workspace,
+            clock,
+            self.sandbox_preference,
+            network_enabled,
+        )?;
         command
-            .arg("-c")
-            .arg(&command_text)
-            .current_dir(&cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        command.process_group(0);
         let mut child = command.spawn().map_err(|error| error.to_string())?;
+        let process_group = child.id();
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -178,6 +204,7 @@ impl ManagedCommandSessions {
             terminal: None,
             output_artifact_ref: None,
             validation_recorded: false,
+            sandbox_scratch,
         }));
         self.sessions
             .lock()
@@ -195,13 +222,11 @@ impl ManagedCommandSessions {
                     Err(error) => CommandTerminal::Failed { error: error.to_string() },
                 },
                 _ = tokio::time::sleep(timeout) => {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
+                    terminate_process_group(process_group, &mut child).await;
                     CommandTerminal::TimedOut
                 },
                 _ = &mut cancel_rx => {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
+                    terminate_process_group(process_group, &mut child).await;
                     CommandTerminal::Cancelled
                 }
             };
@@ -224,6 +249,7 @@ impl ManagedCommandSessions {
             state.stdin = None;
             state.cancel = None;
             state.terminal = Some(terminal);
+            state.sandbox_scratch = None;
         });
         Ok(session_id)
     }
@@ -273,12 +299,13 @@ impl ManagedCommandSessions {
                 CommandPurpose::Shell {
                     transaction_id: Some(transaction_id),
                     starting_workspace_version: Some(starting_workspace_version),
+                    workspace_root,
                 },
                 Some(_),
             ) if !state.validation_recorded => Some((
                 *transaction_id,
                 starting_workspace_version.clone(),
-                state.cwd.clone(),
+                workspace_root.clone(),
                 state
                     .terminal
                     .as_ref()
@@ -431,6 +458,154 @@ impl ManagedCommandSessions {
     }
 }
 
+impl Default for ManagedCommandSessions {
+    fn default() -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            change_transactions: None,
+            // Standalone unit tests and explicitly legacy callers preserve the
+            // historical raw-process behavior. Production composition passes
+            // its configured preference explicitly.
+            sandbox_preference: fabric::SandboxPreference::Forbid,
+        }
+    }
+}
+
+fn managed_command(
+    command_text: &str,
+    cwd: &str,
+    workspace: fabric::WorkspacePolicy,
+    clock: Arc<dyn fabric::Clock>,
+    preference: fabric::SandboxPreference,
+    network_enabled: bool,
+) -> Result<(Command, Option<tempfile::TempDir>), String> {
+    if preference == fabric::SandboxPreference::Forbid {
+        let mut command = Command::new("bash");
+        command.arg("-c").arg(command_text).current_dir(cwd);
+        return Ok((command, None));
+    }
+
+    let executor = crate::security::sandbox::executor::create_default_executor(preference, clock);
+    let backend = executor.select_backend().ok_or_else(|| {
+        "managed command requires a sandbox backend, but none is available".to_string()
+    })?;
+    let scratch = tempfile::Builder::new()
+        .prefix("aletheon-command-")
+        .tempdir()
+        .map_err(|error| format!("could not create command sandbox scratch: {error}"))?;
+    let mut policy = fabric::resolve_profile(
+        &fabric::ProfileName::Workspace,
+        &workspace,
+        &fabric::SandboxProfiles::default(),
+    )
+    .map_err(|error| format!("could not resolve command sandbox policy: {error}"))?;
+    policy.restrict_network = !network_enabled;
+    policy.read_write_roots.push(scratch.path().to_path_buf());
+    let config = fabric::SandboxConfig {
+        environment: crate::security::runner::sandbox_command_environment(
+            workspace.cwd().to_string_lossy().into_owned(),
+            Some(scratch.path()),
+        ),
+        workspace,
+        policy: Some(policy),
+    };
+    if !network_enabled && !backend.capabilities().network_isolation {
+        return Err(format!(
+            "managed command network is denied, but sandbox backend '{}' cannot enforce isolation",
+            backend.name()
+        ));
+    }
+    let wrapped = backend
+        .wrap_argv(
+            Path::new("/bin/bash"),
+            &["-c".into(), command_text.into()],
+            &config,
+        )
+        .map_err(|error| {
+            format!(
+                "sandbox backend '{}' cannot launch managed commands: {error}",
+                backend.name()
+            )
+        })?;
+    let mut command = Command::new(wrapped.program);
+    command
+        .args(wrapped.args)
+        .env_clear()
+        .envs(wrapped.environment)
+        .current_dir(cwd);
+    Ok((command, Some(scratch)))
+}
+
+#[cfg(unix)]
+async fn terminate_process_group(process_group: Option<u32>, child: &mut tokio::process::Child) {
+    if let Some(process_group) = process_group {
+        // SAFETY: the child was placed in its own process group immediately
+        // before spawn. A negative PID targets that exact group.
+        unsafe {
+            libc::kill(-(process_group as i32), libc::SIGTERM);
+        }
+        if matches!(
+            tokio::time::timeout(Duration::from_millis(250), child.wait()).await,
+            Ok(Ok(_))
+        ) {
+            return;
+        }
+        unsafe {
+            libc::kill(-(process_group as i32), libc::SIGKILL);
+        }
+    } else {
+        let _ = child.kill().await;
+    }
+    let _ = child.wait().await;
+}
+
+#[cfg(not(unix))]
+async fn terminate_process_group(_process_group: Option<u32>, child: &mut tokio::process::Child) {
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+
+fn resolve_command_workdir(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<(PathBuf, fabric::WorkspacePolicy), String> {
+    let workspace = ctx.effective_workspace_policy()?;
+    let requested = input
+        .get("workdir")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+    let candidate = requested
+        .map(Path::new)
+        .map(|path| {
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                workspace.cwd().join(path)
+            }
+        })
+        .unwrap_or_else(|| workspace.cwd().to_path_buf());
+    let canonical = std::fs::canonicalize(&candidate)
+        .map_err(|error| format!("invalid command workdir '{}': {error}", candidate.display()))?;
+    if !canonical.is_dir() {
+        return Err(format!(
+            "command workdir is not a directory: {}",
+            canonical.display()
+        ));
+    }
+    let within_workspace = std::iter::once(workspace.cwd())
+        .chain(workspace.writable_roots().iter().map(PathBuf::as_path))
+        .any(|root| canonical.starts_with(root));
+    if !within_workspace {
+        return Err(format!(
+            "command workdir exceeds workspace authority: {}",
+            canonical.display()
+        ));
+    }
+    let workspace = workspace.with_cwd(canonical.clone())?;
+    Ok((canonical, workspace))
+}
+
 async fn capture_stream(
     mut reader: impl AsyncRead + Unpin,
     session: Arc<Mutex<CommandSession>>,
@@ -498,6 +673,8 @@ impl Tool for ExecCommandTool {
             "type": "object",
             "properties": {
                 "command": {"type": "string","description":"Shell command. System package, service, and privilege changes are denied by the production host; report that boundary instead of retrying or requesting repo_inspect."},
+                "workdir": {"type":"string","description":"Optional absolute path or workspace-relative directory for this command. It must resolve inside the governed workspace."},
+                "network_enabled": {"type":"boolean","description":"Request network access for this command. The host requires a separate per-call approval; false by default."},
                 "transaction_id": {"type":"string","description":"Required only for commands the host classifies as mutating; host-minted by repo_inspect"},
                 "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": MAX_TIMEOUT_SECS},
                 "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": MAX_YIELD_MS}
@@ -530,7 +707,15 @@ impl Tool for ExecCommandTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_YIELD_MS)
             .min(MAX_YIELD_MS);
-        let cwd = ctx.working_dir.to_string_lossy().into_owned();
+        let (cwd, sandbox_workspace) = match resolve_command_workdir(&input, ctx) {
+            Ok(value) => value,
+            Err(error) => return tool_error(error),
+        };
+        let cwd = cwd.to_string_lossy().into_owned();
+        let network_enabled = input
+            .get("network_enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         let command_session_id = uuid::Uuid::new_v4().to_string();
         let effect = classify_command(command);
         let unrestricted = ctx
@@ -586,8 +771,12 @@ impl Tool for ExecCommandTool {
                 CommandPurpose::Shell {
                     transaction_id: transaction.as_ref().map(|value| value.0),
                     starting_workspace_version: transaction.as_ref().map(|value| value.1.clone()),
+                    workspace_root: ctx.working_dir.to_string_lossy().into_owned(),
                 },
                 Duration::from_secs(timeout),
+                sandbox_workspace,
+                ctx.clock.clone(),
+                network_enabled,
             )
             .await
         {
@@ -784,6 +973,12 @@ impl Tool for ValidationRunTool {
                     workspace_version: transaction.current.digest,
                 },
                 Duration::from_secs(timeout),
+                match ctx.effective_workspace_policy() {
+                    Ok(workspace) => workspace,
+                    Err(error) => return tool_error(error),
+                },
+                ctx.clock.clone(),
+                false,
             )
             .await
         {
@@ -993,6 +1188,43 @@ mod tests {
         assert!(
             terminal["cursor_end"].as_u64().unwrap() >= terminal["cursor_start"].as_u64().unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn command_workdir_is_resolved_inside_workspace() {
+        let temp = tempfile::tempdir().unwrap();
+        let nested = temp.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let result = ExecCommandTool::new(ManagedCommandSessions::default())
+            .execute(
+                json!({"command":"pwd", "workdir":"nested", "yield_time_ms":1000}),
+                &context_at("owner", temp.path().to_path_buf()),
+            )
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        let value: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(
+            value["cwd"],
+            nested.canonicalize().unwrap().display().to_string()
+        );
+        assert_eq!(
+            value["output"].as_str().unwrap().trim(),
+            nested.canonicalize().unwrap().display().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn command_workdir_cannot_escape_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let result = ExecCommandTool::new(ManagedCommandSessions::default())
+            .execute(
+                json!({"command":"pwd", "workdir":outside.path()}),
+                &context_at("owner", workspace.path().to_path_buf()),
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(result.content.contains("exceeds workspace authority"));
     }
 
     #[tokio::test]

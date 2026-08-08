@@ -104,6 +104,26 @@ impl WorkspacePolicy {
         &self.cwd
     }
 
+    /// Select a working directory without widening the workspace's writable
+    /// roots or dropping protected-path policy. The directory must already be
+    /// resolved and remain inside the original workspace authority.
+    pub fn with_cwd(mut self, cwd: PathBuf) -> Result<Self, String> {
+        if !cwd.is_absolute() {
+            return Err(format!("cwd is not absolute: {}", cwd.display()));
+        }
+        if !std::iter::once(&self.cwd)
+            .chain(self.writable_roots.iter())
+            .any(|root| cwd.starts_with(root))
+        {
+            return Err(format!(
+                "cwd exceeds existing workspace authority: {}",
+                cwd.display()
+            ));
+        }
+        self.cwd = cwd;
+        Ok(self)
+    }
+
     pub fn writable_roots(&self) -> &[PathBuf] {
         &self.writable_roots
     }

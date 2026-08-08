@@ -25,6 +25,14 @@ pub struct InferenceTerminalReceipt {
     pub tool_schema_digest: String,
     pub status: InferenceTerminalStatus,
     pub usage: InferenceUsage,
+    /// Selected model context capacity observed by the Host/provider adapter.
+    /// Optional for backward compatibility with persisted v1 receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_capacity_tokens: Option<u64>,
+    /// Prompt tokens actually submitted for this inference round. This is
+    /// active occupancy, not cumulative billed usage across the Session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_context_occupancy_tokens: Option<u64>,
     pub failure_kind: Option<String>,
     /// Diagnostic identity of the cache-relevant request prefix (see
     /// `executive::host::daemon::cache_shape::InferencePrefixShape::digest`).
@@ -87,6 +95,17 @@ impl InferenceTerminalReceipt {
                     | "provider_miss_or_eviction"
             ) {
                 return Err("unsupported local cache miss reason");
+            }
+        }
+        if matches!(self.context_capacity_tokens, Some(0)) {
+            return Err("context capacity must be positive when reported");
+        }
+        if let (Some(used), Some(capacity)) = (
+            self.active_context_occupancy_tokens,
+            self.context_capacity_tokens,
+        ) {
+            if used > capacity {
+                return Err("active context occupancy exceeds model capacity");
             }
         }
         Ok(())

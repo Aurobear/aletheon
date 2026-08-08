@@ -84,6 +84,7 @@ pub mod turn_pipeline;
 pub mod turn_policy;
 pub mod turn_recovery;
 pub mod turn_services;
+pub mod turn_tool_projection;
 pub mod verification;
 pub mod workspace_checkpoint;
 pub mod workspace_trust;

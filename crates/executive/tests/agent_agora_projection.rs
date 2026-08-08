@@ -58,6 +58,11 @@ fn input() -> AgentRuntimeInput {
     };
     AgentRuntimeInput {
         workspace: None,
+        delegation_authority: fabric::AgentDelegationAuthority::new(
+            None,
+            request.allowed_tools.clone(),
+            request.budget.clone(),
+        ),
         context: AgentContextProjection::from_fork(&request.context).unwrap(),
         memory_context: mnemosyne::AgentMemoryContext::verified(
             child,

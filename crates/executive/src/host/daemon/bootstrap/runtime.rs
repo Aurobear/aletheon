@@ -38,18 +38,19 @@ pub(super) struct ProfileLoadResult {
 
 /// Safe, always-available capabilities that are NOT gated by a profile's
 /// `allowed_tools` whitelist. These are read-only/local, non-exfiltrating
-/// bookkeeping and repo-inspection tools: read-only git evidence and task/todo
-/// management. Mutating git operations are deliberately not universal because
-/// they must not bypass version-bound change transactions. Any registered
-/// universal tool is merged into every profile so the model can both see and
-/// execute it regardless of active profile. Genuinely dangerous capabilities
-/// (file_write, bash_exec, network,
-/// kernel) remain profile-gated and per-action (L0–L3) + sandbox-gated.
+/// bookkeeping and repo-inspection tools: read-only git/toolchain evidence and
+/// task/todo management. Mutating git operations are deliberately not universal
+/// because they must not bypass version-bound change transactions. Any
+/// registered universal tool is merged into every profile so the model can both
+/// see and execute it regardless of active profile. Genuinely dangerous
+/// capabilities (file_write, bash_exec, network, kernel) remain profile-gated
+/// and per-action (L0–L3) + sandbox-gated.
 pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
     "git_status",
     "git_diff",
     "git_log",
     "git_show",
+    "toolchain_status",
     "task_create",
     "task_update",
     "task_list",
@@ -58,6 +59,13 @@ pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
     "skill_list",
     "skill_get",
 ];
+
+/// Profile selector for every non-hidden tool present in the runtime registry.
+/// Expansion uses the bootstrap candidate catalog: built-ins, configured MCP
+/// wrappers, recovered package tools, and the stable Agent-control definitions.
+/// A later package publication resolves its own profiles against that package's
+/// candidate catalog without weakening existing profile authority.
+const ALL_REGISTERED_TOOLS: &str = "*";
 
 pub(super) async fn load_agent_profiles(
     agents_dir: &Path,
@@ -112,7 +120,7 @@ async fn load_agent_profiles_from_loader(
     loader: AgentLoader,
     inference: Arc<dyn InferencePort>,
     default_llm: Arc<dyn LlmProvider>,
-    definitions: &[fabric::ToolDefinition],
+    _definitions: &[fabric::ToolDefinition],
     profile_definitions: &[fabric::ToolDefinition],
     config: &crate::composition::config::ExecutiveConfig,
     profiles_config: &crate::composition::config::AgentProfilesConfig,
@@ -138,16 +146,48 @@ async fn load_agent_profiles_from_loader(
     let mut profiles = HashMap::new();
     let mut quarantined = Vec::new();
     for role in loader.list() {
-        // Merge in universal tools (git + task) that are registered, so every
-        // profile can see and execute them regardless of its allowed_tools
-        // whitelist. Only tools present in the catalog are added, so this never
-        // introduces an unknown-tool quarantine.
-        let mut effective_tools = role.tools.clone();
+        // Merge in universal tools (git + toolchain + task) that are
+        // registered, so every profile can see and execute them regardless of
+        // its allowed_tools whitelist. Only tools present in the catalog are
+        // added, so this never introduces an unknown-tool quarantine.
+        let mut effective_tools = match expand_tool_selectors(&role.tools, &catalog) {
+            Ok(tools) => tools,
+            Err(reason) => {
+                quarantined.push(QuarantinedProfile {
+                    name: role.name.clone(),
+                    reason: format!("Agent profile '{}': {reason}", role.name),
+                });
+                continue;
+            }
+        };
         for name in UNIVERSAL_TOOLS {
             if catalog.contains_key(*name) && !effective_tools.iter().any(|t| t == name) {
                 effective_tools.push((*name).to_string());
             }
         }
+        effective_tools.sort();
+        effective_tools.dedup();
+
+        let delegated_source = role.delegate_tools.as_ref().unwrap_or(&role.tools);
+        let mut delegated_tools = match expand_tool_selectors(delegated_source, &catalog) {
+            Ok(tools) => tools,
+            Err(reason) => {
+                quarantined.push(QuarantinedProfile {
+                    name: role.name.clone(),
+                    reason: format!("Agent profile '{}' delegation: {reason}", role.name),
+                });
+                continue;
+            }
+        };
+        if role.delegate_tools.is_none() {
+            for name in UNIVERSAL_TOOLS {
+                if catalog.contains_key(*name) && !delegated_tools.iter().any(|tool| tool == name) {
+                    delegated_tools.push((*name).to_string());
+                }
+            }
+        }
+        delegated_tools.sort();
+        delegated_tools.dedup();
         let mut authorized_tools = Vec::with_capacity(effective_tools.len());
         let mut tools = Vec::with_capacity(effective_tools.len());
         let mut failed = false;
@@ -155,12 +195,11 @@ async fn load_agent_profiles_from_loader(
             match catalog.get(name).cloned() {
                 Some(definition) => {
                     authorized_tools.push(definition.clone());
-                    if definitions
-                        .iter()
-                        .any(|visible| visible.name == definition.name)
-                    {
-                        tools.push(definition);
-                    }
+                    // A non-hidden tool explicitly selected by a profile must
+                    // be present in the model schema. Discovery-only exposure
+                    // without an activation path made listed deferred tools
+                    // impossible to invoke in practice.
+                    tools.push(definition);
                 }
                 None => {
                     tracing::warn!(
@@ -219,15 +258,20 @@ async fn load_agent_profiles_from_loader(
             continue;
         }
 
-        // Derive risk tier from tool permission levels — delegated to the
-        // registry construction; here we use a simple heuristic.
-        let risk_tier = derive_risk_tier(&effective_tools, &catalog);
+        // Delegation is authority too: a pure orchestrator cannot be labelled
+        // safer than the child capabilities it is explicitly allowed to mint.
+        let mut profile_risk_tools = effective_tools.clone();
+        profile_risk_tools.extend(delegated_tools.iter().cloned());
+        profile_risk_tools.sort();
+        profile_risk_tools.dedup();
+        let risk_tier = derive_risk_tier(&profile_risk_tools, &catalog);
 
         let profile = fabric::AgentProfile {
             id: fabric::AgentProfileId(role.name.clone()),
             system_prompt: role.body.clone(),
             model: llm.name().to_string(),
             allowed_tools: effective_tools.clone(),
+            delegated_tools,
             max_iterations,
             max_input_tokens,
             max_output_tokens,
@@ -261,6 +305,21 @@ async fn load_agent_profiles_from_loader(
     })
 }
 
+fn expand_tool_selectors(
+    selectors: &[String],
+    catalog: &HashMap<String, fabric::ToolDefinition>,
+) -> Result<Vec<String>, String> {
+    if selectors.iter().any(|tool| tool == ALL_REGISTERED_TOOLS) {
+        if selectors.len() != 1 {
+            return Err("'*' must be the only tool selector".into());
+        }
+        let mut tools = catalog.keys().cloned().collect::<Vec<_>>();
+        tools.sort();
+        return Ok(tools);
+    }
+    Ok(selectors.to_vec())
+}
+
 /// Derive the risk tier from the tool names and the tool catalog.
 /// Uses permission levels from registered tools to compute the maximum risk.
 fn derive_risk_tier(
@@ -291,10 +350,16 @@ fn tool_permission_level(name: &str) -> i32 {
         // L3 — Destructive
         "module_load" | "kernel_build" => 3,
         // L2 — System-level changes
-        "ebpf_compile" | "module_build" => 2,
+        "ebpf_compile"
+        | "module_build"
+        | "robot_execute_skill"
+        | "robot_cancel"
+        | "robot_safe_stop" => 2,
         // L1 — Sandboxed write
         "file_write" | "bash_exec" | "exec_command" | "write_stdin" | "validation_run"
-        | "apply_patch" | "web_fetch" => 1,
+        | "apply_patch" | "web_fetch" | "git_restore" | "git_stash" | "git_reset" | "git_add"
+        | "git_commit" | "git_branch" | "git_push" | "agent_spawn" | "agent_wait"
+        | "agent_send" | "agent_cancel" | "agent_list" => 1,
         // L0 — Read-only (default)
         _ => 0,
     }

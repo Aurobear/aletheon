@@ -294,14 +294,13 @@ fn turn_pipeline_prepares_and_assembles_context_once() {
     assert!(pipeline.contains("\"tool_count\": tool_defs.len()"));
     assert!(!pipeline.contains("serde_json::json!({\"tool_count\": 0})"));
     assert_eq!(
-        pipeline
-            .matches("self.active_profile.snapshot().await?")
-            .count(),
+        pipeline.matches("self.active_profile.snapshot()").count(),
         1,
         "one immutable profile snapshot must govern the entire turn"
     );
     assert!(pipeline.contains(".canonical_sessions"));
-    assert!(pipeline.contains(".resume(&fabric::SessionId"));
+    assert!(pipeline.contains("let canonical_session = fabric::SessionId"));
+    assert!(pipeline.contains(".resume(&canonical_session)"));
     for removed in [
         "inject_keyword_skills",
         "inject_composite_recall",

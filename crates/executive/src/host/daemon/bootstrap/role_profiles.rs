@@ -110,6 +110,7 @@ mod tests {
             system_prompt: format!("{role:?} profile"),
             model: "test-model".into(),
             allowed_tools,
+            delegated_tools: Vec::new(),
             max_iterations: 20,
             max_input_tokens: 8_000,
             max_output_tokens: 1_000,

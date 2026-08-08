@@ -42,7 +42,8 @@ pub struct ResolvedAgentProfile {
     pub llm: Arc<dyn LlmProvider>,
     /// Complete host-authorized catalog, including deferred definitions.
     pub authorized_tools: Vec<ToolDefinition>,
-    /// Initial model-visible projection; deferred definitions are absent.
+    /// Model-visible projection. Every non-hidden tool selected by the profile
+    /// is present so an authorization never degrades into an unusable grant.
     pub tools: Vec<ToolDefinition>,
 }
 
@@ -365,11 +366,7 @@ impl NativeCognitRuntime {
                     caller_root_agent_id: input.handle.root_agent_id,
                     parent_agent_id: input.handle.agent_id,
                     parent_process_id: input.handle.process_id,
-                    delegator_authority: Some(fabric::AgentDelegationAuthority::new(
-                        input.workspace.clone(),
-                        input.request.allowed_tools.clone(),
-                        input.request.budget.clone(),
-                    )),
+                    delegator_authority: Some(input.delegation_authority.clone()),
                 }),
                 process_id: input.handle.process_id,
                 operation_id: input.handle.operation_id,

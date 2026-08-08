@@ -160,6 +160,7 @@ fn profile() -> AgentProfile {
         system_prompt: "PROFILE SYSTEM".into(),
         model: "scripted/model".into(),
         allowed_tools: vec!["echo".into()],
+        delegated_tools: vec!["echo".into()],
         max_iterations: 4,
         max_input_tokens: 8_000,
         max_output_tokens: 1_000,
@@ -204,6 +205,11 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
     };
     AgentRuntimeInput {
         workspace: None,
+        delegation_authority: fabric::AgentDelegationAuthority::new(
+            None,
+            request.allowed_tools.clone(),
+            request.budget.clone(),
+        ),
         context: AgentContextProjection::from_fork(&request.context).unwrap(),
         memory_context: mnemosyne::AgentMemoryContext::verified(
             process,

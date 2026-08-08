@@ -17,6 +17,7 @@ pub(super) struct ToolCompositionInput {
     /// `None` keeps tasks in-memory only.
     pub(super) tasks_db: Option<std::path::PathBuf>,
     pub(super) agora: Arc<dyn fabric::AgoraService>,
+    pub(super) sandbox_preference: fabric::SandboxPreference,
 }
 
 pub(super) struct ToolComposition {
@@ -25,10 +26,11 @@ pub(super) struct ToolComposition {
 }
 
 pub(super) fn compose(input: ToolCompositionInput) -> ToolComposition {
-    let mut registry = ToolRegistry::with_network_policy_search_and_tasks(
+    let mut registry = ToolRegistry::with_network_policy_search_tasks_and_sandbox(
         input.network_policy,
         input.search,
         input.tasks_db,
+        input.sandbox_preference,
     );
     registry
         .bind_agora_task_tools(input.agora, fabric::ProcessId::new())
@@ -76,6 +78,7 @@ mod tests {
             agora: Arc::new(agora::AgoraRegistry::new(Arc::new(
                 kernel::chronos::TestClock::default(),
             ))),
+            sandbox_preference: fabric::SandboxPreference::Forbid,
         });
 
         for name in ["core_memory_append", "core_memory_replace", "memory_search"] {

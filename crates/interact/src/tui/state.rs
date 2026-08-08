@@ -140,8 +140,14 @@ pub struct AppState {
     /// Client-local selection protected from older projection pages until a
     /// newer durable UserMessage confirms the same typed target.
     pending_execution_target: Option<PendingExecutionTargetSelection>,
-    /// Total tokens used in session.
-    pub total_tokens: u32,
+    /// Provider-reported cumulative tokens in the active Task projection,
+    /// extended by usage events observed on this connection.
+    pub total_tokens: u64,
+    /// Provider-reported prompt tokens accumulated across the active turn's
+    /// inference rounds. This is billed work, not context occupancy.
+    pub turn_input_tokens: u64,
+    /// Provider-reported completion tokens accumulated across the active turn.
+    pub turn_output_tokens: u64,
     /// Tools used in current turn.
     pub turn_tool_count: usize,
     /// Authoritative per-turn activity counters; never inferred from prose.
@@ -200,6 +206,8 @@ impl Default for AppState {
             execution_target: ExecutionTargetSelection::default(),
             pending_execution_target: None,
             total_tokens: 0,
+            turn_input_tokens: 0,
+            turn_output_tokens: 0,
             turn_tool_count: 0,
             turn_activity: TurnActivity::default(),
             streaming: false,
@@ -339,7 +347,10 @@ impl AppState {
     pub fn format_status_line(&self) -> String {
         let mode_str = format!("{} {}", self.mode.icon(), self.mode.display_name());
         let ctx_str = self.context_status();
-        let token_str = format!("tokens: {}k", self.total_tokens / 1000);
+        let token_str = format!(
+            "turn tokens: {} in / {} out",
+            self.turn_input_tokens, self.turn_output_tokens
+        );
         let aware_str = format!(
             "{} {}",
             self.awareness.level.icon(),

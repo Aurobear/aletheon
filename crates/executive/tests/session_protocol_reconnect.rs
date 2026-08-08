@@ -342,6 +342,8 @@ async fn a_session_001_interruption_at_each_item_boundary_replays_the_same_task_
                 tool_schema_digest: "tool-digest".into(),
                 status: fabric::types::inference_receipt::InferenceTerminalStatus::Succeeded,
                 usage: fabric::InferenceUsage::reported(100, 20, Some(75), Some(25), Some(0)),
+                context_capacity_tokens: Some(1_000_000),
+                active_context_occupancy_tokens: Some(100),
                 failure_kind: None,
                 prefix_shape_digest: None,
                 local_cache_miss_reason: None,
@@ -398,7 +400,8 @@ async fn a_session_001_interruption_at_each_item_boundary_replays_the_same_task_
                 Some("configured-provider")
             );
             assert_eq!(facts.effective_model.as_deref(), Some("effective-model"));
-            assert_eq!(facts.active_context_occupancy_tokens, None);
+            assert_eq!(facts.context_capacity_tokens, Some(1_000_000));
+            assert_eq!(facts.active_context_occupancy_tokens, Some(100));
             assert_eq!(facts.cumulative_usage.total_input_tokens, Some(100));
             assert_eq!(facts.cumulative_usage.cache_read_tokens, Some(25));
             assert_eq!(facts.inference_rounds, 1);

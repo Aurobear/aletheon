@@ -978,6 +978,7 @@ mod profile_switch_tests {
             system_prompt: "test".into(),
             model: "test".into(),
             allowed_tools: tools.iter().map(|tool| (*tool).to_owned()).collect(),
+            delegated_tools: tools.iter().map(|tool| (*tool).to_owned()).collect(),
             max_iterations: 1,
             max_input_tokens: 1,
             max_output_tokens: 1,

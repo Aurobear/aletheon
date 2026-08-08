@@ -8,6 +8,7 @@ use crate::application::governed_capability::CapabilityExecutionContext;
 use crate::application::post_turn_projection::{PostTurnDispatch, PostTurnOutcome};
 use crate::application::turn_coordinator::TurnExecution;
 use crate::application::turn_lifecycle::{TurnPipelineEvent, TurnPipelineLifecycle};
+use crate::application::turn_tool_projection::{project_initial_tools, AuthorizedToolCatalog};
 use crate::core::session_gateway::SessionGateway;
 use cognit::CanonicalTurnEventSink;
 use fabric::events::ui_event::ClientEvent;
@@ -171,8 +172,9 @@ impl TurnPipeline {
         &self,
         workspace: fabric::WorkspacePolicy,
         profile: &crate::application::turn_runtime_ports::ResolvedTurnProfile,
+        config: &crate::composition::config::ExecutiveConfig,
     ) -> anyhow::Result<fabric::AgentDelegationAuthority> {
-        let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
+        let mut allowed_tools = profile.delegated_tools.iter().cloned().collect::<Vec<_>>();
         allowed_tools.sort();
         Ok(fabric::AgentDelegationAuthority::new(
             Some(workspace),
@@ -183,7 +185,7 @@ impl TurnPipeline {
                 max_tool_calls: profile.max_tool_calls,
                 max_elapsed_ms: profile.max_elapsed_ms,
                 max_cost_usd: None,
-                max_depth: 1,
+                max_depth: config.max_agent_depth,
             },
         ))
     }
@@ -368,6 +370,7 @@ impl TurnPipeline {
         root: Option<(fabric::cognitive_workflow::CognitiveTaskNodeId, u64)>,
         cancellation: CancellationToken,
         profile: &crate::application::turn_runtime_ports::ResolvedTurnProfile,
+        config: &crate::composition::config::ExecutiveConfig,
     ) -> anyhow::Result<
         Option<(
             crate::application::cognitive_role_workflow::CognitiveRoleWorkflow,
@@ -375,7 +378,6 @@ impl TurnPipeline {
         )>,
     > {
         use cognit::TaskDecompositionPolicy;
-        let config = self.runtime_ports.config.config().await;
         let process = self.kernel.inspect_process(main_pid).await?;
         let budget = fabric::AgentBudget {
             max_input_tokens: profile.max_input_tokens,
@@ -383,9 +385,9 @@ impl TurnPipeline {
             max_tool_calls: profile.max_tool_calls,
             max_elapsed_ms: profile.max_elapsed_ms,
             max_cost_usd: None,
-            max_depth: 1,
+            max_depth: config.max_agent_depth,
         };
-        let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
+        let mut allowed_tools = profile.delegated_tools.iter().cloned().collect::<Vec<_>>();
         allowed_tools.sort();
         let authority = fabric::AgentDelegationAuthority::new(
             Some(request.context.workspace.clone()),
@@ -563,39 +565,51 @@ impl TurnPipeline {
         principal: PrincipalId,
         notification_sender: Option<mpsc::Sender<String>>,
     ) -> anyhow::Result<TurnPipelineOutcome> {
+        let pipeline_started = std::time::Instant::now();
         let operation_id = scope.id;
         let scope_token = scope.token();
         // Resolve the authoritative runtime session before policy review. The
         // read is non-mutating; denied turns still never call `begin_user`.
         let requested_session_id = turn_request.context.thread_id.0.clone();
-        let (session_id, current_turn_count) = self
-            .runtime_ports
-            .sessions
-            .current(&requested_session_id)
-            .await?;
         // One owned profile snapshot governs budgeting, tool disclosure,
         // execution authority, cache identity, and post-turn compaction. A
         // concurrent profile switch becomes visible on the next turn only.
-        let turn_profile = self.active_profile.snapshot().await?;
+        let (current_session, config, turn_profile) = tokio::join!(
+            self.runtime_ports.sessions.current(&requested_session_id),
+            self.runtime_ports.config.config(),
+            self.active_profile.snapshot()
+        );
+        let (session_id, current_turn_count) = current_session?;
+        let turn_profile = turn_profile?;
 
         // TurnCoordinator durably appends the user message before invoking this
         // pipeline, so it is now safe to bind that canonical response to the
         // one pending clarification in this scoped Agora space.
         self.resume_single_pending_clarification(&turn_request, &message)
             .await?;
-        let cognitive_root = self
-            .ensure_root_cognitive_task(&turn_request, &message, main_pid)
-            .await?;
-        let role_graph = self
-            .prepare_role_graph(
+        let role_graph_needed = role_graph_requested(&turn_request, &config);
+        // Enforced evaluation settlement also addresses the canonical turn
+        // root, even when no multi-Agent role graph is requested.
+        let cognitive_root = if role_graph_needed || turn_request.evaluation_contract.is_some() {
+            self.ensure_root_cognitive_task(&turn_request, &message, main_pid)
+                .await?
+        } else {
+            None
+        };
+        let role_graph = if role_graph_needed {
+            self.prepare_role_graph(
                 &turn_request,
                 &message,
                 main_pid,
                 cognitive_root,
                 scope_token.clone(),
                 &turn_profile,
+                &config,
             )
-            .await?;
+            .await?
+        } else {
+            None
+        };
 
         let checkpoint_id = self
             .workspace_checkpoint
@@ -797,13 +811,16 @@ impl TurnPipeline {
 
         let mut context_request = turn_request.clone();
         context_request.input = effective_message;
-        let prepared_context = self.context_assembler.prepare(&context_request).await?;
+        let (prepared_context, llm) = tokio::join!(
+            self.context_assembler.prepare(&context_request),
+            self.runtime_ports.models.select(&message)
+        );
+        let prepared_context = prepared_context?;
         let context_costs = prepared_context.budget_costs(&context_request.input)?;
 
         // Select exactly once before budget planning. The same provider instance
         // supplies authoritative capability facts, optional compaction, context
         // binding, and inference for this turn.
-        let llm = self.runtime_ports.models.select(&message).await;
         let model_runtime_facts = llm.runtime_facts();
         let begin = self
             .runtime_ports
@@ -831,48 +848,50 @@ impl TurnPipeline {
             )
             .await?;
 
-        if let Err(error) = self
-            .memory_gateway
-            .observe(
-                &lifecycle_principal,
-                "aletheon_native",
-                fabric::protocol::memory::MemoryObservationRequestV1 {
-                    observation_id: format!("native-{native_turn_id}-user"),
-                    client_session_id: lifecycle_session.clone(),
-                    client_turn_id: Some(native_turn_id.clone()),
-                    working_dir: native_working_dir.clone(),
-                    kind: fabric::protocol::memory::MemoryObservationKindV1::UserMessage,
-                    content: message.clone(),
-                    occurred_at: None,
-                    source_refs: vec![format!("turn:{native_turn_id}:user")],
-                    sensitivity_hint: fabric::protocol::memory::MemorySensitivityV1::Internal,
-                    explicit_user_action: false,
-                },
-            )
-            .await
-        {
+        let memory_observation = self.memory_gateway.observe(
+            &lifecycle_principal,
+            "aletheon_native",
+            fabric::protocol::memory::MemoryObservationRequestV1 {
+                observation_id: format!("native-{native_turn_id}-user"),
+                client_session_id: lifecycle_session.clone(),
+                client_turn_id: Some(native_turn_id.clone()),
+                working_dir: native_working_dir.clone(),
+                kind: fabric::protocol::memory::MemoryObservationKindV1::UserMessage,
+                content: message.clone(),
+                occurred_at: None,
+                source_refs: vec![format!("turn:{native_turn_id}:user")],
+                sensitivity_hint: fabric::protocol::memory::MemorySensitivityV1::Internal,
+                explicit_user_action: false,
+            },
+        );
+        let conscious_observation = async {
+            if let Some(conscious) = &self.conscious_core {
+                conscious
+                    .observe_turn(
+                        AgoraSpaceId(sess_id.clone()),
+                        main_pid,
+                        main_pid,
+                        operation_id,
+                        &message,
+                    )
+                    .await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        };
+        // Bind the canonical SessionId so the resumed-history future can borrow
+        // it across the join; an inline temporary would be dropped too early.
+        let canonical_session = fabric::SessionId(turn_request.context.thread_id.0.clone());
+        let history = self.canonical_sessions.resume(&canonical_session);
+        let (memory_observation, conscious_observation, history) =
+            tokio::join!(memory_observation, conscious_observation, history);
+        if let Err(error) = memory_observation {
             warn!(%error, "native user memory observation degraded");
         }
-
-        if let Some(conscious) = &self.conscious_core {
-            conscious
-                .observe_turn(
-                    AgoraSpaceId(sess_id.clone()),
-                    main_pid,
-                    main_pid,
-                    operation_id,
-                    &message,
-                )
-                .await?;
-        }
+        conscious_observation?;
 
         // Canonical Session/Turn/Item history is the only model replay source.
         let existing_messages = {
-            let mut full_history = self
-                .canonical_sessions
-                .resume(&fabric::SessionId(turn_request.context.thread_id.0.clone()))
-                .await?
-                .messages;
+            let mut full_history = history?.messages;
             if full_history.last().is_some_and(|last| {
                 last.role == Role::User
                     && last.content.iter().any(
@@ -932,31 +951,25 @@ impl TurnPipeline {
         let agora_for_events = agora.clone();
         let clock_for_agora = self.clock.clone();
 
-        let action_loop = match &self.conscious_core {
-            Some(resolver) => Some(
-                resolver
-                    .resolve(AgoraSpaceId(sess_id.clone()), main_pid, main_pid)
-                    .await?,
-            ),
-            None => None,
-        };
-        let batch_planner = match &self.conscious_core {
-            Some(conscious) => Some(
-                conscious
-                    .batch_planner(AgoraSpaceId(sess_id.clone()))
-                    .await?,
-            ),
-            None => None,
+        let (action_loop, batch_planner) = match &self.conscious_core {
+            Some(conscious) => {
+                let (action_loop, batch_planner) = tokio::try_join!(
+                    conscious.resolve(AgoraSpaceId(sess_id.clone()), main_pid, main_pid),
+                    conscious.batch_planner(AgoraSpaceId(sess_id.clone()))
+                )?;
+                (Some(action_loop), Some(batch_planner))
+            }
+            None => (None, None),
         };
         // Create the canonical stream before capability composition so G2
         // progress and cognitive events share the same per-turn spine.
         let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
-        let config = self.runtime_ports.config.config().await;
         let main_delegator_authority = if main_agent_id.is_some() {
             Some(
                 self.main_delegation_authority(
                     turn_request.context.workspace.clone(),
                     &turn_profile,
+                    &config,
                 )?,
             )
         } else {
@@ -1002,7 +1015,20 @@ impl TurnPipeline {
                     turn_event_sender: Some(turn_sender.clone()),
                 }, turn_profile.clone())
                 .await?;
-        let tool_defs = prepared.definitions;
+        let authorized_tool_catalog =
+            Arc::new(AuthorizedToolCatalog::new(&prepared.definitions));
+        let projected_tools = project_initial_tools(
+            &prepared.definitions,
+            turn_request.requested_task_kind,
+            &turn_request.requirements,
+        );
+        info!(
+            authorized_tool_count = projected_tools.authorized_count,
+            projected_tool_count = projected_tools.definitions.len(),
+            omitted_tool_count = projected_tools.omitted_count(),
+            "projected initial model-visible tool catalog"
+        );
+        let tool_defs = projected_tools.definitions;
         let capability = prepared.invoker;
         let assembled_context = self.context_assembler.assemble_prepared(
             &context_request,
@@ -1113,8 +1139,10 @@ impl TurnPipeline {
         let diff_principal = lifecycle_principal.clone();
         let diff_thread = lifecycle_thread.clone();
         let diff_connection = turn_request.context.connection_id.clone();
+        let activation_catalog = authorized_tool_catalog.clone();
         let execute_tool = move |tool_id: &str, name: &str, input: &serde_json::Value| {
             let capability = capability.clone();
+            let activation_catalog = activation_catalog.clone();
             let tracker = turn_diff_tracker.clone();
             let session_input = diff_session_input.clone();
             let principal = diff_principal.clone();
@@ -1156,11 +1184,17 @@ impl TurnPipeline {
                         }
                     }
                 }
+                let activated_tool_definitions = if n == "tool_search" && !result.is_error {
+                    activation_catalog.resolve_search_output(&result.output)
+                } else {
+                    Vec::new()
+                };
                 cognit::harness::event_sink::ToolResultEvent {
                     content: result.output,
                     is_error: result.is_error,
                     execution_time_ms: result.usage.wall_time_ms,
                     patch_delta: result.patch_delta,
+                    activated_tool_definitions,
                 }
             }
         };
@@ -1176,6 +1210,7 @@ impl TurnPipeline {
         let evaluation_model_display_name = model_runtime_facts.display_name.clone();
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ToolLoopStarted)?;
+        let pre_cognitive_ms = pipeline_started.elapsed().as_millis() as u64;
 
         // The scope, not an untracked JoinHandle, owns the ReAct task. The
         // result channel carries the domain result while scope drain remains
@@ -1616,6 +1651,7 @@ impl TurnPipeline {
         let text = result.output.clone();
         let metrics = result.metrics.clone();
         info!(len = text.len(), "ReAct loop completed");
+        let post_turn_started = std::time::Instant::now();
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ExecutionFinished)?;
 
@@ -1775,6 +1811,16 @@ impl TurnPipeline {
         // having returned.
         let projection_succeeded = result.stop == fabric::TurnStop::Completed
             && metrics.completed_normally;
+        info!(
+            pre_cognitive_ms,
+            cognitive_ms = metrics.elapsed_ms,
+            post_turn_ms = post_turn_started.elapsed().as_millis() as u64,
+            total_elapsed_ms = pipeline_started.elapsed().as_millis() as u64,
+            inference_rounds = metrics.iterations,
+            provider_retries = metrics.provider_retries,
+            tool_calls = metrics.tool_calls_made,
+            "Turn latency breakdown"
+        );
         Ok(TurnPipelineOutcome::Completed(Box::new(TurnExecution {
             result,
             items: canonical_items,
@@ -1842,6 +1888,19 @@ impl TurnPipeline {
         }
         turn_result
     }
+}
+
+fn role_graph_requested(
+    request: &TurnRequest,
+    config: &crate::composition::config::ExecutiveConfig,
+) -> bool {
+    request
+        .requirements
+        .iter()
+        .any(|requirement| matches!(requirement, fabric::TurnRequirement::RunRoleGraph { .. }))
+        || (request.requested_task_kind == Some(fabric::TaskKind::Coding)
+            && config.multi_agent.enabled
+            && config.multi_agent.automatic_for_coding)
 }
 
 fn classify_runtime_turn_failure(

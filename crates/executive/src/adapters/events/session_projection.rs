@@ -836,15 +836,19 @@ fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
         }),
         context_capacity_tokens: context_budget
             .as_ref()
-            .map(|budget| budget.model_context_tokens.get()),
-        active_context_occupancy_tokens: context_budget.as_ref().map(|budget| {
-            budget
-                .current_history_tokens
-                .get()
-                .saturating_add(budget.pending_input_tokens.get())
-                .saturating_add(budget.system_and_skill_tokens.get())
-                .saturating_add(budget.tool_schema_tokens.get())
-        }),
+            .map(|budget| budget.model_context_tokens.get())
+            .or_else(|| latest.and_then(|receipt| receipt.context_capacity_tokens)),
+        active_context_occupancy_tokens: context_budget
+            .as_ref()
+            .map(|budget| {
+                budget
+                    .current_history_tokens
+                    .get()
+                    .saturating_add(budget.pending_input_tokens.get())
+                    .saturating_add(budget.system_and_skill_tokens.get())
+                    .saturating_add(budget.tool_schema_tokens.get())
+            })
+            .or_else(|| latest.and_then(|receipt| receipt.active_context_occupancy_tokens)),
         context_budget: context_budget.map(Box::new),
         cumulative_usage: fabric::InferenceUsage {
             total_input_tokens,

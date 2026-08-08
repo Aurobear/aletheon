@@ -226,9 +226,101 @@ mod goal_runtime_tests {
         let profiles = result.profiles;
         let profile = profiles.get("reviewer").unwrap();
         assert_eq!(profile.allowed_tools, vec!["file_read", "grep"]);
+        assert_eq!(profile.delegated_tools, vec!["file_read", "grep"]);
         assert_eq!(profile.max_iterations, 3);
         assert_eq!(profile.max_tool_calls, 128);
         assert!(registry.resolve(&profile.id).is_ok());
+    }
+
+    #[tokio::test]
+    async fn wildcard_profile_expands_runtime_catalog_and_exposes_deferred_tools() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("general.md"),
+            "---\nname: general\ndescription: broad\ntools: [\"*\"]\ndelegate_tools: [\"*\"]\n---\nUse governed tools.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
+        let visible = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        }];
+        let mut catalog = visible.clone();
+        catalog.push(fabric::ToolDefinition {
+            name: "connector_deferred".into(),
+            description: "deferred connector".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        });
+
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &visible,
+            &catalog,
+            &crate::composition::config::ExecutiveConfig::default(),
+            &crate::composition::config::AgentProfilesConfig::default(),
+        )
+        .await
+        .unwrap();
+        let resolved = result.registry.resolve_by_name("general").unwrap();
+        assert_eq!(
+            resolved.profile.allowed_tools,
+            vec!["connector_deferred", "file_read"]
+        );
+        assert_eq!(
+            resolved.profile.delegated_tools,
+            vec!["connector_deferred", "file_read"]
+        );
+        assert!(resolved
+            .tools
+            .iter()
+            .any(|tool| tool.name == "connector_deferred"));
+    }
+
+    #[tokio::test]
+    async fn orchestrator_can_delegate_catalog_without_direct_tool_authority() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("orchestrator.md"),
+            "---\nname: orchestrator\ndescription: bounded parent\ntools: [agent_spawn]\ndelegate_tools: [\"*\"]\n---\nDelegate only.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
+        let definitions = ["agent_spawn", "file_write"]
+            .into_iter()
+            .map(|name| fabric::ToolDefinition {
+                name: name.into(),
+                description: name.into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            })
+            .collect::<Vec<_>>();
+
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &definitions,
+            &crate::composition::config::ExecutiveConfig::default(),
+            &crate::composition::config::AgentProfilesConfig::default(),
+        )
+        .await
+        .unwrap();
+        let profile = result.profiles.get("orchestrator").unwrap();
+        assert_eq!(profile.allowed_tools, vec!["agent_spawn"]);
+        assert_eq!(profile.delegated_tools, vec!["agent_spawn", "file_write"]);
     }
 
     #[tokio::test]
@@ -247,14 +339,20 @@ mod goal_runtime_tests {
                 .unwrap(),
         );
         // Catalog includes universal tools the profile did not declare.
-        let definitions = ["file_read", "git_status", "git_reset", "task_create"]
-            .into_iter()
-            .map(|name| fabric::ToolDefinition {
-                name: name.into(),
-                description: name.into(),
-                input_schema: serde_json::json!({"type":"object"}),
-            })
-            .collect::<Vec<_>>();
+        let definitions = [
+            "file_read",
+            "git_status",
+            "git_reset",
+            "task_create",
+            "toolchain_status",
+        ]
+        .into_iter()
+        .map(|name| fabric::ToolDefinition {
+            name: name.into(),
+            description: name.into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        })
+        .collect::<Vec<_>>();
         let result = super::load_agent_profiles(
             directory.path(),
             inference,
@@ -279,6 +377,12 @@ mod goal_runtime_tests {
         assert!(
             profile.allowed_tools.contains(&"task_create".to_string()),
             "task_create must be universally available"
+        );
+        assert!(
+            profile
+                .allowed_tools
+                .contains(&"toolchain_status".to_string()),
+            "toolchain_status must be universally available"
         );
     }
 

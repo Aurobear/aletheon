@@ -166,8 +166,14 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
 /// identity; the V0 compatibility stream receives a reducer-local identity
 /// that is never projected as durable truth.
 pub fn begin_live_turn(state: &mut AppState, turn_id: Option<fabric::TurnId>) {
-    let next = turn_id.unwrap_or_default();
     let current = state.active_turn_id.or(state.live_turn_id);
+    let next = turn_id.unwrap_or_else(|| {
+        if state.turn_active {
+            current.unwrap_or_default()
+        } else {
+            fabric::TurnId::new()
+        }
+    });
     if current != Some(next) {
         clear_ephemeral_overlays(state);
     }
@@ -254,6 +260,7 @@ fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> 
     }
     state.tasks = snapshot.tasks;
     reconcile_live_activities(state, snapshot.activities);
+    project_runtime_accounting(state);
     state.last_error = None;
     vec![
         UiEffect::Render,
@@ -510,6 +517,47 @@ fn reconcile_live_activities(state: &mut AppState, durable: Vec<ActivitySnapshot
         .filter(|activity| activity.activity_id.starts_with("live:"))
         .map(|activity| activity.activity_id.clone())
         .collect();
+}
+
+fn project_runtime_accounting(state: &mut AppState) {
+    let facts = active_task(state).and_then(|task| task.runtime_facts.clone());
+    let Some(facts) = facts else {
+        if !state.turn_active {
+            state.context = super::state::ContextDisplay::default();
+            state.total_tokens = 0;
+            state.turn_input_tokens = 0;
+            state.turn_output_tokens = 0;
+        }
+        return;
+    };
+    let projected_total = facts
+        .cumulative_usage
+        .total_input_tokens
+        .unwrap_or(0)
+        .saturating_add(facts.cumulative_usage.output_tokens.unwrap_or(0));
+    if state.turn_active {
+        // Snapshot polling can trail the live turn stream. Never let a stale
+        // read projection roll back usage/context that the provider event has
+        // already reported for the active turn.
+        state.total_tokens = state.total_tokens.max(projected_total);
+        if state.context.max.is_none() {
+            state.context.max = facts
+                .context_capacity_tokens
+                .and_then(|value| usize::try_from(value).ok());
+        }
+    } else {
+        state.context.used = facts
+            .active_context_occupancy_tokens
+            .and_then(|value| usize::try_from(value).ok());
+        state.context.max = facts
+            .context_capacity_tokens
+            .and_then(|value| usize::try_from(value).ok());
+        state.total_tokens = projected_total;
+        // A read snapshot contains Task-cumulative usage, not enough
+        // information to reconstruct one active turn.
+        state.turn_input_tokens = 0;
+        state.turn_output_tokens = 0;
+    }
 }
 
 fn reduce_event_page(state: &mut AppState, page: SessionEventPage) -> Vec<UiEffect> {
@@ -841,5 +889,66 @@ pub fn snapshot_view(state: &AppState) -> ReducerSnapshot<'_> {
             .map(|value| format!("{}:{:?}", value.handle.agent_id.0, value.status))
             .collect(),
         error: state.last_error.as_deref(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_projection_keeps_task_usage_separate_from_active_turn_usage() {
+        let mut state = AppState::default();
+        state.turn_input_tokens = 99;
+        state.turn_output_tokens = 9;
+        state.tasks.push(fabric::TaskSnapshot {
+            task_id: "task-1".into(),
+            session_id: fabric::SessionId("session-1".into()),
+            goal: None,
+            phase: fabric::TaskPhase::Active,
+            plan_revision: None,
+            steps: Vec::new(),
+            active_turn_id: None,
+            active_runtime_children: Vec::new(),
+            active_commands: Vec::new(),
+            pending_approvals: Vec::new(),
+            budget: None,
+            checkpoint_head: None,
+            checkpoint_review: None,
+            settlement: None,
+            review_findings: Vec::new(),
+            runtime_facts: Some(fabric::TaskRuntimeFacts {
+                effective_provider: Some("deepseek".into()),
+                effective_model: Some("deepseek-v4-flash".into()),
+                context_capacity_tokens: Some(1_000_000),
+                active_context_occupancy_tokens: Some(8_000),
+                context_budget: None,
+                cumulative_usage: fabric::InferenceUsage::unsupported(Some(10_000), Some(500)),
+                inference_rounds: 2,
+                provider_retries: Some(0),
+                tool_calls: 1,
+                terminal_tool_results: 1,
+            }),
+        });
+
+        project_runtime_accounting(&mut state);
+
+        assert_eq!(state.context.used, Some(8_000));
+        assert_eq!(state.context.max, Some(1_000_000));
+        assert_eq!(state.total_tokens, 10_500);
+        assert_eq!(state.turn_input_tokens, 0);
+        assert_eq!(state.turn_output_tokens, 0);
+
+        state.turn_active = true;
+        state.context.used = Some(12_000);
+        state.total_tokens = 12_000;
+        state.turn_input_tokens = 1_000;
+        state.turn_output_tokens = 100;
+        project_runtime_accounting(&mut state);
+
+        assert_eq!(state.context.used, Some(12_000));
+        assert_eq!(state.total_tokens, 12_000);
+        assert_eq!(state.turn_input_tokens, 1_000);
+        assert_eq!(state.turn_output_tokens, 100);
     }
 }

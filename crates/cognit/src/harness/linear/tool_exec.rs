@@ -42,6 +42,7 @@ impl ReActLoop {
         let mut tool_calls_made: usize = 0;
         let mut tool_errors: usize = 0;
         let mut provider_retries = 0_u64;
+        let mut visible_tool_defs = tool_defs.to_vec();
         self.verify_attempts = 0;
 
         event_sink.emit(Event::TurnStarted { iteration: 0 });
@@ -76,7 +77,10 @@ impl ReActLoop {
             // Use streaming instead of complete()
             let mut transient_attempt = 0_u32;
             let mut stream = loop {
-                match llm.complete_stream(&self.messages, tool_defs).await {
+                match llm
+                    .complete_stream(&self.messages, &visible_tool_defs)
+                    .await
+                {
                     Ok(stream) => break stream,
                     Err(e) if is_context_overflow(&e) => {
                         warn!("Context overflow detected, forcing compaction: {e}");
@@ -141,19 +145,33 @@ impl ReActLoop {
                         }
                     }
                     StreamChunk::Usage { usage } => {
+                        // Provider input usage is the authoritative occupancy
+                        // of the prompt actually submitted for this round. The
+                        // previous local message estimate omitted tool schemas
+                        // and the current assistant/tool exchange, so the TUI
+                        // could report a materially incorrect context load.
+                        let used_tokens = usage
+                            .total_input_tokens
+                            .map(|tokens| u32::try_from(tokens).unwrap_or(u32::MAX))
+                            .unwrap_or_else(|| {
+                                self.messages
+                                    .iter()
+                                    .map(|message| message.estimate_tokens())
+                                    .sum::<usize>()
+                                    .try_into()
+                                    .unwrap_or(u32::MAX)
+                            });
                         self.turn_input_tokens = self
                             .turn_input_tokens
                             .saturating_add(usage.total_input_tokens.unwrap_or(0));
                         event_sink.emit(Event::Usage { usage });
-                        // Emit context window usage so TUI can display it
-                        let total_estimate = self
-                            .messages
-                            .iter()
-                            .map(|m| m.estimate_tokens())
-                            .sum::<usize>() as u32;
                         event_sink.emit(Event::ContextUpdate {
-                            used_tokens: total_estimate,
-                            max_tokens: self.config.context_window_tokens as u32,
+                            used_tokens,
+                            max_tokens: self
+                                .config
+                                .context_window_tokens
+                                .try_into()
+                                .unwrap_or(u32::MAX),
                         });
                     }
                     StreamChunk::Done { stop_reason: sr } => {
@@ -443,6 +461,7 @@ impl ReActLoop {
                                 is_error: true,
                                 execution_time_ms: 0,
                                 patch_delta: None,
+                                activated_tool_definitions: Vec::new(),
                             },
                         });
                     }
@@ -497,6 +516,7 @@ impl ReActLoop {
                                     is_error: true,
                                     execution_time_ms: 0,
                                     patch_delta: None,
+                                    activated_tool_definitions: Vec::new(),
                                 },
                             });
                         }
@@ -533,6 +553,23 @@ impl ReActLoop {
                 let tool_result: ToolResultEvent = execute_tool(id, name, input).await.into();
                 let content = tool_result.content.clone();
                 let is_error = tool_result.is_error;
+                let previous_visible_count = visible_tool_defs.len();
+                for definition in &tool_result.activated_tool_definitions {
+                    if !visible_tool_defs
+                        .iter()
+                        .any(|visible| visible.name == definition.name)
+                    {
+                        visible_tool_defs.push(definition.clone());
+                    }
+                }
+                if visible_tool_defs.len() != previous_visible_count {
+                    tracing::info!(
+                        tool = name.as_str(),
+                        activated = visible_tool_defs.len() - previous_visible_count,
+                        visible_tools = visible_tool_defs.len(),
+                        "Expanded model-visible tool projection"
+                    );
+                }
 
                 self.evidence_ledger.record(EvidenceRecord {
                     id: EvidenceId(format!("tool:{id}")),
@@ -645,6 +682,7 @@ impl ReActLoop {
                                 is_error: true,
                                 execution_time_ms: 0,
                                 patch_delta: None,
+                                activated_tool_definitions: Vec::new(),
                             },
                         });
                     }
@@ -1555,6 +1593,7 @@ fn exploration_budget_results(
                     is_error: false,
                     execution_time_ms: 0,
                     patch_delta: None,
+                    activated_tool_definitions: Vec::new(),
                 },
             });
             ContentBlock::ToolResult {

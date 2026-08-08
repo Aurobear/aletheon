@@ -151,6 +151,21 @@ mod tests {
     }
 
     #[test]
+    fn default_code_profile_can_call_and_delegate_agent_controls() {
+        let (_, markdown) = PROFILES
+            .iter()
+            .find(|(name, _)| *name == "code-agent.md")
+            .expect("bundled code-agent Markdown");
+        for control in ["agent_spawn", "agent_wait", "agent_cancel", "agent_list"] {
+            assert!(
+                markdown.contains(control),
+                "code-agent is missing {control}"
+            );
+        }
+        assert!(markdown.contains("delegate_tools: [\"*\"]"));
+    }
+
+    #[test]
     fn shipped_profiles_do_not_claim_host_only_settlement_tools() {
         for (name, profile) in PROFILES {
             for host_only_tool in ["change_accept", "change_rollback"] {

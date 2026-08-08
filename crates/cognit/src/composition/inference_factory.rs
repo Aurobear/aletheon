@@ -1,6 +1,6 @@
 //! Canonical provider definition resolution and construction.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -155,7 +155,12 @@ impl LlmProvider for BackpressuredProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> Result<LlmResponse> {
+        let admission_started = Instant::now();
         let _permit = backpressure::acquire(&self.state).await?;
+        tracing::info!(
+            provider_wait_ms = admission_started.elapsed().as_millis() as u64,
+            "Provider request admitted"
+        );
         let result = self.inner.complete(messages, tools).await;
         if let Err(error) = &result {
             observe_failure(&self.state, error);
@@ -168,7 +173,12 @@ impl LlmProvider for BackpressuredProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> Result<LlmStream> {
+        let admission_started = Instant::now();
         let permit = backpressure::acquire(&self.state).await?;
+        tracing::info!(
+            provider_wait_ms = admission_started.elapsed().as_millis() as u64,
+            "Provider streaming request admitted"
+        );
         match self.inner.complete_stream(messages, tools).await {
             Ok(stream) => {
                 let state = self.state.clone();

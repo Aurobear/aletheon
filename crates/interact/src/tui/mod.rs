@@ -367,10 +367,6 @@ struct App {
     latest_patch: Option<fabric::PatchDelta>,
     /// Streaming controller for incremental rendering
     stream_ctrl: StreamController,
-    /// Current turn's token count
-    turn_tokens: Option<(u32, u32)>,
-    /// Cumulative tokens across all turns
-    total_tokens: u32,
     /// Command history
     history: CommandHistory,
     input_store: InputStateStore,
@@ -461,8 +457,6 @@ impl App {
             latest_diff: None,
             latest_patch: None,
             stream_ctrl: StreamController::new(Arc::clone(&clock)),
-            turn_tokens: None,
-            total_tokens: 0,
             history,
             input_store,
             input_dirty: false,

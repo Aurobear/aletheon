@@ -159,12 +159,12 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
         );
     }
 
-    // Context preparation (including its budget costs) must precede model
-    // selection. Full assembly can then use that model's authoritative budget.
-    let context = pipeline.find("let prepared_context").unwrap();
+    // Context preparation and model selection may run concurrently, but both
+    // must finish before governed capability preparation and full assembly.
+    let context = pipeline.find("self.context_assembler.prepare").unwrap();
     let model = pipeline.find(".models.select").unwrap();
     let capability = pipeline.find(".capabilities").unwrap();
-    assert!(context < model && model < capability);
+    assert!(context < capability && model < capability);
 
     let coordinator = include_str!("../src/application/turn_coordinator.rs");
     let settlement = coordinator.find("terminal?;").unwrap();

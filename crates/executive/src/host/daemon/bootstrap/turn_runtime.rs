@@ -762,6 +762,7 @@ impl ActiveAgentProfilePort for ProductionActiveAgentProfile {
         Ok(ResolvedTurnProfile {
             profile_name: p.profile_name.clone(),
             allowed_tools: p.allowed_tools.iter().cloned().collect(),
+            delegated_tools: p.delegated_tools.iter().cloned().collect(),
             system_prompt: p.system_prompt.clone(),
             model_policy: Some(p.model.clone()),
             max_iterations: p.max_iterations,
@@ -947,6 +948,7 @@ mod tests {
         let snapshot = ResolvedTurnProfile {
             profile_name: "safe".into(),
             allowed_tools: ["file_read".to_owned()].into_iter().collect(),
+            delegated_tools: ["file_read".to_owned()].into_iter().collect(),
             system_prompt: String::new(),
             model_policy: None,
             max_iterations: 0,
@@ -999,6 +1001,7 @@ mod tests {
         let turn_snapshot = ResolvedTurnProfile {
             profile_name: "safe".into(),
             allowed_tools: active_allowed.clone(),
+            delegated_tools: active_allowed.clone(),
             system_prompt: String::new(),
             model_policy: None,
             max_iterations: 0,
@@ -1023,6 +1026,9 @@ mod tests {
         let profile = crate::application::turn_runtime_ports::ResolvedTurnProfile {
             profile_name: "test-code-agent".into(),
             allowed_tools: ["file_read".to_owned(), "bash_exec".to_owned()]
+                .into_iter()
+                .collect(),
+            delegated_tools: ["file_read".to_owned(), "bash_exec".to_owned()]
                 .into_iter()
                 .collect(),
             system_prompt: "You are a code agent. Write and test code.".into(),
@@ -1059,6 +1065,7 @@ mod tests {
         let code = ResolvedTurnProfile {
             profile_name: "code-agent".into(),
             allowed_tools: ["bash_exec".to_owned()].into_iter().collect(),
+            delegated_tools: ["bash_exec".to_owned()].into_iter().collect(),
             system_prompt: "Write production code with tests.".into(),
             model_policy: Some("gpt-5-code".into()),
             max_iterations: 20,
@@ -1074,6 +1081,7 @@ mod tests {
         let review = ResolvedTurnProfile {
             profile_name: "review-agent".into(),
             allowed_tools: ["file_read".to_owned()].into_iter().collect(),
+            delegated_tools: ["file_read".to_owned()].into_iter().collect(),
             system_prompt: "Review code for bugs and security issues.".into(),
             model_policy: Some("claude-opus-review".into()),
             max_iterations: 10,

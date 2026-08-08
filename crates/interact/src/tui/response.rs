@@ -97,6 +97,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
 
     match event {
         ClientEvent::TurnStarted { iteration } => {
+            let new_turn = iteration == 0 || !app.turn_active;
             let observed_at = app.clock.mono_now().0;
             super::reducer::begin_live_turn(&mut app.app_state, None);
             let _ = super::reducer::reduce(
@@ -108,16 +109,21 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     },
                 ),
             );
-            app.stream_ctrl.start_turn();
+            if new_turn {
+                app.stream_ctrl.start_turn();
+                app.status.elapsed_secs = 0.0;
+                app.app_state.turn_tool_count = 0;
+                app.app_state.turn_activity = super::state::TurnActivity::default();
+                app.app_state.turn_input_tokens = 0;
+                app.app_state.turn_output_tokens = 0;
+            }
             app.status.waiting = false;
-            app.status.elapsed_secs = 0.0;
             app.turn_active = true;
             app.streaming = true;
             app.app_state.streaming = true;
-            app.app_state.turn_tool_count = 0;
-            app.app_state.turn_activity = super::state::TurnActivity::default();
-            app.turn_tokens = None;
+            app.app_state.turn_active = true;
             app.current_iteration = iteration;
+            app.app_state.current_iteration = iteration;
         }
         ClientEvent::ThinkingDelta { text } => {
             app.stream_ctrl.push_thinking(&text);
@@ -268,13 +274,21 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.turn_activity.inference_rounds += 1;
             let tokens_in = usage.total_input_tokens.unwrap_or(0);
             let tokens_out = usage.output_tokens.unwrap_or(0);
-            app.turn_tokens = Some((tokens_in as u32, tokens_out as u32));
-            app.total_tokens = app
+            app.app_state.turn_input_tokens =
+                app.app_state.turn_input_tokens.saturating_add(tokens_in);
+            app.app_state.turn_output_tokens =
+                app.app_state.turn_output_tokens.saturating_add(tokens_out);
+            app.app_state.total_tokens = app
+                .app_state
                 .total_tokens
-                .saturating_add(tokens_in as u32)
-                .saturating_add(tokens_out as u32);
-            app.status.token_count = Some(tokens_in as u32 + tokens_out as u32);
-            app.status.total_tokens = app.total_tokens;
+                .saturating_add(tokens_in)
+                .saturating_add(tokens_out);
+            app.status.token_count = Some(
+                app.app_state
+                    .turn_input_tokens
+                    .saturating_add(app.app_state.turn_output_tokens),
+            );
+            app.status.total_tokens = app.app_state.total_tokens;
         }
         ClientEvent::TurnDone => {
             app.stream_ctrl.commit();
@@ -284,6 +298,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.waiting = false;
             app.app_state.streaming = false;
             app.turn_active = false;
+            app.app_state.turn_active = false;
             app.status.session_turns += 1;
         }
         ClientEvent::Error { message } => {
@@ -293,6 +308,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.waiting = false;
             app.app_state.streaming = false;
             app.turn_active = false;
+            app.app_state.turn_active = false;
         }
         ClientEvent::AwarenessChanged { level, context } => {
             if let Ok(awareness_level) =
@@ -354,10 +370,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             max_tokens,
             used_tokens,
         } => {
-            app.app_state.context.used = Some(used_tokens as usize);
-            app.app_state.context.max = Some(max_tokens as usize);
-            app.status.context_used_tokens = used_tokens as u32;
-            app.status.context_window = max_tokens as u32;
+            app.app_state.context.used = usize::try_from(used_tokens).ok();
+            app.app_state.context.max = usize::try_from(max_tokens).ok();
+            app.status.context_used_tokens = used_tokens;
+            app.status.context_window = max_tokens;
         }
         ClientEvent::ModelSwitch { model } => {
             app.app_state.model_name = model.clone();
@@ -1633,6 +1649,7 @@ mod tests {
         app.status.waiting = true;
         app.app_state.streaming = true;
         app.turn_active = true;
+        app.app_state.turn_active = true;
 
         handle_event(
             &mut app,
@@ -1643,6 +1660,59 @@ mod tests {
         assert!(!app.status.waiting);
         assert!(!app.app_state.streaming);
         assert!(!app.turn_active);
+        assert!(!app.app_state.turn_active);
+    }
+
+    #[tokio::test]
+    async fn multi_round_usage_accumulates_without_resetting_the_active_turn() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+
+        for event in [
+            fabric::ui_event::ClientEvent::TurnStarted { iteration: 0 },
+            fabric::ui_event::ClientEvent::Usage {
+                usage: fabric::InferenceUsage::unsupported(Some(100), Some(10)),
+            },
+            fabric::ui_event::ClientEvent::ToolCallStart {
+                call_id: "call-1".into(),
+                tool: "file_read".into(),
+                args: serde_json::Value::Null,
+            },
+            fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 },
+            fabric::ui_event::ClientEvent::Usage {
+                usage: fabric::InferenceUsage::unsupported(Some(200), Some(20)),
+            },
+            fabric::ui_event::ClientEvent::ContextUpdate {
+                used_tokens: 200,
+                max_tokens: 1_000_000,
+            },
+        ] {
+            handle_event(&mut app, &serde_json::to_value(event).unwrap());
+        }
+
+        assert_eq!(app.app_state.turn_input_tokens, 300);
+        assert_eq!(app.app_state.turn_output_tokens, 30);
+        assert_eq!(app.app_state.total_tokens, 330);
+        assert_eq!(app.app_state.turn_activity.inference_rounds, 2);
+        assert_eq!(app.app_state.turn_activity.tool_calls, 1);
+        assert_eq!(app.app_state.current_iteration, 1);
+        assert_eq!(app.app_state.context.used, Some(200));
+        assert_eq!(app.app_state.context.max, Some(1_000_000));
     }
 
     #[tokio::test]

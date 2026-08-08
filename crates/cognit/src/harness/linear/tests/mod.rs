@@ -10,6 +10,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 mod policy_denial_tests;
+mod projection_tests;
 
 /// No-op compressor for tests that don't exercise compaction.
 struct NoopCompressor;

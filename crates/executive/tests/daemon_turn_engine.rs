@@ -41,6 +41,8 @@ fn inference_receipt(inference_id: &str, usage: fabric::InferenceUsage) -> fabri
             tool_schema_digest: "tool-digest".into(),
             status: fabric::types::inference_receipt::InferenceTerminalStatus::Succeeded,
             usage,
+            context_capacity_tokens: None,
+            active_context_occupancy_tokens: None,
             failure_kind: None,
             prefix_shape_digest: None,
             local_cache_miss_reason: None,

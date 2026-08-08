@@ -460,6 +460,22 @@ impl ToolRegistry {
         search: Option<super::web_search::WebSearchConfig>,
         tasks_db: Option<std::path::PathBuf>,
     ) -> Self {
+        Self::with_network_policy_search_tasks_and_sandbox(
+            policy,
+            search,
+            tasks_db,
+            fabric::SandboxPreference::Forbid,
+        )
+    }
+
+    /// Production constructor that binds persistent managed commands to the
+    /// same sandbox preference as the daemon tool runner.
+    pub fn with_network_policy_search_tasks_and_sandbox(
+        policy: fabric::network_policy::NetworkPolicy,
+        search: Option<super::web_search::WebSearchConfig>,
+        tasks_db: Option<std::path::PathBuf>,
+        sandbox_preference: fabric::SandboxPreference,
+    ) -> Self {
         let mut registry = Self::new();
         let change_transactions = super::change_transaction::ChangeTransactionRegistry::default();
         registry.change_transactions = Some(change_transactions.clone());
@@ -468,8 +484,9 @@ impl ToolRegistry {
             .register(Arc::new(super::bash_exec::BashExecTool))
             .expect("duplicate built-in tool");
         let command_sessions =
-            super::managed_command::ManagedCommandSessions::with_change_transactions(
+            super::managed_command::ManagedCommandSessions::with_change_transactions_and_sandbox(
                 change_transactions.clone(),
+                sandbox_preference,
             );
         registry
             .register(Arc::new(super::managed_command::ExecCommandTool::new(
@@ -513,6 +530,9 @@ impl ToolRegistry {
             .register(Arc::new(super::process_list::ProcessListTool))
             .expect("duplicate built-in tool");
         registry
+            .register(Arc::new(super::toolchain_status::ToolchainStatusTool))
+            .expect("duplicate built-in tool");
+        registry
             .register(Arc::new(super::ebpf_compile::EbpfCompileTool))
             .expect("duplicate built-in tool");
         registry
@@ -543,9 +563,9 @@ impl ToolRegistry {
         registry
             .register(Arc::new(super::grep::GrepTool))
             .expect("duplicate built-in tool");
-        // Git tools: read-only (status/diff/log/show) plus safe write/undo
-        // (restore/stash/reset). These were defined but never registered, so
-        // the agent previously had no git capability at all.
+        // Structured Git tools: inspection, staging/history mutation, branch
+        // management, and push. These implementations already existed but
+        // were never registered, so profiles listing them were unusable.
         for tool in super::git_tools::git_tools()
             .into_iter()
             .filter(|tool| tool.name() != "git_diff")
@@ -709,6 +729,7 @@ mod tests {
             "task_update",
             "task_list",
             "task_get",
+            "toolchain_status",
         ];
         for name in expected {
             assert!(

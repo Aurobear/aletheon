@@ -35,6 +35,7 @@ pub mod skill_tools;
 pub mod structured_patch;
 pub mod system_status;
 pub mod task_tools;
+pub mod toolchain_status;
 pub mod toolset;
 pub mod web_fetch;
 pub mod web_search;

@@ -49,6 +49,8 @@ fn terminal(
         tool_schema_digest: "sha256:tools".into(),
         status,
         usage: InferenceUsage::default(),
+        context_capacity_tokens: None,
+        active_context_occupancy_tokens: None,
         failure_kind: failure_kind.map(str::to_owned),
         prefix_shape_digest: None,
         local_cache_miss_reason: None,
@@ -76,6 +78,27 @@ fn terminal_receipt_validation_preserves_status_semantics() {
     let mut invalid = terminal(InferenceTerminalStatus::Succeeded, None);
     invalid.tool_schema_digest.clear();
     assert!(invalid.validate().is_err());
+}
+
+#[test]
+fn terminal_receipt_validates_reported_context_accounting() {
+    let mut receipt = terminal(InferenceTerminalStatus::Succeeded, None);
+    receipt.context_capacity_tokens = Some(1_000_000);
+    receipt.active_context_occupancy_tokens = Some(8_000);
+    assert!(receipt.validate().is_ok());
+
+    receipt.active_context_occupancy_tokens = Some(1_000_001);
+    assert_eq!(
+        receipt.validate(),
+        Err("active context occupancy exceeds model capacity")
+    );
+
+    receipt.active_context_occupancy_tokens = None;
+    receipt.context_capacity_tokens = Some(0);
+    assert_eq!(
+        receipt.validate(),
+        Err("context capacity must be positive when reported")
+    );
 }
 
 #[test]

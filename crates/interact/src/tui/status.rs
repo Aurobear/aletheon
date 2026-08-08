@@ -19,11 +19,11 @@ pub struct StatusBar {
     pub provider_info: String,
     pub model_name: String,
     pub waiting: bool,
-    pub token_count: Option<u32>,
-    pub total_tokens: u32,
+    pub token_count: Option<u64>,
+    pub total_tokens: u64,
     /// Estimated tokens currently present in the active model context.
-    pub context_used_tokens: u32,
-    pub context_window: u32,
+    pub context_used_tokens: u64,
+    pub context_window: u64,
     pub session_turns: u32,
 }
 
@@ -47,9 +47,11 @@ impl StatusBar {
 
     pub fn tick_spinner(&mut self) {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
-        if self.waiting {
-            self.elapsed_secs += 0.06;
-        }
+        // The lifecycle calls this only while a request/turn is streaming.
+        // `waiting` becomes false as soon as the first turn event arrives, so
+        // gating elapsed time on it made long-running inference/tool rounds
+        // appear frozen after admission.
+        self.elapsed_secs += 0.06;
     }
 
     fn spinner_char(&self) -> &'static str {
@@ -143,13 +145,26 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
             Style::default().fg(ctx_color),
         ));
 
-        spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
-
-        // Tokens
-        spans.push(Span::styled(
-            format!("{}k tok", self.state.total_tokens / 1000),
-            Style::default().fg(Color::DarkGray),
-        ));
+        // Provider usage arrives at inference-round terminal boundaries. Keep
+        // active-turn input/output separate from context occupancy and from
+        // the Task-cumulative cost counter.
+        if self.state.turn_input_tokens > 0 || self.state.turn_output_tokens > 0 {
+            spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                format!(
+                    "turn {} in/{} out",
+                    format_with_commas(self.state.turn_input_tokens),
+                    format_with_commas(self.state.turn_output_tokens)
+                ),
+                Style::default().fg(Color::DarkGray),
+            ));
+        } else if self.state.total_tokens > 0 {
+            spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                format!("seen {} tok", format_with_commas(self.state.total_tokens)),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
 
         if self.state.turn_tool_count > 0 {
             spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
@@ -342,7 +357,7 @@ impl<'a> Widget for StatusBarWidget<'a> {
 }
 
 /// Format a number with comma separators (e.g. 12345 -> "12,345").
-fn format_with_commas(n: u32) -> String {
+fn format_with_commas(n: u64) -> String {
     let s = n.to_string();
     let mut result = String::with_capacity(s.len() + s.len() / 3);
     for (i, ch) in s.chars().enumerate() {
@@ -358,6 +373,14 @@ fn format_with_commas(n: u32) -> String {
 mod tests {
     use super::*;
     use ratatui::{buffer::Buffer, widgets::Widget};
+
+    #[test]
+    fn elapsed_time_advances_after_the_first_turn_event() {
+        let mut status = StatusBar::new(TermCaps::detect());
+        status.waiting = false;
+        status.tick_spinner();
+        assert!((status.elapsed_secs - 0.06).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn legacy_context_percent_uses_active_request_not_cumulative_usage() {
@@ -379,5 +402,31 @@ mod tests {
         assert!(rendered.contains("400,000 tok"));
         assert!(rendered.contains("2% ctx"));
         assert!(!rendered.contains("40% ctx"));
+    }
+
+    #[test]
+    fn state_widget_separates_context_from_active_turn_usage() {
+        let status = StatusBar::new(TermCaps::detect());
+        let mut state = AppState::default();
+        state.context.used = Some(8_000);
+        state.context.max = Some(1_000_000);
+        state.turn_input_tokens = 300;
+        state.turn_output_tokens = 30;
+        state.total_tokens = 10_500;
+
+        let area = Rect::new(0, 0, 180, 1);
+        let mut buffer = Buffer::empty(area);
+        status
+            .render_widget_from_state(&state)
+            .render(area, &mut buffer);
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("ctx: 8k / 1,000k (1%)"), "{rendered}");
+        assert!(rendered.contains("turn 300 in/30 out"), "{rendered}");
+        assert!(!rendered.contains("seen 10,500 tok"), "{rendered}");
     }
 }
