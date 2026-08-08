@@ -69,9 +69,17 @@ pub enum CommandOutputProtocol {
 pub enum CommandOutputV1 {
     PromptAccepted,
     PromptCompleted(PromptCompletionV1),
+    CancelRequested(CancelRequestedV1),
     Status(StatusSummaryV1),
     StatusProjected(StatusProjectionV1),
     Rejected(CommandRejectionV1),
+}
+
+/// Acknowledgement that the host accepted a cancellation request. This is a
+/// command result, not a Session status projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelRequestedV1 {
+    pub active_turns: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -622,5 +630,19 @@ mod tests {
 
         let decoded: ClientIntent = serde_json::from_value(encoded).unwrap();
         assert_eq!(decoded, intent);
+    }
+
+    #[test]
+    fn cancel_ack_has_its_own_typed_command_shape() {
+        let output = CommandOutputEnvelopeV1::new(
+            "cancel:7",
+            CommandOutputV1::CancelRequested(CancelRequestedV1 { active_turns: 2 }),
+        );
+        let encoded = serde_json::to_value(&output).unwrap();
+        assert_eq!(encoded["output"]["kind"], "cancel_requested");
+        assert_eq!(encoded["output"]["payload"]["active_turns"], 2);
+
+        let decoded: CommandOutputEnvelopeV1 = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded, output);
     }
 }

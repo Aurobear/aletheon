@@ -818,7 +818,6 @@ impl TurnCoordinator {
                     return self.finish_cancelled_execution(
                         &session_id,
                         turn_id,
-                        sequence,
                         &mut write_tracker,
                         reason,
                     ).await;
@@ -837,7 +836,6 @@ impl TurnCoordinator {
                     return self.finish_cancelled_execution(
                         &session_id,
                         turn_id,
-                        sequence,
                         &mut write_tracker,
                         reason,
                     ).await;
@@ -855,7 +853,6 @@ impl TurnCoordinator {
                     return self.finish_cancelled_execution(
                         &session_id,
                         turn_id,
-                        sequence,
                         &mut write_tracker,
                         reason,
                     ).await;
@@ -1064,10 +1061,14 @@ impl TurnCoordinator {
         &self,
         session_id: &SessionId,
         turn_id: TurnId,
-        mut sequence: u64,
         write_tracker: &mut Option<TurnWriteTracker>,
         reason: CancelReason,
     ) -> Result<CompletedExecution> {
+        // The runner may have persisted model-visible lifecycle fragments
+        // before observing cancellation. It is fully drained at this point, so
+        // refresh the authoritative tail instead of reusing the sequence that
+        // preceded runner execution.
+        let mut sequence = self.next_sequence(session_id).await?;
         self.append_tracked(
             session_id,
             turn_id,

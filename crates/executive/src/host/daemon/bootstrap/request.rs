@@ -1069,19 +1069,10 @@ impl RequestHandler {
                     clock.clone(),
                 )?;
             if registered {
-                let runtime_id = crate::adapters::runtime::PI_CODER_RUNTIME_ID;
-                let compatibility = runtime
-                    .compatibility_runtimes()
-                    .resolve(&fabric::RuntimeId(runtime_id.into()))?;
-                agent_runtimes.register(
-                    fabric::RuntimeId(runtime_id.into()),
-                    Arc::new(
-                        crate::application::agent_control::CompatibilityRuntimeLauncher::new(
-                            compatibility,
-                        ),
-                    ),
-                )?;
-                info!(runtime_id = "pi-coder", "Pi coding runtime registered");
+                info!(
+                    runtime_id = "pi-coder",
+                    "Pi compatibility coding runtime registered"
+                );
             }
             if let Some(pi_rpc) = pi_rpc {
                 agent_runtimes.register_manifested(
@@ -1089,7 +1080,10 @@ impl RequestHandler {
                     Arc::new(pi_rpc),
                     crate::adapters::runtime::pi_manifest().clone(),
                 )?;
-                info!(runtime_id = "pi-rpc", "Pi resident RPC runtime registered");
+                info!(
+                    runtime_id = "pi-coder",
+                    "Pi resident RPC runtime registered"
+                );
             }
         }
 

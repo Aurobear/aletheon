@@ -649,6 +649,9 @@ pub async fn simple_line_mode(
                                         completion,
                                     )) => println!("\n{}\n", completion.response),
                                     Ok(fabric::contract::command::CommandOutputV1::PromptAccepted) => {}
+                                    Ok(fabric::contract::command::CommandOutputV1::CancelRequested(cancel)) => {
+                                        println!("\nCancellation requested for {} active turn(s).\n", cancel.active_turns);
+                                    }
                                     Ok(fabric::contract::command::CommandOutputV1::Status(status)) => {
                                         println!("\n{}: {}\n", if status.ready { "ready" } else { "not ready" }, status.summary);
                                     }

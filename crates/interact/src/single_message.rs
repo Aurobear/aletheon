@@ -148,6 +148,12 @@ pub(crate) async fn run(
                                 "one-shot request was accepted without a terminal result"
                             ));
                         }
+                        fabric::contract::command::CommandOutputV1::CancelRequested(cancel) => {
+                            println!(
+                                "Cancellation requested for {} active turn(s).",
+                                cancel.active_turns
+                            );
+                        }
                         fabric::contract::command::CommandOutputV1::Status(status) => println!(
                             "{}: {}",
                             if status.ready { "ready" } else { "not ready" },

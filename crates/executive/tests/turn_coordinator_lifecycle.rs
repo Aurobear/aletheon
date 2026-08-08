@@ -813,6 +813,100 @@ async fn user_cancel_on_deadline_bearing_turn_preserves_user_reason() {
 }
 
 #[tokio::test]
+async fn cancellation_refreshes_the_terminal_sequence_after_runner_fragments() {
+    let kernel = Arc::new(KernelRuntime::new());
+    let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
+    let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
+    let coordinator = Arc::new(
+        executive::testing::turn_coordinator::compose_with_event_spine(
+            kernel.clone(),
+            read_store,
+            event_spine,
+            GrokHardeningConfig::default(),
+        ),
+    );
+    let store = coordinator.store();
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
+    let operation = Arc::new(tokio::sync::Mutex::new(None));
+    let captured = operation.clone();
+    let runner_store = store.clone();
+    let (fragment_tx, fragment_rx) = tokio::sync::oneshot::channel();
+    let submitted = coordinator.clone();
+    let handle = tokio::spawn(async move {
+        submitted
+            .submit_with(
+                request("cancel-after-runner-fragment", process.id),
+                &TurnPolicy::daemon(),
+                move |request, cancel| async move {
+                    *captured.lock().await = Some(request.operation_id);
+                    let turn_id = request.context.turn_id.expect("coordinator turn id");
+                    let session_id = SessionId(request.context.thread_id.0.clone());
+                    runner_store
+                        .append(
+                            &session_id,
+                            2,
+                            fabric::ItemRecord {
+                                schema_version: fabric::SESSION_SCHEMA_VERSION,
+                                id: fabric::ItemId::new(),
+                                session_id: session_id.clone(),
+                                turn_id,
+                                sequence: 2,
+                                created_at_ms: 2,
+                                payload: ItemPayload::TaskProjection {
+                                    fact: fabric::TaskProjectionFact::default(),
+                                },
+                            },
+                        )
+                        .await?;
+                    let _ = fragment_tx.send(());
+                    cancel.cancelled().await;
+                    Ok(TurnExecution {
+                        result: TurnResult {
+                            output: "runner observed cancellation".into(),
+                            stop: TurnStop::Cancelled,
+                            failure: None,
+                            usage: Default::default(),
+                            metrics: TurnMetrics::default(),
+                        },
+                        items: Vec::new(),
+                        projection: None,
+                        context_projection: None,
+                        evaluation_artifacts: Default::default(),
+                    })
+                },
+            )
+            .await
+    });
+
+    fragment_rx.await.expect("runner fragment persisted");
+    let operation_id = operation.lock().await.expect("operation captured");
+    assert!(coordinator.cancel_operation(operation_id).await);
+    let result = handle
+        .await
+        .expect("submit task should not panic")
+        .expect("cancellation terminal should follow the runner fragment");
+    assert_eq!(result.stop, TurnStop::Cancelled);
+
+    let items = store
+        .load_items(&SessionId("cancel-after-runner-fragment".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        items.iter().map(|item| item.sequence).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert!(matches!(
+        items[1].payload,
+        ItemPayload::TaskProjection { .. }
+    ));
+    assert!(matches!(items[2].payload, ItemPayload::SystemNotice { .. }));
+    assert_eq!(items[2].id.0, items[2].turn_id.0);
+}
+
+#[tokio::test]
 async fn connection_scoped_cancel_touches_only_that_connections_turn() {
     use executive::application::turn_coordinator::TurnExecution;
     use executive::application::turn_policy::*;

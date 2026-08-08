@@ -733,6 +733,13 @@ fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> boo
                 add_compat_notice(app, format!("Turn stopped: {:?}", completion.stop));
             }
         }
+        CommandOutputV1::CancelRequested(cancel) => add_compat_notice(
+            app,
+            format!(
+                "Cancellation requested for {} active turn(s).",
+                cancel.active_turns
+            ),
+        ),
         CommandOutputV1::Status(status) => {
             set_compat_assistant(
                 app,
@@ -1571,6 +1578,44 @@ mod tests {
             app.compat_transcript.entries.last(),
             Some(ChatEntry::Text(message)) if message.content == "typed answer"
         ));
+    }
+
+    #[tokio::test]
+    async fn typed_cancel_ack_is_not_parsed_as_a_status_projection() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        let output = fabric::contract::command::CommandOutputEnvelopeV1::new(
+            "cancel:1",
+            fabric::contract::command::CommandOutputV1::CancelRequested(
+                fabric::contract::command::CancelRequestedV1 { active_turns: 1 },
+            ),
+        );
+
+        process_response(&mut app, serde_json::json!({"id": 1, "result": output}));
+
+        assert!(app.compat_transcript.entries.iter().any(|entry| {
+            matches!(entry, ChatEntry::Text(message)
+                if message.content == "Cancellation requested for 1 active turn(s).")
+        }));
+        assert!(!app.compat_transcript.entries.iter().any(|entry| {
+            matches!(entry, ChatEntry::Text(message)
+                if message.content.contains("Invalid typed status projection"))
+        }));
     }
 
     #[tokio::test]

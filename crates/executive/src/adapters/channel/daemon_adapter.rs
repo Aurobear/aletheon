@@ -355,7 +355,8 @@ impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
                 Ok(completion.response)
             }
             fabric::contract::command::CommandOutputV1::PromptAccepted => Ok(String::new()),
-            fabric::contract::command::CommandOutputV1::Status(_)
+            fabric::contract::command::CommandOutputV1::CancelRequested(_)
+            | fabric::contract::command::CommandOutputV1::Status(_)
             | fabric::contract::command::CommandOutputV1::StatusProjected(_) => {
                 anyhow::bail!("channel turn executor received a non-prompt command")
             }

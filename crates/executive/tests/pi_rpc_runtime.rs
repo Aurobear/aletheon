@@ -22,6 +22,8 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
+const PI_CODER_RUNTIME_ID: &str = "pi-coder";
+
 struct FixtureSandbox {
     script: PathBuf,
     restrict_network: bool,
@@ -144,7 +146,7 @@ fn input_with_inbox(
         parent_agent_id: None,
         parent_process_id: None,
         profile_id: AgentProfileId("pi".into()),
-        runtime_id: RuntimeId("pi-rpc".into()),
+        runtime_id: RuntimeId(PI_CODER_RUNTIME_ID.into()),
         trusted_workspace: Some(policy.clone()),
         delegator_authority: None,
         cognitive_binding: None,
@@ -184,7 +186,7 @@ fn input_with_inbox(
             parent_agent_id: None,
             process_id: process,
             operation_id: OperationId::new(),
-            runtime_id: RuntimeId("pi-rpc".into()),
+            runtime_id: RuntimeId(PI_CODER_RUNTIME_ID.into()),
             profile_id: AgentProfileId("pi".into()),
         },
         workspace_id: AgoraSpaceId(format!("pi-private-{label}")),
@@ -279,6 +281,26 @@ done
             ],
         )
         .unwrap();
+    assert_eq!(PiRpcRuntime::runtime_id().0, PI_CODER_RUNTIME_ID);
+    let manifest = executive::testing::coding_runtime::pi_manifest();
+    assert_eq!(manifest.id, PI_CODER_RUNTIME_ID);
+    assert!(manifest.aliases.iter().any(|alias| alias == "pi-rpc"));
+    let (selected_id, _, decision) = registry
+        .select(&runtime::RuntimeSelectionRequest {
+            selector: runtime::RuntimeSelector::Alias("pi-coder".into()),
+            profile_id: "code-agent".into(),
+            required_capabilities: vec![
+                runtime::RuntimeCapability::CodeEdit,
+                runtime::RuntimeCapability::Test,
+            ],
+            interaction_mode: runtime::InteractionMode::Resident,
+            workspace_mode: runtime::WorkspaceMode::SharedWritable,
+            task_encoding: runtime::TaskEncoding::NaturalLanguage,
+            max_input_tokens: 100,
+        })
+        .unwrap();
+    assert_eq!(selected_id.0, PI_CODER_RUNTIME_ID);
+    assert!(decision.override_used);
     assert!(registry
         .resolve_selector(
             &runtime::RuntimeSelector::Alias("pi".into()),

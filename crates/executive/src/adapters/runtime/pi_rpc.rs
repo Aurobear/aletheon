@@ -4,7 +4,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::pi::{pi_environment_from_process, pi_sandbox_policy, PiRuntime, ResolvedPiConfig};
+use super::pi::{
+    pi_environment_from_process, pi_sandbox_policy, PiRuntime, ResolvedPiConfig,
+    PI_CODER_RUNTIME_ID,
+};
 use super::pi_protocol::{parse_rpc_record, validate_rpc_response, PiRpcCommand, PiRpcRecord};
 use super::process_supervisor::process_start_time_ticks;
 use crate::application::agent_control::{
@@ -89,7 +92,7 @@ impl PiRpcRuntime {
     }
 
     pub fn runtime_id() -> fabric::RuntimeId {
-        fabric::RuntimeId(PI_RPC_RUNTIME_ID.into())
+        fabric::RuntimeId(PI_CODER_RUNTIME_ID.into())
     }
 
     async fn spawn(
@@ -729,8 +732,8 @@ static PI_MANIFEST: std::sync::OnceLock<runtime::RuntimeManifest> = std::sync::O
 
 pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
     PI_MANIFEST.get_or_init(|| runtime::RuntimeManifest {
-        id: PI_RPC_RUNTIME_ID.into(),
-        aliases: vec!["pi".into()],
+        id: PI_CODER_RUNTIME_ID.into(),
+        aliases: vec![PI_RPC_RUNTIME_ID.into(), "pi".into()],
         display_name: "Pi Coding Runtime (RPC)".into(),
         capabilities: BTreeSet::from([
             runtime::RuntimeCapability::CodeRead,

@@ -19,6 +19,7 @@ crates/fabric/src/contract/command.rs	enum	CommandOutputError	governed	fabric	al
 crates/fabric/src/contract/command.rs	enum	CommandOutputProtocol	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	enum	CommandOutputV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	struct	CommandOutputEnvelopeV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
+crates/fabric/src/contract/command.rs	struct	CancelRequestedV1	governed	fabric	interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	struct	CommandRejectionV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	struct	PromptCompletionV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/fabric/src/contract/command.rs	struct	StatusCareWeightV1	governed	fabric	aletheon,interact,executive	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
