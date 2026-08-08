@@ -25,6 +25,7 @@ crates/executive/src/adapters/channel/handlers/gmail_ingest.rs	adapter	executive
 crates/executive/src/adapters/channel/handlers/mod.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/channel/mod.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/events/agent_tree_projection.rs	adapter	executive	concrete infrastructure integration
+crates/executive/src/adapters/events/agent_timeline.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/events/debug_projection.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/events/memory_job_projection.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/adapters/events/metrics_projection.rs	adapter	executive	concrete infrastructure integration

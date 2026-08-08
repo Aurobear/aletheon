@@ -1108,3 +1108,5 @@ crates/fabric/src/types/execution_target.rs	enum	ExecutionTargetSource	governed	
 crates/fabric/src/types/execution_target.rs	struct	ExecutionTargetSelection	governed	fabric	aletheon,executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#command-and-client-entry-authority
 crates/fabric/src/types/turn.rs	enum	TurnFailureKind	governed	fabric	cognit,executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#runtime-authorities
 crates/fabric/src/types/turn.rs	struct	TurnFailure	governed	fabric	cognit,executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#runtime-authorities
+crates/fabric/src/protocol/client.rs	struct	AgentSessionSnapshot	governed	fabric	executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
+crates/fabric/src/protocol/client.rs	struct	AgentTimelineEntry	governed	fabric	executive,interact	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
