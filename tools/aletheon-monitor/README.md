@@ -73,6 +73,47 @@ Configure Claude Code cron jobs for automated monitoring:
 | L2 — Health | Every 30 min | `aletheon_snapshot` |
 | L3 — Deep | Every 2 hours | `aletheon_analyze` |
 
+## Nightwatch continuous engineering
+
+Nightwatch is an external supervisor for continuous tests. It tracks a reviewed
+Git ref, creates a clean detached worktree for the exact commit, runs configured
+argv-only campaigns, captures bounded logs plus complete SHA-256 digests, and
+stores sealed bundles under its private state root. Failure occurrences are
+clustered in SQLite by a model-independent fingerprint.
+
+DeepSeek is optional and receives only bounded, redacted failure evidence. Its
+typed diagnosis cannot change the deterministic verdict, execute a command,
+publish an issue, push a branch, or operate Robot hardware. Nightwatch writes a
+local issue draft for each failure cluster; GitHub publication stays outside
+this first trust boundary.
+
+Install through the normal Aletheon install flow, then review and activate the
+example configuration:
+
+```bash
+install -m 0600 \
+  ~/.config/aletheon/nightwatch.toml.example \
+  ~/.config/aletheon/nightwatch.toml
+aletheon-lab --config ~/.config/aletheon/nightwatch.toml cycle --force
+systemctl --user enable --now aletheon-nightwatch.service
+```
+
+The example runs deterministic coding, monitor and architecture contracts, plus
+the real 20-task coding benchmark through `/usr/bin/aletheon`. That benchmark is
+diagnostic unless the separate installed-runtime gates prove matching source,
+release, installed and running daemon generations.
+
+Useful one-shot commands:
+
+```bash
+aletheon-lab --config ~/.config/aletheon/nightwatch.toml run \
+  --case coding.contracts.v1
+aletheon-lab --config ~/.config/aletheon/nightwatch.toml watch --max-cycles 1
+```
+
+The API key named by `diagnostics.api_key_env` must come from the existing
+credential environment. Do not write it into the TOML file.
+
 ## Development
 
 ```bash

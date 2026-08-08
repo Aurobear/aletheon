@@ -1,0 +1,64 @@
+schema_version = 1
+
+[state]
+root = "~/.local/state/aletheon-nightwatch"
+max_capture_bytes = 65536
+
+[source]
+repository_url = "https://github.com/Aurobear/aletheon.git"
+ref = "dev"
+
+[scheduler]
+poll_seconds = 60
+
+# Model output is diagnostic evidence only. It cannot change a case verdict,
+# execute commands, publish issues, push branches, or operate Robot hardware.
+[diagnostics]
+enabled = true
+base_url = "https://aiapi.lejurobot.com/v1"
+model = "deepseek/deepseek-v4-flash"
+api_key_env = "LEJU_API_KEY"
+timeout_seconds = 60
+max_evidence_bytes = 49152
+max_output_tokens = 2048
+max_calls_per_day = 24
+
+[[campaigns]]
+case_id = "coding.contracts.v1"
+command = ["bash", "tests/coding/static_test.sh"]
+interval_seconds = 900
+timeout_seconds = 300
+expected_exit_codes = [0]
+
+[[campaigns]]
+case_id = "monitor.syntax.v1"
+command = ["python3", "-m", "compileall", "-q", "tools/aletheon-monitor/src"]
+interval_seconds = 1800
+timeout_seconds = 120
+expected_exit_codes = [0]
+
+[[campaigns]]
+case_id = "architecture.fitness.v1"
+command = ["bash", "scripts/aletheon.sh", "test", "architecture"]
+interval_seconds = 3600
+timeout_seconds = 900
+expected_exit_codes = [0]
+
+# This uses the system-installed client and official user socket. Its receipts
+# remain diagnostic unless the repository's separate installed-runtime gates
+# prove release/installed/daemon provenance for the same source generation.
+[[campaigns]]
+case_id = "coding.deepseek.twenty-task.v1"
+command = [
+  "python3",
+  "tests/coding/harness/suite.py",
+  "--catalog", "tests/coding/tasks",
+  "--receipts", "{artifacts}/coding-receipts",
+  "--report", "{artifacts}/coding-suite.json",
+]
+interval_seconds = 21600
+timeout_seconds = 7200
+expected_exit_codes = [0]
+
+[campaigns.environment]
+ALETHEON_BIN = "/usr/bin/aletheon"

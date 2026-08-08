@@ -1,0 +1,34 @@
+[Unit]
+Description=Aletheon Nightwatch continuous engineering lab
+After=network-online.target aletheon.socket
+Wants=network-online.target
+ConditionPathExists=%h/.config/aletheon/nightwatch.toml
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/aletheon/monitor
+ExecStart=%h/.local/bin/aletheon-lab --config %h/.config/aletheon/nightwatch.toml watch
+Restart=always
+RestartSec=10
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+UMask=0077
+
+# Nightwatch checks reviewed dev commits in disposable worktrees. It may write
+# only its state, the shared bounded Cargo cache, and ordinary temporary files.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/aletheon-nightwatch
+ReadWritePaths=%h/.cache/aletheon-cargo
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+LimitCORE=0
+TasksMax=512
+MemoryMax=8G
+
+[Install]
+WantedBy=default.target

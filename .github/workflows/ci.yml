@@ -84,6 +84,24 @@ jobs:
       - name: Check memory feature contracts
         run: bash scripts/cargo-agent.sh +stable check -p mnemosyne --all-targets --all-features
 
+  monitor-contracts:
+    name: Monitor and Nightwatch contracts
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create isolated monitor environment
+        run: python3 -m venv "$RUNNER_TEMP/aletheon-monitor-venv"
+      - name: Install monitor test dependencies
+        run: |
+          "$RUNNER_TEMP/aletheon-monitor-venv/bin/python" -m pip install \
+            --disable-pip-version-check -e 'tools/aletheon-monitor[dev]'
+      - name: Run monitor and Nightwatch contracts
+        run: |
+          "$RUNNER_TEMP/aletheon-monitor-venv/bin/python" -m pytest -q \
+            tools/aletheon-monitor/tests
+
   strict-contracts:
     name: Strict contracts
     if: github.event_name != 'pull_request'
