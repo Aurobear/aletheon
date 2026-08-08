@@ -441,12 +441,7 @@ mod tests {
     async fn signal_error_propagates_without_panic() {
         let cancel = CancellationToken::new();
         let server = std::future::pending::<anyhow::Result<()>>(); // never resolves
-        let shutdown = async {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "signal error",
-            ))
-        };
+        let shutdown = async { Err(std::io::Error::other("signal error")) };
 
         let result = tokio::time::timeout(
             Duration::from_millis(500),
