@@ -455,7 +455,13 @@ async fn compatibility_cancel_reaches_active_turn_for_principal() {
         coordinator.cancel_active_for_principal(&principal_id).await,
         1
     );
-    assert!(running.await.unwrap().is_err());
+    // Cancellation is authoritative: the active turn settles as a typed
+    // cancelled result, not a generic error.
+    let settled = running.await.unwrap();
+    assert!(
+        matches!(settled, Ok(turn) if turn.stop == TurnStop::Cancelled),
+        "cancel must settle the active turn with TurnStop::Cancelled"
+    );
     assert_eq!(coordinator.active_turn_count().await, 0);
 }
 

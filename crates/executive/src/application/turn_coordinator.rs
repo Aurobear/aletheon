@@ -807,7 +807,11 @@ impl TurnCoordinator {
         let execution = if let Some(deadline) = request.deadline {
             let deadline_duration = std::time::Duration::from_millis(deadline.0);
             tokio::select! {
-                execution = &mut runner => execution,
+                // Cancellation is authoritative: when the abort token fires it
+                // must settle as a typed cancelled result even if the runner
+                // surfaces its own error at the same instant. `biased;` with
+                // the cancel branch first keeps that outcome deterministic.
+                biased;
                 () = abort.cancelled() => {
                     let reason = abort.reason().unwrap_or(CancelReason::User);
                     let _ = self.timer.timeout(CANCEL_DRAIN_GRACE, &mut runner).await;
@@ -819,6 +823,7 @@ impl TurnCoordinator {
                         reason,
                     ).await;
                 }
+                execution = &mut runner => execution,
                 () = self.timer.sleep(deadline_duration) => {
                     abort.request(CancelReason::DeadlineExceeded);
                     let reason = abort
@@ -840,7 +845,10 @@ impl TurnCoordinator {
             }
         } else {
             tokio::select! {
-                execution = &mut runner => execution,
+                // See the deadline select above: the cancel branch is biased
+                // first so a cancelled turn settles as a typed result rather
+                // than racing the runner's own error.
+                biased;
                 () = abort.cancelled() => {
                     let reason = abort.reason().unwrap_or(CancelReason::User);
                     let _ = self.timer.timeout(CANCEL_DRAIN_GRACE, &mut runner).await;
@@ -852,6 +860,7 @@ impl TurnCoordinator {
                         reason,
                     ).await;
                 }
+                execution = &mut runner => execution,
             }
         };
         // The runner may persist model-visible lifecycle fragments and the
