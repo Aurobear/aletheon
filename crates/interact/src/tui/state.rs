@@ -44,15 +44,17 @@ impl AwarenessState {
 /// Context window usage tracking for the TUI.
 #[derive(Debug, Clone)]
 pub struct ContextDisplay {
-    pub used: usize,
-    pub max: usize,
+    pub used: u64,
+    pub max: u64,
 }
 
 impl Default for ContextDisplay {
     fn default() -> Self {
         Self {
             used: 0,
-            max: 200_000,
+            // Unknown until the Host emits the selected model's real context
+            // capacity. A client-side 200k guess was misleading for 1M models.
+            max: 0,
         }
     }
 }
@@ -67,10 +69,33 @@ impl ContextDisplay {
     }
 
     pub fn display(&self) -> String {
-        let used_k = self.used / 1000;
-        let max_k = self.max / 1000;
+        if self.max == 0 {
+            return "ctx: unknown".into();
+        }
         let pct = self.usage_percent();
-        format!("ctx: {used_k}k/{max_k}k ({pct:.0}%)")
+        format!(
+            "ctx: {}/{} ({pct:.0}%)",
+            Self::format_tokens(self.used),
+            Self::format_tokens(self.max)
+        )
+    }
+
+    pub fn format_tokens(value: u64) -> String {
+        if value >= 1_000_000 {
+            if value.is_multiple_of(1_000_000) {
+                format!("{}M", value / 1_000_000)
+            } else {
+                format!("{:.1}M", value as f64 / 1_000_000.0)
+            }
+        } else if value >= 1_000 {
+            if value.is_multiple_of(1_000) {
+                format!("{}k", value / 1_000)
+            } else {
+                format!("{:.1}k", value as f64 / 1_000.0)
+            }
+        } else {
+            value.to_string()
+        }
     }
 }
 
@@ -126,8 +151,14 @@ pub struct AppState {
     pub context: ContextDisplay,
     /// Current model name.
     pub model_name: String,
-    /// Total tokens used in session.
-    pub total_tokens: u32,
+    /// Provider-reported cumulative tokens in the active Task projection,
+    /// extended by usage events observed on this connection.
+    pub total_tokens: u64,
+    /// Provider-reported prompt tokens accumulated across the active turn's
+    /// inference rounds. This is billed work, not context occupancy.
+    pub turn_input_tokens: u64,
+    /// Provider-reported completion tokens accumulated across the active turn.
+    pub turn_output_tokens: u64,
     /// Tools used in current turn.
     pub turn_tool_count: usize,
     /// Authoritative per-turn activity counters; never inferred from prose.
@@ -169,6 +200,8 @@ impl Default for AppState {
             context: ContextDisplay::default(),
             model_name: "unknown".to_string(),
             total_tokens: 0,
+            turn_input_tokens: 0,
+            turn_output_tokens: 0,
             turn_tool_count: 0,
             turn_activity: TurnActivity::default(),
             streaming: false,
@@ -195,7 +228,10 @@ impl AppState {
     pub fn format_status_line(&self) -> String {
         let mode_str = format!("{} {}", self.mode.icon(), self.mode.display_name());
         let ctx_str = self.context.display();
-        let token_str = format!("tokens: {}k", self.total_tokens / 1000);
+        let token_str = format!(
+            "turn tokens: {} in / {} out",
+            self.turn_input_tokens, self.turn_output_tokens
+        );
         let aware_str = format!(
             "{} {}",
             self.awareness.level.icon(),
@@ -207,5 +243,23 @@ impl AppState {
             "{} | {} | {} | {} | {} | {}",
             mode_str, self.model_name, ctx_str, token_str, aware_str, tools_str
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContextDisplay;
+
+    #[test]
+    fn context_display_never_guesses_capacity_and_formats_one_million() {
+        assert_eq!(ContextDisplay::default().display(), "ctx: unknown");
+        assert_eq!(
+            ContextDisplay {
+                used: 8_000,
+                max: 1_000_000,
+            }
+            .display(),
+            "ctx: 8k/1M (1%)"
+        );
     }
 }

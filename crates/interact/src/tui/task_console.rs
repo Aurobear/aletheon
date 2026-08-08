@@ -16,7 +16,10 @@ use ratatui::{
 use fabric::protocol::client::{ActivitySnapshot, ActivityState, TaskPhase, TaskSnapshot};
 use fabric::WorkspacePolicy;
 
-use super::{state::AppState, term_compat::TermCaps};
+use super::{
+    state::{AppState, ContextDisplay},
+    term_compat::TermCaps,
+};
 
 /// The primary work surface for an active Session.
 pub struct TaskConsole<'a> {
@@ -38,7 +41,14 @@ impl Widget for TaskConsole<'_> {
             .split(area);
         render_task_header(chunks[0], buf, self.state, self.caps, self.workspace);
 
-        if chunks[1].width >= 110 && chunks[1].height >= 8 {
+        // Conversation is the normal Aletheon work surface. The dense
+        // timeline/diagnostics sidecar is useful while a Robot episode needs
+        // supervision, but permanently reserving it for chat and coding turns
+        // wastes most of the terminal. Non-Robot activity remains available
+        // through the canonical header counters and Ctrl+B/Ctrl+D overlays.
+        if !activity_console_visible(self.state, self.selected_activity) {
+            render_conversation(chunks[1], buf, self.state, self.caps);
+        } else if chunks[1].width >= 110 && chunks[1].height >= 8 {
             let columns = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
@@ -60,6 +70,17 @@ impl Widget for TaskConsole<'_> {
             render_activity_panel(rows[1], buf, self.state, self.caps, self.selected_activity);
         }
     }
+}
+
+fn activity_console_visible(state: &AppState, selected_activity: Option<usize>) -> bool {
+    selected_activity.is_some()
+        || state.activities.iter().any(|activity| {
+            activity.kind == fabric::ActivityKind::Robot
+                && !matches!(
+                    activity.state,
+                    ActivityState::Completed | ActivityState::Cancelled
+                )
+        })
 }
 
 fn render_task_header(
@@ -120,13 +141,20 @@ fn render_task_header(
         )));
     }
     if area.height >= 3 {
-        lines.push(Line::from(Span::styled(
+        let mut runtime = vec![Span::styled(
             format!(
                 " activity {activity} · context {context} · {}",
                 runtime_metrics(task)
             ),
             Style::default().fg(theme.text_muted),
-        )));
+        )];
+        if let Some(error) = state.last_error.as_deref() {
+            runtime.push(Span::styled(
+                format!(" · ERROR {error}"),
+                Style::default().fg(theme.error),
+            ));
+        }
+        lines.push(Line::from(runtime));
     }
     Paragraph::new(lines)
         .style(Style::default().bg(theme.bg_panel))
@@ -334,8 +362,12 @@ fn task_runtime_identity(task: Option<&TaskSnapshot>) -> (&str, &str, String) {
         facts.active_context_occupancy_tokens,
         facts.context_capacity_tokens,
     ) {
-        (Some(used), Some(capacity)) => format!("{used}/{capacity} tokens"),
-        (_, Some(capacity)) => format!("—/{capacity} tokens"),
+        (Some(used), Some(capacity)) => format!(
+            "{}/{}",
+            ContextDisplay::format_tokens(used),
+            ContextDisplay::format_tokens(capacity)
+        ),
+        (_, Some(capacity)) => format!("—/{}", ContextDisplay::format_tokens(capacity)),
         _ => "unknown".into(),
     };
     (provider, model, context)
@@ -521,6 +553,15 @@ mod tests {
     }
 
     fn rendered_text(width: u16, height: u16, state: &AppState) -> String {
+        rendered_text_with_selection(width, height, state, None)
+    }
+
+    fn rendered_text_with_selection(
+        width: u16,
+        height: u16,
+        state: &AppState,
+        selected_activity: Option<usize>,
+    ) -> String {
         let caps = test_caps();
         let workspace = WorkspacePolicy::from_resolved_roots(
             std::env::current_dir().expect("test cwd"),
@@ -533,7 +574,7 @@ mod tests {
             state,
             caps: &caps,
             workspace: &workspace,
-            selected_activity: None,
+            selected_activity,
         }
         .render(area, &mut buffer);
         buffer
@@ -544,11 +585,11 @@ mod tests {
     }
 
     #[test]
-    fn wide_console_has_separate_activity_and_changes_panels() {
+    fn ordinary_console_keeps_conversation_as_the_single_primary_panel() {
         let rendered = rendered_text(120, 40, &AppState::default());
         assert!(rendered.contains("Conversation"));
-        assert!(rendered.contains("Activity timeline"));
-        assert!(rendered.contains("Changes / diagnostics"));
+        assert!(!rendered.contains("Activity timeline"));
+        assert!(!rendered.contains("Changes / diagnostics"));
     }
 
     fn projected_state() -> AppState {
@@ -635,21 +676,32 @@ mod tests {
     }
 
     #[test]
-    fn long_command_progress_is_rendered_from_authoritative_activity() {
+    fn non_robot_activity_does_not_take_permanent_screen_space() {
         let rendered = rendered_text(120, 40, &projected_state());
-        assert!(rendered.contains("running"));
+        assert!(rendered.contains("1 active"));
+        assert!(!rendered.contains("42/100 lines"));
+        assert!(!rendered.contains("Changes / diagnostics"));
+    }
+
+    #[test]
+    fn projected_activity_console_opens_only_when_requested() {
+        let state = projected_state();
+        let rendered = rendered_text_with_selection(120, 40, &state, Some(0));
+        assert!(rendered.contains("Activity timeline"));
+        assert!(rendered.contains("Changes / diagnostics"));
+        assert!(rendered.contains("cargo check"));
         assert!(rendered.contains("42/100 lines"));
     }
 
     #[test]
-    fn u_tui_003_failed_runtime_is_activity_not_conversation_text() {
+    fn u_tui_003_failed_runtime_does_not_pollute_conversation_text() {
         let mut state = projected_state();
         state.activities[0].kind = fabric::ActivityKind::Runtime;
         state.activities[0].state = ActivityState::Failed;
         state.activities[0].label = "sub-agent reviewer".into();
         let rendered = rendered_text(120, 40, &state);
-        assert!(rendered.contains("failed"));
-        assert!(rendered.contains("sub-agent reviewer"));
+        assert!(rendered.contains("1 recorded"));
+        assert!(!rendered.contains("sub-agent reviewer"));
     }
 
     #[test]
@@ -664,10 +716,7 @@ mod tests {
                 rendered.contains("Conversation"),
                 "missing conversation at {width}x{height}"
             );
-            assert!(
-                rendered.contains("Activity timeline"),
-                "missing activity at {width}x{height}"
-            );
+            assert!(!rendered.contains("Activity timeline"));
         }
     }
 
@@ -695,8 +744,8 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(rendered.contains("TASK"));
-        assert!(rendered.contains("cargo check"));
-        assert!(rendered.contains("src/lib.rs"));
+        assert!(rendered.contains("Conversation"));
+        assert!(!rendered.contains("cargo check"));
         assert!(buffer
             .content
             .iter()
@@ -782,6 +831,8 @@ mod tests {
         }
 
         let rendered = rendered_text(200, 60, &state);
+        assert!(rendered.contains("Activity timeline"));
+        assert!(rendered.contains("Changes / diagnostics"));
         for label in [
             "Observe kuavo-mujoco-01",
             "Plan governed VLA proposal",
@@ -811,8 +862,8 @@ mod tests {
         let rendered = rendered_text(80, 24, &AppState::default());
         assert!(rendered.contains("TASK"));
         assert!(rendered.contains("Conversation"));
-        assert!(rendered.contains("Activity timeline"));
-        assert!(rendered.contains("Changes / diagnostics"));
+        assert!(!rendered.contains("Activity timeline"));
+        assert!(!rendered.contains("Changes / diagnostics"));
     }
 
     #[test]
@@ -845,6 +896,6 @@ mod tests {
                 terminal_tool_results: 0,
             }),
         };
-        assert_eq!(task_runtime_identity(Some(&task)).2, "—/1000000 tokens");
+        assert_eq!(task_runtime_identity(Some(&task)).2, "—/1M");
     }
 }

@@ -283,6 +283,24 @@
     "InferenceTerminalReceipt": {
       "type": "object",
       "properties": {
+        "active_context_occupancy_tokens": {
+          "description": "Prompt tokens actually submitted for this inference round. This is\nactive occupancy, not cumulative billed usage across the Session.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "context_capacity_tokens": {
+          "description": "Selected model context capacity observed by the Host/provider adapter.\nOptional for backward compatibility with persisted v1 receipts.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
         "failure_kind": {
           "type": [
             "string",

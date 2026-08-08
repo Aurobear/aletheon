@@ -821,8 +821,8 @@ fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
     Some(TaskRuntimeFacts {
         effective_provider: Some(latest.provider_id.clone()),
         effective_model: Some(latest.model_id.clone()),
-        context_capacity_tokens: None,
-        active_context_occupancy_tokens: None,
+        context_capacity_tokens: latest.context_capacity_tokens,
+        active_context_occupancy_tokens: latest.active_context_occupancy_tokens,
         cumulative_usage: fabric::InferenceUsage {
             total_input_tokens,
             output_tokens,

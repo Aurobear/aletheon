@@ -454,6 +454,8 @@ mod tests {
                 tool_schema_digest: "sha256:tools".into(),
                 status: fabric::types::inference_receipt::InferenceTerminalStatus::Succeeded,
                 usage: fabric::InferenceUsage::reported(10, 2, Some(10), Some(0), None),
+                context_capacity_tokens: Some(1_000_000),
+                active_context_occupancy_tokens: Some(10),
                 failure_kind: None,
                 prefix_shape_digest: None,
                 local_cache_miss_reason: None,

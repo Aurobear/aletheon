@@ -145,19 +145,33 @@ impl ReActLoop {
                         }
                     }
                     StreamChunk::Usage { usage } => {
+                        // Provider input usage is the authoritative occupancy
+                        // of the prompt actually submitted for this round. The
+                        // previous local message estimate omitted tool schemas
+                        // and the current assistant/tool exchange, so the TUI
+                        // could report a materially incorrect context load.
+                        let used_tokens = usage
+                            .total_input_tokens
+                            .map(|tokens| u32::try_from(tokens).unwrap_or(u32::MAX))
+                            .unwrap_or_else(|| {
+                                self.messages
+                                    .iter()
+                                    .map(|message| message.estimate_tokens())
+                                    .sum::<usize>()
+                                    .try_into()
+                                    .unwrap_or(u32::MAX)
+                            });
                         self.turn_input_tokens = self
                             .turn_input_tokens
                             .saturating_add(usage.total_input_tokens.unwrap_or(0));
                         event_sink.emit(Event::Usage { usage });
-                        // Emit context window usage so TUI can display it
-                        let total_estimate = self
-                            .messages
-                            .iter()
-                            .map(|m| m.estimate_tokens())
-                            .sum::<usize>() as u32;
                         event_sink.emit(Event::ContextUpdate {
-                            used_tokens: total_estimate,
-                            max_tokens: self.config.context_window_tokens as u32,
+                            used_tokens,
+                            max_tokens: self
+                                .config
+                                .context_window_tokens
+                                .try_into()
+                                .unwrap_or(u32::MAX),
                         });
                     }
                     StreamChunk::Done { stop_reason: sr } => {

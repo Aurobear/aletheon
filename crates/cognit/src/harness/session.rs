@@ -107,6 +107,7 @@ impl ProjectionRecordingLlm<'_> {
             operation_id: format!("{:?}", self.operation_id),
             provider_id: self.inner.name().to_owned(),
             model_id: facts.effective_model_id,
+            context_capacity_tokens: u64::try_from(facts.max_context_tokens).unwrap_or(u64::MAX),
             system_prefix_digest,
             tool_schema_digest,
         })
@@ -126,6 +127,7 @@ struct InferenceMetadata {
     operation_id: String,
     provider_id: String,
     model_id: String,
+    context_capacity_tokens: u64,
     system_prefix_digest: String,
     tool_schema_digest: String,
 }
@@ -146,6 +148,8 @@ impl InferenceMetadata {
             system_prefix_digest: self.system_prefix_digest.clone(),
             tool_schema_digest: self.tool_schema_digest.clone(),
             status,
+            context_capacity_tokens: Some(self.context_capacity_tokens),
+            active_context_occupancy_tokens: usage.total_input_tokens,
             usage,
             failure_kind: failure_kind.map(str::to_owned),
             // The host stamps the diagnostic prefix-shape digest onto the
