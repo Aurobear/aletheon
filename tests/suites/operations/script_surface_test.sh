@@ -13,6 +13,18 @@ expected=(aletheon.sh cargo-agent.sh)
 [[ -x setup.sh && -x scripts/aletheon.sh && -x scripts/cargo-agent.sh ]]
 ! grep -Eq '(^|[[:space:]])cargo (build|check|test|clippy|doc)' setup.sh
 grep -Fq 'scripts/cargo-agent.sh build -p aletheon --release' setup.sh
+grep -Fq 'CARGO_TARGET_DIR="$ALETHEON_BUILD_TARGET_DIR"' \
+  scripts/lib/aletheon/build.sh
+grep -Fq 'ALETHEON_CARGO_STAGE_BINARY="$ALETHEON_RELEASE_BINARY"' \
+  scripts/lib/aletheon/build.sh
+grep -Fq '[[ ${1:-} == build || ${1:-} == deploy ]]' scripts/aletheon.sh
+grep -Fq 'install -D -m 0755 "$stage_source" "$ALETHEON_CARGO_STAGE_BINARY"' \
+  scripts/cargo-agent.sh
+if grep -Fq 'CARGO_TARGET_DIR="$ALETHEON_ROOT/target"' \
+    scripts/lib/aletheon/build.sh; then
+  echo 'canonical build bypasses the shared incremental target' >&2
+  exit 1
+fi
 
 # Fresh installs must not silently select or advertise the quota-expensive Pro
 # route. Pro may remain in the model catalog for explicit user selection, but

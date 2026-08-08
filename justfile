@@ -92,12 +92,7 @@ clean:
 # 安装 sccache 跨构建共享缓存（clean 后重编译快 50%+）
 setup-sccache:
     cargo install sccache --locked
-    @mkdir -p .cargo
-    @if ! grep -q 'rustc-wrapper' .cargo/config.toml 2>/dev/null; then \
-        echo '[build]' >> .cargo/config.toml; \
-        echo 'rustc-wrapper = "sccache"' >> .cargo/config.toml; \
-    fi
-    @echo "sccache configured in .cargo/config.toml"
+    @echo "sccache installed; scripts/cargo-agent.sh will detect it automatically"
 
 # V02: installed-host production migration, scenario, failure and rollback gate.
 # This invokes V01 through scripts/aletheon.sh acceptance release and fails closed when

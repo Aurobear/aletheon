@@ -146,5 +146,15 @@ exec flock -w "${ALETHEON_CARGO_LOCK_TIMEOUT_SEC:-1800}" -o "$lock_file" \
       fi
       touch -- "$ALETHEON_CARGO_TARGET_SCAN_STAMP"
     fi
-    exec cargo "$@"
+    cargo "$@"
+    if [[ -n ${ALETHEON_CARGO_STAGE_BINARY:-} ]]; then
+      stage_source=${ALETHEON_CARGO_STAGE_SOURCE:-$CARGO_TARGET_DIR/release/aletheon}
+      [[ -x "$stage_source" ]] || {
+        echo "Aletheon Cargo: staged binary source is missing or not executable: $stage_source" >&2
+        exit 1
+      }
+      if [[ "$stage_source" != "$ALETHEON_CARGO_STAGE_BINARY" ]]; then
+        install -D -m 0755 "$stage_source" "$ALETHEON_CARGO_STAGE_BINARY"
+      fi
+    fi
   ' cargo-agent "$@"

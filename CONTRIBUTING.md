@@ -34,6 +34,11 @@ recursive size scan does not delay every no-op incremental command. Set
 `ALETHEON_CARGO_TARGET_SCAN_INTERVAL_SEC` when operating under a tighter disk
 budget.
 
+The canonical `scripts/aletheon.sh build` path uses that shared target too. It
+stages only the finished executable at `target/release/aletheon`, the stable
+candidate path consumed by deployment and acceptance; incremental objects are
+not duplicated per worktree.
+
 Prefer crate- and target-scoped edit loops instead of enumerating every
 workspace integration binary:
 

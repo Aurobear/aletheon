@@ -5,11 +5,10 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 ALETHEON_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
 export SCRIPT_DIR ALETHEON_ROOT
 
-# `sudo scripts/aletheon.sh deploy` must keep the deployment's user-scoped
-# phase attached to the invoking user's systemd manager. Re-enter before
-# sourcing common.sh so HOME and all derived user paths belong to that user;
-# cmd_deploy will cross the sudo boundary only for reviewed system assets.
-if [[ ${1:-} == deploy ]] &&
+# Build and deploy must keep the invoking user's shared Cargo cache and user
+# systemd manager. Re-enter before sourcing common.sh so HOME-derived paths do
+# not silently switch to root and trigger a cold rebuild.
+if [[ ${1:-} == build || ${1:-} == deploy ]] &&
    [[ ${EUID:-$(id -u)} -eq 0 ]] &&
    [[ -n ${SUDO_USER:-} ]] &&
    [[ $SUDO_USER != root ]] &&
