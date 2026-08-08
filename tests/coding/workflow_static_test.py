@@ -181,7 +181,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("HANDOFF_RUN_ID", download_section)
         self.assertIn("R8 Evidence Handoff", download_section)
         self.assertIn("R8 artifact producer did not complete successfully", download_section)
-        self.assertIn("stat.S_ISLNK", download_section)
+        self.assertIn("stat.S_ISREG", download_section)
         self.assertIn("len(full_path.parts) != 1", download_section)
         # Must NOT use gh run download (the old approach)
         self.assertNotIn("gh run download", download_section)
@@ -251,7 +251,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("symlink in artifact", result.stderr)
+            self.assertIn("non-regular file type in artifact", result.stderr)
 
     def test_convergence_gate_downloads_x86_64_artifact(self) -> None:
         self.assertIn("actions/download-artifact@v4", self.workflow)
@@ -803,6 +803,41 @@ class ReleaseWorkflowTest(unittest.TestCase):
             validate_section.index("len(full.parts) != 1"),
             validate_section.index("name = full.name", validate_section.index("len(full.parts) != 1")),
         )
+
+    def test_convergence_gate_zip_extractor_rejects_fifo_device_socket(self) -> None:
+        marker = (
+            'python3 - "$r8_dir/artifact.zip" "$r8_dir" <<\'PY\'\n'
+        )
+        body = self.workflow.split(marker, 1)[1].split("\n          PY", 1)[0]
+        extractor = textwrap.dedent(body)
+
+        for type_label, st_mode in (
+            ("FIFO", stat.S_IFIFO),
+            ("char device", stat.S_IFCHR),
+            ("block device", stat.S_IFBLK),
+            ("socket", stat.S_IFSOCK),
+        ):
+            with self.subTest(type=type_label):
+                with tempfile.TemporaryDirectory() as root_raw:
+                    root = Path(root_raw)
+                    archive = root / f"{type_label}.zip"
+                    destination = root / type_label
+                    destination.mkdir()
+                    with zipfile.ZipFile(archive, "w") as bundle:
+                        info = zipfile.ZipInfo("r8-metadata.json")
+                        info.external_attr = (st_mode | 0o666) << 16
+                        bundle.writestr(info, "content")
+                        bundle.writestr("positive-receipt.json", "{}")
+                        bundle.writestr("negative-receipt.json", "{}")
+                    result = subprocess.run(
+                        ["python3", "-", str(archive), str(destination)],
+                        input=extractor,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("non-regular file type in artifact", result.stderr)
 
     # -- grep -Fvx fixed-string exclusion (defect 6) ----------------------
 

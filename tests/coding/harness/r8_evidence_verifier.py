@@ -102,7 +102,8 @@ def verify_metadata(
     """Validate the R8 metadata file and cross-check digests."""
     reasons: list[str] = []
 
-    if metadata.get("schema_version") != 1:
+    schema_version = metadata.get("schema_version")
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool) or schema_version != 1:
         reasons.append("metadata schema_version must be 1")
 
     commit_sha = metadata.get("commit_sha")
@@ -360,7 +361,7 @@ def verify_positive_receipt(
     if not isinstance(receipt, dict):
         return ["positive receipt is not a JSON object"]
 
-    if receipt.get("schema_version") != 1:
+    if not isinstance(receipt.get("schema_version"), int) or isinstance(receipt.get("schema_version"), bool) or receipt.get("schema_version") != 1:
         reasons.append("positive receipt schema_version must be 1")
 
     if receipt.get("status") != "REPORT_EVIDENCE_PASS":
@@ -449,7 +450,7 @@ def verify_negative_receipt(
     if not isinstance(receipt, dict):
         return ["negative receipt is not a JSON object"]
 
-    if receipt.get("schema_version") != 1:
+    if not isinstance(receipt.get("schema_version"), int) or isinstance(receipt.get("schema_version"), bool) or receipt.get("schema_version") != 1:
         reasons.append("negative receipt schema_version must be 1")
 
     if receipt.get("status") != "REPORT_EVIDENCE_PASS":

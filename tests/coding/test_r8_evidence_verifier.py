@@ -226,6 +226,11 @@ class PositiveReceiptTest(unittest.TestCase):
         reasons = verify_positive_receipt(receipt, FIXTURE_DEVICE)
         self.assertTrue(any("policy.digest" in r for r in reasons))
 
+    def test_rejects_bool_schema_version(self):
+        receipt = _make_positive_receipt(schema_version=True)
+        reasons = verify_positive_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("schema_version must be 1" in r for r in reasons))
+
     def test_rejects_unhashable_operation_id_without_crashing(self):
         receipt = _make_positive_receipt(
             attempt_count=1, operation_ids=[{"invented": "operation"}]
@@ -355,6 +360,11 @@ class NegativeReceiptTest(unittest.TestCase):
         }
         reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
         self.assertTrue(any("protocol_version" in r for r in reasons))
+
+    def test_rejects_bool_schema_version_negative(self):
+        receipt = _make_negative_receipt(schema_version=True)
+        reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("schema_version must be 1" in r for r in reasons))
 
     def test_rejects_unhashable_operation_id_negative_without_crashing(self):
         receipt = _make_negative_receipt(
@@ -644,6 +654,25 @@ class MetadataTest(unittest.TestCase):
             FIXTURE_DEVICE, self._pos, self._neg,
         )
         self.assertTrue(any("before stage_completed_unix_ms" in r for r in reasons))
+
+    def test_rejects_bool_schema_version_metadata(self):
+        meta = _make_metadata(
+            schema_version=True,
+            rc_archive_sha256=self._archive_digest,
+            positive_receipt_sha256=self._pos_digest,
+            negative_receipt_sha256=self._neg_digest,
+        )
+        reasons = verify_metadata(
+            meta,
+            FIXTURE_COMMIT,
+            FIXTURE_RUN_ID,
+            self._rc_archive,
+            meta["installed_digest"],
+            FIXTURE_DEVICE,
+            self._pos,
+            self._neg,
+        )
+        self.assertTrue(any("schema_version must be 1" in r for r in reasons))
 
     def test_same_episode_ids_in_metadata_fails(self):
         meta = _make_metadata(

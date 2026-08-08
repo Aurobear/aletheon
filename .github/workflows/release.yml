@@ -363,8 +363,8 @@ jobs:
                       sys.exit(1)
                   name = full_path.name
                   unix_mode = (info.external_attr >> 16) & 0xFFFF
-                  if stat.S_ISLNK(unix_mode):
-                      print(f"ERROR: symlink in artifact: {info.filename}", file=sys.stderr)
+                  if stat.S_IFMT(unix_mode) != 0 and not stat.S_ISREG(unix_mode):
+                      print(f"ERROR: non-regular file type in artifact: {info.filename}", file=sys.stderr)
                       sys.exit(1)
                   if info.is_dir():
                       print(f"ERROR: directory in artifact: {info.filename}", file=sys.stderr)
