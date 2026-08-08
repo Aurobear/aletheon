@@ -839,7 +839,15 @@ impl CognitiveSession for LinearCognitiveSession {
                     async move {
                         let result =
                             invoke_with_terminal_receipt(services, req, clock.as_ref()).await;
-                        (result.output, result.is_error)
+                        let activated_tool_definitions =
+                            services.drain_activated_tool_definitions().await;
+                        crate::harness::event_sink::ToolResultEvent {
+                            content: result.output,
+                            is_error: result.is_error,
+                            execution_time_ms: result.usage.wall_time_ms,
+                            patch_delta: result.patch_delta,
+                            activated_tool_definitions,
+                        }
                     }
                 });
             let (output, metrics) = tokio::select! {
@@ -988,11 +996,14 @@ impl CognitiveSession for LinearCognitiveSession {
                 };
                 async move {
                     let result = invoke_with_terminal_receipt(services, call, clock.as_ref()).await;
+                    let activated_tool_definitions =
+                        services.drain_activated_tool_definitions().await;
                     crate::harness::event_sink::ToolResultEvent {
                         content: result.output,
                         is_error: result.is_error,
                         execution_time_ms: result.usage.wall_time_ms,
                         patch_delta: result.patch_delta,
+                        activated_tool_definitions,
                     }
                 }
             },

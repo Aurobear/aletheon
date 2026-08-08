@@ -65,24 +65,34 @@ impl Tool for ToolSearchTool {
         let catalog = self.catalog.read().expect("tool catalog lock poisoned");
         let results = catalog.search(query, limit);
 
-        if results.is_empty() {
-            return ToolResult {
-                content: "No matching tools found. Try different keywords.".to_string(),
-                is_error: false,
-                metadata: ToolResultMeta::default(),
-            };
-        }
-
-        let lines: Vec<String> = results
+        let matches = results
             .iter()
             .map(|(name, score)| {
                 let desc = catalog.get_description(name).unwrap_or("(no description)");
-                format!("- {name} (score: {score:.2}): {desc}")
+                json!({
+                    "name": name,
+                    "score": score,
+                    "description": desc,
+                })
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         ToolResult {
-            content: format!("Found {} tool(s):\n{}", lines.len(), lines.join("\n")),
+            // Machine-readable names let the Host expand the model-visible
+            // schema set without trusting prose parsing. The execution
+            // authority still resolves every name against the immutable
+            // profile-authorized catalog.
+            content: json!({
+                "ok": true,
+                "query": query,
+                "matches": matches,
+                "message": if results.is_empty() {
+                    "No matching tools found. Try different keywords."
+                } else {
+                    "Matching authorized tools can be used on the next inference round."
+                }
+            })
+            .to_string(),
             is_error: false,
             metadata: ToolResultMeta::default(),
         }
@@ -149,7 +159,8 @@ mod tests {
             .execute(json!({"query": "read file", "limit": 5}), &ctx)
             .await;
         assert!(!result.is_error);
-        assert!(result.content.contains("file_read"));
+        let output: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(output["matches"][0]["name"], "file_read");
     }
 
     #[tokio::test]
@@ -167,7 +178,12 @@ mod tests {
             .execute(json!({"query": "internal system", "limit": 5}), &ctx)
             .await;
         assert!(!result.is_error);
-        assert!(!result.content.contains("secret_tool"));
+        let output: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert!(output["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["name"] != "secret_tool"));
     }
 
     #[tokio::test]
@@ -185,6 +201,11 @@ mod tests {
             .execute(json!({"query": "zzzznonexistent", "limit": 5}), &ctx)
             .await;
         assert!(!result.is_error);
-        assert!(result.content.contains("No matching tools"));
+        let output: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert!(output["matches"].as_array().unwrap().is_empty());
+        assert!(output["message"]
+            .as_str()
+            .unwrap()
+            .contains("No matching tools"));
     }
 }

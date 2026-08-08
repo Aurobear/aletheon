@@ -111,88 +111,96 @@ pub fn working_directory_policy_prompt(working_dir: &std::path::Path) -> String 
 #[async_trait]
 impl ContextSource for ProductionContextSource {
     async fn load(&self, request: &TurnRequest) -> Result<ContextFragments, ContextAssemblyError> {
-        let system_prefix = format!(
-            "{}\n\n{}",
-            self.cached_prefix.lock().await.clone(),
-            working_directory_policy_prompt(request.context.workspace.cwd())
-        );
-        let skills = {
-            let loader = self.skill_loader.lock().await;
-            let keywords = loader
-                .plugins()
-                .iter()
-                .filter(|plugin| !plugin.keywords.is_empty())
-                .map(|plugin| corpus::skill::keyword_matcher::SkillKeywords {
-                    name: plugin.name.clone(),
-                    keywords: plugin.keywords.clone(),
-                    body: plugin.system_prompt.clone(),
-                })
-                .collect::<Vec<_>>();
-            corpus::skill::keyword_matcher::match_skills(&request.input, &keywords).join("\n\n")
-        };
-        let suggestion = self
-            .skill_router
-            .lock()
-            .await
-            .suggest(&request.input, 0.6, 1)
-            .first()
-            .map(|item| {
-                format!(
-                    "Suggested /{} ({:.2}) — {}",
-                    item.name, item.confidence, item.description
-                )
-            })
-            .unwrap_or_default();
-        let skills = [skills, suggestion]
-            .into_iter()
-            .filter(|item| !item.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-        // A conscious workspace that has not yet observed a turn — e.g. the
-        // first turn on a freshly deployed daemon with no durable state — is
-        // non-fatal. The recurrent-workspace projection is an enhancement, so
-        // its absence must degrade to "no conscious context" rather than fail
-        // the whole turn (downstream already treats this field as optional).
-        let conscious = match self
-            .conscious
-            .latest_context(&AgoraSpaceId(request.context.thread_id.0.clone()))
-            .await
-        {
-            Ok(projection) => {
-                projection
-                    .validate()
-                    .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
-                Some(projection)
-            }
-            Err(_) => None,
-        };
-        // Synchronous pre-turn memory recall (fail-open, bounded timeout).
-        let memory_context = if self.recall_enabled {
-            if let Some(ref svc) = self.memory_service {
-                let req = RecallRequest {
-                    session: request.context.thread_id.0.clone(),
-                    query: request.input.clone(),
-                    max_items: self.recall_max_items,
-                    max_content_bytes: self.recall_max_bytes,
-                    current_at: None,
-                    include_historical: false,
-                    mode: None,
-                };
-                match tokio::time::timeout(
-                    Duration::from_millis(self.recall_timeout_ms),
-                    svc.recall(req),
-                )
+        // These sources are independent and bounded. Loading them concurrently
+        // prevents a normal text turn from paying skill routing + conscious
+        // projection + the full memory recall timeout serially.
+        let prefix_and_skills = async {
+            let system_prefix = format!(
+                "{}\n\n{}",
+                self.cached_prefix.lock().await.clone(),
+                working_directory_policy_prompt(request.context.workspace.cwd())
+            );
+            let skills = {
+                let loader = self.skill_loader.lock().await;
+                let keywords = loader
+                    .plugins()
+                    .iter()
+                    .filter(|plugin| !plugin.keywords.is_empty())
+                    .map(|plugin| corpus::skill::keyword_matcher::SkillKeywords {
+                        name: plugin.name.clone(),
+                        keywords: plugin.keywords.clone(),
+                        body: plugin.system_prompt.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                corpus::skill::keyword_matcher::match_skills(&request.input, &keywords)
+                    .join("\n\n")
+            };
+            let suggestion = self
+                .skill_router
+                .lock()
                 .await
-                {
-                    Ok(Ok(set)) if !set.items.is_empty() => format_recall_context(&set),
-                    _ => String::new(),
+                .suggest(&request.input, 0.6, 1)
+                .first()
+                .map(|item| {
+                    format!(
+                        "Suggested /{} ({:.2}) — {}",
+                        item.name, item.confidence, item.description
+                    )
+                })
+                .unwrap_or_default();
+            let skills = [skills, suggestion]
+                .into_iter()
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            (system_prefix, skills)
+        };
+        let conscious = async {
+            // A fresh conscious workspace is non-fatal; it degrades to no
+            // projection rather than blocking the user turn.
+            match self
+                .conscious
+                .latest_context(&AgoraSpaceId(request.context.thread_id.0.clone()))
+                .await
+            {
+                Ok(projection) => {
+                    projection
+                        .validate()
+                        .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
+                    Ok::<_, ContextAssemblyError>(Some(projection))
                 }
-            } else {
-                String::new()
+                Err(_) => Ok(None),
             }
-        } else {
+        };
+        let memory_context = async {
+            // Synchronous pre-turn memory recall remains fail-open and bounded.
+            if self.recall_enabled {
+                if let Some(ref svc) = self.memory_service {
+                    let req = RecallRequest {
+                        session: request.context.thread_id.0.clone(),
+                        query: request.input.clone(),
+                        max_items: self.recall_max_items,
+                        max_content_bytes: self.recall_max_bytes,
+                        current_at: None,
+                        include_historical: false,
+                        mode: None,
+                    };
+                    return match tokio::time::timeout(
+                        Duration::from_millis(self.recall_timeout_ms),
+                        svc.recall(req),
+                    )
+                    .await
+                    {
+                        Ok(Ok(set)) if !set.items.is_empty() => format_recall_context(&set),
+                        _ => String::new(),
+                    };
+                }
+            }
             String::new()
         };
+        let ((system_prefix, skills), conscious, memory_context) =
+            tokio::join!(prefix_and_skills, conscious, memory_context);
+        let conscious = conscious?;
         Ok(ContextFragments {
             system_prefix,
             skills,

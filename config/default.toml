@@ -6,6 +6,10 @@ default_model = "deepseek/deepseek-v4-flash[1m]"
 # Bound cumulative provider/tool rounds for every top-level turn. Set 0 only in
 # an explicitly reviewed override when another authoritative budget is present.
 max_iterations = 50
+# Bound one provider response. The previous implicit 100k ceiling let a
+# misrouted or reasoning-heavy simple turn consume an excessive hidden/output
+# budget; complex work should use additional bounded rounds instead.
+max_tokens = 16384
 
 [agent.provider_timeouts]
 # Bound connection setup, whole non-stream responses / stream headers, and SSE silence.

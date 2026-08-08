@@ -278,6 +278,14 @@ pub trait TurnServices: Send + Sync {
     async fn agora_view(&self, session_id: &str) -> Result<AgoraView>;
     async fn invoke(&self, call: CapabilityCall) -> CapabilityResult;
 
+    /// Drain schemas activated by a preceding discovery capability. The Host
+    /// implementation resolves every returned name against the immutable
+    /// profile-authorized catalog before placing it here. The default keeps
+    /// existing TurnServices implementations projection-neutral.
+    async fn drain_activated_tool_definitions(&self) -> Vec<ToolDefinition> {
+        Vec::new()
+    }
+
     /// Persist or project an authoritative terminal receipt. The default is a
     /// compatibility no-op; callers invoke it only after terminal observation.
     async fn record_capability_receipt(&self, _receipt: CapabilityTerminalReceipt) {}

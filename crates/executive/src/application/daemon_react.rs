@@ -64,6 +64,7 @@ where
         local_cache_miss_reason,
         provider_miss_inference_allowed,
     } = context;
+    let initial_tool_schema_digest = fabric::tool_schema_digest(&tool_defs).ok();
     let services = DaemonTurnServices {
         llm,
         tool_defs,
@@ -80,6 +81,9 @@ where
         prefix_shape_digest,
         local_cache_miss_reason: tokio::sync::Mutex::new(local_cache_miss_reason),
         provider_miss_inference_allowed,
+        activated_tool_definitions: tokio::sync::Mutex::new(Vec::new()),
+        last_tool_schema_digest: tokio::sync::Mutex::new(initial_tool_schema_digest.clone()),
+        initial_tool_schema_digest,
     };
     let session_record = SessionRecord {
         schema_version: SESSION_SCHEMA_VERSION,
@@ -121,6 +125,9 @@ struct DaemonTurnServices<F> {
     prefix_shape_digest: Option<String>,
     local_cache_miss_reason: tokio::sync::Mutex<Option<LocalMissReason>>,
     provider_miss_inference_allowed: bool,
+    activated_tool_definitions: tokio::sync::Mutex<Vec<ToolDefinition>>,
+    initial_tool_schema_digest: Option<String>,
+    last_tool_schema_digest: tokio::sync::Mutex<Option<String>>,
 }
 
 #[async_trait]
@@ -149,6 +156,12 @@ where
             (self.execute_tool)(&call.call_id, &call.name, &call.input)
                 .await
                 .into();
+        if !result.activated_tool_definitions.is_empty() {
+            self.activated_tool_definitions
+                .lock()
+                .await
+                .extend(result.activated_tool_definitions.iter().cloned());
+        }
         CapabilityResult {
             call_id: call.call_id,
             output: result.content,
@@ -161,6 +174,10 @@ where
             patch_delta: result.patch_delta,
             served_from_cache: false,
         }
+    }
+
+    async fn drain_activated_tool_definitions(&self) -> Vec<ToolDefinition> {
+        std::mem::take(&mut *self.activated_tool_definitions.lock().await)
     }
 
     async fn record_capability_receipt(&self, receipt: fabric::CapabilityTerminalReceipt) {
@@ -182,8 +199,25 @@ where
         &self,
         mut receipt: fabric::types::inference_receipt::InferenceTerminalReceipt,
     ) {
-        receipt.prefix_shape_digest = self.prefix_shape_digest.clone();
+        let uses_initial_tool_projection = self
+            .initial_tool_schema_digest
+            .as_ref()
+            .is_some_and(|initial| initial == &receipt.tool_schema_digest);
+        let tool_schema_changed = {
+            let mut last = self.last_tool_schema_digest.lock().await;
+            let changed = last
+                .as_ref()
+                .is_some_and(|previous| previous != &receipt.tool_schema_digest);
+            *last = Some(receipt.tool_schema_digest.clone());
+            changed
+        };
+        receipt.prefix_shape_digest = uses_initial_tool_projection
+            .then(|| self.prefix_shape_digest.clone())
+            .flatten();
         let mut reason = self.local_cache_miss_reason.lock().await.take();
+        if reason.is_none() && tool_schema_changed {
+            reason = Some(LocalMissReason::ToolSchemaChanged);
+        }
         if reason.is_none()
             && self.provider_miss_inference_allowed
             && receipt.usage.cache_telemetry == fabric::CacheTelemetry::Reported

@@ -262,6 +262,10 @@ pub struct ToolResultEvent {
     pub is_error: bool,
     pub execution_time_ms: u64,
     pub patch_delta: Option<fabric::PatchDelta>,
+    /// Additional Host-authorized schemas made model-visible after this tool
+    /// result. This is projection metadata only; it never grants execution
+    /// authority and is intentionally omitted from public UI events.
+    pub activated_tool_definitions: Vec<fabric::ToolDefinition>,
 }
 
 impl From<(String, bool)> for ToolResultEvent {
@@ -271,6 +275,7 @@ impl From<(String, bool)> for ToolResultEvent {
             is_error,
             execution_time_ms: 0,
             patch_delta: None,
+            activated_tool_definitions: Vec::new(),
         }
     }
 }
@@ -282,6 +287,7 @@ impl From<&ToolResult> for ToolResultEvent {
             is_error: tr.is_error,
             execution_time_ms: tr.metadata.execution_time_ms,
             patch_delta: tr.metadata.patch_delta.clone(),
+            activated_tool_definitions: Vec::new(),
         }
     }
 }
@@ -473,6 +479,7 @@ mod tests {
                 is_error: false,
                 execution_time_ms: 100,
                 patch_delta: None,
+                activated_tool_definitions: Vec::new(),
             },
         };
         let _ = Event::Usage {
@@ -580,6 +587,7 @@ mod tests {
                 is_error: false,
                 execution_time_ms: 17,
                 patch_delta: None,
+                activated_tool_definitions: Vec::new(),
             },
         };
 

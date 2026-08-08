@@ -76,6 +76,7 @@ pub mod settlement;
 pub mod storage_quota;
 pub mod thread_authority;
 pub mod tool_stream_bridge;
+pub mod turn_tool_projection;
 pub mod turn_coordinator;
 pub mod turn_diff_tracker;
 pub mod turn_engine;
