@@ -192,13 +192,19 @@ fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &Te
         .collect::<Vec<_>>();
     items.sort_by_key(|item| item.sequence);
     let mut lines = Vec::new();
+    let mut last_assistant_content: Option<&str> = None;
     for item in items {
         if item.kind == "user" {
+            last_assistant_content = None;
             lines.push(Line::from(vec![
                 Span::styled("> ", Style::default().fg(theme.user_icon)),
                 Span::styled(item.content.clone(), Style::default().fg(theme.user_icon)),
             ]));
         } else {
+            if last_assistant_content == Some(item.content.as_str()) {
+                continue;
+            }
+            last_assistant_content = Some(item.content.as_str());
             lines.extend(markdown::render_markdown(&item.content, inner.width, caps));
         }
         lines.push(Line::from(""));
@@ -760,6 +766,49 @@ mod tests {
             assert!(!rendered.contains("|---"), "width={width}: {rendered}");
             assert!(!rendered.contains("||"), "width={width}: {rendered}");
         }
+    }
+
+    #[test]
+    fn consecutive_identical_assistant_transport_rows_render_once_per_turn() {
+        let mut state = AppState::default();
+        for (id, sequence) in [("durable-1", 1), ("compat-1", 2)] {
+            state.items.insert(
+                id.into(),
+                UiItem {
+                    id: id.into(),
+                    sequence,
+                    kind: "assistant".into(),
+                    content: "same answer".into(),
+                    status: UiItemStatus::Completed,
+                    collapsed: false,
+                },
+            );
+        }
+        state.items.insert(
+            "user-2".into(),
+            UiItem {
+                id: "user-2".into(),
+                sequence: 3,
+                kind: "user".into(),
+                content: "repeat".into(),
+                status: UiItemStatus::Completed,
+                collapsed: false,
+            },
+        );
+        state.items.insert(
+            "durable-2".into(),
+            UiItem {
+                id: "durable-2".into(),
+                sequence: 4,
+                kind: "assistant".into(),
+                content: "same answer".into(),
+                status: UiItemStatus::Completed,
+                collapsed: false,
+            },
+        );
+
+        let rendered = rendered_text(120, 40, &state);
+        assert_eq!(rendered.matches("same answer").count(), 2, "{rendered}");
     }
 
     fn projected_state() -> AppState {

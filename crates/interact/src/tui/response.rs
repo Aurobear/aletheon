@@ -613,8 +613,11 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
 /// Temporary V0 response adapter. This is the only location allowed to inspect
 /// legacy result fields; remove after the compatibility window ending 2026-12-31.
 fn set_compat_assistant(app: &mut App, text: String) {
+    let already_streamed = !text.is_empty() && app.stream_ctrl.current_text() == text;
     app.compat_transcript.set_assistant_stream(text.clone());
-    app.replace_transient_assistant(text);
+    if !already_streamed {
+        app.replace_transient_assistant(text);
+    }
 }
 
 fn add_compat_notice(app: &mut App, text: String) {
@@ -1575,6 +1578,11 @@ mod tests {
                     metrics: Default::default(),
                 },
             ),
+        );
+
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "text_snapshot", "text": "typed answer"}),
         );
 
         process_response(&mut app, serde_json::json!({"id": 1, "result": output}));
