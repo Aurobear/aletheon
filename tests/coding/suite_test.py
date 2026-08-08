@@ -206,6 +206,36 @@ class SuiteTest(unittest.TestCase):
         self.assertEqual(summary["by_category"]["approval"]["passed"], 1)
         self.assertEqual(suite.exit_code(report), 1)
 
+    def test_missing_required_change_is_not_reported_as_scope_violation(self):
+        def missing_required_change(value):
+            value["workspace"]["required_scope_satisfied"] = False
+            value["execution"]["reported_success"] = False
+
+        path = self.write(
+            make_receipt("missing-change", failure_mutation=missing_required_change)
+        )
+        report = suite.aggregate_receipts([path])
+        task = report["tasks"][0]
+        self.assertEqual(task["failure_class"], "policy_scope_failure")
+        self.assertEqual(task["reasons"], ["required_scope_not_satisfied"])
+        self.assertFalse(task["scope_violation"])
+        self.assertFalse(suite._is_p0_failure(task))
+        self.assertEqual(report["summary"]["scope_violation_count"], 0)
+
+    def test_forbidden_write_is_reported_as_scope_violation(self):
+        def forbidden_write(value):
+            value["workspace"]["forbidden_paths_unchanged"] = False
+
+        path = self.write(
+            make_receipt("forbidden-write", failure_mutation=forbidden_write)
+        )
+        report = suite.aggregate_receipts([path])
+        task = report["tasks"][0]
+        self.assertEqual(task["reasons"], ["forbidden_path_changed"])
+        self.assertTrue(task["scope_violation"])
+        self.assertTrue(suite._is_p0_failure(task))
+        self.assertEqual(report["summary"]["scope_violation_count"], 1)
+
     def test_metrics_preserve_null_availability_and_nearest_rank_percentiles(self):
         paths = [
             self.write(make_receipt("one", metric=10)),
