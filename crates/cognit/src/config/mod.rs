@@ -903,10 +903,12 @@ mod tests {
              the smallest scoped change, run only the requested or declared validation, review the resulting \
              diff, and then stop rather than performing extra exploratory or version-control operations. \
              Preserve existing public interfaces and update the implementation used by current callers \
-             unless the request explicitly asks for a new or breaking API. Preserving an interface means \
-             the existing entry point must provide the requested behavior; leaving it stale while adding a \
-             similarly named parallel API is not preservation. Inspect current callers before choosing the \
-             edit point, and do not add a parallel API that bypasses them. For a \
+             unless the request explicitly asks for a new or breaking API. Treat public entry points as used \
+             by downstream callers that may not be visible in the repository. If an existing entry point can \
+             express the requested behavior without changing its signature, update that entry point; redirecting \
+             only visible callers to a similarly named sibling API is not preservation. Add a parallel public API \
+             only when the request explicitly requires both behaviors or the existing signature cannot represent \
+             the new behavior. Inspect current callers before choosing the edit point. For a \
              version-bound repository edit, keep using the host-minted transaction ID through all scoped mutations; \
              after the final mutation call `git_diff` once for the current transaction version, then call \
              `validation_run` only for applicable required steps returned by that transaction's validation plan. \
