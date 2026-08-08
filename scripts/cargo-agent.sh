@@ -65,6 +65,11 @@ if [[ -z ${RUSTC_WRAPPER+x} ]] && command -v sccache >/dev/null 2>&1; then
   export RUSTC_WRAPPER=sccache
   export SCCACHE_DIR=${SCCACHE_DIR:-$cache_root/sccache}
   export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-20G}
+  # A self-hosted runner can reap or restart its inherited sccache daemon while
+  # another serialized build is starting. Preserve compilation correctness by
+  # using sccache's documented local-compiler fallback for server I/O failures;
+  # callers that explicitly configure the policy still win.
+  export SCCACHE_IGNORE_SERVER_IO_ERROR=${SCCACHE_IGNORE_SERVER_IO_ERROR:-1}
   mkdir -p -- "$SCCACHE_DIR"
 fi
 
