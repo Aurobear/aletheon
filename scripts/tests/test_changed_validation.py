@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -78,6 +79,42 @@ class ChangedValidationTests(unittest.TestCase):
         commands = self.commands(["scripts/lib/aletheon/test.sh"])
         self.assertIn(("bash", "tests/suites/operations/cli_static_test.sh"), commands)
         self.assertIn(("bash", "tests/suites/operations/script_surface_test.sh"), commands)
+
+    def test_failed_rerun_is_intersected_with_current_plan(self):
+        steps = MODULE.derive_steps(
+            self.root, ["crates/core/src/lib.rs"], self.metadata
+        )
+        failed = steps[1]
+        report = self.root / "report.json"
+        payload = {
+            "selected_steps": [{"command": list(step.command)} for step in steps],
+            "results": [
+                {"command": list(steps[0].command), "status": "passed"},
+                {"command": list(failed.command), "status": "failed"},
+            ],
+        }
+        report.write_text(json.dumps(payload), encoding="utf-8")
+        self.assertEqual(MODULE.select_report_steps(payload, steps, True), [failed])
+        self.assertEqual(MODULE.select_report_steps(payload, steps, False), steps[1:])
+
+    def test_stale_failed_command_is_rejected(self):
+        steps = MODULE.derive_steps(
+            self.root, ["crates/core/src/lib.rs"], self.metadata
+        )
+        report = self.root / "report.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {"command": ["bash", "unknown.sh"], "status": "failed"}
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        with self.assertRaises(ValueError):
+            MODULE.select_report_steps(payload, steps, True)
 
 
 if __name__ == "__main__":

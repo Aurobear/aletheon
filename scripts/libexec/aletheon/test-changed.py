@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -11,7 +13,6 @@ import shlex
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from typing import Iterable
 
 
@@ -233,8 +234,70 @@ def print_plan(paths: list[str], steps: list[Step]) -> None:
         print(f"[{step.kind}] {shlex.join(step.command)}  # {step.reason}")
 
 
-def execute(root: Path, steps: list[Step], keep_going: bool) -> int:
+def report_payload(paths: list[str], steps: list[Step], results: list[dict]) -> dict:
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "changed_paths": paths,
+        "selected_steps": [
+            {**asdict(step), "command": list(step.command)} for step in steps
+        ],
+        "results": results,
+    }
+
+
+def write_report(path: Path | None, payload: dict) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def load_report(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def report_commands(payload: dict) -> set[tuple[str, ...]]:
+    return {
+        tuple(step.get("command", [])) for step in payload.get("selected_steps", [])
+    }
+
+
+def select_report_steps(
+    payload: dict, available: list[Step], failed_only: bool
+) -> list[Step]:
+    available_commands = {step.command for step in available}
+    recorded_commands = report_commands(payload)
+    if recorded_commands != available_commands:
+        raise ValueError("validation report does not match the current diff-derived plan")
+    statuses = {
+        tuple(result.get("command", [])): result.get("status")
+        for result in payload.get("results", [])
+    }
+    if failed_only:
+        return [step for step in available if statuses.get(step.command) == "failed"]
+    return [step for step in available if statuses.get(step.command) != "passed"]
+
+
+def merge_result(results: list[dict], result: dict) -> None:
+    command = tuple(result["command"])
+    results[:] = [item for item in results if tuple(item.get("command", [])) != command]
+    results.append(result)
+
+
+def execute(
+    root: Path,
+    paths: list[str],
+    steps: list[Step],
+    selected_plan: list[Step],
+    keep_going: bool,
+    report_path: Path | None,
+    initial_results: list[dict],
+) -> int:
     failures = 0
+    results = list(initial_results)
     for index, step in enumerate(steps, 1):
         started = time.monotonic()
         print(f"\n[{index}/{len(steps)}] {shlex.join(step.command)}", flush=True)
@@ -242,6 +305,18 @@ def execute(root: Path, steps: list[Step], keep_going: bool) -> int:
         elapsed = time.monotonic() - started
         status = "passed" if result.returncode == 0 else f"failed ({result.returncode})"
         print(f"[{step.kind}] {status} in {elapsed:.2f}s", flush=True)
+        merge_result(
+            results,
+            {
+                "kind": step.kind,
+                "command": list(step.command),
+                "reason": step.reason,
+                "status": "passed" if result.returncode == 0 else "failed",
+                "exit_code": result.returncode,
+                "duration_ms": round(elapsed * 1000),
+            },
+        )
+        write_report(report_path, report_payload(paths, selected_plan, results))
         if result.returncode != 0:
             failures += 1
             if not keep_going:
@@ -254,6 +329,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base", help="compare committed changes with this Git revision")
     parser.add_argument("--plan", action="store_true", help="print the selected steps without running them")
     parser.add_argument("--keep-going", action="store_true", help="continue after a failed validation step")
+    parser.add_argument("--report", type=Path, help="write a machine-readable JSON validation report")
+    parser.add_argument(
+        "--rerun-failed",
+        type=Path,
+        metavar="REPORT",
+        help="run only failed steps that remain in the current validation plan",
+    )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        metavar="REPORT",
+        help="rerun failed and not-yet-run steps while preserving passed receipts",
+    )
     return parser.parse_args()
 
 
@@ -264,11 +352,30 @@ def main() -> int:
     if not paths:
         print("Aletheon changed validation: no changed paths")
         return 0
-    steps = derive_steps(root, paths, load_metadata(root))
+    if args.rerun_failed and args.resume:
+        raise ValueError("--rerun-failed and --resume are mutually exclusive")
+    selected_plan = derive_steps(root, paths, load_metadata(root))
+    steps = selected_plan
+    prior_results: list[dict] = []
+    prior_report = args.rerun_failed or args.resume
+    if prior_report:
+        payload = load_report(prior_report)
+        prior_results = payload.get("results", [])
+        steps = select_report_steps(payload, selected_plan, bool(args.rerun_failed))
+    report_path = args.report or prior_report
     print_plan(paths, steps)
     if args.plan or not steps:
+        write_report(report_path, report_payload(paths, selected_plan, prior_results))
         return 0
-    return execute(root, steps, args.keep_going)
+    return execute(
+        root,
+        paths,
+        steps,
+        selected_plan,
+        args.keep_going,
+        report_path,
+        prior_results,
+    )
 
 
 if __name__ == "__main__":

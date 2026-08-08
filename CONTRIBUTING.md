@@ -55,6 +55,10 @@ unstaged, and untracked paths, and selects package checks, library tests, exact
 integration targets, and direct workspace-dependent checks. Use
 `just test-changed --plan` to inspect the commands without executing them, or
 `just test-changed --base <revision>` when the comparison base is different.
+For a debug loop, persist timings and exit codes with `--report <file>` and use
+`--rerun-failed <file>` after a repair. Use `--resume <file>` to preserve passed
+receipts while running failed and not-yet-run steps. Reports whose selected
+commands no longer match the current diff-derived plan are rejected.
 
 Rust source modules within one crate are not separate Cargo compilation units;
 incremental rustc codegen handles changed units inside that crate. Use a new

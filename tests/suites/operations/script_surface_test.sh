@@ -15,6 +15,16 @@ expected=(aletheon.sh cargo-agent.sh)
 ! grep -Eq '(^|[[:space:]])cargo (build|check|test|clippy|doc)' setup.sh
 grep -Fq 'scripts/cargo-agent.sh build -p aletheon --release' setup.sh
 grep -Fq 'run_internal test-changed.py "$@"' scripts/lib/aletheon/test.sh
+cmp .codex/skills/aletheon-tester/SKILL.md \
+  .claude/skills/aletheon-tester/SKILL.md
+grep -Fq '| `regression` |' .codex/skills/aletheon-tester/SKILL.md
+grep -Fq '| `soak` |' .codex/skills/aletheon-tester/SKILL.md
+grep -Fq -- '--rerun-failed "$report"' .codex/skills/aletheon-tester/SKILL.md
+grep -Fq -- '--resume "$report"' .codex/skills/aletheon-tester/SKILL.md
+if grep -Fq 'aletheon_ask(question=' .codex/skills/aletheon-tester/SKILL.md; then
+  echo 'aletheon-tester must not use introspection RPC as execution evidence' >&2
+  exit 1
+fi
 grep -Fq 'CARGO_TARGET_DIR="$ALETHEON_BUILD_TARGET_DIR"' \
   scripts/lib/aletheon/build.sh
 grep -Fq 'ALETHEON_CARGO_STAGE_BINARY="$ALETHEON_RELEASE_BINARY"' \
