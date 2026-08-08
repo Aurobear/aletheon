@@ -7,6 +7,7 @@ pub mod core;
 pub mod drivers;
 pub mod extension;
 pub mod hook;
+mod process_spawn;
 pub mod security;
 pub mod service;
 pub mod skill;

@@ -5,15 +5,16 @@ mod query;
 mod schema;
 mod storage;
 
-pub use schema::{HashEmbeddingProvider, SemanticMemory};
+pub use schema::SemanticMemory;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use fabric::{
         wall_to_datetime, CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry,
-        MemoryFilter, MemoryQuery, MemoryType, Subsystem, SubsystemContext, WallTime,
+        MemoryQuery, MemoryType, Subsystem, SubsystemContext,
     };
+    use schema::HashEmbeddingProvider;
     use std::sync::Arc;
     use uuid::Uuid;
 

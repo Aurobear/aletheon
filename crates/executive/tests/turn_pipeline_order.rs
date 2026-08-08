@@ -26,6 +26,7 @@ fn request(process_id: ProcessId) -> TurnRequest {
         process_id,
         context: turn_request_support::context("pipeline", PathBuf::from(".")),
         input: "use tool".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),

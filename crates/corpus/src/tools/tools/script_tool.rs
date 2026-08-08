@@ -18,6 +18,8 @@ use fabric::tool::{
     ToolResultMeta,
 };
 
+use crate::process_spawn::spawn_with_transient_retry;
+
 /// A tool backed by an external executable script.
 #[derive(Debug, Clone)]
 pub struct ScriptTool {
@@ -114,15 +116,18 @@ impl Tool for ScriptTool {
         let input_json = serde_json::to_string(&input).unwrap_or_default();
 
         // Execute script
-        let result = Command::new(&self.script_path)
+        let mut command = Command::new(&self.script_path);
+        command
             .current_dir(&ctx.working_dir)
             .env("ALETHEON_SESSION_ID", &ctx.session_id)
             .env("ALETHEON_TOOL_INPUT", &input_json)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output()
-            .await;
+            .stderr(std::process::Stdio::piped());
+        let result = match spawn_with_transient_retry(&mut command).await {
+            Ok(child) => child.wait_with_output().await,
+            Err(error) => Err(error),
+        };
 
         let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
@@ -302,7 +307,7 @@ mod tests {
             turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
-        assert!(!result.is_error);
+        assert!(!result.is_error, "script failed: {}", result.content);
         assert_eq!(result.content, "hello world");
     }
 
@@ -365,7 +370,7 @@ mod tests {
             turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
-        assert!(!result.is_error);
+        assert!(!result.is_error, "script failed: {}", result.content);
         assert_eq!(result.content, "structured");
     }
 

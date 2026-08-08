@@ -6,11 +6,24 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use fabric::{AppendOutcome, ItemRecord, PrincipalId, SessionId, SessionReadStore, SessionRecord};
+use fabric::{
+    AppendOutcome, ItemId, ItemRecord, PrincipalId, SessionId, SessionReadStore, SessionRecord,
+};
 
 #[async_trait]
 pub trait SessionProjectionStore: SessionReadStore {
     async fn create(&self, session: SessionRecord) -> Result<()>;
+
+    /// Read the durable per-session sequence head (the next sequence that will
+    /// be assigned). Used for O(1) append admission instead of scanning the
+    /// full session history.
+    async fn next_sequence(&self, session: &SessionId) -> Result<Option<u64>>;
+
+    /// O(1) idempotency lookup by stable item id. Returns `None` when no item
+    /// with that id has been committed; otherwise the persisted item for
+    /// equality comparison. This replaces the full-history `load_items` scan
+    /// used for append admission (S1-AUDIT-001).
+    async fn item_by_id(&self, session: &SessionId, id: &ItemId) -> Result<Option<ItemRecord>>;
 
     async fn append(
         &self,

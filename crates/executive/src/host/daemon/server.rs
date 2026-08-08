@@ -509,6 +509,7 @@ async fn dispatch_versioned_request(
                             workspace,
                             Vec::new(),
                             None,
+                            fabric::ExecutionTargetSelection::default(),
                             request.permission_mode,
                         )
                         .await

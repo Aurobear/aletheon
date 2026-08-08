@@ -167,10 +167,15 @@ impl AppConfig {
             .preflight(self.deployment.integrations.google, resolver)
     }
 
-    /// Resolve and validate optional Robot settings against the selected
-    /// harness. Linear remains valid without Robot configuration.
+    /// Resolve and validate optional Robot capability settings independently of
+    /// the deprecated global harness hint.
     pub fn resolve_robot_config(&self) -> Result<Option<ResolvedRobotIntegrationConfig>> {
         self.integrations.resolve_robot(self.agent.harness_kind)
+    }
+
+    fn validate_memory_config(&self) -> Result<()> {
+        let memory = &self.memory;
+        memory.validate()
     }
 
     /// Parse one explicit file strictly. The caller chooses how it participates
@@ -183,6 +188,12 @@ impl AppConfig {
         config.resolve_robot_config().map_err(|error| {
             anyhow::anyhow!(
                 "validate config layer {} Robot/Policy configuration: {error:#}",
+                path.display()
+            )
+        })?;
+        config.validate_memory_config().map_err(|error| {
+            anyhow::anyhow!(
+                "validate config layer {} memory configuration: {error:#}",
                 path.display()
             )
         })?;
@@ -210,8 +221,14 @@ impl ConfigLayer {
         let value: toml::Value = toml::from_str(text)
             .map_err(|error| anyhow::anyhow!("parse config layer {}: {error}", source.locator))?;
         // Validate the layer against the typed root before it can affect lower layers.
-        let _: AppConfig = value.clone().try_into().map_err(|error| {
+        let config: AppConfig = value.clone().try_into().map_err(|error| {
             anyhow::anyhow!("validate config layer {}: {error}", source.locator)
+        })?;
+        config.validate_memory_config().map_err(|error| {
+            anyhow::anyhow!(
+                "validate config layer {} memory configuration: {error:#}",
+                source.locator
+            )
         })?;
         Ok(Self { source, value })
     }
@@ -355,6 +372,9 @@ pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<Loa
     value.resolve_robot_config().map_err(|error| {
         anyhow::anyhow!("validate effective Robot/Policy configuration: {error:#}")
     })?;
+    value
+        .validate_memory_config()
+        .context("validate effective memory configuration")?;
     Ok(LoadedConfig { value, provenance })
 }
 

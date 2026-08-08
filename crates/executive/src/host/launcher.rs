@@ -561,6 +561,7 @@ pub async fn run_exec_streaming(
                         )
                     },
                     input: request.prompt.clone(),
+                    execution_target: fabric::ExecutionTargetSelection::default(),
                     model_policy: (!request.model.is_empty()).then_some(request.model.clone()),
                     deadline: None,
                     requirements: Vec::new(),

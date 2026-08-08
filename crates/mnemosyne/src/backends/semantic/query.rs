@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use fabric::{wall_to_datetime, MemoryEntry, MemoryType, WallTime};
+use fabric::{wall_to_datetime, MemoryEntry, MemoryType};
 use uuid::Uuid;
 
 /// Convert a rusqlite Row into a MemoryEntry.

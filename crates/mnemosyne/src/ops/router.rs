@@ -6,9 +6,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use fabric::{
-    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
-    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, Subsystem,
-    SubsystemContext, SubsystemHealth, Version, WallTime,
+    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
+    MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, Subsystem, SubsystemContext,
+    SubsystemHealth, Version,
 };
 
 use crate::backends::episodic::EpisodicMemory;
@@ -74,7 +74,7 @@ impl MemoryContext {
         if !self.relevant_knowledge.is_empty() {
             sections.push("### Relevant Knowledge".to_string());
             for k in &self.relevant_knowledge {
-                sections.push(format!("- {}", k));
+                sections.push(format!("- {k}"));
             }
         }
 
@@ -254,7 +254,7 @@ impl Subsystem for MemoryRouter {
         for (mt, backend) in &self.backends {
             let h = backend.health().await;
             if h != SubsystemHealth::Healthy {
-                degraded.push(format!("{:?}", mt));
+                degraded.push(format!("{mt:?}"));
             }
         }
         if degraded.is_empty() {
@@ -291,7 +291,7 @@ impl MemoryBackend for MemoryRouter {
         if let Some(mt) = query.memory_type {
             let backend = self
                 .backend_for(mt)
-                .ok_or_else(|| anyhow::anyhow!("no backend registered for {:?}", mt))?;
+                .ok_or_else(|| anyhow::anyhow!("no backend registered for {mt:?}"))?;
             return backend.recall(query).await;
         }
 
@@ -335,7 +335,7 @@ impl MemoryBackend for MemoryRouter {
         if let Some(mt) = filter.memory_type {
             let backend = self
                 .backend_for(mt)
-                .ok_or_else(|| anyhow::anyhow!("no backend registered for {:?}", mt))?;
+                .ok_or_else(|| anyhow::anyhow!("no backend registered for {mt:?}"))?;
             return backend.list(filter).await;
         }
 
@@ -421,7 +421,7 @@ impl MemoryBackend for MemoryRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::{wall_to_datetime, MemoryEntry, ReflectionTrigger};
+    use fabric::{wall_to_datetime, MemoryEntry};
     use uuid::Uuid;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
@@ -796,7 +796,7 @@ mod tests {
             router
                 .store(make_entry(
                     MemoryType::Semantic,
-                    format!("fact {}", i).as_bytes(),
+                    format!("fact {i}").as_bytes(),
                 ))
                 .await
                 .unwrap();
@@ -842,8 +842,7 @@ mod tests {
         let first_content = String::from_utf8_lossy(&results[0].content);
         assert!(
             first_content.contains("recent"),
-            "recent entry should rank higher via activation despite lower importance: got {:?}",
-            first_content
+            "recent entry should rank higher via activation despite lower importance: got {first_content:?}"
         );
     }
 
@@ -874,8 +873,7 @@ mod tests {
         let first_content = String::from_utf8_lossy(&results[0].content);
         assert!(
             first_content.contains("fresh"),
-            "fresh entry should rank higher: got {:?}",
-            first_content
+            "fresh entry should rank higher: got {first_content:?}"
         );
     }
 }

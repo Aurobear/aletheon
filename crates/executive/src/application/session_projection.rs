@@ -25,7 +25,7 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
     let mut payloads = normalized.items.iter().peekable();
     while let Some(payload) = payloads.next() {
         let message = match payload {
-            ItemPayload::UserMessage { content } => Some(Message::user(content)),
+            ItemPayload::UserMessage { content, .. } => Some(Message::user(content)),
             ItemPayload::AssistantMessage { content } => Some(Message::assistant(content)),
             ItemPayload::SystemNotice { content } => Some(Message::system(content)),
             ItemPayload::ToolCall {
@@ -67,6 +67,8 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
                 *is_error,
             )),
             ItemPayload::ContextProjection { .. }
+            | ItemPayload::ContextBudgetProjection { .. }
+            | ItemPayload::ContextCompactionProjection { .. }
             | ItemPayload::CapabilityReceipt { .. }
             | ItemPayload::RobotEpisodeReceipt { .. }
             | ItemPayload::EvaluationReceiptRef { .. }

@@ -68,6 +68,14 @@
     }
   ],
   "$defs": {
+    "BudgetMissingReason": {
+      "type": "string",
+      "enum": [
+        "no_active_agent_rollout",
+        "runtime_scope_not_reported",
+        "source_unavailable"
+      ]
+    },
     "CacheTelemetry": {
       "type": "string",
       "enum": [
@@ -200,6 +208,150 @@
         "timed_out"
       ]
     },
+    "ContextBudgetProjection": {
+      "description": "One authoritative per-turn snapshot. Context values are request-scoped;\n`rollout` values are cumulative and deliberately use a separate newtype.",
+      "type": "object",
+      "properties": {
+        "admissible_history_tokens": {
+          "$ref": "#/$defs/HistoryBudgetTokens"
+        },
+        "compaction_threshold_tokens": {
+          "$ref": "#/$defs/HistoryBudgetTokens"
+        },
+        "current_history_tokens": {
+          "$ref": "#/$defs/HistoryTokens"
+        },
+        "history_source": {
+          "$ref": "#/$defs/ContextBudgetSource"
+        },
+        "model_context_tokens": {
+          "$ref": "#/$defs/ModelContextWindowTokens"
+        },
+        "model_source": {
+          "$ref": "#/$defs/ContextBudgetSource"
+        },
+        "model_spec": {
+          "type": "string"
+        },
+        "pending_input_tokens": {
+          "$ref": "#/$defs/HistoryTokens"
+        },
+        "profile_input_limit_tokens": {
+          "$ref": "#/$defs/ProfileInputLimitTokens"
+        },
+        "profile_source": {
+          "$ref": "#/$defs/ContextBudgetSource"
+        },
+        "reserved_output_tokens": {
+          "$ref": "#/$defs/ContextCostTokens"
+        },
+        "rollout": {
+          "$ref": "#/$defs/RolloutBudgetProjection"
+        },
+        "safety_margin_tokens": {
+          "$ref": "#/$defs/ContextCostTokens"
+        },
+        "system_and_skill_tokens": {
+          "$ref": "#/$defs/ContextCostTokens"
+        },
+        "tool_schema_tokens": {
+          "$ref": "#/$defs/ContextCostTokens"
+        }
+      },
+      "required": [
+        "model_spec",
+        "model_context_tokens",
+        "profile_input_limit_tokens",
+        "reserved_output_tokens",
+        "system_and_skill_tokens",
+        "tool_schema_tokens",
+        "pending_input_tokens",
+        "safety_margin_tokens",
+        "current_history_tokens",
+        "admissible_history_tokens",
+        "compaction_threshold_tokens",
+        "model_source",
+        "profile_source",
+        "history_source",
+        "rollout"
+      ]
+    },
+    "ContextBudgetSource": {
+      "description": "Secret-safe description of the authority for a projected value.",
+      "type": "object",
+      "properties": {
+        "digest_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/ContextBudgetSourceKind"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "label"
+      ]
+    },
+    "ContextBudgetSourceKind": {
+      "type": "string",
+      "enum": [
+        "runtime_model_capability",
+        "active_agent_profile",
+        "context_budget_planner",
+        "effective_admission_config",
+        "agent_runtime"
+      ]
+    },
+    "ContextCompactionMode": {
+      "type": "string",
+      "enum": [
+        "preflight",
+        "automatic"
+      ]
+    },
+    "ContextCompactionProjection": {
+      "description": "Durable evidence for one applied context compaction.",
+      "type": "object",
+      "properties": {
+        "budget_snapshot": {
+          "$ref": "#/$defs/ContextBudgetProjection"
+        },
+        "mode": {
+          "$ref": "#/$defs/ContextCompactionMode"
+        },
+        "tokens_after": {
+          "$ref": "#/$defs/HistoryTokens"
+        },
+        "tokens_before": {
+          "$ref": "#/$defs/HistoryTokens"
+        },
+        "trigger_threshold_tokens": {
+          "$ref": "#/$defs/HistoryBudgetTokens"
+        }
+      },
+      "required": [
+        "mode",
+        "trigger_threshold_tokens",
+        "tokens_before",
+        "tokens_after",
+        "budget_snapshot"
+      ]
+    },
+    "ContextCostTokens": {
+      "description": "Tokens consumed or reserved by one non-history context component.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "DeviceId": {
+      "type": "string"
+    },
     "EvaluationDecision": {
       "type": "string",
       "enum": [
@@ -279,6 +431,98 @@
         "failed_gates",
         "created_at_ms"
       ]
+    },
+    "ExecutionEnvironment": {
+      "description": "Provider-attested execution environment. The value comes from the device\nprovider capability handshake; operator configuration may only state the\nenvironment it expects and cannot upgrade this fact.",
+      "type": "string",
+      "enum": [
+        "simulation",
+        "hil",
+        "real"
+      ]
+    },
+    "ExecutionTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "general"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "device_id": {
+              "$ref": "#/$defs/DeviceId"
+            },
+            "environment": {
+              "$ref": "#/$defs/ExecutionEnvironment"
+            },
+            "kind": {
+              "type": "string",
+              "const": "robot"
+            }
+          },
+          "required": [
+            "kind",
+            "device_id",
+            "environment"
+          ]
+        }
+      ]
+    },
+    "ExecutionTargetSelection": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/ExecutionTargetSource",
+          "default": "default"
+        },
+        "target": {
+          "$ref": "#/$defs/ExecutionTarget",
+          "default": {
+            "kind": "general"
+          }
+        }
+      }
+    },
+    "ExecutionTargetSource": {
+      "description": "Auditable provenance for the typed target selection.",
+      "oneOf": [
+        {
+          "description": "Backward-compatible/default path. This source may select only General.",
+          "type": "string",
+          "const": "default"
+        },
+        {
+          "description": "Explicit local UI command such as `/target robot <device>`.",
+          "type": "string",
+          "const": "user_command"
+        },
+        {
+          "description": "Explicit typed field supplied by an authenticated trusted client.",
+          "type": "string",
+          "const": "trusted_client"
+        }
+      ]
+    },
+    "HistoryBudgetTokens": {
+      "description": "Capacity made available to conversation history for one request.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "HistoryTokens": {
+      "description": "Observed or projected conversation-history tokens for one request.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
     },
     "InferenceTerminalReceipt": {
       "type": "object",
@@ -411,6 +655,7 @@
     "ItemPayload": {
       "oneOf": [
         {
+          "description": "Authoritative per-turn start fact. The typed target is stored on the\nexisting durable start boundary so replay cannot inherit a prior turn's\ntarget. Legacy items decode as General.",
           "type": "object",
           "properties": {
             "data": {
@@ -418,6 +663,15 @@
               "properties": {
                 "content": {
                   "type": "string"
+                },
+                "execution_target": {
+                  "$ref": "#/$defs/ExecutionTargetSelection",
+                  "default": {
+                    "source": "default",
+                    "target": {
+                      "kind": "general"
+                    }
+                  }
                 }
               },
               "required": [
@@ -622,6 +876,56 @@
             "type": {
               "type": "string",
               "const": "model_context_projection"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "description": "Host-authoritative model/profile/history/rollout budget truth for this\nturn. It is computed before inference from the selected model and the\nexact prepared context.",
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "projection": {
+                  "$ref": "#/$defs/ContextBudgetProjection"
+                }
+              },
+              "required": [
+                "projection"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "context_budget_projection"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "description": "Evidence for an applied history rewrite, including its triggering budget.",
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "projection": {
+                  "$ref": "#/$defs/ContextCompactionProjection"
+                }
+              },
+              "required": [
+                "projection"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "context_compaction_projection"
             }
           },
           "required": [
@@ -947,9 +1251,91 @@
         "tool_schema_bytes"
       ]
     },
+    "ModelContextWindowTokens": {
+      "description": "Maximum tokens accepted by one request to the effective runtime model.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
     "OperationId": {
       "type": "string",
       "format": "uuid"
+    },
+    "ProfileInputLimitTokens": {
+      "description": "Input ceiling selected by the active Agent profile.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "RolloutBudgetProjection": {
+      "type": "object",
+      "properties": {
+        "child_limit_tokens": {
+          "$ref": "#/$defs/RolloutBudgetValue"
+        },
+        "current_agent_remaining_tokens": {
+          "$ref": "#/$defs/RolloutBudgetValue"
+        },
+        "root_remaining_tokens": {
+          "$ref": "#/$defs/RolloutBudgetValue"
+        }
+      },
+      "required": [
+        "root_remaining_tokens",
+        "child_limit_tokens",
+        "current_agent_remaining_tokens"
+      ]
+    },
+    "RolloutBudgetTokens": {
+      "description": "Cumulative tokens allowed or remaining across an Agent rollout.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "RolloutBudgetValue": {
+      "description": "A rollout value is either known with its source or explicitly unavailable\nwith a source-specific reason. There is no numeric fallback state.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/ContextBudgetSource"
+            },
+            "status": {
+              "type": "string",
+              "const": "known"
+            },
+            "value": {
+              "$ref": "#/$defs/RolloutBudgetTokens"
+            }
+          },
+          "required": [
+            "status",
+            "value",
+            "source"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/BudgetMissingReason"
+            },
+            "source": {
+              "$ref": "#/$defs/ContextBudgetSource"
+            },
+            "status": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "status",
+            "source",
+            "reason"
+          ]
+        }
+      ]
     },
     "SessionFork": {
       "type": "object",

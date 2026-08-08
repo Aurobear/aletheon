@@ -120,6 +120,7 @@ mod tests {
             process_id,
             context: crate::turn_request_support::context(session, std::env::temp_dir()),
             input: "hello".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
             model_policy: None,
             deadline: None,
             requirements: Vec::new(),
@@ -179,6 +180,8 @@ mod tests {
                             result: TurnResult {
                                 output: format!("answer: {output}"),
                                 stop: TurnStop::Completed,
+                                failure: None,
+                                usage: Default::default(),
                                 metrics: TurnMetrics {
                                     completed_normally: true,
                                     ..Default::default()

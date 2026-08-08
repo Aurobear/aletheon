@@ -11,6 +11,10 @@ pub struct TurnRequest {
     pub process_id: ProcessId,
     pub context: PrincipalContext,
     pub input: String,
+    /// Explicit target selected at the trusted client edge. Defaults to General
+    /// for backward-compatible request decoding.
+    #[serde(default)]
+    pub execution_target: crate::ExecutionTargetSelection,
     pub model_policy: Option<String>,
     pub deadline: Option<MonoDeadlineMillis>,
     /// Explicit host/client workflow obligations for this turn. These are
@@ -52,6 +56,30 @@ impl From<TurnStop> for TurnTerminalStatus {
     }
 }
 
+/// Stable failure classification for a `TurnStop::Failed` outcome. Blocked and
+/// cancelled turns retain their distinct `TurnStop` values and are not encoded
+/// as failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnFailureKind {
+    ProviderTransient,
+    ProviderPermanent,
+    ContextOverflow,
+    Tool,
+    Policy,
+    Runtime,
+    Persistence,
+    InvalidContext,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TurnFailure {
+    pub kind: TurnFailureKind,
+    pub message: String,
+    pub retryable: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnMetrics {
     pub tool_calls_made: usize,
@@ -67,6 +95,14 @@ pub struct TurnMetrics {
 pub struct TurnResult {
     pub output: String,
     pub stop: TurnStop,
+    /// Present for a typed failed outcome. Legacy records and non-failed stops
+    /// decode with `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<TurnFailure>,
+    /// Provider-reported usage for this turn. Every field remains nullable so
+    /// unavailable telemetry is never represented as a fabricated zero.
+    #[serde(default)]
+    pub usage: crate::InferenceUsage,
     pub metrics: TurnMetrics,
 }
 
@@ -102,7 +138,7 @@ pub enum TurnEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::TurnMetrics;
+    use super::{TurnMetrics, TurnResult};
 
     #[test]
     fn legacy_turn_metrics_default_provider_retries_without_losing_new_values() {
@@ -123,5 +159,24 @@ mod tests {
         let round_trip: TurnMetrics =
             serde_json::from_value(serde_json::to_value(current).unwrap()).unwrap();
         assert_eq!(round_trip.provider_retries, 3);
+    }
+
+    #[test]
+    fn legacy_turn_result_defaults_failure_and_usage_to_unknown() {
+        let legacy = serde_json::json!({
+            "output": "done",
+            "stop": "Completed",
+            "metrics": {
+                "tool_calls_made": 0,
+                "tool_errors": 0,
+                "elapsed_ms": 10,
+                "iterations": 1,
+                "completed_normally": true
+            }
+        });
+        let decoded: TurnResult = serde_json::from_value(legacy).unwrap();
+        assert!(decoded.failure.is_none());
+        assert_eq!(decoded.usage.total_input_tokens, None);
+        assert_eq!(decoded.usage.output_tokens, None);
     }
 }

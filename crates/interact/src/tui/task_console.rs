@@ -16,7 +16,7 @@ use ratatui::{
 use fabric::protocol::client::{ActivitySnapshot, ActivityState, TaskPhase, TaskSnapshot};
 use fabric::WorkspacePolicy;
 
-use super::{state::AppState, term_compat::TermCaps};
+use super::{markdown, state::AppState, term_compat::TermCaps};
 
 /// The primary work surface for an active Session.
 pub struct TaskConsole<'a> {
@@ -96,6 +96,13 @@ fn render_task_header(
         .and_then(|name| name.to_str())
         .unwrap_or("workspace");
     let activity = activity_summary(&state.activities);
+    let target = match &state.execution_target.target {
+        fabric::ExecutionTarget::General => "general".to_string(),
+        fabric::ExecutionTarget::Robot {
+            device_id,
+            environment,
+        } => format!("robot:{}/{}", device_id.0, environment.as_str()),
+    };
     let theme = caps.theme();
 
     let task_badge = if caps.color {
@@ -114,7 +121,7 @@ fn render_task_header(
     if area.height >= 2 {
         lines.push(Line::from(Span::styled(
             format!(
-                " session {session} · provider {provider} · model {model} · permission {permission}"
+                " session {session} · target {target} · provider {provider} · model {model} · permission {permission}"
             ),
             Style::default().fg(theme.text_muted),
         )));
@@ -141,33 +148,43 @@ fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &Te
     let inner = block.inner(area);
     block.render(area, buf);
     let theme = caps.theme();
-    let mut lines = state
+    let mut items = state
         .items
         .values()
         .filter(|item| matches!(item.kind.as_str(), "user" | "assistant"))
-        .map(|item| {
-            let (prefix, color) = if item.kind == "user" {
-                ("> ", theme.user_icon)
-            } else {
-                ("", theme.text)
-            };
-            Line::from(vec![
-                Span::styled(prefix, Style::default().fg(color)),
-                Span::styled(item.content.clone(), Style::default().fg(color)),
-            ])
-        })
         .collect::<Vec<_>>();
+    items.sort_by_key(|item| item.sequence);
+    let mut lines = Vec::new();
+    for item in items {
+        if item.kind == "user" {
+            lines.push(Line::from(vec![
+                Span::styled("> ", Style::default().fg(theme.user_icon)),
+                Span::styled(item.content.clone(), Style::default().fg(theme.user_icon)),
+            ]));
+        } else {
+            lines.extend(markdown::render_markdown(&item.content, inner.width, caps));
+        }
+        lines.push(Line::from(""));
+    }
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
             "No projected conversation yet",
             Style::default().fg(theme.text_muted),
         )));
     }
-    let visible = lines.len().saturating_sub(inner.height as usize);
-    let lines = lines.into_iter().skip(visible).collect::<Vec<_>>();
-    Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .render(inner, buf);
+    let wrapped_line_count = lines
+        .iter()
+        .map(|line| {
+            let width = inner.width.max(1) as usize;
+            line.width().max(1).div_ceil(width)
+        })
+        .sum::<usize>();
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let tail_scroll = wrapped_line_count
+        .saturating_sub(inner.height as usize)
+        .min(u16::MAX as usize) as u16;
+    let scroll = tail_scroll.saturating_sub(state.conversation_scroll.min(tail_scroll));
+    paragraph.scroll((scroll, 0)).render(inner, buf);
 }
 
 fn render_activity_panel(
@@ -326,33 +343,67 @@ fn active_task(state: &AppState) -> Option<&TaskSnapshot> {
 
 fn task_runtime_identity(task: Option<&TaskSnapshot>) -> (&str, &str, String) {
     let Some(facts) = task.and_then(|task| task.runtime_facts.as_ref()) else {
-        return ("—", "—", "unknown".into());
+        return (
+            "—",
+            "—",
+            "window unknown (missing runtime facts projection)".into(),
+        );
     };
     let provider = facts.effective_provider.as_deref().unwrap_or("—");
     let model = facts.effective_model.as_deref().unwrap_or("—");
-    let context = match (
-        facts.active_context_occupancy_tokens,
-        facts.context_capacity_tokens,
-    ) {
-        (Some(used), Some(capacity)) => format!("{used}/{capacity} tokens"),
-        (_, Some(capacity)) => format!("—/{capacity} tokens"),
-        _ => "unknown".into(),
+    let context = match facts.context_budget.as_deref() {
+        Some(budget) => format!(
+            "window {} · profile input {} · history {} / {}",
+            compact_tokens(budget.model_context_tokens.get()),
+            compact_tokens(budget.profile_input_limit_tokens.get()),
+            compact_tokens(budget.current_history_tokens.get()),
+            compact_tokens(budget.admissible_history_tokens.get()),
+        ),
+        None => match (
+            facts.active_context_occupancy_tokens,
+            facts.context_capacity_tokens,
+        ) {
+            (Some(used), Some(capacity)) => format!(
+                "window {} · active {} · history unknown (missing context budget projection)",
+                compact_tokens(capacity),
+                compact_tokens(used),
+            ),
+            (_, Some(capacity)) => format!(
+                "window {} · history unknown (missing context budget projection)",
+                compact_tokens(capacity),
+            ),
+            _ => "window unknown (missing context budget projection)".into(),
+        },
     };
     (provider, model, context)
 }
 
 fn runtime_metrics(task: Option<&TaskSnapshot>) -> String {
     let Some(task) = task else {
-        return "budget unknown · cache unknown".into();
+        return "budget unavailable (missing daemon task projection) · cache unavailable (missing inference receipt)".into();
     };
-    let budget = task
-        .budget
-        .as_ref()
-        .map(|value| bounded_value(value, 24))
-        .unwrap_or_else(|| "unknown".into());
     let Some(facts) = task.runtime_facts.as_ref() else {
-        return format!("budget {budget} · cache unknown");
+        return "budget unavailable (missing runtime facts projection) · cache unavailable (missing inference receipt)".into();
     };
+    let budget = facts.context_budget.as_deref().map_or_else(
+        || "budget unavailable (missing context budget projection)".into(),
+        |budget| {
+            format!(
+                "output reserve {} · system+tools {} · safety {} · rollout root remaining {} · child limit {} · current Agent remaining {}",
+                compact_tokens(budget.reserved_output_tokens.get()),
+                compact_tokens(
+                    budget
+                        .system_and_skill_tokens
+                        .get()
+                        .saturating_add(budget.tool_schema_tokens.get())
+                ),
+                compact_tokens(budget.safety_margin_tokens.get()),
+                rollout_value(&budget.rollout.root_remaining_tokens),
+                rollout_value(&budget.rollout.child_limit_tokens),
+                rollout_value(&budget.rollout.current_agent_remaining_tokens),
+            )
+        },
+    );
     let cache = match facts.cumulative_usage.cache_telemetry {
         fabric::CacheTelemetry::Reported => format!(
             "read {} / write {}",
@@ -366,10 +417,12 @@ fn runtime_metrics(task: Option<&TaskSnapshot>) -> String {
                 .map_or_else(|| "unknown".into(), |value| value.to_string())
         ),
         fabric::CacheTelemetry::Unsupported => "unsupported".into(),
-        fabric::CacheTelemetry::Unknown => "unknown".into(),
+        fabric::CacheTelemetry::Unknown => {
+            "unknown (provider receipt did not report cache usage)".into()
+        }
     };
     format!(
-        "budget {budget} · cache {cache} · infer {} · retries {} · tools {}/{}",
+        "{budget} · cache {cache} · infer {} · retries {} · tools {}/{}",
         facts.inference_rounds,
         facts
             .provider_retries
@@ -377,6 +430,35 @@ fn runtime_metrics(task: Option<&TaskSnapshot>) -> String {
         facts.terminal_tool_results,
         facts.tool_calls
     )
+}
+
+fn rollout_value(value: &fabric::RolloutBudgetValue) -> String {
+    match value {
+        fabric::RolloutBudgetValue::Known { value, .. } => compact_tokens(value.get()),
+        fabric::RolloutBudgetValue::Unknown { reason, .. } => {
+            format!("unknown ({})", reason.as_str())
+        }
+    }
+}
+
+fn compact_tokens(tokens: u64) -> String {
+    if tokens >= 1_000 {
+        format!("{}k", grouped_decimal(tokens / 1_000))
+    } else {
+        grouped_decimal(tokens)
+    }
+}
+
+fn grouped_decimal(value: u64) -> String {
+    let digits = value.to_string();
+    let mut output = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            output.push(',');
+        }
+        output.push(ch);
+    }
+    output
 }
 
 fn permission_summary(task: &TaskSnapshot) -> String {
@@ -551,6 +633,35 @@ mod tests {
         assert!(rendered.contains("Changes / diagnostics"));
     }
 
+    #[test]
+    fn assistant_markdown_table_is_rendered_on_the_canonical_surface() {
+        let mut state = AppState::default();
+        state.items.insert(
+            "assistant".into(),
+            UiItem {
+                id: "assistant".into(),
+                sequence: 1,
+                kind: "assistant".into(),
+                content: "架构概览\n\n| 层 | Crate | 证据 |\n|---|---|---|\n| 入口 | aletheon | ACP 协议 |\n| 编排 | executive | turn pipeline |"
+                    .into(),
+                status: UiItemStatus::Completed,
+                collapsed: false,
+            },
+        );
+
+        for width in [80, 120] {
+            let rendered = rendered_text(width, 40, &state);
+            // Ratatui stores an empty filler cell after every double-width CJK
+            // glyph. Remove display whitespace before asserting semantic text.
+            let compact = rendered.split_whitespace().collect::<String>();
+            assert!(compact.contains("架构概览"), "width={width}: {rendered}");
+            assert!(compact.contains("入口"), "width={width}: {rendered}");
+            assert!(compact.contains("ACP协议"), "width={width}: {rendered}");
+            assert!(!rendered.contains("|---"), "width={width}: {rendered}");
+            assert!(!rendered.contains("||"), "width={width}: {rendered}");
+        }
+    }
+
     fn projected_state() -> AppState {
         let mut state = AppState::default();
         state.items.insert(
@@ -596,6 +707,7 @@ mod tests {
                 effective_model: Some("deepseek-v4-flash".into()),
                 context_capacity_tokens: Some(1_000_000),
                 active_context_occupancy_tokens: Some(8_000),
+                context_budget: Some(Box::new(projected_context_budget())),
                 cumulative_usage: fabric::InferenceUsage::reported(
                     10_000,
                     500,
@@ -774,9 +886,11 @@ mod tests {
                 } else {
                     serde_json::json!({"stage": stage})
                 }),
-                artifact_refs: (stage == "observe" || settle)
-                    .then(|| vec!["artifact://sha256/evidence".into()])
-                    .unwrap_or_default(),
+                artifact_refs: if stage == "observe" || settle {
+                    vec!["artifact://sha256/evidence".into()]
+                } else {
+                    Vec::new()
+                },
                 receipt_ref: Some("robot-episode:episode:sha256:b307c5be1363fcb8".into()),
             });
         }
@@ -838,6 +952,7 @@ mod tests {
                 effective_model: Some("model".into()),
                 context_capacity_tokens: Some(1_000_000),
                 active_context_occupancy_tokens: None,
+                context_budget: None,
                 cumulative_usage: fabric::InferenceUsage::default(),
                 inference_rounds: 1,
                 provider_retries: None,
@@ -845,6 +960,82 @@ mod tests {
                 terminal_tool_results: 0,
             }),
         };
-        assert_eq!(task_runtime_identity(Some(&task)).2, "—/1000000 tokens");
+        assert_eq!(
+            task_runtime_identity(Some(&task)).2,
+            "window 1,000k · history unknown (missing context budget projection)"
+        );
+    }
+
+    #[test]
+    fn typed_budget_renders_model_window_history_and_rollout_labels() {
+        let mut state = projected_state();
+        let (identity, metrics) = {
+            let task = state.tasks.first_mut().unwrap();
+            (
+                task_runtime_identity(Some(task)).2,
+                runtime_metrics(Some(task)),
+            )
+        };
+        let diagnostic = state.context_diagnostic();
+        assert!(identity.contains("window 1,000k"));
+        assert!(identity.contains("profile input 1,000k"));
+        assert!(identity.contains("history 83k / 915k"));
+        assert!(metrics.contains("child limit 200k"));
+        assert!(metrics.contains("root remaining unknown (no active Agent rollout)"));
+        assert!(diagnostic.contains("Window: 1,000k (source: runtime model capability"));
+        assert!(diagnostic.contains("child limit 200k (source: effective admission config"));
+    }
+
+    fn projected_context_budget() -> fabric::ContextBudgetProjection {
+        let runtime_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::RuntimeModelCapability,
+            "deepseek/deepseek-v4-flash[1m]",
+        );
+        let profile_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::ActiveAgentProfile,
+            "general",
+        );
+        let planner_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::ContextBudgetPlanner,
+            "ContextBudgetPlanner",
+        );
+        let admission_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::EffectiveAdmissionConfig,
+            "agent.admission.max_child_tokens",
+        );
+        let agent_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::AgentRuntime,
+            "current Agent rollout scope",
+        );
+        fabric::ContextBudgetProjection {
+            model_spec: "deepseek-v4-flash[1m]".into(),
+            model_context_tokens: 1_000_000.into(),
+            profile_input_limit_tokens: 1_000_000.into(),
+            reserved_output_tokens: 16_384.into(),
+            system_and_skill_tokens: 10_000.into(),
+            tool_schema_tokens: 8_000.into(),
+            pending_input_tokens: 1_000.into(),
+            safety_margin_tokens: 50_000.into(),
+            current_history_tokens: 83_000.into(),
+            admissible_history_tokens: 915_616.into(),
+            compaction_threshold_tokens: 801_164.into(),
+            model_source: runtime_source,
+            profile_source,
+            history_source: planner_source,
+            rollout: fabric::RolloutBudgetProjection {
+                root_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                    source: agent_source.clone(),
+                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                },
+                child_limit_tokens: fabric::RolloutBudgetValue::Known {
+                    value: 200_000.into(),
+                    source: admission_source,
+                },
+                current_agent_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                    source: agent_source,
+                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                },
+            },
+        }
     }
 }

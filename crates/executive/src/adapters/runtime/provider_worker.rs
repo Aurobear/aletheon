@@ -319,6 +319,7 @@ impl ProviderWorkerRuntime {
                                 connection_id,
                                 thread_id,
                                 turn_id,
+                                execution_target: fabric::ExecutionTargetSelection::default(),
                                 workspace,
                                 session_id: context.session_id,
                                 working_dir: context.working_dir,

@@ -42,7 +42,7 @@ impl SessionProjection {
     ) -> (Vec<TaskSnapshot>, Vec<ActivitySnapshot>) {
         let task_id = format!("session:{}:task", session.id.0);
         let goal = items.iter().find_map(|item| match &item.payload {
-            ItemPayload::UserMessage { content } => Some(content.clone()),
+            ItemPayload::UserMessage { content, .. } => Some(content.clone()),
             _ => None,
         });
         let mut turns = BTreeMap::<String, Vec<&ItemRecord>>::new();
@@ -786,6 +786,10 @@ fn project_robot_episode_activities(
 }
 
 fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
+    let context_budget = items.iter().rev().find_map(|item| match &item.payload {
+        ItemPayload::ContextBudgetProjection { projection } => Some(projection.as_ref().clone()),
+        _ => None,
+    });
     let receipts = items
         .iter()
         .filter_map(|item| match &item.payload {
@@ -793,7 +797,10 @@ fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
             _ => None,
         })
         .collect::<Vec<_>>();
-    let latest = receipts.last()?;
+    let latest = receipts.last();
+    if latest.is_none() && context_budget.is_none() {
+        return None;
+    }
     let sum = |select: fn(&fabric::InferenceUsage) -> Option<u64>| {
         receipts.iter().try_fold(0_u64, |total, receipt| {
             select(&receipt.usage).map(|value| total.saturating_add(value))
@@ -804,7 +811,9 @@ fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
     let cache_read_tokens = sum(|usage| usage.cache_read_tokens);
     let cache_write_tokens = sum(|usage| usage.cache_write_tokens);
     let uncached_input_tokens = sum(|usage| usage.uncached_input_tokens);
-    let cache_telemetry = if receipts
+    let cache_telemetry = if receipts.is_empty() {
+        fabric::CacheTelemetry::Unknown
+    } else if receipts
         .iter()
         .all(|receipt| receipt.usage.cache_telemetry == fabric::CacheTelemetry::Reported)
     {
@@ -819,10 +828,24 @@ fn project_runtime_facts(items: &[ItemRecord]) -> Option<TaskRuntimeFacts> {
     };
     let cache_known = cache_telemetry == fabric::CacheTelemetry::Reported;
     Some(TaskRuntimeFacts {
-        effective_provider: Some(latest.provider_id.clone()),
-        effective_model: Some(latest.model_id.clone()),
-        context_capacity_tokens: None,
-        active_context_occupancy_tokens: None,
+        effective_provider: latest.map(|receipt| receipt.provider_id.clone()),
+        effective_model: latest.map(|receipt| receipt.model_id.clone()).or_else(|| {
+            context_budget
+                .as_ref()
+                .map(|budget| budget.model_spec.clone())
+        }),
+        context_capacity_tokens: context_budget
+            .as_ref()
+            .map(|budget| budget.model_context_tokens.get()),
+        active_context_occupancy_tokens: context_budget.as_ref().map(|budget| {
+            budget
+                .current_history_tokens
+                .get()
+                .saturating_add(budget.pending_input_tokens.get())
+                .saturating_add(budget.system_and_skill_tokens.get())
+                .saturating_add(budget.tool_schema_tokens.get())
+        }),
+        context_budget: context_budget.map(Box::new),
         cumulative_usage: fabric::InferenceUsage {
             total_input_tokens,
             output_tokens,
@@ -849,6 +872,87 @@ mod tests {
     use super::*;
 
     const FRAME_DIGEST: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+    fn context_budget_projection() -> fabric::ContextBudgetProjection {
+        let model_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::RuntimeModelCapability,
+            "deepseek/deepseek-v4-flash[1m]",
+        );
+        let profile_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::ActiveAgentProfile,
+            "general",
+        );
+        let history_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::ContextBudgetPlanner,
+            "ContextBudgetPlanner",
+        );
+        let agent_source = fabric::ContextBudgetSource::new(
+            fabric::ContextBudgetSourceKind::AgentRuntime,
+            "current Agent rollout scope",
+        );
+        fabric::ContextBudgetProjection {
+            model_spec: "deepseek/deepseek-v4-flash[1m]".into(),
+            model_context_tokens: 1_000_000.into(),
+            profile_input_limit_tokens: 200_000.into(),
+            reserved_output_tokens: 16_384.into(),
+            system_and_skill_tokens: 10_000.into(),
+            tool_schema_tokens: 8_000.into(),
+            pending_input_tokens: 1_000.into(),
+            safety_margin_tokens: 10_000.into(),
+            current_history_tokens: 83_000.into(),
+            admissible_history_tokens: 155_616.into(),
+            compaction_threshold_tokens: 136_164.into(),
+            model_source,
+            profile_source,
+            history_source,
+            rollout: fabric::RolloutBudgetProjection {
+                root_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                    source: agent_source.clone(),
+                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                },
+                child_limit_tokens: fabric::RolloutBudgetValue::Known {
+                    value: 200_000.into(),
+                    source: fabric::ContextBudgetSource::new(
+                        fabric::ContextBudgetSourceKind::EffectiveAdmissionConfig,
+                        "agent.admission.max_child_tokens",
+                    ),
+                },
+                current_agent_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                    source: agent_source,
+                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn daemon_task_and_json_protocol_round_trip_one_budget_snapshot() {
+        let projection = context_budget_projection();
+        let item = ItemRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: fabric::ItemId::new(),
+            session_id: SessionId("budget-session".into()),
+            turn_id: fabric::TurnId::new(),
+            sequence: 1,
+            created_at_ms: 1,
+            payload: ItemPayload::ContextBudgetProjection {
+                projection: Box::new(projection.clone()),
+            },
+        };
+
+        let facts = project_runtime_facts(&[item]).expect("budget-only runtime facts");
+        assert_eq!(facts.context_capacity_tokens, Some(1_000_000));
+        assert_eq!(facts.active_context_occupancy_tokens, Some(102_000));
+        assert_eq!(
+            facts.effective_model.as_deref(),
+            Some(projection.model_spec.as_str())
+        );
+        assert_eq!(facts.context_budget.as_deref(), Some(&projection));
+
+        let json = serde_json::to_value(&facts).unwrap();
+        let round_trip: TaskRuntimeFacts = serde_json::from_value(json).unwrap();
+        assert_eq!(round_trip, facts);
+    }
 
     fn robot_receipt(safety_denied: bool) -> SettledEpisodeReport {
         let expected = fabric::types::expected_outcome::ExpectedOutcome {
@@ -967,6 +1071,7 @@ mod tests {
                 created_at_ms: 1_000,
                 payload: ItemPayload::UserMessage {
                     content: "让机器人站稳三秒".into(),
+                    execution_target: fabric::ExecutionTargetSelection::default(),
                 },
             },
             ItemRecord {

@@ -97,6 +97,8 @@ crates/executive/src/application/approval_service.rs	application	executive	use-c
 crates/executive/src/application/capability_benchmark.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/coding_runtime.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/cognitive_role_workflow.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/cognitive_role_workflow/stages.rs	application	executive	adaptive workflow stage execution
+crates/executive/src/application/cognitive_role_workflow/state_machine.rs	application	executive	adaptive workflow state transitions
 crates/executive/src/application/cognitive_workspace.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/compaction_normalize.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious/agent_processor.rs	application	executive	use-case orchestration and ports

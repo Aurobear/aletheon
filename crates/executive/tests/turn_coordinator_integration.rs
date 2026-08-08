@@ -21,10 +21,27 @@ struct TerminalFailingStore {
     inner: executive::runtime::session::canonical_store::CanonicalSessionStore,
 }
 
+struct AmbiguousTerminalAckStore {
+    inner: executive::runtime::session::canonical_store::CanonicalSessionStore,
+    terminal_attempts: Arc<std::sync::atomic::AtomicUsize>,
+}
+
 #[async_trait]
 impl SessionProjectionStore for TerminalFailingStore {
     async fn create(&self, session: fabric::SessionRecord) -> anyhow::Result<()> {
         self.inner.create(session).await
+    }
+
+    async fn next_sequence(&self, session: &SessionId) -> anyhow::Result<Option<u64>> {
+        self.inner.next_sequence(session).await
+    }
+
+    async fn item_by_id(
+        &self,
+        session: &SessionId,
+        id: &fabric::ItemId,
+    ) -> anyhow::Result<Option<fabric::ItemRecord>> {
+        self.inner.item_by_id(session, id).await
     }
 
     async fn append(
@@ -78,6 +95,79 @@ impl SessionReadStore for TerminalFailingStore {
     }
 }
 
+#[async_trait]
+impl SessionProjectionStore for AmbiguousTerminalAckStore {
+    async fn create(&self, session: fabric::SessionRecord) -> anyhow::Result<()> {
+        self.inner.create(session).await
+    }
+
+    async fn next_sequence(&self, session: &SessionId) -> anyhow::Result<Option<u64>> {
+        self.inner.next_sequence(session).await
+    }
+
+    async fn item_by_id(
+        &self,
+        session: &SessionId,
+        id: &fabric::ItemId,
+    ) -> anyhow::Result<Option<fabric::ItemRecord>> {
+        self.inner.item_by_id(session, id).await
+    }
+
+    async fn append(
+        &self,
+        session: &SessionId,
+        expected_sequence: u64,
+        item: fabric::ItemRecord,
+    ) -> anyhow::Result<fabric::AppendOutcome> {
+        let terminal = item.id.0 == item.turn_id.0;
+        let outcome = self.inner.append(session, expected_sequence, item).await?;
+        if terminal
+            && self
+                .terminal_attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                == 0
+        {
+            anyhow::bail!("injected lost terminal acknowledgement after durable append");
+        }
+        Ok(outcome)
+    }
+
+    async fn fork(
+        &self,
+        parent: &SessionId,
+        through_sequence: u64,
+        child: fabric::SessionRecord,
+    ) -> anyhow::Result<()> {
+        self.inner.fork(parent, through_sequence, child).await
+    }
+
+    async fn bind_principal(
+        &self,
+        session: &SessionId,
+        principal: &PrincipalId,
+    ) -> anyhow::Result<()> {
+        self.inner.bind_principal(session, principal).await
+    }
+}
+
+#[async_trait]
+impl SessionReadStore for AmbiguousTerminalAckStore {
+    async fn load_session(
+        &self,
+        session: &SessionId,
+    ) -> anyhow::Result<Option<fabric::SessionRecord>> {
+        self.inner.load_session(session).await
+    }
+
+    async fn load_items(
+        &self,
+        session: &SessionId,
+        after: Option<u64>,
+    ) -> anyhow::Result<Vec<fabric::ItemRecord>> {
+        self.inner.load_items(session, after).await
+    }
+}
+
 mod turn_request_support;
 
 fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
@@ -86,6 +176,7 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
         process_id,
         context: turn_request_support::context(session, std::env::temp_dir()),
         input: "hello".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
@@ -116,6 +207,8 @@ async fn create_session_on_first_turn() {
                     result: TurnResult {
                         output: "ok".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -179,6 +272,8 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
                     result: TurnResult {
                         output: "must-not-succeed".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -204,6 +299,76 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
     assert!(matches!(items[0].payload, ItemPayload::UserMessage { .. }));
 }
 
+#[tokio::test]
+async fn terminal_settlement_retry_is_idempotent_after_ambiguous_ack() {
+    let clock = Arc::new(kernel::chronos::TestClock::default());
+    let kernel = Arc::new(::kernel::KernelRuntime::with_clock(
+        clock as Arc<dyn fabric::Clock>,
+    ));
+    let terminal_attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let projection_store: Arc<dyn SessionProjectionStore> = Arc::new(AmbiguousTerminalAckStore {
+        inner: executive::runtime::session::canonical_store::CanonicalSessionStore::open(
+            ":memory:",
+        )
+        .unwrap(),
+        terminal_attempts: terminal_attempts.clone(),
+    });
+    let spine = Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap());
+    let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
+        kernel.clone(),
+        projection_store,
+        spine,
+        executive::composition::config::GrokHardeningConfig::default(),
+    );
+    let store = coordinator.store();
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
+
+    let result = coordinator
+        .submit_with(
+            request("terminal-ambiguous-ack", process.id),
+            &TurnPolicy::daemon(),
+            |_request, _cancel| async move {
+                Ok(TurnExecution {
+                    result: TurnResult {
+                        output: "settled once".into(),
+                        stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
+                        metrics: TurnMetrics {
+                            completed_normally: true,
+                            ..Default::default()
+                        },
+                    },
+                    items: vec![],
+                    projection: None,
+                    context_projection: None,
+                    evaluation_artifacts: Default::default(),
+                })
+            },
+        )
+        .await
+        .expect("the identical terminal retry should observe AlreadyPresent");
+
+    assert_eq!(result.stop, TurnStop::Completed);
+    assert_eq!(
+        terminal_attempts.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    let items = store
+        .load_items(&SessionId("terminal-ambiguous-ack".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(items.len(), 2, "terminal retry must not duplicate items");
+    assert_eq!(items[1].id.0, items[1].turn_id.0);
+    assert!(matches!(
+        &items[1].payload,
+        ItemPayload::AssistantMessage { content } if content == "settled once"
+    ));
+}
+
 //
 // Item ordering
 //
@@ -226,6 +391,8 @@ async fn append_items_in_sequence_order() {
                     result: TurnResult {
                         output: "answer".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -302,6 +469,8 @@ async fn settle_operation_on_success() {
                         result: TurnResult {
                             output: "done".into(),
                             stop: TurnStop::Completed,
+                            failure: None,
+                            usage: Default::default(),
                             metrics: TurnMetrics {
                                 completed_normally: true,
                                 ..Default::default()
@@ -382,6 +551,47 @@ async fn settle_operation_on_failure() {
     assert!(matches!(items[1].payload, ItemPayload::SystemNotice { .. }));
 }
 
+#[tokio::test]
+async fn missing_principal_context_refusal_is_durable_and_auditable() {
+    let test = TestAletheonBuilder::new().build().await;
+    let process = test
+        .kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
+
+    let error = test
+        .coordinator
+        .submit_with(
+            request("missing-principal-context", process.id),
+            &TurnPolicy::daemon(),
+            |_request, _cancel| async move {
+                Err(anyhow::Error::new(
+                    executive::application::turn_engine::TurnEngineError::InvalidContext(
+                        "authenticated principal context is missing".into(),
+                    ),
+                ))
+            },
+        )
+        .await
+        .expect_err("missing authority must fail before capability execution");
+    assert!(error
+        .to_string()
+        .contains("authenticated principal context is missing"));
+
+    let items = test
+        .store
+        .load_items(&SessionId("missing-principal-context".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(matches!(
+        &items[1].payload,
+        ItemPayload::SystemNotice { content }
+            if content.contains("authenticated principal context is missing")
+    ));
+}
+
 //
 // Cancellation
 //
@@ -411,6 +621,8 @@ async fn cancel_mid_turn() {
                         result: TurnResult {
                             output: String::new(),
                             stop: TurnStop::Cancelled,
+                            failure: None,
+                            usage: Default::default(),
                             metrics: TurnMetrics {
                                 completed_normally: false,
                                 ..Default::default()
@@ -461,6 +673,8 @@ async fn concurrent_turns_different_sessions_dont_interfere() {
                     result: TurnResult {
                         output: "a".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -481,6 +695,8 @@ async fn concurrent_turns_different_sessions_dont_interfere() {
                     result: TurnResult {
                         output: "b".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -538,6 +754,8 @@ async fn event_spine_sequence_monotonic_across_turns() {
                     result: TurnResult {
                         output: "t1".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -563,6 +781,8 @@ async fn event_spine_sequence_monotonic_across_turns() {
                     result: TurnResult {
                         output: "t2".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -628,6 +848,8 @@ async fn context_projection_stored_as_item() {
                     result: TurnResult {
                         output: "ok".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()

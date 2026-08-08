@@ -213,6 +213,34 @@ impl SessionInputCoordinator {
         requirements: Vec<fabric::TurnRequirement>,
         requested_task_kind: Option<fabric::TaskKind>,
     ) -> Result<PromptEnvelope> {
+        self.enqueue_with_target(
+            principal,
+            connection,
+            thread,
+            kind,
+            content,
+            idempotency_key,
+            requirements,
+            requested_task_kind,
+            fabric::ExecutionTargetSelection::default(),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn enqueue_with_target(
+        &self,
+        principal: PrincipalId,
+        connection: ConnectionId,
+        thread: ThreadId,
+        kind: PromptKind,
+        content: String,
+        idempotency_key: String,
+        requirements: Vec<fabric::TurnRequirement>,
+        requested_task_kind: Option<fabric::TaskKind>,
+        execution_target: fabric::ExecutionTargetSelection,
+    ) -> Result<PromptEnvelope> {
+        execution_target.validate().map_err(anyhow::Error::msg)?;
         let _guard = self.operation_lock.lock().await;
         let existing = self.store.ordered(&principal, &thread).await?;
         if let Some(existing) = existing
@@ -246,6 +274,7 @@ impl SessionInputCoordinator {
                 content,
                 requirements,
                 requested_task_kind,
+                execution_target,
                 created_at_unix: now,
                 updated_at_unix: now,
                 state: PromptState::Queued,

@@ -48,6 +48,7 @@ pub fn chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> serde
         requirements: Vec::new(),
         task_kind: None,
         permission_mode: crate::host::permission_mode_from_environment(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
     }))
     .to_json_rpc(Some(1))
     .expect("typed chat request serializes")
@@ -302,7 +303,10 @@ struct App {
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
     requested_task_kind: Option<fabric::TaskKind>,
-    chat: ChatWidget,
+    /// Compatibility-only V0 transcript recorder. It is never rendered and is
+    /// never consulted for durable conversation, tool, or terminal truth; all
+    /// visible state is projected into `app_state` through the reducer.
+    compat_transcript: ChatWidget,
     input_buf: String,
     /// Cursor position in input_buf (byte index).
     cursor: usize,
@@ -394,6 +398,8 @@ struct App {
     sub_agents: Vec<SubAgentHandle>,
     /// Current ReAct loop iteration (0 = first call, 1+ = after tool calls).
     current_iteration: usize,
+    next_transient_item: u64,
+    compat_projected_entries: usize,
     pub registry: registry::CommandRegistry,
     /// Clock for time-based operations (injectable for testing).
     pub clock: Arc<dyn Clock>,
@@ -411,10 +417,8 @@ impl App {
         let mut status = StatusBar::new(caps.clone());
         status.connected = true;
         status.model_name = model_name.clone();
-        let app_state = AppState {
-            model_name: model_name.clone(),
-            ..Default::default()
-        };
+        let mut app_state = AppState::default();
+        app_state.model_name = model_name.clone();
 
         let input_store = InputStateStore::for_workspace(&workspace);
         let (history, draft) = input_store.load();
@@ -424,7 +428,7 @@ impl App {
             workspace,
             turn_requirements,
             requested_task_kind: None,
-            chat: ChatWidget::new(caps.clone()),
+            compat_transcript: ChatWidget::new(caps.clone()),
             input_buf: draft,
             cursor,
             stream,
@@ -474,8 +478,82 @@ impl App {
             plan_view: PlanViewState::default(),
             sub_agents: Vec::new(),
             current_iteration: 0,
+            next_transient_item: 0,
+            compat_projected_entries: 0,
             registry: registry::CommandRegistry::new(),
             clock,
+        }
+    }
+
+    /// Project the current live assistant stream onto the canonical reducer
+    /// surface so text is visible before the durable projection commits it
+    /// (U1-AUDIT-001). The reducer drops the overlay once a durable assistant
+    /// item with the same or later sequence arrives, preventing duplication.
+    pub(crate) fn dispatch_live_assistant_text(&mut self) {
+        let text = self.stream_ctrl.current_text();
+        let sequence = self.app_state.cursor.sequence;
+        let _ = crate::tui::reducer::reduce(
+            &mut self.app_state,
+            crate::tui::reducer::UiAction::LiveAssistantText { text, sequence },
+        );
+    }
+
+    /// Project a bounded local command/compatibility response onto the same
+    /// visible item map as durable and live conversation. These entries are
+    /// explicitly ephemeral and are discarded on snapshot/reconnect.
+    pub(crate) fn show_transient_assistant(&mut self, text: impl Into<String>) {
+        self.next_transient_item = self.next_transient_item.saturating_add(1);
+        let session = self
+            .app_state
+            .session_id
+            .as_deref()
+            .unwrap_or("unbound-session");
+        let turn = self
+            .app_state
+            .active_turn_id
+            .map(|turn| turn.0.to_string())
+            .unwrap_or_else(|| "no-turn".into());
+        let id = format!(
+            "local:{session}:{turn}:assistant:{}",
+            self.next_transient_item
+        );
+        self.app_state.items.insert(
+            id.clone(),
+            self::state::UiItem {
+                id,
+                sequence: self
+                    .app_state
+                    .cursor
+                    .sequence
+                    .saturating_add(self.next_transient_item),
+                kind: "assistant".into(),
+                content: text.into(),
+                status: self::state::UiItemStatus::Streaming,
+                collapsed: false,
+            },
+        );
+    }
+
+    /// Mirror only new V0 system notices into reducer-owned visible state.
+    /// User/assistant/tool business truth is never read from this recorder.
+    pub(crate) fn sync_compat_notices(&mut self) {
+        let start = self
+            .compat_projected_entries
+            .min(self.compat_transcript.entries.len());
+        let notices = self.compat_transcript.entries[start..]
+            .iter()
+            .filter_map(|entry| match entry {
+                self::chat::ChatEntry::Text(message)
+                    if message.role == self::chat::Role::System =>
+                {
+                    Some(message.content.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.compat_projected_entries = self.compat_transcript.entries.len();
+        for notice in notices {
+            self.show_transient_assistant(notice);
         }
     }
 

@@ -1,8 +1,8 @@
 //! Pure protocol-to-view-state reducer.
 
 use fabric::protocol::client::{
-    AgentEvent, ApprovalEvent, EventCursor, ItemEvent, ItemPhase, SessionEventPage,
-    SessionReadSnapshot, UiSnapshot,
+    ActivityKind, ActivitySnapshot, ActivityState, AgentEvent, ApprovalEvent, EventCursor,
+    ItemEvent, ItemPhase, SessionEventPage, SessionReadSnapshot, UiSnapshot,
 };
 use fabric::{EvaluationDecision, EvaluationReceiptRef, ItemPayload, ItemRecord};
 use serde::Serialize;
@@ -19,6 +19,46 @@ pub enum UiAction {
     Agent(AgentEvent),
     Reconnected(EventCursor),
     Failed(UiError),
+    LiveActivity(LiveActivityEvent),
+    /// Ephemeral assistant text that has not yet been committed as a durable
+    /// item. It is rendered on the canonical conversation surface before the
+    /// durable projection replaces it, so live output is visible (U1-AUDIT-001).
+    LiveAssistantText {
+        text: String,
+        sequence: u64,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum LiveActivityEvent {
+    InferenceStarted {
+        iteration: usize,
+        observed_at: u64,
+    },
+    InferenceFinished {
+        iteration: usize,
+        observed_at: u64,
+    },
+    ToolStarted {
+        call_id: String,
+        tool: String,
+        observed_at: u64,
+    },
+    ToolProgress {
+        call_id: String,
+        payload: serde_json::Value,
+        observed_at: u64,
+    },
+    ToolFinished {
+        call_id: String,
+        is_error: bool,
+        elapsed_ms: u64,
+        observed_at: u64,
+    },
+    ProgressSummary {
+        summary: String,
+        observed_at: u64,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -90,10 +130,16 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
             }
         }
         UiAction::Reconnected(cursor) => {
+            clear_ephemeral_overlays(state);
             if cursor.sequence > state.cursor.sequence {
                 state.cursor = cursor;
             }
-            vec![UiEffect::SubscribeAfter(state.cursor.clone())]
+            let mut effects = Vec::new();
+            if let Some(session_id) = state.session_id.clone() {
+                effects.push(UiEffect::ReloadSnapshot(fabric::SessionId(session_id)));
+            }
+            effects.push(UiEffect::SubscribeAfter(state.cursor.clone()));
+            effects
         }
         UiAction::Failed(error) => {
             if let Some(cursor) = error.cursor {
@@ -104,7 +150,67 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
             state.last_error = Some(error.message.clone());
             vec![UiEffect::AnnounceError(error.message), UiEffect::Render]
         }
+        UiAction::LiveActivity(event) => {
+            reduce_live_activity(state, event);
+            vec![UiEffect::Render]
+        }
+        UiAction::LiveAssistantText { text, sequence } => {
+            reduce_live_assistant_text(state, text, sequence);
+            vec![UiEffect::Render]
+        }
     }
+}
+
+/// Establish one stable identity for a live turn before applying any
+/// ephemeral text or activity. Versioned events provide the authoritative
+/// identity; the V0 compatibility stream receives a reducer-local identity
+/// that is never projected as durable truth.
+pub fn begin_live_turn(state: &mut AppState, turn_id: Option<fabric::TurnId>) {
+    let next = turn_id.unwrap_or_default();
+    let current = state.active_turn_id.or(state.live_turn_id);
+    if current != Some(next) {
+        clear_ephemeral_overlays(state);
+    }
+    state.active_turn_id = turn_id;
+    state.live_turn_id = turn_id.is_none().then_some(next);
+    state.turn_active = true;
+}
+
+/// Upsert an ephemeral assistant item so live streamed text is visible on the
+/// canonical conversation surface before the durable projection replaces it.
+/// The durable item (same stable id once committed) supersedes this overlay;
+/// until then it is the only visible representation.
+fn reduce_live_assistant_text(state: &mut AppState, text: String, sequence: u64) {
+    ensure_live_turn_id(state);
+    let live_assistant_id = live_assistant_id(state);
+    let live = UiItem {
+        id: live_assistant_id.clone(),
+        sequence,
+        kind: "assistant".into(),
+        content: text,
+        status: UiItemStatus::Streaming,
+        collapsed: false,
+    };
+    // A live overlay must never displace a durable item with the same sequence.
+    // If the durable projection already committed this turn's assistant text,
+    // drop the ephemeral copy so no duplication can occur.
+    let durable_at_or_after = state.items.values().any(|item| {
+        item.kind == "assistant" && item.sequence >= sequence && item.id != live_assistant_id
+    });
+    if durable_at_or_after {
+        state.items.remove(&live_assistant_id);
+        return;
+    }
+    state.items.insert(live_assistant_id, live);
+}
+
+/// Remove the ephemeral live-assistant overlay once a durable assistant item
+/// commits, so the same text is atomically replaced rather than duplicated.
+fn clear_live_assistant_overlay(state: &mut AppState, record: &ItemRecord) {
+    state.items.remove(&format!(
+        "live:{}:{}:assistant",
+        record.session_id.0, record.turn_id.0
+    ));
 }
 
 fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> Vec<UiEffect> {
@@ -134,6 +240,10 @@ fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> 
         )];
     }
 
+    let session_changed = state.session_id.as_deref() != Some(snapshot.session.id.0.as_str());
+    if session_changed {
+        clear_ephemeral_overlays(state);
+    }
     state.cursor = snapshot.through;
     state.session_id = Some(snapshot.session.id.0.clone());
     state.projected_session = Some(snapshot.session);
@@ -143,12 +253,263 @@ fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> 
         upsert_completed(state, item);
     }
     state.tasks = snapshot.tasks;
-    state.activities = snapshot.activities;
+    reconcile_live_activities(state, snapshot.activities);
     state.last_error = None;
     vec![
         UiEffect::Render,
         UiEffect::SubscribeAfter(state.cursor.clone()),
     ]
+}
+
+fn live_scope(state: &AppState) -> String {
+    format!(
+        "{}:{}",
+        state.session_id.as_deref().unwrap_or("unbound-session"),
+        active_turn_id(state).0
+    )
+}
+
+fn live_assistant_id(state: &AppState) -> String {
+    format!("live:{}:assistant", live_scope(state))
+}
+
+fn live_activity_id(state: &AppState, call_id: &str) -> String {
+    format!("live:{}:tool:{call_id}", live_scope(state))
+}
+
+fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
+    ensure_live_turn_id(state);
+    match event {
+        LiveActivityEvent::InferenceStarted {
+            iteration,
+            observed_at,
+        } => {
+            if iteration == 0 {
+                let scope_prefix = format!("live:{}:", live_scope(state));
+                state
+                    .activities
+                    .retain(|activity| !activity.activity_id.starts_with(&scope_prefix));
+                state
+                    .live_activity_ids
+                    .retain(|activity_id| !activity_id.starts_with(&scope_prefix));
+            }
+            let activity_id = format!("live:{}:inference:{iteration}", live_scope(state));
+            state.live_activity_ids.insert(activity_id.clone());
+            state.activities.push(ActivitySnapshot {
+                activity_id,
+                task_id: active_task_id(state),
+                turn_id: active_turn_id(state),
+                parent_activity_id: None,
+                kind: ActivityKind::Runtime,
+                label: format!("Model inference round {}", iteration + 1),
+                state: ActivityState::Running,
+                started_at: observed_at,
+                updated_at: observed_at,
+                progress: Some(serde_json::json!("reasoning and selecting next action")),
+                artifact_refs: Vec::new(),
+                receipt_ref: None,
+            });
+        }
+        LiveActivityEvent::InferenceFinished {
+            iteration,
+            observed_at,
+        } => {
+            let activity_id = format!("live:{}:inference:{iteration}", live_scope(state));
+            if let Some(activity) = state
+                .activities
+                .iter_mut()
+                .find(|activity| activity.activity_id == activity_id)
+            {
+                activity.state = ActivityState::Completed;
+                activity.updated_at = observed_at;
+                activity.progress = Some(serde_json::json!("provider response received"));
+            }
+        }
+        LiveActivityEvent::ToolStarted {
+            call_id,
+            tool,
+            observed_at,
+        } => {
+            let activity_id = live_activity_id(state, &call_id);
+            state.live_activity_ids.insert(activity_id.clone());
+            if let Some(activity) = state
+                .activities
+                .iter_mut()
+                .find(|activity| activity.activity_id == activity_id)
+            {
+                activity.label = tool;
+                activity.state = ActivityState::Running;
+                activity.updated_at = observed_at;
+                activity.progress = Some(serde_json::json!("started"));
+            } else {
+                state.activities.push(ActivitySnapshot {
+                    activity_id,
+                    task_id: active_task_id(state),
+                    turn_id: active_turn_id(state),
+                    parent_activity_id: None,
+                    kind: ActivityKind::Tool,
+                    label: tool,
+                    state: ActivityState::Running,
+                    started_at: observed_at,
+                    updated_at: observed_at,
+                    progress: Some(serde_json::json!("started")),
+                    artifact_refs: Vec::new(),
+                    receipt_ref: None,
+                });
+            }
+        }
+        LiveActivityEvent::ToolProgress {
+            call_id,
+            payload,
+            observed_at,
+        } => {
+            let activity_id = live_activity_id(state, &call_id);
+            if let Some(activity) = state
+                .activities
+                .iter_mut()
+                .find(|activity| activity.activity_id == activity_id)
+            {
+                activity.state = ActivityState::Running;
+                activity.updated_at = observed_at;
+                activity.progress = Some(payload);
+            }
+        }
+        LiveActivityEvent::ToolFinished {
+            call_id,
+            is_error,
+            elapsed_ms,
+            observed_at,
+        } => {
+            let activity_id = live_activity_id(state, &call_id);
+            if let Some(activity) = state
+                .activities
+                .iter_mut()
+                .find(|activity| activity.activity_id == activity_id)
+            {
+                activity.state = if is_error {
+                    ActivityState::Failed
+                } else {
+                    ActivityState::Completed
+                };
+                activity.updated_at = observed_at;
+                activity.progress = Some(serde_json::json!({
+                    "status": if is_error { "failed" } else { "completed" },
+                    "elapsed_ms": elapsed_ms,
+                }));
+            }
+        }
+        LiveActivityEvent::ProgressSummary {
+            summary,
+            observed_at,
+        } => {
+            let activity_id = format!("live:{}:progress", live_scope(state));
+            let summary = bounded_summary(&summary, 160);
+            state.live_activity_ids.insert(activity_id.clone());
+            if let Some(activity) = state
+                .activities
+                .iter_mut()
+                .find(|activity| activity.activity_id == activity_id)
+            {
+                activity.label = summary;
+                activity.state = ActivityState::Running;
+                activity.updated_at = observed_at;
+                activity.progress = Some(serde_json::json!("strategy update"));
+            } else {
+                state.activities.push(ActivitySnapshot {
+                    activity_id,
+                    task_id: active_task_id(state),
+                    turn_id: active_turn_id(state),
+                    parent_activity_id: None,
+                    kind: ActivityKind::Runtime,
+                    label: summary,
+                    state: ActivityState::Running,
+                    started_at: observed_at,
+                    updated_at: observed_at,
+                    progress: Some(serde_json::json!("strategy update")),
+                    artifact_refs: Vec::new(),
+                    receipt_ref: None,
+                });
+            }
+        }
+    }
+}
+
+fn active_task(state: &AppState) -> Option<&fabric::TaskSnapshot> {
+    state
+        .tasks
+        .iter()
+        .find(|task| {
+            matches!(
+                task.phase,
+                fabric::TaskPhase::Active | fabric::TaskPhase::Interrupted
+            )
+        })
+        .or_else(|| state.tasks.first())
+}
+
+fn active_task_id(state: &AppState) -> String {
+    active_task(state)
+        .map(|task| task.task_id.clone())
+        .unwrap_or_else(|| "live-turn".into())
+}
+
+fn active_turn_id(state: &AppState) -> fabric::TurnId {
+    state
+        .active_turn_id
+        .or(state.live_turn_id)
+        .or_else(|| active_task(state).and_then(|task| task.active_turn_id))
+        .expect("live reducer actions establish a stable turn identity")
+}
+
+fn ensure_live_turn_id(state: &mut AppState) {
+    if state.active_turn_id.is_none() && state.live_turn_id.is_none() {
+        state.live_turn_id = Some(fabric::TurnId::new());
+    }
+}
+
+fn bounded_summary(summary: &str, max_chars: usize) -> String {
+    let normalized = summary.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= max_chars {
+        normalized
+    } else {
+        format!(
+            "{}…",
+            normalized
+                .chars()
+                .take(max_chars.saturating_sub(1))
+                .collect::<String>()
+        )
+    }
+}
+
+fn reconcile_live_activities(state: &mut AppState, durable: Vec<ActivitySnapshot>) {
+    let mut live = state
+        .activities
+        .drain(..)
+        .filter(|activity| state.live_activity_ids.contains(&activity.activity_id))
+        .map(|activity| (activity.activity_id.clone(), activity))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    for activity in &durable {
+        if activity.kind != ActivityKind::Tool {
+            continue;
+        }
+        live.retain(|live_id, _| {
+            let Some((_, call_id)) = live_id.rsplit_once(":tool:") else {
+                return true;
+            };
+            !activity.activity_id.ends_with(&format!(":{call_id}"))
+        });
+    }
+
+    state.activities = durable;
+    state.activities.extend(live.into_values());
+    state.live_activity_ids = state
+        .activities
+        .iter()
+        .filter(|activity| activity.activity_id.starts_with("live:"))
+        .map(|activity| activity.activity_id.clone())
+        .collect();
 }
 
 fn reduce_event_page(state: &mut AppState, page: SessionEventPage) -> Vec<UiEffect> {
@@ -240,6 +601,9 @@ fn apply_item_event(state: &mut AppState, event: ItemEvent) {
         ItemPhase::Completed => {
             if let Some(item) = event.item {
                 state.items.remove(&id);
+                if item_content(&item.payload).0 == "assistant" {
+                    clear_live_assistant_overlay(state, &item);
+                }
                 upsert_completed(state, item);
             }
         }
@@ -252,6 +616,19 @@ fn apply_item_event(state: &mut AppState, event: ItemEvent) {
             item.content = event.error.unwrap_or_else(|| "item failed".into());
         }
     }
+}
+
+fn clear_ephemeral_overlays(state: &mut AppState) {
+    state.items.retain(|id, item| {
+        !id.starts_with("live:")
+            && !id.starts_with("local:")
+            && item.status != UiItemStatus::Streaming
+    });
+    state
+        .activities
+        .retain(|activity| !state.live_activity_ids.contains(&activity.activity_id));
+    state.live_activity_ids.clear();
+    state.live_turn_id = None;
 }
 
 /// Project the terminal status carried by the canonical client event. This is
@@ -275,6 +652,8 @@ pub fn reduce_terminal(
     state.last_terminal_status = Some(status);
     state.streaming = false;
     state.turn_active = false;
+    state.active_turn_id = None;
+    state.live_turn_id = None;
     true
 }
 
@@ -287,6 +666,12 @@ fn advance(state: &mut AppState, cursor: &EventCursor) -> bool {
 }
 
 fn upsert_completed(state: &mut AppState, record: ItemRecord) {
+    if let ItemPayload::UserMessage {
+        execution_target, ..
+    } = &record.payload
+    {
+        state.reconcile_projected_execution_target(execution_target, record.sequence);
+    }
     if let ItemPayload::EvaluationReceiptRef { receipt } = &record.payload {
         state.latest_evaluation = Some(receipt.clone());
     }
@@ -312,7 +697,7 @@ fn upsert_completed(state: &mut AppState, record: ItemRecord) {
 
 fn item_content(payload: &ItemPayload) -> (String, String, bool) {
     match payload {
-        ItemPayload::UserMessage { content } => ("user".into(), content.clone(), false),
+        ItemPayload::UserMessage { content, .. } => ("user".into(), content.clone(), false),
         ItemPayload::AssistantMessage { content } => ("assistant".into(), content.clone(), false),
         ItemPayload::ToolCall { name, input, .. } => {
             ("tool_call".into(), format!("{name} {input}"), true)
@@ -356,6 +741,29 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
                 receipt.fragments.len(),
                 receipt.message_bytes,
                 receipt.tool_schema_bytes
+            ),
+            true,
+        ),
+        ItemPayload::ContextBudgetProjection { projection } => (
+            "context_budget_projection".into(),
+            format!(
+                "{}: window {} tokens, profile input {} tokens, history {}/{} tokens",
+                projection.model_spec,
+                projection.model_context_tokens.get(),
+                projection.profile_input_limit_tokens.get(),
+                projection.current_history_tokens.get(),
+                projection.admissible_history_tokens.get(),
+            ),
+            true,
+        ),
+        ItemPayload::ContextCompactionProjection { projection } => (
+            "context_compaction_projection".into(),
+            format!(
+                "{:?}: {} -> {} tokens at {}",
+                projection.mode,
+                projection.tokens_before.get(),
+                projection.tokens_after.get(),
+                projection.trigger_threshold_tokens.get(),
             ),
             true,
         ),

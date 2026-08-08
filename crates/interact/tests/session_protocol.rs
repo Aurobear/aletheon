@@ -45,6 +45,7 @@ fn item_notification_uses_fabric_shape() {
         created_at_ms: 1,
         payload: ItemPayload::UserMessage {
             content: "hello".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
     })
     .to_json();

@@ -115,16 +115,19 @@ pub(super) fn cosine_similarity(a: &[f32], a_norm: f32, b: &[f32]) -> f32 {
 /// hash function.  The vectors are NOT semantically meaningful — they
 /// exist solely to exercise the VectorIndex plumbing in environments
 /// where no real embedding model is available.
-pub struct HashEmbeddingProvider {
+#[cfg(test)]
+pub(super) struct HashEmbeddingProvider {
     dimension: usize,
 }
 
+#[cfg(test)]
 impl HashEmbeddingProvider {
-    pub fn new(dimension: usize) -> Self {
+    pub(super) fn new(dimension: usize) -> Self {
         Self { dimension }
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl EmbeddingProvider for HashEmbeddingProvider {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
@@ -145,6 +148,7 @@ impl EmbeddingProvider for HashEmbeddingProvider {
 /// Each byte of the input seeds a position in the output vector via
 /// modular indexing.  The result is L2-normalised so cosine similarity
 /// is well-defined.
+#[cfg(test)]
 pub(super) fn hash_embedding(text: &str, dim: usize) -> Vec<f32> {
     let mut vec = vec![0.0f32; dim];
     for (i, byte) in text.bytes().enumerate() {

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use fabric::tool::ToolCachePolicy;
@@ -9,7 +9,8 @@ use fabric::{
 use kernel::capability::ToolExecutor;
 
 use crate::tools::read_only_cache::{
-    cache_ttl, is_cacheable, read_only_cache_key, ReadOnlyToolResultCache, ToolCacheScope,
+    cache_ttl, dependency_fingerprint, is_cacheable, read_only_cache_key, ReadOnlyToolResultCache,
+    ToolCacheIdentity, ToolCacheScope,
 };
 use crate::{CorpusError, ExtensionDescriptor, ExtensionKind};
 use crate::{ToolRegistry, ToolRunnerWithGuard};
@@ -87,6 +88,36 @@ pub struct CorpusToolExecutor {
     /// Bounded read-only result cache (Phase C7). Only tools that declare a
     /// non-`Never` policy AND are L0 are consulted; see `read_only_cache`.
     read_only_cache: Arc<ReadOnlyToolResultCache>,
+    read_only_cache_config: ToolResultCacheConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolResultCacheConfig {
+    pub enabled: bool,
+    pub capacity: usize,
+    pub max_ttl: Duration,
+}
+
+impl Default for ToolResultCacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            capacity: 256,
+            max_ttl: Duration::from_secs(300),
+        }
+    }
+}
+
+impl ToolResultCacheConfig {
+    fn governed(self) -> Self {
+        Self {
+            enabled: self.enabled,
+            capacity: self.capacity.clamp(1, 4096),
+            max_ttl: self
+                .max_ttl
+                .clamp(Duration::from_millis(1), Duration::from_secs(3600)),
+        }
+    }
 }
 
 impl CorpusToolExecutor {
@@ -95,11 +126,22 @@ impl CorpusToolExecutor {
         runner: Arc<tokio::sync::Mutex<ToolRunnerWithGuard>>,
         clock: Arc<dyn Clock>,
     ) -> Self {
+        Self::new_with_cache_config(registry, runner, clock, ToolResultCacheConfig::default())
+    }
+
+    pub fn new_with_cache_config(
+        registry: Arc<tokio::sync::Mutex<ToolRegistry>>,
+        runner: Arc<tokio::sync::Mutex<ToolRunnerWithGuard>>,
+        clock: Arc<dyn Clock>,
+        cache_config: ToolResultCacheConfig,
+    ) -> Self {
+        let cache_config = cache_config.governed();
         Self {
             registry,
             runner,
             clock,
-            read_only_cache: Arc::new(ReadOnlyToolResultCache::new(256)),
+            read_only_cache: Arc::new(ReadOnlyToolResultCache::new(cache_config.capacity)),
+            read_only_cache_config: cache_config,
         }
     }
 
@@ -153,16 +195,57 @@ impl CorpusToolExecutor {
     }
 
     fn cache_key(
+        &self,
         request: &CapabilityRequest,
+        permit: &ExecutionPermit,
         tool: &dyn fabric::Tool,
         cache_policy: ToolCachePolicy,
-    ) -> Option<String> {
-        is_cacheable(cache_policy, tool.permission_level()).then(|| {
+    ) -> Result<Option<String>, String> {
+        if !self.read_only_cache_config.enabled
+            || !is_cacheable(cache_policy, tool.permission_level())
+        {
+            return Ok(None);
+        }
+        let dependencies = tool.cache_dependencies().ok_or_else(|| {
+            format!(
+                "tool '{}' declares caching without dependencies",
+                tool.name()
+            )
+        })?;
+        let dependency = dependency_fingerprint(
+            dependencies,
+            &request.call.input,
+            &request.authority.workspace,
+        )?;
+        let schema_digest = fabric::tool_schema_digest(&[fabric::ToolDefinition {
+            name: tool.name().to_owned(),
+            description: tool.description().to_owned(),
+            input_schema: tool.input_schema(),
+        }])
+        .map_err(|error| error.to_string())?;
+        let authority_context = serde_json::to_string(&serde_json::json!({
+            "permission_mode": request.authority.permission_mode,
+            "requested_scope": request.authority.requested_scope,
+            "granted_scope": permit.granted_scope,
+            "sandbox_requirement": request.authority.sandbox,
+            "sandbox_decision": permit.sandbox,
+        }))
+        .map_err(|error| format!("cache authority serialization failed: {error}"))?;
+        Ok(Some({
             let workspace = serde_json::to_string(&request.authority.workspace)
                 .expect("workspace cache identity serializes");
             read_only_cache_key(
-                tool.name(),
-                env!("CARGO_PKG_VERSION"),
+                ToolCacheIdentity {
+                    tool_name: tool.name(),
+                    impl_version: &format!(
+                        "corpus/{}/{}",
+                        env!("CARGO_PKG_VERSION"),
+                        tool.cache_implementation_version()
+                    ),
+                    schema_digest: &schema_digest,
+                    dependency_fingerprint: &dependency,
+                    authority_context: &authority_context,
+                },
                 &request.call.input,
                 ToolCacheScope {
                     workspace: &workspace,
@@ -172,7 +255,32 @@ impl CorpusToolExecutor {
                 },
                 cache_policy,
             )
-        })
+        }))
+    }
+
+    fn resolve_cache_key(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        tool: &dyn fabric::Tool,
+        cache_policy: ToolCachePolicy,
+    ) -> Option<String> {
+        match self.cache_key(request, permit, tool, cache_policy) {
+            Ok(Some(key)) => Some(key),
+            Ok(None) => {
+                self.read_only_cache.record_bypass(tool.name());
+                None
+            }
+            Err(error) => {
+                tracing::debug!(tool = tool.name(), %error, "read-only tool cache bypassed");
+                self.read_only_cache.record_rejected_candidate(tool.name());
+                None
+            }
+        }
+    }
+
+    fn effective_cache_ttl(&self, policy: ToolCachePolicy) -> Option<Duration> {
+        cache_ttl(policy).map(|ttl| ttl.min(self.read_only_cache_config.max_ttl))
     }
 
     async fn emit_stream_terminal_error(
@@ -226,6 +334,8 @@ impl CorpusToolExecutor {
             self.read_only_cache.record_rejected_candidate(tool.name());
             return false;
         };
+        let saved_latency_ms = hit.usage.wall_time_ms;
+        let saved_output_bytes = hit.usage.output_bytes;
         hit.call_id = request.call.call_id.clone();
         hit.usage = UsageReport {
             permit_id: permit.id,
@@ -236,7 +346,8 @@ impl CorpusToolExecutor {
         hit.audit_id = Some(audit_id);
         hit.patch_delta = None;
         hit.served_from_cache = true;
-        self.read_only_cache.record_hit(tool.name());
+        self.read_only_cache
+            .record_hit(tool.name(), saved_latency_ms, saved_output_bytes);
         true
     }
 }
@@ -287,7 +398,7 @@ impl ToolExecutor for CorpusToolExecutor {
         // gate above already ran, and this cache never bypasses it. A hit is
         // returned as an auditable CapabilityResult marked served_from_cache.
         let cache_policy = tool.cache_policy();
-        let cache_key = Self::cache_key(request, tool.as_ref(), cache_policy);
+        let cache_key = self.resolve_cache_key(request, permit, tool.as_ref(), cache_policy);
         if let Some(key) = &cache_key {
             if let Some(mut hit) = self.read_only_cache.get(tool.name(), key) {
                 if !self
@@ -320,6 +431,7 @@ impl ToolExecutor for CorpusToolExecutor {
 
         match report.result {
             Ok(result) => {
+                let result_truncated = result.metadata.truncated;
                 let wall_time_ms = if result.metadata.execution_time_ms == 0 {
                     self.clock.mono_now().0.saturating_sub(started.0)
                 } else {
@@ -343,9 +455,13 @@ impl ToolExecutor for CorpusToolExecutor {
                 };
                 // Store successful read-only results under their cache key so a
                 // later identical call is served without executing the tool.
-                if !capability.is_error && capability.patch_delta.is_none() {
+                if !capability.is_error
+                    && capability.patch_delta.is_none()
+                    && !result_truncated
+                    && !request.control.cancel.is_cancelled()
+                {
                     if let Some(key) = cache_key {
-                        if let Some(ttl) = cache_ttl(cache_policy) {
+                        if let Some(ttl) = self.effective_cache_ttl(cache_policy) {
                             let mut cached = capability.clone();
                             cached.served_from_cache = true;
                             self.read_only_cache.insert(key, cached, ttl);
@@ -402,7 +518,7 @@ impl ToolExecutor for CorpusToolExecutor {
             turn_event_sender: request.control.turn_event_sender.clone(),
         };
         let cache_policy = tool.cache_policy();
-        let cache_key = Self::cache_key(request, tool.as_ref(), cache_policy);
+        let cache_key = self.resolve_cache_key(request, permit, tool.as_ref(), cache_policy);
         if let Some(key) = &cache_key {
             if let Some(mut hit) = self.read_only_cache.get(tool.name(), key) {
                 if self
@@ -441,6 +557,7 @@ impl ToolExecutor for CorpusToolExecutor {
 
         match report.result {
             Ok(result) => {
+                let result_truncated = result.metadata.truncated;
                 let wall_time_ms = if result.metadata.execution_time_ms == 0 {
                     self.clock.mono_now().0.saturating_sub(started.0)
                 } else {
@@ -461,9 +578,13 @@ impl ToolExecutor for CorpusToolExecutor {
                     patch_delta: result.metadata.patch_delta,
                     served_from_cache: false,
                 };
-                if !capability.is_error && capability.patch_delta.is_none() {
+                if !capability.is_error
+                    && capability.patch_delta.is_none()
+                    && !result_truncated
+                    && !request.control.cancel.is_cancelled()
+                {
                     if let Some(key) = cache_key {
-                        if let Some(ttl) = cache_ttl(cache_policy) {
+                        if let Some(ttl) = self.effective_cache_ttl(cache_policy) {
                             let mut cached = capability.clone();
                             cached.served_from_cache = true;
                             self.read_only_cache.insert(key, cached, ttl);

@@ -389,6 +389,7 @@ fn to_builtin(key: &str, args: &str) -> Option<BuiltinCommand> {
         "tui.interrupt" => BuiltinCommand::Interrupt,
         "tui.copy" => BuiltinCommand::Copy,
         "tui.mode" => BuiltinCommand::Mode { name: args.into() },
+        "tui.target" => BuiltinCommand::Target { value: args.into() },
         "tui.quit" => BuiltinCommand::Quit,
         "tui.agents" => BuiltinCommand::Agents,
         "tui.agent" => BuiltinCommand::AgentDetail { id: args.into() },
@@ -483,6 +484,7 @@ mod tests {
                 "shell",
                 "skills",
                 "status",
+                "target",
             ]
         );
         for retired in RETIRED_GOVERNANCE_COMMAND_NAMES {

@@ -5,9 +5,18 @@
 
 use fabric::protocol::client::EventCursor;
 use fabric::ui_event::{AwarenessLevel, CollaborationMode};
-use fabric::{AgentSnapshot, ApprovalSnapshot, EvaluationReceiptRef, MonoTime, TurnTerminalStatus};
+use fabric::{
+    AgentSnapshot, ApprovalSnapshot, EvaluationReceiptRef, ExecutionTargetSelection, MonoTime,
+    TurnTerminalStatus,
+};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug, Clone)]
+struct PendingExecutionTargetSelection {
+    selection: ExecutionTargetSelection,
+    after_sequence: u64,
+}
 
 /// Tracks the current awareness level from brain signals.
 #[derive(Debug, Clone)]
@@ -42,35 +51,34 @@ impl AwarenessState {
 }
 
 /// Context window usage tracking for the TUI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ContextDisplay {
-    pub used: usize,
-    pub max: usize,
-}
-
-impl Default for ContextDisplay {
-    fn default() -> Self {
-        Self {
-            used: 0,
-            max: 200_000,
-        }
-    }
+    pub used: Option<usize>,
+    pub max: Option<usize>,
 }
 
 impl ContextDisplay {
-    pub fn usage_percent(&self) -> f64 {
-        if self.max == 0 {
-            0.0
-        } else {
-            (self.used as f64 / self.max as f64) * 100.0
-        }
+    pub fn usage_percent(&self) -> Option<f64> {
+        let max = self.max.filter(|max| *max > 0)?;
+        self.used.map(|used| (used as f64 / max as f64) * 100.0)
     }
 
     pub fn display(&self) -> String {
-        let used_k = self.used / 1000;
-        let max_k = self.max / 1000;
-        let pct = self.usage_percent();
-        format!("ctx: {used_k}k/{max_k}k ({pct:.0}%)")
+        match (self.used, self.max) {
+            (Some(used), Some(max)) if max > 0 => {
+                let pct = self.usage_percent().unwrap_or_default();
+                format!(
+                    "ctx: {} / {} ({pct:.0}%)",
+                    compact_tokens(used as u64),
+                    compact_tokens(max as u64)
+                )
+            }
+            (None, Some(max)) => format!(
+                "ctx: unknown / {} (missing active occupancy)",
+                compact_tokens(max as u64)
+            ),
+            _ => "ctx: unknown (missing context capacity projection)".into(),
+        }
     }
 }
 
@@ -126,6 +134,12 @@ pub struct AppState {
     pub context: ContextDisplay,
     /// Current model name.
     pub model_name: String,
+    /// Explicit target for the next turn, then reconciled from the durable
+    /// UserMessage start boundary when the Session projection advances.
+    pub execution_target: ExecutionTargetSelection,
+    /// Client-local selection protected from older projection pages until a
+    /// newer durable UserMessage confirms the same typed target.
+    pending_execution_target: Option<PendingExecutionTargetSelection>,
     /// Total tokens used in session.
     pub total_tokens: u32,
     /// Tools used in current turn.
@@ -141,8 +155,18 @@ pub struct AppState {
     /// Last protocol event included in this state.
     pub cursor: EventCursor,
     pub session_id: Option<String>,
+    /// Exact turn identity from the versioned client protocol. Ephemeral
+    /// overlay keys use this instead of global text positions.
+    pub active_turn_id: Option<fabric::TurnId>,
+    /// Compatibility streams do not carry a turn id. The reducer assigns one
+    /// ephemeral identity per such turn so every chunk/tool update in that
+    /// turn uses one stable key without pretending it is durable authority.
+    pub(crate) live_turn_id: Option<fabric::TurnId>,
     pub provider_name: Option<String>,
     pub items: BTreeMap<String, UiItem>,
+    /// Scrollback offset for the actually rendered Task Console conversation.
+    /// Zero follows the tail; larger values move upward.
+    pub conversation_scroll: u16,
     pub approvals: BTreeMap<String, ApprovalSnapshot>,
     pub agents: BTreeMap<String, AgentSnapshot>,
     /// Daemon-owned Session/Task/Activity projection. These fields are
@@ -151,6 +175,11 @@ pub struct AppState {
     pub projected_session: Option<fabric::SessionRecord>,
     pub tasks: Vec<fabric::TaskSnapshot>,
     pub activities: Vec<fabric::ActivitySnapshot>,
+    /// Ephemeral activity identities currently overlaid in `activities`.
+    ///
+    /// The reducer owns insertion, terminal updates, and durable reconciliation;
+    /// renderers never reconstruct tool state from the legacy chat transcript.
+    pub(crate) live_activity_ids: BTreeSet<String>,
     pub last_error: Option<String>,
     /// Semantic terminal projected from the canonical versioned turn stream.
     /// ACP and TUI derive this from the same `ClientEvent`, rather than from
@@ -168,6 +197,8 @@ impl Default for AppState {
             awareness: AwarenessState::default(),
             context: ContextDisplay::default(),
             model_name: "unknown".to_string(),
+            execution_target: ExecutionTargetSelection::default(),
+            pending_execution_target: None,
             total_tokens: 0,
             turn_tool_count: 0,
             turn_activity: TurnActivity::default(),
@@ -176,13 +207,17 @@ impl Default for AppState {
             current_iteration: 0,
             cursor: EventCursor::origin(),
             session_id: None,
+            active_turn_id: None,
+            live_turn_id: None,
             provider_name: None,
             items: BTreeMap::new(),
+            conversation_scroll: 0,
             approvals: BTreeMap::new(),
             agents: BTreeMap::new(),
             projected_session: None,
             tasks: Vec::new(),
             activities: Vec::new(),
+            live_activity_ids: BTreeSet::new(),
             last_error: None,
             last_terminal_status: None,
             latest_evaluation: None,
@@ -191,10 +226,119 @@ impl Default for AppState {
 }
 
 impl AppState {
+    pub fn select_execution_target_for_next_turn(&mut self, selection: ExecutionTargetSelection) {
+        self.pending_execution_target = Some(PendingExecutionTargetSelection {
+            selection: selection.clone(),
+            after_sequence: self.cursor.sequence,
+        });
+        self.execution_target = selection;
+    }
+
+    pub fn execution_target_for_submission(&self) -> &ExecutionTargetSelection {
+        self.pending_execution_target
+            .as_ref()
+            .map_or(&self.execution_target, |pending| &pending.selection)
+    }
+
+    pub fn has_pending_execution_target(&self) -> bool {
+        self.pending_execution_target.is_some()
+    }
+
+    pub fn reset_execution_target_for_session(&mut self) {
+        self.execution_target = ExecutionTargetSelection::default();
+        self.pending_execution_target = None;
+    }
+
+    pub(crate) fn reconcile_projected_execution_target(
+        &mut self,
+        selection: &ExecutionTargetSelection,
+        sequence: u64,
+    ) {
+        if let Some(pending) = self.pending_execution_target.as_ref() {
+            if sequence <= pending.after_sequence || selection != &pending.selection {
+                return;
+            }
+        }
+        self.execution_target = selection.clone();
+        self.pending_execution_target = None;
+    }
+
+    pub fn latest_context_budget(&self) -> Option<&fabric::ContextBudgetProjection> {
+        self.tasks
+            .iter()
+            .find(|task| {
+                matches!(
+                    task.phase,
+                    fabric::TaskPhase::Active | fabric::TaskPhase::Interrupted
+                )
+            })
+            .or_else(|| self.tasks.first())
+            .and_then(|task| task.runtime_facts.as_ref())
+            .and_then(|facts| facts.context_budget.as_deref())
+    }
+
+    pub fn context_status(&self) -> String {
+        self.latest_context_budget().map_or_else(
+            || self.context.display(),
+            |budget| {
+                format!(
+                    "history {} / {} · window {}",
+                    compact_tokens(budget.current_history_tokens.get()),
+                    compact_tokens(budget.admissible_history_tokens.get()),
+                    compact_tokens(budget.model_context_tokens.get()),
+                )
+            },
+        )
+    }
+
+    pub fn context_pressure_percent(&self) -> Option<f64> {
+        self.latest_context_budget().map_or_else(
+            || self.context.usage_percent(),
+            |budget| {
+                let available = budget.admissible_history_tokens.get();
+                (available > 0)
+                    .then(|| budget.current_history_tokens.get() as f64 / available as f64 * 100.0)
+            },
+        )
+    }
+
+    /// Read-only, secret-safe diagnostic used by `/context`.
+    pub fn context_diagnostic(&self) -> String {
+        let Some(budget) = self.latest_context_budget() else {
+            return format!(
+                "Context budget unavailable: missing canonical turn-start projection\nLegacy event: {}",
+                self.context.display()
+            );
+        };
+        format!(
+            "Model: {}\nWindow: {} (source: {} / {})\nProfile input: {} (source: {} / {})\nHistory: {} / {} · compaction threshold {} (source: {} / {})\nCosts: output reserve {} · system+skills {} · tools {} · pending {} · safety {}\nRollout: root remaining {} · child limit {} · current Agent remaining {}",
+            budget.model_spec,
+            compact_tokens(budget.model_context_tokens.get()),
+            budget.model_source.kind.as_str(),
+            budget.model_source.label,
+            compact_tokens(budget.profile_input_limit_tokens.get()),
+            budget.profile_source.kind.as_str(),
+            budget.profile_source.label,
+            compact_tokens(budget.current_history_tokens.get()),
+            compact_tokens(budget.admissible_history_tokens.get()),
+            compact_tokens(budget.compaction_threshold_tokens.get()),
+            budget.history_source.kind.as_str(),
+            budget.history_source.label,
+            compact_tokens(budget.reserved_output_tokens.get()),
+            compact_tokens(budget.system_and_skill_tokens.get()),
+            compact_tokens(budget.tool_schema_tokens.get()),
+            compact_tokens(budget.pending_input_tokens.get()),
+            compact_tokens(budget.safety_margin_tokens.get()),
+            rollout_diagnostic(&budget.rollout.root_remaining_tokens),
+            rollout_diagnostic(&budget.rollout.child_limit_tokens),
+            rollout_diagnostic(&budget.rollout.current_agent_remaining_tokens),
+        )
+    }
+
     /// Format the status line for the built-in status bar.
     pub fn format_status_line(&self) -> String {
         let mode_str = format!("{} {}", self.mode.icon(), self.mode.display_name());
-        let ctx_str = self.context.display();
+        let ctx_str = self.context_status();
         let token_str = format!("tokens: {}k", self.total_tokens / 1000);
         let aware_str = format!(
             "{} {}",
@@ -207,5 +351,59 @@ impl AppState {
             "{} | {} | {} | {} | {} | {}",
             mode_str, self.model_name, ctx_str, token_str, aware_str, tools_str
         )
+    }
+}
+
+fn rollout_diagnostic(value: &fabric::RolloutBudgetValue) -> String {
+    match value {
+        fabric::RolloutBudgetValue::Known { value, source } => format!(
+            "{} (source: {} / {})",
+            compact_tokens(value.get()),
+            source.kind.as_str(),
+            source.label
+        ),
+        fabric::RolloutBudgetValue::Unknown { source, reason } => format!(
+            "unknown ({}, source: {} / {})",
+            reason.as_str(),
+            source.kind.as_str(),
+            source.label
+        ),
+    }
+}
+
+fn compact_tokens(tokens: u64) -> String {
+    if tokens >= 1_000 {
+        format!("{}k", grouped_decimal(tokens / 1_000))
+    } else {
+        grouped_decimal(tokens)
+    }
+}
+
+fn grouped_decimal(value: u64) -> String {
+    let digits = value.to_string();
+    let mut output = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            output.push(',');
+        }
+        output.push(ch);
+    }
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_context_capacity_has_a_reason_and_no_numeric_fallback() {
+        let state = AppState::default();
+        let status = state.context_status();
+        let diagnostic = state.context_diagnostic();
+        assert!(status.contains("unknown"));
+        assert!(status.contains("missing context capacity projection"));
+        assert!(diagnostic.contains("missing canonical turn-start projection"));
+        assert!(!status.contains("200k"));
+        assert!(!diagnostic.contains("200k"));
     }
 }

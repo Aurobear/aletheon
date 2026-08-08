@@ -77,3 +77,108 @@ fn daemon_turn_resources_are_constructed_only_in_bootstrap() {
         "resource construction escaped bootstrap: {violations:?}"
     );
 }
+
+#[test]
+fn production_has_one_turn_engine_and_no_permission_fallback_adapter() {
+    let mut implementations = Vec::new();
+    let mut bindings = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from("src")];
+    while let Some(directory) = stack.pop() {
+        for entry in fs::read_dir(directory).expect("source directory") {
+            let path = entry.expect("source entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                let code = source(path.to_str().unwrap());
+                if code.contains("impl TurnEngine for") {
+                    implementations.push(path.clone());
+                }
+                if code.contains("DaemonTurnEngine::new(") {
+                    bindings.push(path.clone());
+                }
+            }
+        }
+    }
+
+    let engine_boundary = format!(
+        "{}\n{}",
+        source("src/application/turn_engine.rs"),
+        source("src/application/daemon_turn_engine.rs")
+    );
+    for forbidden in [
+        "SessionTurnEngine",
+        "LocalOsPrincipal { uid: 0, gid: 0 }",
+        "PermissionProfileId(\"exec\"",
+        "ApprovalPolicy::Never",
+    ] {
+        assert!(
+            !engine_boundary.contains(forbidden),
+            "TurnEngine boundary retains forbidden R1 fallback {forbidden}"
+        );
+    }
+
+    assert_eq!(
+        implementations,
+        [std::path::PathBuf::from(
+            "src/application/daemon_turn_engine.rs"
+        )],
+        "production must have one TurnEngine implementation"
+    );
+    assert_eq!(
+        bindings,
+        [std::path::PathBuf::from(
+            "src/application/daemon_turn/orchestrator.rs"
+        )],
+        "production must have one TurnEngine binding point"
+    );
+}
+
+#[test]
+fn daemon_turn_scope_is_local_and_never_stored_in_a_shared_option() {
+    let pipeline = source("src/application/turn_pipeline.rs");
+    let engine = source("src/application/daemon_turn_engine.rs");
+    let bootstrap = source("src/host/daemon/bootstrap/services.rs");
+    let production = format!("{pipeline}\n{engine}\n{bootstrap}");
+
+    assert!(!production.contains("current_scope"));
+    assert!(!production.contains("Option<OperationScope>"));
+    assert!(engine.contains("OperationScope::with_cancellation("));
+    assert!(engine.contains("&mut scope"));
+    assert!(engine.contains("settle_and_drain("));
+    assert!(engine.contains("abort_and_drain("));
+}
+
+#[test]
+fn turn_result_crosses_the_pipeline_boundary_as_a_typed_outcome_not_json() {
+    let engine = source("src/application/daemon_turn_engine.rs");
+    let pipeline = source("src/application/turn_pipeline.rs");
+
+    // R3: the daemon engine must consume the typed TurnPipelineOutcome directly
+    // and must not reverse-index a serialized turn envelope.
+    assert!(
+        engine.contains("TurnPipelineOutcome::Completed(execution)"),
+        "daemon engine must destructure the typed pipeline outcome"
+    );
+    assert!(
+        !engine.contains("response.get(\"error\")"),
+        "daemon engine must not probe a JSON error envelope"
+    );
+    assert!(
+        !engine.contains("serde_json::from_value::<fabric::TurnResult>"),
+        "daemon engine must not re-parse turn_result JSON"
+    );
+    assert!(
+        !engine.contains("raw[\"turn_result\"]"),
+        "daemon engine must not index turn_result JSON"
+    );
+
+    // The pipeline returns the typed outcome and owns TurnExecution construction.
+    assert!(
+        pipeline.contains("pub enum TurnPipelineOutcome"),
+        "pipeline must expose the typed outcome"
+    );
+    assert!(
+        pipeline.contains("Completed(Box<TurnExecution>)"),
+        "pipeline outcome must carry the typed TurnExecution"
+    );
+}

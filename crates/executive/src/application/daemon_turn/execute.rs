@@ -20,12 +20,103 @@ enum PromptAdmissionMode {
     Queued,
 }
 
+/// Internal command-boundary result. Queue settlement consumes the typed stop
+/// directly; it must never infer success from the presence of a JSON-RPC
+/// `result` or `error` member.
+struct TurnRpcExecution {
+    response: serde_json::Value,
+    stop: Option<fabric::TurnStop>,
+}
+
+impl TurnRpcExecution {
+    fn rejected(response: serde_json::Value) -> Self {
+        Self {
+            response,
+            stop: None,
+        }
+    }
+
+    fn settled(response: serde_json::Value, stop: fabric::TurnStop) -> Self {
+        Self {
+            response,
+            stop: Some(stop),
+        }
+    }
+
+    fn completed(&self) -> bool {
+        self.stop == Some(fabric::TurnStop::Completed)
+    }
+}
+
 fn prompt_admission_mode(enabled: bool) -> PromptAdmissionMode {
     if enabled {
         PromptAdmissionMode::Queued
     } else {
         PromptAdmissionMode::Direct
     }
+}
+
+fn turn_failure_response(id: serde_json::Value, error: anyhow::Error) -> serde_json::Value {
+    let (code, typed_code, retryable) = match error
+        .downcast_ref::<crate::application::turn_engine::TurnEngineError>()
+    {
+        Some(engine_error) => {
+            let code = match engine_error {
+                crate::application::turn_engine::TurnEngineError::Unavailable(_)
+                | crate::application::turn_engine::TurnEngineError::ProfileNotFound(_) => -32004,
+                crate::application::turn_engine::TurnEngineError::AdmissionRejected(_) => -32005,
+                crate::application::turn_engine::TurnEngineError::InvalidContext(_) => -32602,
+                crate::application::turn_engine::TurnEngineError::Internal(_) => -32603,
+            };
+            (code, engine_error.code(), engine_error.retryable())
+        }
+        None => (-32603, "turn_failed", false),
+    };
+    json!({"jsonrpc": "2.0", "id": id, "error": {
+        "code": code,
+        "message": error.to_string(),
+        "data": {"code": typed_code, "retryable": retryable}
+    }})
+}
+
+fn settled_turn_response(id: serde_json::Value, result: fabric::TurnResult) -> serde_json::Value {
+    if result.stop != fabric::TurnStop::Failed {
+        return json!({"jsonrpc": "2.0", "id": id, "result": {
+            "response": result.output,
+            "stop": result.stop,
+            "failure": result.failure,
+            "usage": result.usage,
+            "metrics": result.metrics,
+        }});
+    }
+
+    let failure = result.failure.unwrap_or(fabric::TurnFailure {
+        kind: fabric::TurnFailureKind::Unknown,
+        message: result.output,
+        retryable: false,
+    });
+    let (rpc_code, typed_code) = match failure.kind {
+        fabric::TurnFailureKind::ProviderTransient => (-32004, "provider_unavailable"),
+        fabric::TurnFailureKind::ProviderPermanent => (-32603, "provider_rejected_request"),
+        fabric::TurnFailureKind::ContextOverflow => (-32006, "context_overflow"),
+        fabric::TurnFailureKind::Tool => (-32603, "tool_failed"),
+        fabric::TurnFailureKind::Policy => (-32003, "policy_denied"),
+        fabric::TurnFailureKind::InvalidContext => (-32602, "turn_context_invalid"),
+        fabric::TurnFailureKind::Persistence => (-32603, "turn_persistence_failed"),
+        fabric::TurnFailureKind::Runtime => (-32603, "turn_runtime_failed"),
+        fabric::TurnFailureKind::Unknown => (-32603, "turn_failed"),
+    };
+    json!({"jsonrpc": "2.0", "id": id, "error": {
+        "code": rpc_code,
+        "message": failure.message,
+        "data": {
+            "code": typed_code,
+            "kind": failure.kind,
+            "retryable": failure.retryable,
+            "usage": result.usage,
+            "metrics": result.metrics,
+        }
+    }})
 }
 
 impl DaemonTurnOrchestrator {
@@ -42,8 +133,40 @@ impl DaemonTurnOrchestrator {
         task_kind: Option<fabric::TaskKind>,
         notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
-        self.execute_turn_with_context(id, message, context, requirements, task_kind, notify)
-            .await
+        self.execute_turn_with_context(
+            id,
+            message,
+            context,
+            requirements,
+            task_kind,
+            fabric::ExecutionTargetSelection::default(),
+            notify,
+        )
+        .await
+    }
+
+    /// Execute a turn with an explicit target supplied by a typed trusted edge.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_turn_targeted(
+        &self,
+        id: serde_json::Value,
+        message: &str,
+        context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
+        execution_target: fabric::ExecutionTargetSelection,
+        notify: Option<tokio::sync::mpsc::Sender<String>>,
+    ) -> serde_json::Value {
+        self.execute_turn_with_context(
+            id,
+            message,
+            context,
+            requirements,
+            task_kind,
+            execution_target,
+            notify,
+        )
+        .await
     }
 
     /// Execute a channel turn under an identity established by the channel
@@ -54,8 +177,16 @@ impl DaemonTurnOrchestrator {
         message: &str,
         context: PrincipalContext,
     ) -> serde_json::Value {
-        self.execute_turn_with_context(id, message, context, Vec::new(), None, None)
-            .await
+        self.execute_turn_with_context(
+            id,
+            message,
+            context,
+            Vec::new(),
+            None,
+            fabric::ExecutionTargetSelection::default(),
+            None,
+        )
+        .await
     }
 
     async fn execute_turn_with_context(
@@ -65,12 +196,29 @@ impl DaemonTurnOrchestrator {
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
         task_kind: Option<fabric::TaskKind>,
+        execution_target: fabric::ExecutionTargetSelection,
         notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
+        if let Err(error) = execution_target.validate() {
+            return json!({"jsonrpc": "2.0", "id": id, "error": {
+                "code": -32602,
+                "message": error,
+                "data": {"code": "execution_target_invalid"}
+            }});
+        }
         if prompt_admission_mode(self.grok_hardening.prompt_queue) == PromptAdmissionMode::Direct {
             return self
-                .execute_one_turn(id, message, context, requirements, task_kind, notify)
-                .await;
+                .execute_one_turn(
+                    id,
+                    message,
+                    context,
+                    requirements,
+                    task_kind,
+                    execution_target,
+                    notify,
+                )
+                .await
+                .response;
         }
 
         let principal = context.principal_id.clone();
@@ -83,7 +231,7 @@ impl DaemonTurnOrchestrator {
             serde_json::to_string(&id).unwrap_or_default()
         );
         let queued = match session_input
-            .enqueue_with_requirements(
+            .enqueue_with_target(
                 principal.clone(),
                 context.connection_id.clone(),
                 thread.clone(),
@@ -92,6 +240,7 @@ impl DaemonTurnOrchestrator {
                 idempotency_key,
                 requirements,
                 task_kind,
+                execution_target,
             )
             .await
         {
@@ -134,11 +283,10 @@ impl DaemonTurnOrchestrator {
             let prompt_notify = (prompt_id == queued.prompt_id)
                 .then(|| notify.clone())
                 .flatten();
-            let turn_result = self
+            let execution = self
                 .execute_queued_prompt(rpc_id, next, context.clone(), prompt_notify)
                 .await;
-            let succeeded = turn_result.get("error").is_none();
-            if succeeded {
+            if execution.completed() {
                 let receipt = format!("turn-completed:{prompt_id:?}");
                 if let Err(error) = session_input
                     .mark_prompt_completed(prompt_id, &receipt)
@@ -150,7 +298,7 @@ impl DaemonTurnOrchestrator {
                 warn!(%error, ?prompt_id, "failed to persist prompt rejection");
             }
             if prompt_id == queued.prompt_id {
-                requested_result = Some(turn_result);
+                requested_result = Some(execution.response);
             }
         }
         requested_result.unwrap_or_else(|| {
@@ -164,7 +312,7 @@ impl DaemonTurnOrchestrator {
         prompt: PromptEnvelope,
         mut context: PrincipalContext,
         notify: Option<tokio::sync::mpsc::Sender<String>>,
-    ) -> serde_json::Value {
+    ) -> TurnRpcExecution {
         context.connection_id = prompt.connection_id;
         context.thread_id = prompt.thread_id;
         self.execute_one_turn(
@@ -173,6 +321,7 @@ impl DaemonTurnOrchestrator {
             context,
             prompt.requirements,
             prompt.requested_task_kind,
+            prompt.execution_target,
             notify,
         )
         .await
@@ -185,8 +334,9 @@ impl DaemonTurnOrchestrator {
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
         task_kind: Option<fabric::TaskKind>,
+        execution_target: fabric::ExecutionTargetSelection,
         notify: Option<tokio::sync::mpsc::Sender<String>>,
-    ) -> serde_json::Value {
+    ) -> TurnRpcExecution {
         // -- Kernel: register main agent --
         let main_pid = match self
             .ensure_main_agent(&context.principal_id, &context.thread_id)
@@ -195,7 +345,9 @@ impl DaemonTurnOrchestrator {
             Ok(pid) => pid,
             Err(e) => {
                 warn!(error = %e, "Failed to register main agent in process table");
-                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": format!("Kernel error: {e}")}});
+                return TurnRpcExecution::rejected(
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": format!("Kernel error: {e}")}}),
+                );
             }
         };
 
@@ -205,7 +357,9 @@ impl DaemonTurnOrchestrator {
             Ok(profile) => profile,
             Err(error) => {
                 warn!(%error, "failed to resolve active turn profile");
-                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}});
+                return TurnRpcExecution::rejected(
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}}),
+                );
             }
         };
         let model_policy = profile.model_policy.clone();
@@ -216,6 +370,7 @@ impl DaemonTurnOrchestrator {
             process_id: main_pid,
             context,
             input: message.to_string(),
+            execution_target: execution_target.clone(),
             model_policy,
             deadline: None,
             requirements,
@@ -246,6 +401,7 @@ impl DaemonTurnOrchestrator {
                             deadline: request.deadline,
                             requirements: request.requirements.clone(),
                             requested_task_kind: request.requested_task_kind,
+                            execution_target: request.execution_target.clone(),
                         },
                         crate::application::turn_engine::TurnEngineContext {
                             principal_id: request.context.principal_id.clone(),
@@ -257,7 +413,6 @@ impl DaemonTurnOrchestrator {
                             principal_context: Some(request.context.clone()),
                             notification_sender: notify.clone(),
                         },
-                        Arc::new(crate::application::daemon_turn_engine::NoopTurnEngineEventSink),
                     )
                     .await
                     .map_err(anyhow::Error::from)?;
@@ -266,22 +421,33 @@ impl DaemonTurnOrchestrator {
                 })
             })
             .await;
+        let terminal_error = match &coordinated {
+            Ok(result) if result.stop == fabric::TurnStop::Failed => Some(
+                result
+                    .failure
+                    .as_ref()
+                    .map(|failure| failure.message.clone())
+                    .unwrap_or_else(|| result.output.clone()),
+            ),
+            Err(error) => Some(error.to_string()),
+            _ => None,
+        };
         self.emit_authoritative_terminal_events(
             terminal_notify,
             coordinated
                 .as_ref()
                 .ok()
-                .map(|result| result.output.as_str()),
-            coordinated.as_ref().err(),
+                .map(|result| result.output.as_str())
+                .filter(|output| !output.is_empty()),
+            terminal_error.as_deref(),
         )
         .await;
         match coordinated {
             Ok(result) => {
-                json!({"jsonrpc": "2.0", "id": id, "result": {"response": result.output}})
+                let stop = result.stop.clone();
+                TurnRpcExecution::settled(settled_turn_response(id, result), stop)
             }
-            Err(error) => {
-                json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}})
-            }
+            Err(error) => TurnRpcExecution::rejected(turn_failure_response(id, error)),
         }
     }
 
@@ -293,7 +459,7 @@ impl DaemonTurnOrchestrator {
         &self,
         sender: Option<tokio::sync::mpsc::Sender<String>>,
         output: Option<&str>,
-        error: Option<&anyhow::Error>,
+        error: Option<&str>,
     ) {
         let Some(sender) = sender.or_else(|| self.notify_tx.try_lock().ok()?.clone()) else {
             return;
@@ -307,7 +473,7 @@ impl DaemonTurnOrchestrator {
         }
         if let Some(error) = error {
             events.push(ClientEvent::Error {
-                message: error.to_string(),
+                message: error.to_owned(),
             });
         }
         events.push(ClientEvent::TurnDone);
@@ -348,6 +514,149 @@ mod tests {
     fn disabled_prompt_queue_preserves_direct_turn_admission() {
         assert_eq!(prompt_admission_mode(false), PromptAdmissionMode::Direct);
         assert_eq!(prompt_admission_mode(true), PromptAdmissionMode::Queued);
+    }
+
+    #[test]
+    fn queued_prompt_completion_uses_typed_stop_not_json_shape() {
+        for (stop, completed) in [
+            (fabric::TurnStop::Completed, true),
+            (fabric::TurnStop::Blocked, false),
+            (fabric::TurnStop::Cancelled, false),
+            (fabric::TurnStop::Failed, false),
+        ] {
+            let execution = TurnRpcExecution::settled(
+                json!({"jsonrpc": "2.0", "result": {"legacy_success_shape": true}}),
+                stop,
+            );
+            assert_eq!(execution.completed(), completed);
+        }
+
+        let rejected = TurnRpcExecution::rejected(json!({
+            "jsonrpc": "2.0",
+            "error": {"code": -32603}
+        }));
+        assert!(!rejected.completed());
+    }
+
+    #[test]
+    fn unavailable_turn_error_keeps_typed_json_rpc_contract() {
+        let error = anyhow::Error::new(
+            crate::application::turn_engine::TurnEngineError::Unavailable(
+                "execution_target_unavailable: robot capability is not configured".into(),
+            ),
+        );
+        let response = turn_failure_response(json!(72), error);
+        assert_eq!(response["error"]["code"], -32004);
+        assert_eq!(
+            response["error"]["data"]["code"],
+            "execution_target_unavailable"
+        );
+        assert_eq!(response["error"]["data"]["retryable"], true);
+    }
+
+    #[test]
+    fn turn_engine_error_variants_preserve_machine_code_and_retryability() {
+        use crate::application::turn_engine::TurnEngineError;
+
+        for (error, rpc_code, typed_code, retryable) in [
+            (
+                TurnEngineError::ProfileNotFound("missing".into()),
+                -32004,
+                "turn_profile_not_found",
+                false,
+            ),
+            (
+                TurnEngineError::AdmissionRejected("busy".into()),
+                -32005,
+                "turn_admission_rejected",
+                false,
+            ),
+            (
+                TurnEngineError::InvalidContext("missing identity".into()),
+                -32602,
+                "turn_context_invalid",
+                false,
+            ),
+            (
+                TurnEngineError::Internal(anyhow::anyhow!("runtime crash")),
+                -32603,
+                "turn_runtime_failed",
+                false,
+            ),
+        ] {
+            let response = turn_failure_response(json!(91), anyhow::Error::new(error));
+            assert_eq!(response["error"]["code"], rpc_code);
+            assert_eq!(response["error"]["data"]["code"], typed_code);
+            assert_eq!(response["error"]["data"]["retryable"], retryable);
+        }
+    }
+
+    #[test]
+    fn settled_failed_and_blocked_turns_keep_distinct_typed_contracts() {
+        let failed = settled_turn_response(
+            json!(92),
+            fabric::TurnResult {
+                output: "provider unavailable".into(),
+                stop: fabric::TurnStop::Failed,
+                failure: Some(fabric::TurnFailure {
+                    kind: fabric::TurnFailureKind::ProviderTransient,
+                    message: "provider unavailable".into(),
+                    retryable: true,
+                }),
+                usage: fabric::InferenceUsage::reported(10, 2, None, None, None),
+                metrics: fabric::TurnMetrics::default(),
+            },
+        );
+        assert_eq!(failed["error"]["data"]["code"], "provider_unavailable");
+        assert_eq!(failed["error"]["data"]["retryable"], true);
+        assert_eq!(failed["error"]["data"]["usage"]["total_input_tokens"], 10);
+
+        let blocked = settled_turn_response(
+            json!(93),
+            fabric::TurnResult {
+                output: "policy denied".into(),
+                stop: fabric::TurnStop::Blocked,
+                failure: None,
+                usage: fabric::InferenceUsage::default(),
+                metrics: fabric::TurnMetrics {
+                    tool_errors: 1,
+                    ..Default::default()
+                },
+            },
+        );
+        assert_eq!(blocked["result"]["stop"], "Blocked");
+        assert!(blocked.get("error").is_none());
+    }
+
+    #[tokio::test]
+    async fn invalid_robot_target_is_rejected_as_typed_input_error() {
+        let harness = DaemonTurnTestBuilder::succeeding("must not run")
+            .build()
+            .await;
+        let response = harness
+            .orchestrator
+            .execute_turn_targeted(
+                json!(73),
+                "move",
+                context("invalid-target"),
+                Vec::new(),
+                None,
+                fabric::ExecutionTargetSelection {
+                    target: fabric::ExecutionTarget::Robot {
+                        device_id: fabric::types::embodiment::DeviceId("robot-1".into()),
+                        environment: fabric::types::embodiment::ExecutionEnvironment::Simulation,
+                    },
+                    source: fabric::ExecutionTargetSource::Default,
+                },
+                None,
+            )
+            .await;
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(
+            response["error"]["data"]["code"],
+            "execution_target_invalid"
+        );
+        assert_eq!(harness.coordinator.active_turn_count().await, 0);
     }
 
     #[tokio::test]
@@ -452,20 +761,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_kind_survives_direct_and_queued_admission() {
+    async fn typed_task_kind_and_target_survive_direct_and_queued_admission() {
         for (queued, thread) in [(false, "task-kind-direct"), (true, "task-kind-queued")] {
             let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
             let observed_by_runner = observed.clone();
             let runner = Arc::new(move |request: TurnRequest, _cancel| {
-                observed_by_runner
-                    .lock()
-                    .unwrap()
-                    .push(request.requested_task_kind);
+                observed_by_runner.lock().unwrap().push((
+                    request.requested_task_kind,
+                    request.execution_target.clone(),
+                ));
                 Box::pin(async move {
                     Ok(crate::application::turn_coordinator::TurnExecution {
                         result: fabric::TurnResult {
                             output: "typed turn".into(),
                             stop: fabric::TurnStop::Completed,
+                            failure: None,
+                            usage: Default::default(),
                             metrics: fabric::TurnMetrics {
                                 completed_normally: true,
                                 ..Default::default()
@@ -485,12 +796,18 @@ mod tests {
 
             let response = harness
                 .orchestrator
-                .execute_turn(
+                .execute_turn_targeted(
                     json!(thread),
                     "explicit coding turn",
                     context(thread),
                     Vec::new(),
                     Some(fabric::TaskKind::Coding),
+                    fabric::ExecutionTargetSelection::robot(
+                        "robot-1",
+                        fabric::types::embodiment::ExecutionEnvironment::Simulation,
+                        fabric::ExecutionTargetSource::TrustedClient,
+                    )
+                    .unwrap(),
                     None,
                 )
                 .await;
@@ -498,7 +815,15 @@ mod tests {
             assert_eq!(response["result"]["response"], "typed turn");
             assert_eq!(
                 observed.lock().unwrap().as_slice(),
-                &[Some(fabric::TaskKind::Coding)],
+                &[(
+                    Some(fabric::TaskKind::Coding),
+                    fabric::ExecutionTargetSelection::robot(
+                        "robot-1",
+                        fabric::types::embodiment::ExecutionEnvironment::Simulation,
+                        fabric::ExecutionTargetSource::TrustedClient,
+                    )
+                    .unwrap(),
+                )],
                 "queued={queued}"
             );
         }

@@ -100,6 +100,7 @@ fn policy_boundary_has_no_execution_capability_symbols() {
 #[test]
 fn child_agent_runtime_is_pinned_to_linear_cognitive_sessions() {
     let bootstrap = include_str!("../src/host/daemon/bootstrap/request.rs");
+    let robot_bootstrap = include_str!("../src/host/daemon/bootstrap/robot.rs");
     let native_start = bootstrap
         .find("NativeCognitRuntimeResources {")
         .expect("native Cognit runtime composition must remain explicit");
@@ -110,8 +111,9 @@ fn child_agent_runtime_is_pinned_to_linear_cognitive_sessions() {
     let native = &native[..native_end];
 
     assert!(
-        bootstrap.contains("HarnessKind::Robot =>"),
-        "the top-level runtime must retain the configured Robot path"
+        bootstrap.contains("build_target_routed_cognition(")
+            && robot_bootstrap.contains("TargetRoutedCognitiveSessionFactory::new"),
+        "the top-level runtime must retain explicit per-turn Robot routing"
     );
     assert!(
         native.contains("sessions: linear_cognitive_sessions.clone()"),

@@ -268,6 +268,40 @@ impl InferenceUsage {
         }
     }
 
+    /// Aggregate provider reports without inventing missing dimensions. A
+    /// dimension is summed only when at least one report exists and every
+    /// report contains that dimension. Mixed/absent cache telemetry is Unknown.
+    pub fn aggregate<'a>(usages: impl IntoIterator<Item = &'a Self>) -> Self {
+        let usages = usages.into_iter().collect::<Vec<_>>();
+
+        fn sum_known(
+            usages: &[&InferenceUsage],
+            select: impl Fn(&InferenceUsage) -> Option<u64>,
+        ) -> Option<u64> {
+            if usages.is_empty() {
+                return None;
+            }
+            usages.iter().try_fold(0_u64, |total, usage| {
+                select(usage).map(|value| total.saturating_add(value))
+            })
+        }
+
+        let cache_telemetry = usages
+            .first()
+            .map(|first| first.cache_telemetry)
+            .filter(|first| usages.iter().all(|usage| usage.cache_telemetry == *first))
+            .unwrap_or_default();
+
+        Self {
+            total_input_tokens: sum_known(&usages, |usage| usage.total_input_tokens),
+            output_tokens: sum_known(&usages, |usage| usage.output_tokens),
+            uncached_input_tokens: sum_known(&usages, |usage| usage.uncached_input_tokens),
+            cache_read_tokens: sum_known(&usages, |usage| usage.cache_read_tokens),
+            cache_write_tokens: sum_known(&usages, |usage| usage.cache_write_tokens),
+            cache_telemetry,
+        }
+    }
+
     /// Validate cache-accounting invariants. Provider-neutral: applies to any
     /// cache reporting the runtime can observe, independent of the wire format.
     ///

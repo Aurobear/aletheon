@@ -1650,6 +1650,9 @@
         "recall": {
           "$ref": "#/$defs/MemoryRecallConfig",
           "default": {
+            "cache_capacity": 512,
+            "cache_enabled": true,
+            "cache_ttl_seconds": 30,
             "enabled": true,
             "inject_into_context": true,
             "max_bytes": 65536,
@@ -1940,6 +1943,26 @@
     "MemoryRecallConfig": {
       "additionalProperties": false,
       "properties": {
+        "cache_capacity": {
+          "default": 512,
+          "description": "Recall-cache capacity (number of cache entries) and TTL in seconds.\nBounded with safe defaults so the cache cannot grow without a configurable\nceiling or serve stale recalls forever (C1-AUDIT-003).",
+          "format": "uint",
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "cache_enabled": {
+          "default": true,
+          "description": "Independently disable reuse while retaining authoritative recall.",
+          "type": "boolean"
+        },
+        "cache_ttl_seconds": {
+          "default": 30,
+          "format": "uint64",
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        },
         "enabled": {
           "default": true,
           "type": "boolean"
@@ -2434,7 +2457,7 @@
     },
     "RobotIntegrationConfig": {
       "additionalProperties": false,
-      "description": "Operator-owned Robot harness configuration. It is optional for a Linear\nharness and mandatory when `agent.harness_kind = \"robot\"`.",
+      "description": "Operator-owned optional Robot capability configuration. Presence enables a\nper-turn Robot target; absence never changes the General default.",
       "properties": {
         "deployment_gate": {
           "anyOf": [
@@ -2493,7 +2516,7 @@
             }
           ],
           "default": null,
-          "description": "A Robot harness must name a real Policy gateway explicitly."
+          "description": "A Robot capability must name a real Policy gateway explicitly."
         },
         "required_observation_schemas": {
           "default": [
@@ -3311,6 +3334,9 @@
           "min_confidence": 0.7
         },
         "recall": {
+          "cache_capacity": 512,
+          "cache_enabled": true,
+          "cache_ttl_seconds": 30,
           "enabled": true,
           "inject_into_context": true,
           "max_bytes": 65536,

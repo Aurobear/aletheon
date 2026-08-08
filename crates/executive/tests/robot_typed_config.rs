@@ -118,8 +118,8 @@ scene_version = "scene-v1"
 }
 
 #[test]
-fn legacy_embodiment_only_robot_config_has_explicit_migration_failure() {
-    let error = merge_layers([layer(
+fn legacy_harness_hint_without_robot_config_keeps_general_available() {
+    let loaded = merge_layers([layer(
         ConfigSourceKind::User,
         "legacy-embodiment-only",
         r#"
@@ -130,12 +130,8 @@ kind = "simulator"
 device_id = "sim-01"
 "#,
     )])
-    .unwrap_err()
-    .to_string();
-    assert!(
-        error.contains("legacy integrations.embodiment-only"),
-        "{error}"
-    );
+    .unwrap();
+    assert!(loaded.value.resolve_robot_config().unwrap().is_none());
 }
 
 #[test]
@@ -164,12 +160,21 @@ device_id = "legacy-sim"
         "environment:ALETHEON_POLICY_ENDPOINT",
         "[integrations.robot.policy]\nendpoint='http://127.0.0.1:50052'",
     )])
-    .unwrap();
-    assert!(endpoint_override_only
-        .value
-        .resolve_robot_config()
-        .unwrap()
-        .is_none());
+    .unwrap_err()
+    .to_string();
+    assert!(
+        endpoint_override_only.contains("integrations.embodiment"),
+        "{endpoint_override_only}"
+    );
+}
+
+#[test]
+fn complete_robot_integration_is_available_even_with_linear_legacy_hint() {
+    let config = robot_config("http://127.0.0.1:50052")
+        .replace("harness_kind = \"robot\"", "harness_kind = \"linear\"");
+    let loaded =
+        merge_layers([layer(ConfigSourceKind::User, "robot-capability", &config)]).unwrap();
+    assert!(loaded.value.resolve_robot_config().unwrap().is_some());
 }
 
 #[test]

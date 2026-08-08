@@ -47,7 +47,7 @@ async fn operation_parent_cancel_propagates_to_children() {
 #[tokio::test]
 async fn operation_scope_records_task_panic_as_structured_exit() {
     let mut scope = OperationScope::new(fabric::OperationId::new());
-    scope.tasks.spawn(async { panic!("boom") });
+    scope.spawn("panic-worker", async { panic!("boom") });
     let exit = scope.join_next().await.unwrap();
     assert!(matches!(exit.reason, OperationExitReason::Panic(_)));
 }

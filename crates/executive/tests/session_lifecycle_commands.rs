@@ -14,6 +14,7 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
         process_id,
         context: turn_request_support::context(session, std::env::temp_dir()),
         input: "hello".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
@@ -49,6 +50,8 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                     result: fabric::TurnResult {
                         output: "answer".into(),
                         stop: fabric::TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: fabric::TurnMetrics {
                             completed_normally: true,
                             ..Default::default()

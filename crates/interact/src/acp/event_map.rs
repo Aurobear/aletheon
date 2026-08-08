@@ -271,13 +271,16 @@ mod tests {
             stop: fabric::TurnStop::Failed,
             status: Some(fabric::TurnTerminalStatus::Failed),
             error: Some(fabric::protocol::client::TurnCompletionError {
+                kind: Some(fabric::TurnFailureKind::ProviderTransient),
                 code: Some("overloaded".into()),
                 message: "provider overloaded".into(),
             }),
             retryable: true,
             usage: fabric::protocol::client::TurnCompletionUsage {
-                input_tokens: 7,
-                output_tokens: 2,
+                input_tokens: Some(7),
+                output_tokens: Some(2),
+                cache_read_tokens: Some(2),
+                cache_write_tokens: Some(1),
                 tool_calls: 1,
                 elapsed_ms: 40,
             },

@@ -11,6 +11,65 @@ use fabric::{
 };
 use std::sync::Arc;
 
+/// Async resources cannot be released directly from `Drop`, so the guard
+/// schedules the idempotent admission revoke on the current Tokio runtime.
+/// Explicit settle/revoke paths disarm it only after their terminal call has
+/// been observed.
+struct PermitCleanupGuard<A>
+where
+    A: AdmissionController + ?Sized + 'static,
+{
+    admission: Arc<A>,
+    permit_id: Option<fabric::PermitId>,
+}
+
+impl<A> PermitCleanupGuard<A>
+where
+    A: AdmissionController + ?Sized + 'static,
+{
+    fn new(admission: Arc<A>, permit_id: fabric::PermitId) -> Self {
+        Self {
+            admission,
+            permit_id: Some(permit_id),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.permit_id = None;
+    }
+}
+
+impl<A> Drop for PermitCleanupGuard<A>
+where
+    A: AdmissionController + ?Sized + 'static,
+{
+    fn drop(&mut self) {
+        let Some(permit_id) = self.permit_id.take() else {
+            return;
+        };
+        let admission = self.admission.clone();
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::error!(
+                permit = %permit_id.0,
+                "capability permit cleanup lost its async runtime"
+            );
+            return;
+        };
+        runtime.spawn(async move {
+            if let Err(error) = admission
+                .revoke(permit_id, fabric::RevokeReason::OperationCancelled)
+                .await
+            {
+                tracing::warn!(
+                    permit = %permit_id.0,
+                    %error,
+                    "capability permit Drop fallback revoke failed"
+                );
+            }
+        });
+    }
+}
+
 /// Capability invoker that enforces admission control.
 ///
 /// Every `invoke()` call:
@@ -86,7 +145,7 @@ where
 #[async_trait]
 impl<A, E> CapabilityInvoker for DefaultCapabilityInvoker<A, E>
 where
-    A: AdmissionController + ?Sized,
+    A: AdmissionController + ?Sized + 'static,
     E: ToolExecutor + ?Sized,
 {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityResult {
@@ -104,7 +163,7 @@ where
 
 impl<A, E> DefaultCapabilityInvoker<A, E>
 where
-    A: AdmissionController + ?Sized,
+    A: AdmissionController + ?Sized + 'static,
     E: ToolExecutor + ?Sized,
 {
     async fn invoke_inner(
@@ -145,6 +204,7 @@ where
                 };
             }
         };
+        let mut permit_cleanup = PermitCleanupGuard::new(self.admission.clone(), permit.id);
 
         // 2b. Sandbox check — fail closed.  SandboxFirst mandates that when
         // sandbox infrastructure is unavailable, execution must be denied even
@@ -154,6 +214,7 @@ where
                 .admission
                 .revoke(permit.id, fabric::RevokeReason::OperationCancelled)
                 .await;
+            permit_cleanup.disarm();
             return CapabilityResult {
                 call_id: request.call.call_id.clone(),
                 output: format!(
@@ -189,6 +250,7 @@ where
                     .admission
                     .revoke(permit.id, fabric::RevokeReason::OperationCancelled)
                     .await;
+                permit_cleanup.disarm();
                 return CapabilityResult {
                     call_id: request.call.call_id.clone(),
                     output: "capability invocation cancelled".into(),
@@ -223,6 +285,16 @@ where
         // is returned as a structured capability error so double-settle / budget
         // accounting bugs cannot silently pass.
         if let Err(err) = self.admission.settle(permit.id, result.usage.clone()).await {
+            // AlreadySettled is itself an authoritative terminal receipt. For
+            // any other controller failure, revoke defensively so a failed
+            // settlement cannot retain a live budget or lease hold.
+            if !matches!(err, fabric::AdmissionError::AlreadySettled) {
+                let _ = self
+                    .admission
+                    .revoke(permit.id, fabric::RevokeReason::OperationCancelled)
+                    .await;
+            }
+            permit_cleanup.disarm();
             return CapabilityResult {
                 call_id: request.call.call_id.clone(),
                 output: format!("settlement failed: {err}"),
@@ -233,6 +305,7 @@ where
                 served_from_cache: false,
             };
         }
+        permit_cleanup.disarm();
 
         result
     }

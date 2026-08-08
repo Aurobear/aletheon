@@ -266,6 +266,7 @@ mod tests {
             seq,
             ItemPayload::UserMessage {
                 content: "hello".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
             },
         )
     }

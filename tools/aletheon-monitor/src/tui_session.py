@@ -5,8 +5,28 @@ the OS, so these functions are stateless apart from the session name.
 """
 import asyncio
 import os
+import re
 
 DEFAULT_SESSION = "aletheon-tui-debug"
+
+
+def _user_runtime_environment(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Fill login-session variables omitted by headless MCP hosts.
+
+    The monitored per-user socket identifies the authoritative user runtime.
+    Preserve explicit operator values, but derive the standard runtime and D-Bus
+    paths when the host process did not inherit them from a login session.
+    """
+    environment = dict(os.environ if base is None else base)
+    socket_path = environment.get("ALETHEON_SOCKET", "")
+    match = re.match(r"^/run/user/([0-9]+)(?:/|$)", socket_path)
+    if match:
+        runtime_dir = f"/run/user/{match.group(1)}"
+        environment.setdefault("XDG_RUNTIME_DIR", runtime_dir)
+        environment.setdefault(
+            "DBUS_SESSION_BUS_ADDRESS", f"unix:path={runtime_dir}/bus"
+        )
+    return environment
 
 
 async def _tmux(*args: str, timeout: float = 5.0) -> tuple[int, str, str]:
@@ -31,7 +51,15 @@ async def start(cmd: str, session: str = DEFAULT_SESSION,
     await kill(session)  # clean slate
     cwd = os.path.realpath(working_dir or os.getcwd())
     args = ["new-session", "-d", "-s", session,
-            "-x", str(cols), "-y", str(rows), "-c", cwd, cmd]
+            "-x", str(cols), "-y", str(rows), "-c", cwd]
+    environment = _user_runtime_environment()
+    for name in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+        if value := environment.get(name):
+            # Set the new session environment explicitly.  Merely passing env
+            # to the tmux client is insufficient when an existing tmux server
+            # was itself started without login-session variables.
+            args.extend(["-e", f"{name}={value}"])
+    args.append(cmd)
     rc, _, err = await _tmux(*args)
     if rc != 0:
         return {"ok": False, "error": f"tmux new-session failed: {err.strip()}"}

@@ -291,7 +291,11 @@ pub struct ChannelCognitiveStreamSink {
 /// canonical Fabric turn stream.
 pub struct CanonicalTurnEventSink {
     sender: fabric::ipc::TurnEventSender,
+    pending_text: std::sync::Mutex<String>,
+    receiver_closed: std::sync::atomic::AtomicBool,
 }
+
+const CANONICAL_TEXT_CHUNK_BYTES: usize = 256;
 
 /// Projection for the runtime-level [`TurnEvent`] channel. Cognitive streaming
 /// and runtime receipts are intentionally separate producers even though both
@@ -303,11 +307,48 @@ pub struct CanonicalRuntimeTurnEventSink {
 
 impl CanonicalTurnEventSink {
     pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
-        Self { sender }
+        Self {
+            sender,
+            pending_text: std::sync::Mutex::new(String::new()),
+            receiver_closed: std::sync::atomic::AtomicBool::new(false),
+        }
     }
 
     pub fn runtime_sink(&self) -> CanonicalRuntimeTurnEventSink {
         CanonicalRuntimeTurnEventSink::new(self.sender.clone())
+    }
+
+    fn send_event(&self, event: &fabric::ipc::TurnEventV1) {
+        use std::sync::atomic::Ordering;
+
+        if self.receiver_closed.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Err(error) = self.sender.send(event) {
+            if !self.receiver_closed.swap(true, Ordering::Relaxed) {
+                tracing::warn!(?error, "canonical cognitive turn-event receiver closed");
+            }
+        }
+    }
+
+    fn take_pending_text(&self) -> Option<String> {
+        let mut pending = self
+            .pending_text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (!pending.is_empty()).then(|| std::mem::take(&mut *pending))
+    }
+
+    fn flush_pending_text(&self) {
+        if let Some(delta) = self.take_pending_text() {
+            self.send_event(&fabric::ipc::TurnEventV1::TextDelta { delta });
+        }
+    }
+}
+
+impl Drop for CanonicalTurnEventSink {
+    fn drop(&mut self) {
+        self.flush_pending_text();
     }
 }
 
@@ -333,14 +374,31 @@ impl TurnEventSink for CanonicalRuntimeTurnEventSink {
             | TurnEvent::EmbodimentProgress { .. } => None,
         };
         if let Some(projected) = projected {
-            let _ = self.sender.send(&projected);
+            if let Err(error) = self.sender.send(&projected) {
+                tracing::warn!(?error, "canonical runtime turn-event receiver closed");
+            }
         }
     }
 }
 
 impl CognitiveStreamSink for CanonicalTurnEventSink {
     fn emit(&self, event: CognitiveStreamEvent) {
-        let _ = self.sender.send(&event.into());
+        if let CognitiveStreamEvent::TextDelta { delta } = event {
+            let ready = {
+                let mut pending = self
+                    .pending_text
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                pending.push_str(&delta);
+                (pending.len() >= CANONICAL_TEXT_CHUNK_BYTES).then(|| std::mem::take(&mut *pending))
+            };
+            if let Some(delta) = ready {
+                self.send_event(&fabric::ipc::TurnEventV1::TextDelta { delta });
+            }
+        } else {
+            self.flush_pending_text();
+            self.send_event(&event.into());
+        }
     }
 }
 
@@ -375,6 +433,7 @@ pub enum CognitErrorKind {
     Cancelled,
     ContextOverflow,
     TransientProvider,
+    TerminalProvider,
     TerminalRuntime,
 }
 
@@ -395,6 +454,7 @@ impl CognitError {
             CognitErrorKind::TransientProvider => CognitRetryDisposition::AfterBackoff,
             CognitErrorKind::Cancelled
             | CognitErrorKind::ContextOverflow
+            | CognitErrorKind::TerminalProvider
             | CognitErrorKind::TerminalRuntime => CognitRetryDisposition::Never,
         }
     }
@@ -415,10 +475,23 @@ impl CognitError {
 
     fn from_runtime(error: anyhow::Error) -> Self {
         use crate::adapters::inference::scheduler::{classify_error, ErrorClass};
-        let kind = match classify_error(&error) {
-            ErrorClass::Transient => CognitErrorKind::TransientProvider,
-            ErrorClass::ContextOverflow => CognitErrorKind::ContextOverflow,
-            ErrorClass::Terminal => CognitErrorKind::TerminalRuntime,
+        let kind = match error.downcast_ref::<crate::inference::InferenceFailure>() {
+            Some(failure) => match failure.kind {
+                crate::inference::InferenceFailureKind::Transient => {
+                    CognitErrorKind::TransientProvider
+                }
+                crate::inference::InferenceFailureKind::ContextOverflow => {
+                    CognitErrorKind::ContextOverflow
+                }
+                crate::inference::InferenceFailureKind::Terminal => {
+                    CognitErrorKind::TerminalProvider
+                }
+            },
+            None => match classify_error(&error) {
+                ErrorClass::Transient => CognitErrorKind::TransientProvider,
+                ErrorClass::ContextOverflow => CognitErrorKind::ContextOverflow,
+                ErrorClass::Terminal => CognitErrorKind::TerminalRuntime,
+            },
         };
         Self {
             kind,
@@ -867,6 +940,8 @@ impl CognitiveSession for LinearCognitiveSession {
             TurnResult {
                 output,
                 stop: metrics.stop.clone(),
+                failure: None,
+                usage: Default::default(),
                 metrics: FabricTurnMetrics {
                     tool_calls_made: metrics.tool_calls_made,
                     tool_errors: metrics.tool_errors,
@@ -880,6 +955,8 @@ impl CognitiveSession for LinearCognitiveSession {
             TurnResult {
                 output: request.input,
                 stop: TurnStop::Completed,
+                failure: None,
+                usage: Default::default(),
                 metrics: FabricTurnMetrics {
                     completed_normally: true,
                     ..Default::default()
@@ -922,6 +999,8 @@ impl CognitiveSession for LinearCognitiveSession {
             let result = TurnResult {
                 output: request.input,
                 stop: TurnStop::Completed,
+                failure: None,
+                usage: Default::default(),
                 metrics: FabricTurnMetrics {
                     completed_normally: true,
                     ..Default::default()
@@ -1024,6 +1103,8 @@ impl CognitiveSession for LinearCognitiveSession {
         let result = TurnResult {
             output,
             stop: metrics.stop.clone(),
+            failure: None,
+            usage: Default::default(),
             metrics: FabricTurnMetrics {
                 tool_calls_made: metrics.tool_calls_made,
                 tool_errors: metrics.tool_errors,
@@ -1080,6 +1161,35 @@ mod context_tests {
     use fabric::{RecallRequest, RecallSet};
     use std::sync::Mutex as StdMutex;
 
+    #[tokio::test]
+    async fn canonical_sink_coalesces_text_but_flushes_before_lifecycle_events() {
+        let (mut stream, sender) =
+            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(1));
+        let sink = CanonicalTurnEventSink::new(sender);
+
+        for _ in 0..100 {
+            CognitiveStreamSink::emit(&sink, CognitiveStreamEvent::TextDelta { delta: "x".into() });
+        }
+        CognitiveStreamSink::emit(
+            &sink,
+            CognitiveStreamEvent::Usage {
+                usage: fabric::InferenceUsage::default(),
+            },
+        );
+
+        let first = stream.recv().await.unwrap();
+        assert!(matches!(
+            first,
+            fabric::ipc::TurnEventV1::TextDelta { delta }
+                if delta == "x".repeat(100)
+        ));
+        assert!(matches!(
+            stream.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::Usage { .. }
+        ));
+        assert!(stream.try_recv().is_none());
+    }
+
     struct ReceiptServices {
         result: fabric::CapabilityResult,
         receipts: StdMutex<Vec<CapabilityTerminalReceipt>>,
@@ -1114,6 +1224,24 @@ mod context_tests {
 
         assert!(bounded.len() <= MAX_DASEIN_CONTEXT_BYTES + 80);
         assert!(bounded.contains("existential context truncated"));
+    }
+
+    #[test]
+    fn provider_retry_disposition_survives_cognitive_error_boundary() {
+        let transient = CognitError::from_runtime(crate::inference::InferenceFailure::transient(
+            "provider_unavailable",
+        ));
+        assert_eq!(transient.kind(), CognitErrorKind::TransientProvider);
+        assert_eq!(
+            transient.retry_disposition(),
+            CognitRetryDisposition::AfterBackoff
+        );
+
+        let permanent = CognitError::from_runtime(crate::inference::InferenceFailure::terminal(
+            "provider_rejected_request",
+        ));
+        assert_eq!(permanent.kind(), CognitErrorKind::TerminalProvider);
+        assert_eq!(permanent.retry_disposition(), CognitRetryDisposition::Never);
     }
 
     #[test]

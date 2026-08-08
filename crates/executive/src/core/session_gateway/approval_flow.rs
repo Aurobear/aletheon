@@ -83,6 +83,12 @@ impl SessionGateway {
                             fabric::ItemPayload::ModelContextProjection { .. } => {
                                 "model_context_projection"
                             }
+                            fabric::ItemPayload::ContextBudgetProjection { .. } => {
+                                "context_budget_projection"
+                            }
+                            fabric::ItemPayload::ContextCompactionProjection { .. } => {
+                                "context_compaction_projection"
+                            }
                             fabric::ItemPayload::InferenceReceipt { .. } => "inference_receipt",
                             fabric::ItemPayload::TaskProjection { .. } => "task_projection",
                             fabric::ItemPayload::TurnRecovery { .. } => "turn_recovery",

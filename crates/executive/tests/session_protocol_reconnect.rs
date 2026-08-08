@@ -313,6 +313,7 @@ async fn a_session_001_interruption_at_each_item_boundary_replays_the_same_task_
     let payloads = [
         ItemPayload::UserMessage {
             content: "inspect the workspace".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
         ItemPayload::ToolCall {
             call_id: "read-1".into(),
@@ -517,6 +518,7 @@ async fn u_resume_001_daemon_restart_preserves_goal_plan_budget_and_checkpoint()
         1,
         ItemPayload::UserMessage {
             content: "stabilize architecture".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
     )
     .await;
@@ -613,6 +615,7 @@ async fn u_resume_002_restart_recovery_marks_unsettled_commands_lost() {
         1,
         ItemPayload::UserMessage {
             content: "run a long command".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
         },
     )
     .await;
@@ -644,8 +647,10 @@ async fn u_resume_002_restart_recovery_marks_unsettled_commands_lost() {
     )
     .await;
 
-    let mut hardening = executive::composition::config::GrokHardeningConfig::default();
-    hardening.compaction_v2 = true;
+    let hardening = executive::composition::config::GrokHardeningConfig {
+        compaction_v2: true,
+        ..Default::default()
+    };
     let recovery =
         executive::application::turn_recovery::scan_incomplete_turns(store.as_ref(), &hardening)
             .await

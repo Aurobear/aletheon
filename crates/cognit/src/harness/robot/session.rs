@@ -272,6 +272,8 @@ impl CognitiveSession for RobotCognitiveSession {
         let result = TurnResult {
             output,
             stop: stop.clone(),
+            failure: None,
+            usage: Default::default(),
             metrics: TurnMetrics {
                 tool_calls_made: 0,
                 tool_errors: 0,

@@ -55,6 +55,7 @@ tui.context	tui	-	context	ctx	显示当前上下文信息	会话	/context	local	
 tui.interrupt	tui	-	interrupt	int	中断当前操作	会话	/interrupt	compatibility	active_turn_only	public	-
 tui.copy	tui	-	copy	cp	复制最后回复到剪贴板	动作	/copy	local	always	public	-
 tui.mode	tui	-	mode	-	切换协作模式	动作	/mode [plan|auto|sandbox]	compatibility	idle_only	public	-
+tui.target	tui	-	target	-	切换下一回合执行目标	动作	/target general | /target robot <device> [simulation|hil|real]	local	idle_only	public	-
 tui.quit	tui	-	quit	exit	退出	动作	/quit	local	always	public	-
 tui.agents	tui	-	agents	ag	列出活跃子 Agent	信息	/agents	local	always	public	-
 tui.agent	tui	-	agent	-	查看子 Agent 详情	信息	/agent <id>	local	always	public	-

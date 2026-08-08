@@ -44,6 +44,16 @@ impl UserRuntimeConfig {
         enable_execd: bool,
     ) -> anyhow::Result<Self> {
         let loaded = crate::composition::config::load_for_host(None, config_path)?;
+        Self::from_loaded(loaded, paths, socket, enable_evolution, enable_execd)
+    }
+
+    fn from_loaded(
+        loaded: crate::composition::config::LoadedConfig,
+        paths: UserRuntimePaths,
+        socket: PathBuf,
+        enable_evolution: bool,
+        enable_execd: bool,
+    ) -> anyhow::Result<Self> {
         let integrations = loaded
             .preflight_integrations(&crate::composition::config::EnvironmentCredentialResolver)
             .context("optional integration startup preflight")?;
@@ -142,7 +152,9 @@ impl UserRuntimeConfig {
             cache_root: root.join("cache"),
         };
         let socket = paths.runtime_root.join("aletheon.sock");
-        let mut config = Self::load(None, paths, socket, false, false)
+        let loaded = crate::composition::config::merge_layers(std::iter::empty())
+            .expect("default user runtime fixture config must load");
+        let mut config = Self::from_loaded(loaded, paths, socket, false, false)
             .expect("default user runtime fixture config must load");
         config.request.mcp_servers.clear();
         config.request.telegram.enabled = false;

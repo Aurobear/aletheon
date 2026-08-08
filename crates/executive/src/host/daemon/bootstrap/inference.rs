@@ -24,6 +24,33 @@ pub(super) async fn compose(
     })
 }
 
+/// Reconcile the configured model catalog with the host-observed provider
+/// capabilities once at bootstrap. Downstream session construction receives a
+/// verified context window instead of repeating cross-source checks.
+pub(super) fn verify_runtime_context(
+    provider: &dyn LlmProvider,
+    configured_model_spec: &str,
+) -> anyhow::Result<(fabric::ModelRuntimeFacts, usize)> {
+    let runtime_facts = provider.runtime_facts();
+    let context_window = runtime_facts.max_context_tokens;
+    anyhow::ensure!(
+        context_window > 0 && context_window == provider.max_context_length(),
+        "runtime model capability conflict: runtime facts and provider context window disagree"
+    );
+    let resolved = cognit::composition::model_catalog::resolve_spec(
+        configured_model_spec,
+        Some(context_window),
+    )?;
+    anyhow::ensure!(
+        resolved.context_window_tokens == context_window,
+        "runtime model capability conflict for configured model '{}': catalog/config says {}, runtime says {}",
+        configured_model_spec,
+        resolved.context_window_tokens,
+        context_window
+    );
+    Ok((runtime_facts, context_window))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

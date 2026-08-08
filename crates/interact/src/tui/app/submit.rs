@@ -74,7 +74,7 @@ pub async fn submit_message(app: &mut App, text: String) {
             app.pending_shell_confirmation = Some(command.clone());
             app.input_buf = format!("!{command}");
             app.cursor = app.input_buf.len();
-            app.chat.add_text(
+            app.compat_transcript.add_text(
                 ChatRole::System,
                 format!(
                     "Shell confirmation\nWorkspace: {}\nPermission: {:?}\nTransaction coverage: non-rollbackable\nHost policy and approval still apply. Press Enter again to submit or Esc to cancel.",
@@ -87,7 +87,8 @@ pub async fn submit_message(app: &mut App, text: String) {
         app.pending_shell_confirmation = None;
         app.history.push(format!("!{command}"));
         app.persist_input_state();
-        app.chat.add_text(ChatRole::User, format!("!{command}"));
+        app.compat_transcript
+            .add_text(ChatRole::User, format!("!{command}"));
         send_shell_to_daemon(app, &command).await;
         return;
     }
@@ -114,7 +115,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     request_id,
                     super::super::PendingCommand::NewSession { clear_screen: true },
                 );
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "正在创建新会话…".to_string());
                 return;
             }
@@ -134,23 +135,19 @@ pub async fn submit_message(app: &mut App, text: String) {
                         clear_screen: false,
                     },
                 );
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "正在创建新会话…".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Copy)) => {
                 // Copy last assistant message to clipboard via OSC 52
-                let last_assistant = app.chat.entries.iter().rev().find_map(|entry| {
-                    if let super::super::chat::ChatEntry::Text(ref msg) = entry {
-                        if msg.role == ChatRole::Assistant {
-                            Some(msg.content.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
+                let last_assistant = app
+                    .app_state
+                    .items
+                    .values()
+                    .filter(|item| item.kind == "assistant")
+                    .max_by_key(|item| item.sequence)
+                    .map(|item| item.content.clone());
                 match last_assistant {
                     Some(text) if !text.is_empty() => {
                         let encoded = base64_encode(&text);
@@ -158,11 +155,11 @@ pub async fn submit_message(app: &mut App, text: String) {
                         let osc = format!("\x1b]52;c;{encoded}\x1b\\");
                         io::stdout().write_all(osc.as_bytes()).ok();
                         io::stdout().flush().ok();
-                        app.chat
+                        app.compat_transcript
                             .add_text(ChatRole::System, "已复制到剪贴板".to_string());
                     }
                     _ => {
-                        app.chat
+                        app.compat_transcript
                             .add_text(ChatRole::System, "没有可复制的内容".to_string());
                     }
                 }
@@ -170,12 +167,12 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Help)) => {
                 let help = app.registry.help_text();
-                app.chat.add_text(ChatRole::System, help);
+                app.compat_transcript.add_text(ChatRole::System, help);
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Status)) => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         "会话仍在初始化，请稍后重试 /status".to_string(),
                     );
@@ -199,7 +196,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 app.pending_non_turn.insert(request_id);
                 app.streaming = true;
                 app.status.waiting = true;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "查询会话列表中...".to_string());
                 return;
             }
@@ -211,7 +208,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.pending_non_turn.insert(request_id);
                     app.streaming = true;
                     app.status.waiting = true;
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, "查询可恢复会话中...".to_string());
                     return;
                 }
@@ -230,13 +227,13 @@ pub async fn submit_message(app: &mut App, text: String) {
                 );
                 app.projection_target_session_id = Some(id.clone());
                 app.projection_request_in_flight = true;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         "会话仍在初始化，请稍后重试 /compact".to_string(),
                     );
@@ -249,13 +246,13 @@ pub async fn submit_message(app: &mut App, text: String) {
                     }),
                 )
                 .await;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "压缩上下文中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Fork)) => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         "当前会话尚未初始化，无法创建分支".to_string(),
                     );
@@ -273,7 +270,7 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Rewind { prompt_index })) => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         "当前会话尚未初始化，无法恢复工作区检查点".to_string(),
                     );
@@ -289,12 +286,12 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.pending_non_turn.insert(request_id);
                     app.streaming = true;
                     app.status.waiting = true;
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, "查询工作区检查点中…".to_string());
                     return;
                 }
                 let Ok(prompt_index) = prompt_index.parse::<u64>() else {
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         "用法：/rewind <prompt-index>（必须使用 daemon 提供的检查点索引）"
                             .to_string(),
@@ -320,14 +317,14 @@ pub async fn submit_message(app: &mut App, text: String) {
                 app.pending_non_turn.insert(request_id);
                 app.streaming = true;
                 app.status.waiting = true;
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     format!("请求恢复工作区检查点 {prompt_index}…"),
                 );
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Permissions)) => {
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     format!(
                         "=== Permissions ===\nWorking directory: {}\nWorkspace roots:\n{}",
@@ -344,7 +341,7 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Model)) => {
                 send_request(app, ClientRpcRequest::ModelList).await;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "查询可用模型中...".to_string());
                 return;
             }
@@ -372,15 +369,70 @@ pub async fn submit_message(app: &mut App, text: String) {
                     }
                 };
                 write_request(app, ClientRpcRequest::mode_switch(mode)).await;
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     format!("Switching mode to: {}", mode.display_name()),
                 );
                 return;
             }
+            Some(CommandType::Builtin(BuiltinCommand::Target { value })) => {
+                if app.turn_active {
+                    app.app_state.last_error =
+                        Some("execution target cannot change while a turn is active".into());
+                    return;
+                }
+                let parts = value.split_whitespace().collect::<Vec<_>>();
+                let next = match parts.as_slice() {
+                    ["general"] => Ok(fabric::ExecutionTargetSelection::general(
+                        fabric::ExecutionTargetSource::UserCommand,
+                    )),
+                    ["robot", device] | ["robot", device, "simulation"] => {
+                        fabric::ExecutionTargetSelection::robot(
+                            *device,
+                            fabric::types::embodiment::ExecutionEnvironment::Simulation,
+                            fabric::ExecutionTargetSource::UserCommand,
+                        )
+                    }
+                    ["robot", device, "hil"] => fabric::ExecutionTargetSelection::robot(
+                        *device,
+                        fabric::types::embodiment::ExecutionEnvironment::Hil,
+                        fabric::ExecutionTargetSource::UserCommand,
+                    ),
+                    ["robot", device, "real"] => fabric::ExecutionTargetSelection::robot(
+                        *device,
+                        fabric::types::embodiment::ExecutionEnvironment::Real,
+                        fabric::ExecutionTargetSource::UserCommand,
+                    ),
+                    _ => Err(
+                        "usage: /target general | /target robot <device> [simulation|hil|real]"
+                            .into(),
+                    ),
+                };
+                match next {
+                    Ok(selection) => {
+                        let label = match &selection.target {
+                            fabric::ExecutionTarget::General => "general".to_string(),
+                            fabric::ExecutionTarget::Robot {
+                                device_id,
+                                environment,
+                            } => format!("robot:{}/{}", device_id.0, environment.as_str()),
+                        };
+                        app.app_state
+                            .select_execution_target_for_next_turn(selection);
+                        app.compat_transcript.add_text(
+                            ChatRole::System,
+                            format!(
+                                "Execution target set to {label}; the next turn will persist this typed selection."
+                            ),
+                        );
+                    }
+                    Err(error) => app.app_state.last_error = Some(error),
+                }
+                return;
+            }
             Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
                 if app.sub_agents.is_empty() {
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, "No active sub-agents".to_string());
                 } else {
                     let lines: Vec<String> = app
@@ -388,7 +440,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                         .iter()
                         .map(|a| format!("  {} - {:?}: {}", a.id, a.status, a.task))
                         .collect();
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         format!("Active sub-agents:\n{}", lines.join("\n")),
                     );
@@ -401,28 +453,28 @@ pub async fn submit_message(app: &mut App, text: String) {
                         "Agent: {}\nTask: {}\nStatus: {:?}\nParent: {}",
                         agent.id, agent.task, agent.status, agent.parent_turn_id
                     );
-                    app.chat.add_text(ChatRole::System, msg);
+                    app.compat_transcript.add_text(ChatRole::System, msg);
                 } else {
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, format!("Agent not found: {id}"));
                 }
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
                 send_request(app, ClientRpcRequest::SkillsList).await;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "查询技能列表中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Memory)) => {
                 send_request(app, ClientRpcRequest::SessionMemory).await;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "查询记忆中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::MemorySearch { query })) => {
                 if query.is_empty() {
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, "用法：/memory search <query>".to_string());
                 } else {
                     send_request(
@@ -430,26 +482,26 @@ pub async fn submit_message(app: &mut App, text: String) {
                         ClientRpcRequest::memory_search(query, app.app_state.session_id.clone()),
                     )
                     .await;
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, "搜索记忆中...".to_string());
                 }
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::MemoryStatus)) => {
                 send_request(app, ClientRpcRequest::MemoryStatus).await;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "查询记忆状态中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::SkillRun { name, args })) => {
                 if !app.registry.is_skill(&name) {
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         format!("Skill 不可用：{name}。请先运行 /skills 刷新目录。"),
                     );
                     return;
                 }
-                app.chat.add_text(ChatRole::User, text.clone());
+                app.compat_transcript.add_text(ChatRole::User, text.clone());
                 let request = match app.app_state.session_id.clone() {
                     Some(session_id) => ClientRpcRequest::skill_invoke_for(
                         name,
@@ -468,35 +520,39 @@ pub async fn submit_message(app: &mut App, text: String) {
                     ClientRpcRequest::interrupt(InterruptReason::UserCancelled),
                 )
                 .await;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "Interrupt sent".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Context)) => {
-                let ctx = &app.app_state.context;
                 let mode = &app.app_state.mode;
                 let msg = format!(
-                    "Context: {}\nMode: {} {}\nModel: {}\nTokens: {}k\nAwareness: {} {}",
-                    ctx.display(),
+                    "{}\nMode: {} {}\nCumulative provider usage: {}k tokens\nAwareness: {} {}",
+                    app.app_state.context_diagnostic(),
                     mode.icon(),
                     mode.display_name(),
-                    app.app_state.model_name,
                     app.app_state.total_tokens / 1000,
                     app.app_state.awareness.level.icon(),
                     app.app_state.awareness.level.display_name(),
                 );
-                app.chat.add_text(ChatRole::System, msg);
+                // Task Console renders only daemon-projected conversation
+                // state.  Keep this local, read-only diagnostic out of that
+                // canonical projection while still making it visible.
+                app.pager = Some(super::super::pager::PagerOverlay::new(
+                    "Context diagnostics",
+                    msg,
+                ));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Profile)) => {
                 write_request(app, ClientRpcRequest::AgentProfileList).await;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "Querying agent profiles...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::ProfileSet { name })) => {
                 write_request(app, ClientRpcRequest::agent_profile_set(name.clone())).await;
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     format!("Switching agent profile to: {name}"),
                 );
@@ -507,7 +563,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.detail = Some(super::super::diff_view::DiffView::from_patch_delta(delta));
                     return;
                 }
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     "No authoritative checkpoint diff is available for this turn".to_string(),
                 );
@@ -515,12 +571,12 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Mention { path })) => {
                 if path.is_empty() {
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, "用法: /mention <path>".to_string());
                 } else {
                     app.input_buf = format!("@{path} ");
                     app.cursor = app.input_buf.len();
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, format!("已将 @{path} 加入输入框"));
                 }
                 return;
@@ -528,14 +584,14 @@ pub async fn submit_message(app: &mut App, text: String) {
             Some(CommandType::Builtin(BuiltinCommand::Input)) => {
                 app.input_buf.push('\n');
                 app.cursor = app.input_buf.len();
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     "多行输入已开启；继续输入，使用 Alt+Enter 提交".to_string(),
                 );
                 return;
             }
             Some(CommandType::Skill { name, args }) => {
-                app.chat.add_text(ChatRole::User, text.clone());
+                app.compat_transcript.add_text(ChatRole::User, text.clone());
                 let request = match app.app_state.session_id.clone() {
                     Some(session_id) => ClientRpcRequest::skill_invoke_for(
                         name,
@@ -556,12 +612,13 @@ pub async fn submit_message(app: &mut App, text: String) {
                 } else {
                     format!("你是否想输入：{}", suggestions.join("、"))
                 };
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, format!("未知命令 /{name}。{hint}"));
                 return;
             }
             None => {
-                app.chat.add_text(ChatRole::System, "无效命令".to_string());
+                app.compat_transcript
+                    .add_text(ChatRole::System, "无效命令".to_string());
                 return;
             }
         }
@@ -578,7 +635,7 @@ pub async fn submit_message(app: &mut App, text: String) {
     }
     app.history.push(text.clone());
     app.persist_input_state();
-    app.chat.add_text(ChatRole::User, text.clone());
+    app.compat_transcript.add_text(ChatRole::User, text.clone());
     // Assistant entry created lazily on first response delta so it renders
     // after any tool/reflection logs (ordering fix).
     send_to_daemon(app, &text).await;
@@ -612,6 +669,7 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
         requirements: app.turn_requirements.clone(),
         task_kind: app.requested_task_kind,
         permission_mode: crate::host::permission_mode_from_environment(),
+        execution_target: app.app_state.execution_target_for_submission().clone(),
     }));
     let msg = request
         .to_json_rpc(Some(request_id))
@@ -620,7 +678,7 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
     let framed = format!("{payload}\n");
 
     if app.stream.write_all(framed.as_bytes()).await.is_err() {
-        app.chat
+        app.compat_transcript
             .add_text(ChatRole::System, "发送失败，请检查 daemon".to_string());
         return;
     }
@@ -705,6 +763,51 @@ mod secure_shell_tests {
             "printf governed"
         );
         assert!(app.pending_shell_confirmation.is_none());
+    }
+
+    #[tokio::test]
+    async fn pending_robot_target_survives_stale_projection_and_is_sent_on_wire() {
+        let (stream, mut peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test-model".into(),
+            std::sync::Arc::new(ClientClock::default()),
+            workspace,
+            vec![],
+        );
+        app.app_state.cursor.sequence = 10;
+        let robot = fabric::ExecutionTargetSelection::robot(
+            "robot-1",
+            fabric::types::embodiment::ExecutionEnvironment::Simulation,
+            fabric::ExecutionTargetSource::UserCommand,
+        )
+        .unwrap();
+        app.app_state
+            .select_execution_target_for_next_turn(robot.clone());
+
+        app.app_state
+            .reconcile_projected_execution_target(&fabric::ExecutionTargetSelection::default(), 1);
+        send_to_daemon(&mut app, "perform a safe simulation step").await;
+
+        let mut bytes = vec![0; 4096];
+        let read = peer.read(&mut bytes).await.unwrap();
+        let request: serde_json::Value =
+            serde_json::from_slice(bytes[..read].strip_suffix(b"\n").unwrap()).unwrap();
+        let selection = &request["params"]["command"]["arguments"]["execution_target"];
+        assert_eq!(selection["target"]["kind"], "robot");
+        assert_eq!(selection["target"]["device_id"], "robot-1");
+        assert_eq!(selection["target"]["environment"], "simulation");
+        assert_eq!(selection["source"], "user_command");
+        assert_eq!(app.app_state.execution_target_for_submission(), &robot);
     }
 }
 

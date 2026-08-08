@@ -68,16 +68,26 @@ impl CommandUseCases for DaemonCommandUseCases {
                 prompt.workspace.clone(),
                 prompt.requirements.clone(),
                 prompt.task_kind,
+                prompt.execution_target.clone(),
                 prompt.permission_mode,
             )
             .await;
         if let Some((code, message)) = rpc_error_parts(&response) {
-            return Ok(CommandOutput::Rejected { code, message });
+            return Ok(CommandOutput::new(
+                intent.correlation_id.clone(),
+                fabric::contract::command::CommandOutputV1::Rejected(
+                    fabric::contract::command::CommandRejectionV1 { code, message },
+                ),
+            ));
         }
-        Ok(CommandOutput::PromptCompleted {
-            correlation_id: intent.correlation_id.clone(),
-            result: take_rpc_result(response)?,
-        })
+        Ok(CommandOutput::new(
+            intent.correlation_id.clone(),
+            fabric::contract::command::CommandOutputV1::PromptCompleted(
+                crate::application::command_dispatcher::prompt_completion_from_rpc_result(
+                    take_rpc_result(response)?,
+                )?,
+            ),
+        ))
     }
 
     async fn execute_shell(
@@ -112,16 +122,26 @@ impl CommandUseCases for DaemonCommandUseCases {
                     name: "exec_command".into(),
                 }],
                 None,
+                fabric::ExecutionTargetSelection::default(),
                 shell.permission_mode,
             )
             .await;
         if let Some((code, message)) = rpc_error_parts(&response) {
-            return Ok(CommandOutput::Rejected { code, message });
+            return Ok(CommandOutput::new(
+                intent.correlation_id.clone(),
+                fabric::contract::command::CommandOutputV1::Rejected(
+                    fabric::contract::command::CommandRejectionV1 { code, message },
+                ),
+            ));
         }
-        Ok(CommandOutput::PromptCompleted {
-            correlation_id: intent.correlation_id.clone(),
-            result: take_rpc_result(response)?,
-        })
+        Ok(CommandOutput::new(
+            intent.correlation_id.clone(),
+            fabric::contract::command::CommandOutputV1::PromptCompleted(
+                crate::application::command_dispatcher::prompt_completion_from_rpc_result(
+                    take_rpc_result(response)?,
+                )?,
+            ),
+        ))
     }
 
     async fn status(
@@ -129,19 +149,32 @@ impl CommandUseCases for DaemonCommandUseCases {
         intent: &fabric::contract::command::ClientIntent,
         status: &fabric::contract::command::StatusIntent,
     ) -> anyhow::Result<CommandOutput> {
-        let request = serde_json::json!({
-            "params": {
-                "session_id": status.session_id.as_ref().map(|value| value.0.as_str())
-            }
-        });
-        let response = self.handler.handle_status(&self.rpc_id, &request).await;
-        if let Some((code, message)) = rpc_error_parts(&response) {
-            return Ok(CommandOutput::Rejected { code, message });
+        let Some(session_id) = status.session_id.as_ref() else {
+            return Ok(CommandOutput::new(
+                intent.correlation_id.clone(),
+                fabric::contract::command::CommandOutputV1::Rejected(
+                    fabric::contract::command::CommandRejectionV1 {
+                        code: -32602,
+                        message: "Missing session_id parameter".into(),
+                    },
+                ),
+            ));
+        };
+        match self.handler.status_projection(&session_id.0).await {
+            Ok(projection) => Ok(CommandOutput::new(
+                intent.correlation_id.clone(),
+                fabric::contract::command::CommandOutputV1::StatusProjected(projection),
+            )),
+            Err(error) => Ok(CommandOutput::new(
+                intent.correlation_id.clone(),
+                fabric::contract::command::CommandOutputV1::Rejected(
+                    fabric::contract::command::CommandRejectionV1 {
+                        code: -32000,
+                        message: error.to_string(),
+                    },
+                ),
+            )),
         }
-        Ok(CommandOutput::StatusProjected {
-            correlation_id: intent.correlation_id.clone(),
-            result: take_rpc_result(response)?,
-        })
     }
 }
 
@@ -369,6 +402,14 @@ impl RequestHandler {
         self.ports
             .pending_approvals
             .cancel_connection(connection_id)
+            .await;
+        // Cancel exactly the turns admitted by this connection before the
+        // connection-scoped request tasks are aborted. Each turn's settlement
+        // guard still guarantees active-index removal and kernel terminal
+        // settlement even if its request future is dropped below.
+        self.ports
+            .turn
+            .cancel_active_for_connection(connection_id.clone())
             .await;
         self.ports
             .kernel
@@ -602,19 +643,15 @@ impl RequestHandler {
             rpc_id: id.clone(),
         }));
         match dispatcher.dispatch(intent).await {
-            Ok(CommandOutput::PromptCompleted { result, .. })
-            | Ok(CommandOutput::StatusProjected { result, .. }) => {
-                serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result})
-            }
-            Ok(CommandOutput::PromptAccepted { correlation_id }) => serde_json::json!({
-                "jsonrpc":"2.0", "id":id,
-                "result":{"status":"accepted", "correlation_id":correlation_id}
-            }),
-            Ok(CommandOutput::Status { ready, summary }) => serde_json::json!({
-                "jsonrpc":"2.0", "id":id,
-                "result":{"ready":ready, "summary":summary}
-            }),
-            Ok(CommandOutput::Rejected { code, message }) => rpc_error(&id, code, message),
+            Ok(output) => match &output.output {
+                fabric::contract::command::CommandOutputV1::Rejected(rejection) => {
+                    rpc_error(&id, rejection.code, rejection.message.clone())
+                }
+                _ => match serde_json::to_value(output) {
+                    Ok(result) => serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result}),
+                    Err(error) => rpc_error(&id, -32603, error.to_string()),
+                },
+            },
             Err(error) => rpc_error(&id, -32603, error.to_string()),
         }
     }
@@ -638,7 +675,29 @@ impl RequestHandler {
                 fabric::contract::command::StatusIntent { session_id },
             ),
         );
-        self.dispatch_client_intent(connection, id, intent).await
+        // Sole V1→V0 compatibility adapter for the historical `status` RPC.
+        // New `client_intent` callers receive CommandOutputEnvelopeV1 directly.
+        let dispatcher = CommandDispatcher::new(Arc::new(DaemonCommandUseCases {
+            handler: self.clone(),
+            connection: connection.clone(),
+            rpc_id: id.clone(),
+        }));
+        match dispatcher.dispatch(intent).await {
+            Ok(output) => match output.output {
+                fabric::contract::command::CommandOutputV1::StatusProjected(status) => {
+                    serde_json::json!({"jsonrpc":"2.0", "id":id, "result":{"status":status}})
+                }
+                fabric::contract::command::CommandOutputV1::Rejected(rejection) => {
+                    rpc_error(&id, rejection.code, rejection.message)
+                }
+                _ => rpc_error(
+                    &id,
+                    -32603,
+                    "status command returned an incompatible typed output",
+                ),
+            },
+            Err(error) => rpc_error(&id, -32603, error.to_string()),
+        }
     }
 
     /// Thin delegation to the macro-kernel turn orchestrator.
@@ -698,6 +757,7 @@ impl RequestHandler {
                     requirements,
                     task_kind,
                     permission_mode,
+                    execution_target: fabric::ExecutionTargetSelection::default(),
                 },
             ),
         );
@@ -715,6 +775,7 @@ impl RequestHandler {
         workspace: fabric::WorkspacePolicy,
         requirements: Vec<fabric::TurnRequirement>,
         task_kind: Option<fabric::TaskKind>,
+        execution_target: fabric::ExecutionTargetSelection,
         permission_mode: fabric::permission::HostPermissionMode,
     ) -> serde_json::Value {
         if thread_id.0.trim().is_empty() || message.trim().is_empty() {
@@ -778,6 +839,7 @@ impl RequestHandler {
                 context,
                 requirements,
                 task_kind,
+                execution_target,
                 self.notify_tx.clone(),
             )
             .await

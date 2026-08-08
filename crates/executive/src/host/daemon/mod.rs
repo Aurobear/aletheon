@@ -67,13 +67,14 @@ pub struct DaemonConfig {
     /// Percent of the context window at which automatic compaction triggers;
     /// populated from AppConfig.agent.compaction_threshold. `80` = legacy `0.8`.
     pub agent_compaction_threshold_percent: usize,
-    /// Cognitive harness selected by the typed root application config.
+    /// Legacy capability-enablement hint. It no longer selects each turn's
+    /// cognition path; turns default to General and carry a typed target.
     pub harness_kind: cognit::harness::HarnessKind,
     /// Secret-safe integration settings resolved by the host startup preflight.
     pub integrations: crate::composition::config::ResolvedIntegrations,
     /// Embodiment provider selection (Simulator or gRPC gateway).
     pub embodiment_provider: crate::composition::config::EmbodimentProviderConfig,
-    /// Fully validated Robot settings. `None` for a Linear harness.
+    /// Fully validated optional Robot capability settings.
     pub robot: Option<crate::composition::config::ResolvedRobotIntegrationConfig>,
 }
 

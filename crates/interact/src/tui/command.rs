@@ -24,6 +24,9 @@ pub enum BuiltinCommand {
     Mode {
         name: String,
     },
+    Target {
+        value: String,
+    },
     Agents,
     AgentDetail {
         id: String,
@@ -117,6 +120,19 @@ mod tests {
             parse_command("/memory search deployment path"),
             Some(CommandType::Builtin(BuiltinCommand::MemorySearch { query }))
                 if query == "deployment path"
+        ));
+    }
+
+    #[test]
+    fn target_command_preserves_typed_arguments_for_local_validation() {
+        assert!(matches!(
+            parse_command("/target general"),
+            Some(CommandType::Builtin(BuiltinCommand::Target { value })) if value == "general"
+        ));
+        assert!(matches!(
+            parse_command("/target robot kuavo-01 hil"),
+            Some(CommandType::Builtin(BuiltinCommand::Target { value }))
+                if value == "robot kuavo-01 hil"
         ));
     }
 
