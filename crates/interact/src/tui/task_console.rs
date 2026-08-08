@@ -581,7 +581,7 @@ fn activity_line(activity: &ActivitySnapshot, caps: &TermCaps, selected: bool) -
     Line::from(vec![
         Span::styled(selection, Style::default().fg(caps.theme().accent)),
         Span::styled(format!(" {} ", caps.bullet()), Style::default().fg(color)),
-        Span::styled(format!("{state:9}"), Style::default().fg(color)),
+        Span::styled(format!("{state:9} "), Style::default().fg(color)),
         Span::raw(format!("{}{progress}", activity.label)),
     ])
 }
@@ -925,6 +925,16 @@ mod tests {
         assert!(rendered.contains("1 recorded"));
         assert!(rendered.contains("sub-agent reviewer"));
         assert!(rendered.contains("failed"));
+    }
+
+    #[test]
+    fn cancelled_activity_status_is_separated_from_its_label() {
+        let mut state = projected_state();
+        state.activities[0].state = ActivityState::Cancelled;
+        state.activities[0].label = "Model inference round 2".into();
+        let rendered = rendered_text(120, 40, &state);
+        assert!(rendered.contains("cancelled Model inference round 2"));
+        assert!(!rendered.contains("cancelledModel inference round 2"));
     }
 
     #[test]
