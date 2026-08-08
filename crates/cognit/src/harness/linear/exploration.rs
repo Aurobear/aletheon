@@ -34,8 +34,8 @@ fn is_broad_glob(input: &Value) -> bool {
     // Validate explicit root: unsafe roots fail closed as broad.
     if let Some(root) = input.get("root") {
         match root.as_str() {
-            None => return true,          // non-string root → broad (malformed)
-            Some(s) if s.is_empty() => {} // empty → default cwd, ok
+            None => return true, // non-string root → broad (malformed)
+            Some("") => {}       // empty → default cwd, ok
             Some(s) => {
                 let path = Path::new(s);
                 if path.is_absolute() {
@@ -117,7 +117,7 @@ fn is_broad_text_search(input: &Value) -> bool {
     match path {
         // Omitted or empty → repository-wide scan.
         None => true,
-        Some(p) if p.is_empty() => true,
+        Some("") => true,
         Some(p) => {
             let path = Path::new(p);
             // Absolute paths are broad.
