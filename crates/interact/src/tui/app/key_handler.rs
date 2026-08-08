@@ -531,6 +531,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             app.last_ctrl_c = Some(now);
+            app.turn_cancel_requested = true;
             write_request(app, ClientRpcRequest::Cancel).await;
             return;
         }

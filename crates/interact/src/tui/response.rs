@@ -115,6 +115,8 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 );
             }
             if new_turn {
+                app.turn_cancel_requested = false;
+                app.app_state.last_terminal_status = None;
                 app.stream_ctrl.start_turn();
                 app.status.elapsed_secs = 0.0;
                 app.app_state.turn_tool_count = 0;
@@ -316,6 +318,16 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.streaming = false;
             app.turn_active = false;
             app.app_state.turn_active = false;
+            let terminal = if app.turn_cancel_requested {
+                fabric::TurnTerminalStatus::Interrupted
+            } else if app.app_state.last_terminal_status == Some(fabric::TurnTerminalStatus::Failed)
+            {
+                fabric::TurnTerminalStatus::Failed
+            } else {
+                fabric::TurnTerminalStatus::Completed
+            };
+            super::reducer::finish_live_turn(&mut app.app_state, terminal);
+            app.turn_cancel_requested = false;
             app.status.session_turns += 1;
         }
         ClientEvent::Error { message } => {
@@ -326,6 +338,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.streaming = false;
             app.turn_active = false;
             app.app_state.turn_active = false;
+            super::reducer::finish_live_turn(
+                &mut app.app_state,
+                fabric::TurnTerminalStatus::Failed,
+            );
         }
         ClientEvent::AwarenessChanged { level, context } => {
             if let Ok(awareness_level) =
@@ -1651,6 +1667,58 @@ mod tests {
         assert!(!app.compat_transcript.entries.iter().any(|entry| {
             matches!(entry, ChatEntry::Text(message)
                 if message.content.contains("Invalid typed status projection"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn cancelled_compatibility_turn_settles_live_progress_and_keeps_output() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "turn_started", "iteration": 0}),
+        );
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "turn_started", "iteration": 1}),
+        );
+        app.turn_cancel_requested = true;
+        handle_event(
+            &mut app,
+            &serde_json::json!({
+                "type": "text_snapshot",
+                "text": "Cancelled by user. The cancelled turn objective is closed."
+            }),
+        );
+        handle_event(&mut app, &serde_json::json!({"type": "turn_done"}));
+
+        assert_eq!(
+            app.app_state.last_terminal_status,
+            Some(fabric::TurnTerminalStatus::Interrupted)
+        );
+        assert!(app
+            .app_state
+            .activities
+            .iter()
+            .all(|activity| activity.state != fabric::ActivityState::Running));
+        assert!(app.app_state.items.values().any(|item| {
+            item.kind == "assistant" && item.content.starts_with("Cancelled by user")
         }));
     }
 

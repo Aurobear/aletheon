@@ -48,8 +48,10 @@ source_paths = [
   "crates/executive/src/adapters/events/sqlite_event_spine.rs",
   "crates/executive/src/adapters/channel/daemon_adapter.rs",
   "crates/executive/src/adapters/runtime/pi_rpc.rs",
+  "crates/executive/src/adapters/session/event_sourced_store.rs",
   "crates/executive/src/application/admin_service.rs",
   "crates/executive/src/application/daemon_turn_engine.rs",
+  "crates/executive/src/application/session_projection.rs",
   "crates/executive/src/application/turn_coordinator.rs",
   "crates/executive/src/application/turn_pipeline.rs",
   "crates/executive/src/core/session_gateway/approval_flow.rs",
@@ -80,6 +82,7 @@ source_paths = [
   "crates/fabric/src/ipc/stream.rs",
   "crates/fabric/src/protocol/client.rs",
   "crates/fabric/src/types/agent_control.rs",
+  "crates/fabric/src/types/session.rs",
   "crates/fabric/src/types/tool.rs",
 ]
 lib_filters = [
@@ -87,6 +90,7 @@ lib_filters = [
   "ipc::stream::tests::",
   "protocol::client::request_tests::",
   "types::agent_control::delegation_tests::",
+  "types::session::tests::",
   "types::tool::tests::",
 ]
 integration_targets = ["agent_control_contract"]

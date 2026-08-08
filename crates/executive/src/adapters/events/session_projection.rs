@@ -409,6 +409,16 @@ fn turn_phase(items: &[&ItemRecord]) -> TaskPhase {
             fabric::TurnRecoveryClassification::Failed => TaskPhase::Failed,
         };
     }
+    if let Some(status) = items.iter().rev().find_map(|item| match &item.payload {
+        ItemPayload::TurnSettlement { status, .. } => Some(*status),
+        _ => None,
+    }) {
+        return match status {
+            fabric::TurnTerminalStatus::Completed => TaskPhase::Completed,
+            fabric::TurnTerminalStatus::Interrupted => TaskPhase::Interrupted,
+            fabric::TurnTerminalStatus::Failed => TaskPhase::Failed,
+        };
+    }
     if items.iter().any(|item| {
         matches!(
             item.payload,
@@ -1167,6 +1177,48 @@ mod tests {
         assert!(activities
             .windows(2)
             .all(|pair| pair[1].parent_activity_id.as_deref() == Some(&pair[0].activity_id)));
+    }
+
+    #[test]
+    fn cancelled_turn_settlement_projects_an_interrupted_step() {
+        let session_id = SessionId("cancelled-session".into());
+        let turn_id = fabric::TurnId::new();
+        let items = vec![
+            ItemRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: fabric::ItemId::new(),
+                session_id: session_id.clone(),
+                turn_id,
+                sequence: 1,
+                created_at_ms: 1,
+                payload: ItemPayload::UserMessage {
+                    content: "long task".into(),
+                    execution_target: fabric::ExecutionTargetSelection::default(),
+                },
+            },
+            ItemRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: fabric::ItemId::new(),
+                session_id: session_id.clone(),
+                turn_id,
+                sequence: 2,
+                created_at_ms: 2,
+                payload: ItemPayload::TurnSettlement {
+                    status: fabric::TurnTerminalStatus::Interrupted,
+                    content: "Cancelled by user".into(),
+                },
+            },
+        ];
+        let session = SessionRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: session_id,
+            parent: None,
+            created_at_ms: 1,
+            status: SessionStatus::Active,
+        };
+
+        let (tasks, _) = SessionProjection::read_model(&session, &items);
+        assert_eq!(tasks[0].steps[0].phase, TaskPhase::Interrupted);
     }
 
     #[test]

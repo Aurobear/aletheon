@@ -206,7 +206,8 @@ impl EventSourcedSessionStore {
             | ItemPayload::ContextCompactionProjection { .. }
             | ItemPayload::InferenceReceipt { .. }
             | ItemPayload::TaskProjection { .. }
-            | ItemPayload::TurnRecovery { .. } => EventVisibility::Control,
+            | ItemPayload::TurnRecovery { .. }
+            | ItemPayload::TurnSettlement { .. } => EventVisibility::Control,
         }
     }
 }

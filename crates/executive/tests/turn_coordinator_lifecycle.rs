@@ -902,7 +902,13 @@ async fn cancellation_refreshes_the_terminal_sequence_after_runner_fragments() {
         items[1].payload,
         ItemPayload::TaskProjection { .. }
     ));
-    assert!(matches!(items[2].payload, ItemPayload::SystemNotice { .. }));
+    assert!(matches!(
+        items[2].payload,
+        ItemPayload::TurnSettlement {
+            status: fabric::TurnTerminalStatus::Interrupted,
+            ..
+        }
+    ));
     assert_eq!(items[2].id.0, items[2].turn_id.0);
 }
 

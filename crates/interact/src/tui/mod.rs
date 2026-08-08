@@ -348,6 +348,10 @@ struct App {
     status: StatusBar,
     /// Last Ctrl+C press time (for double-press detection).
     last_ctrl_c: Option<fabric::MonoTime>,
+    /// Local acknowledgement that the current turn received an explicit user
+    /// cancellation request. Authoritative settlement still comes from the
+    /// daemon's durable `TurnSettlement` item.
+    turn_cancel_requested: bool,
     /// Whether input has CJK characters (affects Enter behavior).
     has_cjk: bool,
     /// A leading action sigil arrived through paste and remains inert until
@@ -452,6 +456,7 @@ impl App {
             model_name,
             status,
             last_ctrl_c: None,
+            turn_cancel_requested: false,
             has_cjk: false,
             input_literal: false,
             pending_shell_confirmation: None,

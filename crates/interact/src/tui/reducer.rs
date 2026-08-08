@@ -744,12 +744,33 @@ pub fn reduce_terminal(
         fabric::protocol::client::ClientEvent::Failed { .. } => fabric::TurnTerminalStatus::Failed,
         _ => return false,
     };
+    finish_live_turn(state, status);
+    true
+}
+
+/// Settle reducer-local progress when the compatibility stream reaches its
+/// terminal boundary. Durable conversation and task truth still arrive through
+/// the Session projection; this only prevents an already-finished turn from
+/// remaining visibly `running` while that projection catches up.
+pub fn finish_live_turn(state: &mut AppState, status: fabric::TurnTerminalStatus) {
+    let activity_state = match status {
+        fabric::TurnTerminalStatus::Completed => ActivityState::Completed,
+        fabric::TurnTerminalStatus::Interrupted => ActivityState::Cancelled,
+        fabric::TurnTerminalStatus::Failed => ActivityState::Failed,
+    };
+    for activity in &mut state.activities {
+        if state.live_activity_ids.contains(&activity.activity_id)
+            && activity.state == ActivityState::Running
+        {
+            activity.state = activity_state;
+        }
+    }
+    state.live_activity_ids.clear();
     state.last_terminal_status = Some(status);
     state.streaming = false;
     state.turn_active = false;
     state.active_turn_id = None;
     state.live_turn_id = None;
-    true
 }
 
 fn advance(state: &mut AppState, cursor: &EventCursor) -> bool {
@@ -877,6 +898,9 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
             format!("Turn recovery settled: {classification:?}"),
             true,
         ),
+        ItemPayload::TurnSettlement { status, content } => {
+            ("assistant".into(), format!("{content} ({status:?})"), false)
+        }
         ItemPayload::ContextProjection { space, .. } => ("context".into(), space.clone(), true),
         ItemPayload::SystemNotice { content } => ("system".into(), content.clone(), false),
     }

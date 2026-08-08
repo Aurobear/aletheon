@@ -1220,6 +1220,7 @@ impl TurnPipeline {
         let session_input = self.session_input.clone();
         let prompt_queue_enabled = self.prompt_queue_enabled;
         let react_cancel = scope_token.clone();
+        let react_task_cancel = react_cancel.clone();
         let react_llm = llm.clone();
         scope.spawn("turn-react", async move {
             let result: anyhow::Result<fabric::TurnResult> = async move {
@@ -1276,6 +1277,11 @@ impl TurnPipeline {
                     fabric::OperationExitReason::Failed(format!("{:?}", turn.stop))
                 }
                 Ok(_) => fabric::OperationExitReason::Completed,
+                Err(error) if react_task_cancel.is_cancelled() => {
+                    fabric::OperationExitReason::Cancelled(fabric::CancelReason::Other(
+                        error.to_string(),
+                    ))
+                }
                 Err(error) => fabric::OperationExitReason::Failed(error.to_string()),
             };
             let _ = react_result_tx.send(result);

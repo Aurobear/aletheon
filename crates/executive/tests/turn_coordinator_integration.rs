@@ -646,6 +646,18 @@ async fn cancel_mid_turn() {
         .await
         .unwrap();
     assert_eq!(op.state, OperationState::Cancelled);
+    let items = test
+        .store
+        .load_items(&SessionId("cancel-mid".into()), None)
+        .await
+        .unwrap();
+    assert!(matches!(
+        items.last().map(|item| &item.payload),
+        Some(ItemPayload::TurnSettlement {
+            status: fabric::TurnTerminalStatus::Interrupted,
+            content,
+        }) if !content.trim().is_empty()
+    ));
 }
 
 //

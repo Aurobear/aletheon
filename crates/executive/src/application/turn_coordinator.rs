@@ -979,18 +979,21 @@ impl TurnCoordinator {
                         }
                     }
                 }
+                if result.stop == TurnStop::Cancelled && result.output.trim().is_empty() {
+                    result.output = cancelled_result().output;
+                }
                 let terminal = if result.stop == TurnStop::Completed {
                     ItemPayload::AssistantMessage {
                         content: result.output.clone(),
                     }
+                } else if result.stop == TurnStop::Cancelled {
+                    ItemPayload::TurnSettlement {
+                        status: fabric::TurnTerminalStatus::Interrupted,
+                        content: result.output.clone(),
+                    }
                 } else {
                     ItemPayload::SystemNotice {
-                        content: if result.stop == TurnStop::Cancelled {
-                            "Previous turn was cancelled. Its objective is closed. Do not resume that objective unless the current user explicitly asks to continue it; reconcile only the new user input."
-                                .to_string()
-                        } else {
-                            format!("turn stopped: {:?}", result.stop)
-                        },
+                        content: format!("turn stopped: {:?}", result.stop),
                     }
                 };
                 self.append_tracked(
@@ -1073,9 +1076,10 @@ impl TurnCoordinator {
             session_id,
             turn_id,
             &mut sequence,
-            ItemPayload::SystemNotice {
+            ItemPayload::TurnSettlement {
+                status: fabric::TurnTerminalStatus::Interrupted,
                 content: format!(
-                    "Previous turn was cancelled ({reason:?}). Its objective is closed. Do not resume that objective unless the current user explicitly asks to continue it; reconcile only the new user input."
+                    "Turn cancelled ({reason:?}). The cancelled turn objective is closed."
                 ),
             },
             WritePhase::TerminalFlush,
