@@ -55,14 +55,14 @@ def changed_paths(root: Path, base: str | None) -> list[str]:
                     root,
                     "diff",
                     "--name-only",
-                    "--diff-filter=ACMR",
+                    "--diff-filter=ACMRD",
                     f"{merge_base[0]}..HEAD",
                 )
             )
-    paths.update(git_lines(root, "diff", "--name-only", "--diff-filter=ACMR"))
+    paths.update(git_lines(root, "diff", "--name-only", "--diff-filter=ACMRD"))
     paths.update(
         git_lines(
-            root, "diff", "--cached", "--name-only", "--diff-filter=ACMR"
+            root, "diff", "--cached", "--name-only", "--diff-filter=ACMRD"
         )
     )
     paths.update(git_lines(root, "ls-files", "--others", "--exclude-standard"))
@@ -140,16 +140,35 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
             steps,
             Step("check", cargo + ("check", "-p", name), f"package {name} changed"),
         )
-        if any(
+        rust_or_manifest_changed = any(
             path.endswith(".rs") and f"{package_root}/tests/" not in path
             for path in package_paths
-        ) or any(path.endswith("Cargo.toml") for path in package_paths):
+        ) or any(path.endswith("Cargo.toml") for path in package_paths)
+        if rust_or_manifest_changed:
+            target_kinds = {
+                kind
+                for target in package.get("targets", [])
+                for kind in target.get("kind", [])
+            }
+            if "lib" in target_kinds:
+                unit_args = ("--lib",)
+                unit_reason = f"package {name} library code changed"
+            elif "bin" in target_kinds:
+                unit_args = ("--bins",)
+                unit_reason = f"package {name} binary code changed"
+            else:
+                unit_args = ()
+                unit_reason = ""
+        else:
+            unit_args = ()
+            unit_reason = ""
+        if unit_args:
             append_unique(
                 steps,
                 Step(
                     "test",
-                    cargo + ("test", "-p", name, "--lib"),
-                    f"package {name} library code changed",
+                    cargo + ("test", "-p", name) + unit_args,
+                    unit_reason,
                 ),
             )
 

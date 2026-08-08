@@ -1946,6 +1946,11 @@ mod tests {
             "[package]\nname='demo'\nversion='0.1.0'\n",
         )
         .unwrap();
+        std::fs::write(
+            crate_root.join("tests/contract.rs"),
+            "#[test]\nfn contract() {}\n",
+        )
+        .unwrap();
         let context = RepositoryContext {
             root: temp.path().display().to_string(),
             version: "context".into(),
@@ -1986,6 +1991,17 @@ mod tests {
             .steps
             .iter()
             .any(|step| step.command == "bash scripts/cargo-agent.sh test -p demo --tests"));
+
+        std::fs::remove_file(crate_root.join("tests/contract.rs")).unwrap();
+        let deleted = derive_validation_plan(&context, &["crates/demo/tests/contract.rs".into()]);
+        assert!(deleted
+            .steps
+            .iter()
+            .any(|step| step.command == "bash scripts/cargo-agent.sh test -p demo --tests"));
+        assert!(!deleted
+            .steps
+            .iter()
+            .any(|step| step.command.ends_with("--test contract")));
     }
 
     #[tokio::test]

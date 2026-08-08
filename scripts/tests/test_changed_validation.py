@@ -16,7 +16,7 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
-def package(root: Path, name: str, dependencies=(), tests=()):
+def package(root: Path, name: str, dependencies=(), tests=(), target_kind="lib"):
     package_root = root / "crates" / name
     return {
         "id": f"path+file://{package_root}#{name}@0.1.0",
@@ -24,6 +24,17 @@ def package(root: Path, name: str, dependencies=(), tests=()):
         "manifest_path": str(package_root / "Cargo.toml"),
         "dependencies": [{"name": dependency} for dependency in dependencies],
         "targets": [
+            {
+                "name": name,
+                "kind": [target_kind],
+                "src_path": str(
+                    package_root
+                    / "src"
+                    / ("lib.rs" if target_kind == "lib" else "main.rs")
+                ),
+            }
+        ]
+        + [
             {
                 "name": target,
                 "kind": ["test"],
@@ -59,6 +70,46 @@ class ChangedValidationTests(unittest.TestCase):
         self.assertIn(("bash", "scripts/cargo-agent.sh", "test", "-p", "core", "--lib"), commands)
         self.assertIn(("bash", "scripts/cargo-agent.sh", "check", "-p", "client"), commands)
         self.assertNotIn(("bash", "scripts/cargo-agent.sh", "test", "-p", "core", "--tests"), commands)
+
+    def test_binary_only_source_change_uses_bin_tests(self):
+        binary = package(self.root, "runner", target_kind="bin")
+        metadata = {"packages": [binary], "workspace_members": [binary["id"]]}
+        commands = [
+            step.command
+            for step in MODULE.derive_steps(
+                self.root, ["crates/runner/src/main.rs"], metadata
+            )
+        ]
+        self.assertIn(
+            ("bash", "scripts/cargo-agent.sh", "test", "-p", "runner", "--bins"),
+            commands,
+        )
+        self.assertNotIn(
+            ("bash", "scripts/cargo-agent.sh", "test", "-p", "runner", "--lib"),
+            commands,
+        )
+
+    def test_deleted_paths_are_included_in_the_diff(self):
+        deleted = self.root / "crates/core/src/lib.rs"
+        deleted.parent.mkdir(parents=True, exist_ok=True)
+        deleted.write_text("pub fn value() {}\n", encoding="utf-8")
+        MODULE.subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        MODULE.subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=self.root,
+            check=True,
+        )
+        MODULE.subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=self.root, check=True
+        )
+        MODULE.subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        MODULE.subprocess.run(
+            ["git", "commit", "-qm", "baseline"], cwd=self.root, check=True
+        )
+        base = MODULE.git_lines(self.root, "rev-parse", "HEAD")[0]
+        deleted.unlink()
+
+        self.assertEqual(MODULE.changed_paths(self.root, base), ["crates/core/src/lib.rs"])
 
     def test_changed_integration_entry_selects_only_that_target(self):
         commands = self.commands(["crates/core/tests/contract.rs"])

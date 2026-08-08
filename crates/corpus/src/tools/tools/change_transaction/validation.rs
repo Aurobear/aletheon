@@ -157,7 +157,12 @@ pub(super) fn derive_validation_plan(
                 .filter_map(|path| path.strip_prefix(&integration_prefix))
                 .filter(|path| path.ends_with(".rs"))
             {
-                if !path.contains('/') {
+                if !path.contains('/')
+                    && Path::new(&context.root)
+                        .join(&integration_prefix)
+                        .join(path)
+                        .is_file()
+                {
                     exact_integration_targets.insert(path.trim_end_matches(".rs").to_string());
                 } else {
                     shared_integration_support_changed = true;
