@@ -212,14 +212,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.turn_activity.inference_rounds += 1;
             let tokens_in = usage.total_input_tokens.unwrap_or(0);
             let tokens_out = usage.output_tokens.unwrap_or(0);
-            app.app_state.turn_input_tokens = app
-                .app_state
-                .turn_input_tokens
-                .saturating_add(tokens_in);
-            app.app_state.turn_output_tokens = app
-                .app_state
-                .turn_output_tokens
-                .saturating_add(tokens_out);
+            app.app_state.turn_input_tokens =
+                app.app_state.turn_input_tokens.saturating_add(tokens_in);
+            app.app_state.turn_output_tokens =
+                app.app_state.turn_output_tokens.saturating_add(tokens_out);
             app.app_state.total_tokens = app
                 .app_state
                 .total_tokens

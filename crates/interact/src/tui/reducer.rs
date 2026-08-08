@@ -517,10 +517,7 @@ mod tests {
                 effective_model: Some("deepseek-v4-flash".into()),
                 context_capacity_tokens: Some(1_000_000),
                 active_context_occupancy_tokens: Some(8_000),
-                cumulative_usage: fabric::InferenceUsage::unsupported(
-                    Some(10_000),
-                    Some(500),
-                ),
+                cumulative_usage: fabric::InferenceUsage::unsupported(Some(10_000), Some(500)),
                 inference_rounds: 2,
                 provider_retries: Some(0),
                 tool_calls: 1,
