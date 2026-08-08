@@ -60,8 +60,15 @@ def _require_safe_regular_file(path: Path, label: str) -> list[str]:
     return reasons
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is not accepted: {value}")
+
+
 def _load_json_file(path: Path, label: str) -> tuple[dict | None, list[str]]:
-    """Load and parse a JSON file; returns (parsed_dict, reasons)."""
+    """Load and parse a JSON file; returns (parsed_dict, reasons).
+
+    Rejects NaN/Infinity via parse_constant.
+    """
     reasons = _require_safe_regular_file(path, label)
     if reasons:
         return None, reasons
@@ -70,8 +77,8 @@ def _load_json_file(path: Path, label: str) -> tuple[dict | None, list[str]]:
     except OSError as exc:
         return None, [f"cannot read {label}: {exc}"]
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = json.loads(raw, parse_constant=_reject_json_constant)
+    except (json.JSONDecodeError, ValueError) as exc:
         return None, [f"cannot parse {label}: {exc}"]
     if not isinstance(data, dict):
         return None, [f"{label} is not a JSON object"]
@@ -117,11 +124,12 @@ def verify_metadata(
 
     if metadata.get("device") != expected_device:
         reasons.append(
-            f"metadata device {metadata.get('device')!r} "
-            f"!= expected {expected_device!r}"
+            f"metadata device mismatch: "
+            f"expected={expected_device!r}"
         )
 
-    # generated_utc must be a parseable timezone-aware UTC timestamp
+    # generated_utc must be a parseable UTC timestamp with offset exactly zero
+    generated_dt: datetime | None = None
     generated_utc = metadata.get("generated_utc")
     if not isinstance(generated_utc, str):
         reasons.append("metadata generated_utc must be a string")
@@ -138,10 +146,98 @@ def verify_metadata(
                 reasons.append(
                     "metadata generated_utc must be timezone-aware (UTC)"
                 )
+            elif dt.utcoffset() != timezone.utc.utcoffset(None):
+                reasons.append(
+                    "metadata generated_utc UTC offset must be exactly zero"
+                )
+            else:
+                generated_dt = dt
+
+    # stage_completed_utc must be present, parseable, UTC offset exactly zero
+    stage_dt: datetime | None = None
+    stage_completed_utc = metadata.get("stage_completed_utc")
+    if not isinstance(stage_completed_utc, str):
+        reasons.append("metadata stage_completed_utc must be a non-empty string")
+    else:
+        try:
+            dt_stage = datetime.fromisoformat(stage_completed_utc)
+        except (ValueError, TypeError):
+            reasons.append(
+                f"metadata stage_completed_utc is not a valid ISO timestamp: "
+                f"{stage_completed_utc!r}"
+            )
+        else:
+            if dt_stage.tzinfo is None:
+                reasons.append(
+                    "metadata stage_completed_utc must be timezone-aware (UTC)"
+                )
+            elif dt_stage.utcoffset() != timezone.utc.utcoffset(None):
+                reasons.append(
+                    "metadata stage_completed_utc UTC offset must be exactly zero"
+                )
+            else:
+                stage_dt = dt_stage
+
+    if (
+        generated_dt is not None
+        and stage_dt is not None
+        and generated_dt < stage_dt
+    ):
+        reasons.append("metadata generated_utc must not precede stage_completed_utc")
+
+    # stage_completed_unix_ms must be a non-negative integer
+    stage_completed_unix_ms = metadata.get("stage_completed_unix_ms")
+    if (
+        not isinstance(stage_completed_unix_ms, int)
+        or isinstance(stage_completed_unix_ms, bool)
+        or stage_completed_unix_ms < 0
+    ):
+        reasons.append("metadata stage_completed_unix_ms must be a non-negative integer")
+    elif stage_dt is not None:
+        stage_utc_unix_ms = int(stage_dt.timestamp() * 1000)
+        if stage_completed_unix_ms != stage_utc_unix_ms:
+            reasons.append(
+                "metadata stage_completed_utc and stage_completed_unix_ms "
+                "must describe the same instant"
+            )
+
+    # Settlement timestamps must be non-negative and no older than the stage.
+    for field in (
+        "positive_settled_at_unix_ms",
+        "negative_settled_at_unix_ms",
+    ):
+        val = metadata.get(field)
+        if not isinstance(val, int) or isinstance(val, bool) or val < 0:
+            reasons.append(f"metadata {field} must be a non-negative integer")
+        elif (
+            isinstance(stage_completed_unix_ms, int)
+            and not isinstance(stage_completed_unix_ms, bool)
+            and val < stage_completed_unix_ms
+        ):
+            reasons.append(
+                f"metadata {field}={val} is before "
+                f"stage_completed_unix_ms={stage_completed_unix_ms}"
+            )
+
+    # positive/negative episode IDs must differ (embedded in metadata for freshness)
+    pos_ep_id_meta = metadata.get("positive_episode_id")
+    neg_ep_id_meta = metadata.get("negative_episode_id")
+    if not isinstance(pos_ep_id_meta, str) or not pos_ep_id_meta.strip():
+        reasons.append("metadata positive_episode_id must be a non-empty string")
+    if not isinstance(neg_ep_id_meta, str) or not neg_ep_id_meta.strip():
+        reasons.append("metadata negative_episode_id must be a non-empty string")
+    if (
+        isinstance(pos_ep_id_meta, str)
+        and isinstance(neg_ep_id_meta, str)
+        and pos_ep_id_meta.strip() == neg_ep_id_meta.strip()
+    ):
+        reasons.append("metadata positive_episode_id and negative_episode_id must differ")
 
     # recompute actual RC archive digest
     rc_archive_sha256 = metadata.get("rc_archive_sha256")
-    if not isinstance(rc_archive_sha256, str) or not _is_lowercase_hex(rc_archive_sha256, 64):
+    if not isinstance(rc_archive_sha256, str) or not _is_lowercase_hex(
+        rc_archive_sha256, 64
+    ):
         reasons.append("metadata rc_archive_sha256 must be a 64-char lowercase hex string")
     else:
         file_reasons = _require_safe_regular_file(expected_rc_archive_path, "RC archive")
@@ -238,14 +334,16 @@ def _validate_runtime_facts(
     if not isinstance(policy, dict):
         reasons.append("runtime_facts policy must be a dict")
     else:
-        for field in ("provider", "model", "version", "protocol", "digest"):
+        for field in ("provider", "model", "version", "protocol_version", "digest"):
             val = policy.get(field)
             if not isinstance(val, str) or not val:
                 reasons.append(
                     f"runtime_facts policy.{field} must be a non-empty string"
                 )
         pol_digest = policy.get("digest", "")
-        if not _is_lowercase_hex(pol_digest, 64):
+        if not isinstance(pol_digest, str) or not _is_lowercase_hex(
+            pol_digest, 64
+        ):
             reasons.append(
                 "runtime_facts policy.digest must be a 64-char lowercase hex string"
             )
@@ -277,9 +375,18 @@ def verify_positive_receipt(
             f" got {receipt.get('settlement')!r}"
         )
 
-    # at least one attempt
+    # episode_id must be non-empty
+    episode_id = receipt.get("episode_id")
+    if not isinstance(episode_id, str) or not episode_id.strip():
+        reasons.append("positive receipt episode_id must be a non-empty string")
+
+    # at least one attempt (reject bool masquerading as int)
     attempt_count = receipt.get("attempt_count")
-    if not isinstance(attempt_count, int) or attempt_count < 1:
+    if (
+        not isinstance(attempt_count, int)
+        or isinstance(attempt_count, bool)
+        or attempt_count < 1
+    ):
         reasons.append(
             "positive receipt attempt_count must be a positive integer"
         )
@@ -296,19 +403,25 @@ def verify_positive_receipt(
                 f" != attempt_count {attempt_count}"
             )
         # unique and nonempty
+        operation_ids_are_strings = True
         for i, opid in enumerate(operation_ids):
             if not isinstance(opid, str) or not opid:
+                operation_ids_are_strings = False
                 reasons.append(
                     f"positive receipt operation_ids[{i}] must be a "
                     f"non-empty string"
                 )
-        if len(set(operation_ids)) != len(operation_ids):
+        if operation_ids_are_strings and len(set(operation_ids)) != len(
+            operation_ids
+        ):
             reasons.append(
                 "positive receipt operation_ids must be unique"
             )
 
     report_sha256 = receipt.get("report_sha256")
-    if not isinstance(report_sha256, str) or not _is_lowercase_hex(report_sha256, 64):
+    if not isinstance(report_sha256, str) or not _is_lowercase_hex(
+        report_sha256, 64
+    ):
         reasons.append(
             "positive receipt report_sha256 must be a 64-char lowercase hex string"
         )
@@ -351,8 +464,17 @@ def verify_negative_receipt(
             f" got {receipt.get('settlement')!r}"
         )
 
+    # episode_id must be non-empty
+    episode_id = receipt.get("episode_id")
+    if not isinstance(episode_id, str) or not episode_id.strip():
+        reasons.append("negative receipt episode_id must be a non-empty string")
+
     attempt_count = receipt.get("attempt_count")
-    if not isinstance(attempt_count, int) or attempt_count < 0:
+    if (
+        not isinstance(attempt_count, int)
+        or isinstance(attempt_count, bool)
+        or attempt_count < 0
+    ):
         reasons.append(
             "negative receipt attempt_count must be a non-negative integer"
         )
@@ -366,19 +488,27 @@ def verify_negative_receipt(
                 f"negative receipt operation_ids count {len(operation_ids)}"
                 f" != attempt_count {attempt_count}"
             )
+        operation_ids_are_strings = True
         for i, opid in enumerate(operation_ids):
             if not isinstance(opid, str) or not opid:
+                operation_ids_are_strings = False
                 reasons.append(
                     f"negative receipt operation_ids[{i}] must be a "
                     f"non-empty string"
                 )
-        if len(operation_ids) > 0 and len(set(operation_ids)) != len(operation_ids):
+        if (
+            operation_ids_are_strings
+            and len(operation_ids) > 0
+            and len(set(operation_ids)) != len(operation_ids)
+        ):
             reasons.append(
                 "negative receipt operation_ids must be unique when non-empty"
             )
 
     report_sha256 = receipt.get("report_sha256")
-    if not isinstance(report_sha256, str) or not _is_lowercase_hex(report_sha256, 64):
+    if not isinstance(report_sha256, str) or not _is_lowercase_hex(
+        report_sha256, 64
+    ):
         reasons.append(
             "negative receipt report_sha256 must be a 64-char lowercase hex string"
         )
@@ -387,6 +517,16 @@ def verify_negative_receipt(
     if not isinstance(safe_stop, dict):
         reasons.append("negative receipt safe_stop must be a dict")
     else:
+        # Authoritative SafeStopReceipt keys: exactly outcome,
+        # attempted_after_attempt, and optional trigger. Reject
+        # invented extra keys (e.g. triggered, status, etc.).
+        allowed_keys = {"outcome", "attempted_after_attempt", "trigger"}
+        extra_keys = set(safe_stop.keys()) - allowed_keys
+        if extra_keys:
+            reasons.append(
+                "negative receipt safe_stop contains disallowed keys: "
+                + ", ".join(sorted(extra_keys))
+            )
         outcome = safe_stop.get("outcome")
         if outcome != "succeeded":
             reasons.append(
@@ -394,21 +534,28 @@ def verify_negative_receipt(
                 f" got {outcome!r}"
             )
         # attempted_after_attempt must be a non-negative integer equal to
-        # attempt_count (per authoritative robot_r8_evidence.py:268-270)
+        # attempt_count (per authoritative robot_r8_evidence.py:268-270).
+        # Reject bool masquerading as int.
         after_attempt = safe_stop.get("attempted_after_attempt")
-        if not isinstance(after_attempt, int) or after_attempt < 0:
+        if (
+            not isinstance(after_attempt, int)
+            or isinstance(after_attempt, bool)
+            or after_attempt < 0
+        ):
             reasons.append(
                 "negative receipt safe_stop.attempted_after_attempt must "
                 "be a non-negative integer"
             )
-        elif isinstance(attempt_count, int) and after_attempt != attempt_count:
+        elif (
+            isinstance(attempt_count, int)
+            and not isinstance(attempt_count, bool)
+            and after_attempt != attempt_count
+        ):
             reasons.append(
                 f"negative receipt safe_stop.attempted_after_attempt "
                 f"{after_attempt} != attempt_count {attempt_count}"
             )
         # trigger is optional; if present it must be a non-empty string.
-        # Do NOT require safe_stop.triggered (the authoritative schema
-        # does not include that field).
         if "trigger" in safe_stop:
             trigger = safe_stop["trigger"]
             if trigger is not None and (
@@ -445,6 +592,22 @@ def verify_distinct_episodes(
         reasons.append(
             "positive and negative report_sha256 must differ"
         )
+    return reasons
+
+
+def verify_metadata_receipt_binding(
+    metadata: dict, positive: dict, negative: dict
+) -> list[str]:
+    """Bind freshness metadata to the exact receipt episode identifiers."""
+    reasons: list[str] = []
+    for label, receipt in (("positive", positive), ("negative", negative)):
+        metadata_id = metadata.get(f"{label}_episode_id")
+        receipt_id = receipt.get("episode_id")
+        if metadata_id != receipt_id:
+            reasons.append(
+                f"metadata {label}_episode_id {metadata_id!r} does not match "
+                f"the {label} receipt episode_id {receipt_id!r}"
+            )
     return reasons
 
 
@@ -506,6 +669,10 @@ def run_verifier(
     # --- cross-validation ---
     if positive is not None and negative is not None:
         errors.extend(verify_distinct_episodes(positive, negative))
+        if metadata is not None:
+            errors.extend(
+                verify_metadata_receipt_binding(metadata, positive, negative)
+            )
 
     if errors:
         print("R8 evidence verification FAILED:", file=sys.stderr)

@@ -8,7 +8,7 @@ immutable release candidate, not this document.
 ## Not Yet Accepted
 
 These capabilities have implementation code and focused tests but have not
-passed a release-level acceptance gate.
+passed a release-level acceptance gate. They remain operational blockers.
 
 ### Physical HIL (H1)
 
@@ -20,20 +20,38 @@ passed a release-level acceptance gate.
 - **ADR Reference**: Physical HIL/real robot is subject to an independent
   safety gate per ADR.
 
-### Robot R8 Acceptance
+### Robot R8 Live Post-Stage Tasks
 
-- **Status**: Mandatory gate consumed by the release workflow.
-- **Entrypoint**: `scripts/aletheon.sh acceptance robot-r8`
-- **Scope**: Fresh installed acceptance with positive (completed) and negative
-  (failed + safe-stop) Robot task evidence, daemon restart, and SQLite
-  cross-validation.
-- **Impact**: The automated release workflow downloads R8 evidence produced
-  by the self-hosted `r8-evidence-handoff.yml` workflow for the exact
-  GITHUB_SHA and verifies it with
-  `tests/coding/harness/r8_evidence_verifier.py`. A release will not publish
-  until authoritative positive and negative R8 receipts are consumed. Fixture
-  tests (`scripts/tests/test_robot_r8_evidence.py`) prove checker behavior
-  only and are not substitutes for fresh installed Robot acceptance.
+- **Status**: Operator-driven manual gate after the stage-rc job.
+- **Validation entrypoint**: `scripts/aletheon.sh acceptance robot-r8`
+- **Scope**: Fresh positive (completed) and negative (failed + safe-stop)
+  Robot task evidence produced on the exact staged binary, with daemon
+  restart and SQLite cross-validation.
+- **Impact**: The `r8-evidence-handoff.yml` workflow pauses for operator
+  approval after staging the RC. Live task execution and report capture are
+  operator responsibilities. The automated verifier validates the resulting
+  receipts but does not execute the tasks. The first Release gate fails closed
+  until that artifact exists; after handoff completes, the operator re-runs
+  the failed Release jobs with the same run ID.
+
+### Release Promotion and Tag/Publish/Smoke
+
+- **Status**: Release-time operational gates, not yet executed for any
+  tagged release.
+- **Scope**: `dev` to `main` promotion, immutable RC acceptance, semantic
+  tag creation, GitHub Release publishing, and post-release smoke.
+- **Impact**: These gates are defined in the release workflow but their
+  execution for a specific tag remains a release-time operation. No static
+  documentation can substitute for having run them.
+
+### Environment Protection/Configuration
+
+- **Status**: Required for the `robot-r8-release` GitHub Environment.
+- **Scope**: The self-hosted runner's topology, credentials, database paths,
+  and environment variables must be pre-configured and protected.
+- **Impact**: Without proper environment configuration, the handoff workflow
+  cannot produce valid evidence. This is an operational prerequisite, not a
+  code-level gate.
 
 ### Convergence Changes Versus Tagged Releases
 

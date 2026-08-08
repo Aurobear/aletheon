@@ -28,6 +28,7 @@ from r8_evidence_verifier import (  # noqa: E402
     verify_negative_receipt,
     verify_metadata,
     verify_distinct_episodes,
+    verify_metadata_receipt_binding,
     run_verifier,
 )
 
@@ -56,7 +57,7 @@ def _make_positive_receipt(**overrides) -> dict:
                 "provider": "test",
                 "model": "test-model",
                 "version": "1.0",
-                "protocol": "1.0",
+                "protocol_version": "1.0",
                 "digest": "d" * 64,
             },
         },
@@ -87,7 +88,7 @@ def _make_negative_receipt(**overrides) -> dict:
                 "provider": "test",
                 "model": "test-model",
                 "version": "1.0",
-                "protocol": "1.0",
+                "protocol_version": "1.0",
                 "digest": "d" * 64,
             },
         },
@@ -107,6 +108,12 @@ def _make_metadata(**overrides) -> dict:
         "negative_receipt_sha256": "d" * 64,
         "device": FIXTURE_DEVICE,
         "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "stage_completed_utc": "2026-08-07T12:00:00+00:00",
+        "stage_completed_unix_ms": 1786104000000,
+        "positive_settled_at_unix_ms": 1786104005000,
+        "negative_settled_at_unix_ms": 1786104006000,
+        "positive_episode_id": "ep-001",
+        "negative_episode_id": "ep-neg-001",
     }
     base.update(overrides)
     return base
@@ -191,6 +198,41 @@ class PositiveReceiptTest(unittest.TestCase):
         reasons = verify_positive_receipt(receipt, FIXTURE_DEVICE)
         self.assertTrue(any("non-empty string" in r for r in reasons))
 
+    def test_rejects_empty_episode_id(self):
+        receipt = _make_positive_receipt(episode_id="")
+        reasons = verify_positive_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("episode_id" in r for r in reasons))
+
+    def test_rejects_bool_attempt_count(self):
+        receipt = _make_positive_receipt(attempt_count=True)
+        reasons = verify_positive_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("attempt_count" in r for r in reasons))
+
+    def test_rejects_policy_missing_protocol_version_field(self):
+        receipt = _make_positive_receipt()
+        receipt["runtime_facts"]["policy"] = {
+            "provider": "test",
+            "model": "test-model",
+            "version": "1.0",
+            "protocol": "1.0",
+            "digest": "d" * 64,
+        }
+        reasons = verify_positive_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("protocol_version" in r for r in reasons))
+
+    def test_rejects_non_string_policy_digest_without_crashing(self):
+        receipt = _make_positive_receipt()
+        receipt["runtime_facts"]["policy"]["digest"] = 7
+        reasons = verify_positive_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("policy.digest" in r for r in reasons))
+
+    def test_rejects_unhashable_operation_id_without_crashing(self):
+        receipt = _make_positive_receipt(
+            attempt_count=1, operation_ids=[{"invented": "operation"}]
+        )
+        reasons = verify_positive_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("operation_ids[0]" in r for r in reasons))
+
 
 # ---------------------------------------------------------------------------
 # verify_negative_receipt
@@ -216,10 +258,19 @@ class NegativeReceiptTest(unittest.TestCase):
         self.assertEqual(reasons, [])
 
     def test_rejects_invented_safe_stop_triggered_field(self):
+        # The authoritative SafeStopReceipt schema allows exactly
+        # outcome, attempted_after_attempt, and optional trigger.
+        # An invented "triggered" key must cause rejection.
         receipt = _make_negative_receipt()
         receipt["safe_stop"]["triggered"] = True
         reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
-        self.assertEqual(reasons, [])
+        self.assertTrue(any("disallowed keys" in r for r in reasons))
+
+    def test_rejects_extra_safe_stop_keys(self):
+        receipt = _make_negative_receipt()
+        receipt["safe_stop"]["status"] = "ok"
+        reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("disallowed keys" in r for r in reasons))
 
     def test_rejects_wrong_schema_version(self):
         receipt = _make_negative_receipt(schema_version=2)
@@ -277,6 +328,46 @@ class NegativeReceiptTest(unittest.TestCase):
         reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
         self.assertTrue(any("operation_ids count" in r for r in reasons))
 
+    def test_rejects_negative_empty_episode_id(self):
+        receipt = _make_negative_receipt(episode_id="")
+        reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("episode_id" in r for r in reasons))
+
+    def test_rejects_bool_attempted_after_attempt(self):
+        receipt = _make_negative_receipt()
+        receipt["safe_stop"]["attempted_after_attempt"] = True
+        reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("attempted_after_attempt" in r for r in reasons))
+
+    def test_rejects_bool_attempt_count_negative(self):
+        receipt = _make_negative_receipt(attempt_count=True)
+        reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("attempt_count" in r for r in reasons))
+
+    def test_rejects_policy_missing_protocol_version_neg(self):
+        receipt = _make_negative_receipt()
+        receipt["runtime_facts"]["policy"] = {
+            "provider": "test",
+            "model": "test-model",
+            "version": "1.0",
+            "protocol": "1.0",
+            "digest": "d" * 64,
+        }
+        reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("protocol_version" in r for r in reasons))
+
+    def test_rejects_unhashable_operation_id_negative_without_crashing(self):
+        receipt = _make_negative_receipt(
+            attempt_count=1,
+            operation_ids=[["invented"]],
+            safe_stop={
+                "outcome": "succeeded",
+                "attempted_after_attempt": 1,
+            },
+        )
+        reasons = verify_negative_receipt(receipt, FIXTURE_DEVICE)
+        self.assertTrue(any("operation_ids[0]" in r for r in reasons))
+
 
 # ---------------------------------------------------------------------------
 # verify_distinct_episodes
@@ -308,6 +399,14 @@ class DistinctEpisodesTest(unittest.TestCase):
             ),
         )
         self.assertTrue(any("report_sha256" in r for r in reasons))
+
+    def test_metadata_episode_ids_must_match_receipts(self):
+        reasons = verify_metadata_receipt_binding(
+            _make_metadata(positive_episode_id="wrong-positive"),
+            _make_positive_receipt(),
+            _make_negative_receipt(),
+        )
+        self.assertTrue(any("positive_episode_id" in r for r in reasons))
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +533,20 @@ class MetadataTest(unittest.TestCase):
         )
         self.assertTrue(any("generated_utc" in r for r in reasons))
 
+    def test_generated_utc_before_stage_fails(self):
+        meta = _make_metadata(
+            generated_utc="2026-08-07T11:59:59+00:00",
+            rc_archive_sha256=self._archive_digest,
+            positive_receipt_sha256=self._pos_digest,
+            negative_receipt_sha256=self._neg_digest,
+        )
+        reasons = verify_metadata(
+            meta, FIXTURE_COMMIT, FIXTURE_RUN_ID,
+            self._rc_archive, meta["installed_digest"],
+            FIXTURE_DEVICE, self._pos, self._neg,
+        )
+        self.assertTrue(any("must not precede" in r for r in reasons))
+
     def test_positive_receipt_digest_mismatch_fails(self):
         meta = _make_metadata(
             rc_archive_sha256=self._archive_digest,
@@ -459,6 +572,93 @@ class MetadataTest(unittest.TestCase):
             FIXTURE_DEVICE, self._pos, self._neg,
         )
         self.assertTrue(any("negative_receipt_sha256" in r for r in reasons))
+
+    def test_generated_utc_nonzero_offset_fails(self):
+        meta = _make_metadata(
+            generated_utc="2026-08-07T12:00:00+02:00",
+            rc_archive_sha256=self._archive_digest,
+            positive_receipt_sha256=self._pos_digest,
+            negative_receipt_sha256=self._neg_digest,
+        )
+        reasons = verify_metadata(
+            meta, FIXTURE_COMMIT, FIXTURE_RUN_ID,
+            self._rc_archive, meta["installed_digest"],
+            FIXTURE_DEVICE, self._pos, self._neg,
+        )
+        self.assertTrue(any("UTC offset must be exactly zero" in r for r in reasons))
+
+    def test_stage_completed_utc_missing_fails(self):
+        meta = _make_metadata(
+            stage_completed_utc=None,
+            rc_archive_sha256=self._archive_digest,
+            positive_receipt_sha256=self._pos_digest,
+            negative_receipt_sha256=self._neg_digest,
+        )
+        reasons = verify_metadata(
+            meta, FIXTURE_COMMIT, FIXTURE_RUN_ID,
+            self._rc_archive, meta.get("installed_digest") or "b" * 64,
+            FIXTURE_DEVICE, self._pos, self._neg,
+        )
+        self.assertTrue(any("stage_completed_utc" in r for r in reasons))
+
+    def test_stage_completed_unix_ms_missing_fails(self):
+        meta = _make_metadata(
+            stage_completed_unix_ms=None,
+            rc_archive_sha256=self._archive_digest,
+            positive_receipt_sha256=self._pos_digest,
+            negative_receipt_sha256=self._neg_digest,
+        )
+        reasons = verify_metadata(
+            meta, FIXTURE_COMMIT, FIXTURE_RUN_ID,
+            self._rc_archive, meta["installed_digest"],
+            FIXTURE_DEVICE, self._pos, self._neg,
+        )
+        self.assertTrue(any("stage_completed_unix_ms" in r for r in reasons))
+
+    def test_stage_timestamp_representations_must_match(self):
+        meta = _make_metadata(
+            stage_completed_unix_ms=1786104000001,
+            rc_archive_sha256=self._archive_digest,
+            positive_receipt_sha256=self._pos_digest,
+            negative_receipt_sha256=self._neg_digest,
+        )
+        reasons = verify_metadata(
+            meta, FIXTURE_COMMIT, FIXTURE_RUN_ID,
+            self._rc_archive, meta["installed_digest"],
+            FIXTURE_DEVICE, self._pos, self._neg,
+        )
+        self.assertTrue(any("same instant" in r for r in reasons))
+
+    def test_settled_before_stage_fails(self):
+        meta = _make_metadata(
+            rc_archive_sha256=self._archive_digest,
+            positive_receipt_sha256=self._pos_digest,
+            negative_receipt_sha256=self._neg_digest,
+            stage_completed_utc="2026-08-07T12:00:05+00:00",
+            stage_completed_unix_ms=1786104005000,
+            positive_settled_at_unix_ms=1786104004000,
+        )
+        reasons = verify_metadata(
+            meta, FIXTURE_COMMIT, FIXTURE_RUN_ID,
+            self._rc_archive, meta["installed_digest"],
+            FIXTURE_DEVICE, self._pos, self._neg,
+        )
+        self.assertTrue(any("before stage_completed_unix_ms" in r for r in reasons))
+
+    def test_same_episode_ids_in_metadata_fails(self):
+        meta = _make_metadata(
+            rc_archive_sha256=self._archive_digest,
+            positive_receipt_sha256=self._pos_digest,
+            negative_receipt_sha256=self._neg_digest,
+            positive_episode_id="ep-same",
+            negative_episode_id="ep-same",
+        )
+        reasons = verify_metadata(
+            meta, FIXTURE_COMMIT, FIXTURE_RUN_ID,
+            self._rc_archive, meta["installed_digest"],
+            FIXTURE_DEVICE, self._pos, self._neg,
+        )
+        self.assertTrue(any("must differ" in r for r in reasons))
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +854,25 @@ class RunVerifierTest(unittest.TestCase):
         ))
         rc = run_verifier(
             meta, pos, neg,
+            FIXTURE_COMMIT, FIXTURE_RUN_ID,
+            self._rc_archive, installed_digest, FIXTURE_DEVICE,
+        )
+        self.assertEqual(rc, 1)
+
+    def test_parse_constant_nan_rejected(self):
+        # A receipt containing NaN must be rejected by parse_constant.
+        pos_path = self.tmp_dir / "positive.json"
+        pos_path.write_text('{"schema_version":1,"status":"REPORT_EVIDENCE_PASS","episode_id":"ep-001","settlement":"completed","report_sha256":"' + "e" * 64 + '","attempt_count":1,"operation_ids":["op-1"],"safe_stop":null,"runtime_facts":{"device":"kuavo-mujoco-01","scene":"s","bridge_protocol_digest":"' + "b" * 64 + '","skill_descriptor_digest":"' + "c" * 64 + '","policy":{"provider":"p","model":"m","version":"1.0","protocol_version":"1.0","digest":NaN}}}')
+        neg = self._write_json("negative.json", _make_negative_receipt())
+        installed_digest = "b" * 64
+        meta = self._write_json("metadata.json", _make_metadata(
+            rc_archive_sha256=self._archive_digest,
+            installed_digest=installed_digest,
+            positive_receipt_sha256="c" * 64,
+            negative_receipt_sha256=self._file_digest(neg),
+        ))
+        rc = run_verifier(
+            meta, pos_path, neg,
             FIXTURE_COMMIT, FIXTURE_RUN_ID,
             self._rc_archive, installed_digest, FIXTURE_DEVICE,
         )

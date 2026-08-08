@@ -52,8 +52,10 @@ current known limitations.
 - Physical HIL (H1): Not performed. Simulation R8 is the highest Robot
   evidence accepted by the release workflow; no physical-support claim is made.
 - Release promotion: `dev` to `main`, immutable RC acceptance, semantic tag,
-  and post-release smoke remain release-time gates; this unreleased entry does
-  not assert they have run.
+  and post-release smoke remain release-time operational gates; this unreleased
+  entry does not assert they have run.
+- Live post-stage positive/negative Robot tasks, tag/publish/smoke, and
+  environment protection/configuration remain operator-driven gates.
 
 ## [0.1.0] - 2026-06-06
 
