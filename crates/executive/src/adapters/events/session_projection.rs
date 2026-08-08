@@ -493,33 +493,52 @@ fn project_activities(task_id: &str, items: &[ItemRecord]) -> Vec<ActivitySnapsh
                 activity.receipt_ref = Some(format!("item:{}", item.id.0));
             }
             ItemPayload::CapabilityReceipt { receipt } => {
-                let activity_id = format!("capability:{}", receipt.invocation_id);
-                activities.insert(
-                    activity_id.clone(),
-                    ActivitySnapshot {
-                        activity_id,
-                        task_id: task_id.to_owned(),
-                        turn_id: item.turn_id,
-                        parent_activity_id: None,
-                        kind: if matches!(receipt.capability.as_str(), "exec_command" | "shell") {
-                            ActivityKind::Command
-                        } else {
-                            ActivityKind::Runtime
+                let state = match receipt.status {
+                    fabric::CapabilityTerminalStatus::Succeeded => ActivityState::Completed,
+                    fabric::CapabilityTerminalStatus::Failed
+                    | fabric::CapabilityTerminalStatus::TimedOut => ActivityState::Failed,
+                    fabric::CapabilityTerminalStatus::Cancelled => ActivityState::Cancelled,
+                };
+                let kind = if matches!(receipt.capability.as_str(), "exec_command" | "shell") {
+                    ActivityKind::Command
+                } else {
+                    ActivityKind::Runtime
+                };
+                let tool_activity_id = format!("tool:{}:{}", item.turn_id.0, receipt.invocation_id);
+                if let Some(activity) = activities.get_mut(&tool_activity_id) {
+                    // A model-visible tool call and its capability receipt are
+                    // two schemas for one execution, not two public actions.
+                    // Enrich the existing timeline entry with the authoritative
+                    // terminal receipt instead of rendering a duplicate row.
+                    if kind == ActivityKind::Command {
+                        activity.kind = ActivityKind::Command;
+                    }
+                    activity.state = state;
+                    activity.updated_at = item.created_at_ms;
+                    activity.artifact_refs.extend(receipt.artifact_ids.clone());
+                    activity.artifact_refs.sort();
+                    activity.artifact_refs.dedup();
+                    activity.receipt_ref = Some(format!("item:{}", item.id.0));
+                } else {
+                    let activity_id = format!("capability:{}", receipt.invocation_id);
+                    activities.insert(
+                        activity_id.clone(),
+                        ActivitySnapshot {
+                            activity_id,
+                            task_id: task_id.to_owned(),
+                            turn_id: item.turn_id,
+                            parent_activity_id: None,
+                            kind,
+                            label: receipt.capability.clone(),
+                            state,
+                            started_at: receipt.started_at.0,
+                            updated_at: receipt.finished_at.0,
+                            progress: None,
+                            artifact_refs: receipt.artifact_ids.clone(),
+                            receipt_ref: Some(format!("item:{}", item.id.0)),
                         },
-                        label: receipt.capability.clone(),
-                        state: match receipt.status {
-                            fabric::CapabilityTerminalStatus::Succeeded => ActivityState::Completed,
-                            fabric::CapabilityTerminalStatus::Failed
-                            | fabric::CapabilityTerminalStatus::TimedOut => ActivityState::Failed,
-                            fabric::CapabilityTerminalStatus::Cancelled => ActivityState::Cancelled,
-                        },
-                        started_at: receipt.started_at.0,
-                        updated_at: receipt.finished_at.0,
-                        progress: None,
-                        artifact_refs: receipt.artifact_ids.clone(),
-                        receipt_ref: Some(format!("item:{}", item.id.0)),
-                    },
-                );
+                    );
+                }
             }
             ItemPayload::RobotEpisodeReceipt { receipt } => {
                 project_robot_episode_activities(task_id, item, receipt, &mut activities);
@@ -1260,6 +1279,74 @@ mod tests {
         assert_eq!(activities.len(), 1);
         assert_eq!(activities[0].kind, ActivityKind::Command);
         assert_eq!(activities[0].state, ActivityState::Completed);
+        assert!(activities[0]
+            .receipt_ref
+            .as_deref()
+            .is_some_and(|receipt| receipt.starts_with("item:")));
+    }
+
+    #[test]
+    fn tool_and_capability_receipt_project_one_public_activity() {
+        let session_id = SessionId("agent-session".into());
+        let turn_id = fabric::TurnId::new();
+        let record = |sequence, payload| ItemRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: fabric::ItemId::new(),
+            session_id: session_id.clone(),
+            turn_id,
+            sequence,
+            created_at_ms: sequence * 10,
+            payload,
+        };
+        let items = vec![
+            record(
+                1,
+                ItemPayload::ToolCall {
+                    call_id: "agent-call-1".into(),
+                    name: "agent_wait".into(),
+                    input: serde_json::json!({"agent_id": "child"}),
+                },
+            ),
+            record(
+                2,
+                ItemPayload::ToolResult {
+                    call_id: "agent-call-1".into(),
+                    content: "succeeded".into(),
+                    is_error: false,
+                    permit_id: None,
+                    audit_id: None,
+                },
+            ),
+            record(
+                3,
+                ItemPayload::CapabilityReceipt {
+                    receipt: fabric::CapabilityTerminalReceipt {
+                        invocation_id: "agent-call-1".into(),
+                        operation_id: fabric::OperationId::new(),
+                        process_id: fabric::ProcessId::new(),
+                        capability: "agent_wait".into(),
+                        status: fabric::CapabilityTerminalStatus::Succeeded,
+                        started_at: fabric::MonoTime(10),
+                        finished_at: fabric::MonoTime(20),
+                        exit_code: None,
+                        error_class: None,
+                        artifact_ids: vec!["agent-result:child".into()],
+                        evidence_ids: vec![],
+                        output_ref: None,
+                        truncated: false,
+                        retry_disposition: fabric::CapabilityRetryDisposition::Never,
+                        audit_id: None,
+                    },
+                },
+            ),
+        ];
+
+        let activities = project_activities("task", &items);
+        assert_eq!(activities.len(), 1);
+        assert_eq!(activities[0].label, "agent_wait");
+        assert_eq!(activities[0].kind, ActivityKind::Tool);
+        assert_eq!(activities[0].state, ActivityState::Completed);
+        assert_eq!(activities[0].artifact_refs, ["agent-result:child"]);
         assert!(activities[0]
             .receipt_ref
             .as_deref()

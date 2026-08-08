@@ -44,6 +44,7 @@ package = "executive"
 source_paths = [
   "crates/executive/src/adapters/events/agent_timeline.rs",
   "crates/executive/src/adapters/events/mod.rs",
+  "crates/executive/src/adapters/events/session_projection.rs",
   "crates/executive/src/adapters/events/sqlite_event_spine.rs",
   "crates/executive/src/adapters/channel/daemon_adapter.rs",
   "crates/executive/src/adapters/runtime/pi_rpc.rs",
@@ -57,6 +58,7 @@ source_paths = [
   "crates/executive/src/host/daemon/handler/rpc.rs",
 ]
 lib_filters = [
+  "adapters::events::session_projection::",
   "adapters::runtime::pi_rpc::tests::",
   "application::admin_service::",
   "application::turn_coordinator::",

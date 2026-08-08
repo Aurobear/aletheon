@@ -100,15 +100,20 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             let new_turn = iteration == 0 || !app.turn_active;
             let observed_at = app.clock.mono_now().0;
             super::reducer::begin_live_turn(&mut app.app_state, None);
-            let _ = super::reducer::reduce(
-                &mut app.app_state,
-                super::reducer::UiAction::LiveActivity(
-                    super::reducer::LiveActivityEvent::InferenceStarted {
-                        iteration,
-                        observed_at,
-                    },
-                ),
-            );
+            // Cognit emits iteration 0 as a turn-lifecycle marker, then emits
+            // one-based inference iterations. Do not render the lifecycle
+            // marker as a phantom inference round.
+            if let Some(inference_index) = iteration.checked_sub(1) {
+                let _ = super::reducer::reduce(
+                    &mut app.app_state,
+                    super::reducer::UiAction::LiveActivity(
+                        super::reducer::LiveActivityEvent::InferenceStarted {
+                            iteration: inference_index,
+                            observed_at,
+                        },
+                    ),
+                );
+            }
             if new_turn {
                 app.stream_ctrl.start_turn();
                 app.status.elapsed_secs = 0.0;
@@ -278,7 +283,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 &mut app.app_state,
                 super::reducer::UiAction::LiveActivity(
                     super::reducer::LiveActivityEvent::InferenceFinished {
-                        iteration: app.current_iteration,
+                        iteration: app.current_iteration.saturating_sub(1),
                         observed_at,
                     },
                 ),
@@ -1857,6 +1862,7 @@ mod tests {
 
         for event in [
             fabric::ui_event::ClientEvent::TurnStarted { iteration: 0 },
+            fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 },
             fabric::ui_event::ClientEvent::Usage {
                 usage: fabric::InferenceUsage::unsupported(Some(100), Some(10)),
             },
@@ -1865,7 +1871,7 @@ mod tests {
                 tool: "file_read".into(),
                 args: serde_json::Value::Null,
             },
-            fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 },
+            fabric::ui_event::ClientEvent::TurnStarted { iteration: 2 },
             fabric::ui_event::ClientEvent::Usage {
                 usage: fabric::InferenceUsage::unsupported(Some(200), Some(20)),
             },
@@ -1882,7 +1888,17 @@ mod tests {
         assert_eq!(app.app_state.total_tokens, 330);
         assert_eq!(app.app_state.turn_activity.inference_rounds, 2);
         assert_eq!(app.app_state.turn_activity.tool_calls, 1);
-        assert_eq!(app.app_state.current_iteration, 1);
+        assert_eq!(app.app_state.current_iteration, 2);
+        let inference = app
+            .app_state
+            .activities
+            .iter()
+            .filter(|activity| activity.activity_id.contains(":inference:"))
+            .collect::<Vec<_>>();
+        assert_eq!(inference.len(), 2);
+        assert!(inference
+            .iter()
+            .all(|activity| activity.state == fabric::ActivityState::Completed));
         assert_eq!(app.app_state.context.used, Some(200));
         assert_eq!(app.app_state.context.max, Some(1_000_000));
     }
@@ -1992,6 +2008,16 @@ mod tests {
         handle_event(
             &mut app,
             &serde_json::to_value(fabric::ui_event::ClientEvent::TurnStarted { iteration: 0 })
+                .unwrap(),
+        );
+        assert!(!app
+            .app_state
+            .activities
+            .iter()
+            .any(|activity| activity.activity_id.contains(":inference:")));
+        handle_event(
+            &mut app,
+            &serde_json::to_value(fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 })
                 .unwrap(),
         );
         handle_event(
