@@ -7,6 +7,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cache_root=${ALETHEON_CARGO_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/aletheon-cargo}
 target_dir=${CARGO_TARGET_DIR:-$cache_root/target}
 lock_file=$cache_root/build.lock
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 max_gib=${ALETHEON_CARGO_TARGET_MAX_GIB:-60}
 scan_interval_sec=${ALETHEON_CARGO_TARGET_SCAN_INTERVAL_SEC:-900}
 force_size_scan=${ALETHEON_CARGO_TARGET_FORCE_SCAN:-0}
@@ -62,13 +63,15 @@ export ALETHEON_CARGO_TARGET_SCAN_STAMP="$cache_root/target-size-$target_key.sta
 # A bounded compiler cache preserves reusable objects even when Cargo must
 # rotate its target directory. Explicit RUSTC_WRAPPER/SCCACHE settings win.
 if [[ -z ${RUSTC_WRAPPER+x} ]] && command -v sccache >/dev/null 2>&1; then
-  export RUSTC_WRAPPER=sccache
+  export RUSTC_WRAPPER="$script_dir/libexec/aletheon/rustc-sccache-fallback.sh"
   export SCCACHE_DIR=${SCCACHE_DIR:-$cache_root/sccache}
   export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-20G}
   # A self-hosted runner can reap or restart its inherited sccache daemon while
   # another serialized build is starting. Preserve compilation correctness by
-  # using sccache's documented local-compiler fallback for server I/O failures;
-  # callers that explicitly configure the policy still win.
+  # retrying the compiler locally after a proven server transport failure;
+  # callers that explicitly configure the policy still win. The wrapper is
+  # required because some deployed sccache versions do not honor the native
+  # fallback setting for failures that occur after connecting to the server.
   export SCCACHE_IGNORE_SERVER_IO_ERROR=${SCCACHE_IGNORE_SERVER_IO_ERROR:-1}
   mkdir -p -- "$SCCACHE_DIR"
 fi
