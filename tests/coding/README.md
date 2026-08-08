@@ -86,8 +86,8 @@ counted as completed engineering tasks in the normal success numerator.
 
 The GitHub Actions workflow **Real Coding Evaluation** is manual-only. It uses
 the owner-provided `LEJU_API_KEY`, pins the `leju` provider and
-`deepseek/deepseek-v4-pro`, starts one inference core, then runs the twenty tasks
-sequentially through `harness/suite.py`.
+`deepseek/deepseek-v4-flash[1m]`, starts one inference core, then runs the twenty
+tasks sequentially through `harness/suite.py`.
 
 GitHub-hosted runners use `ALETHEON_CODING_SANDBOX=forbid` because they may
 expose bubblewrap while denying its namespace operations. This exception is

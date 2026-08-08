@@ -14,6 +14,20 @@ expected=(aletheon.sh cargo-agent.sh)
 ! grep -Eq '(^|[[:space:]])cargo (build|check|test|clippy|doc)' setup.sh
 grep -Fq 'scripts/cargo-agent.sh build -p aletheon --release' setup.sh
 
+# Fresh installs must not silently select or advertise the quota-expensive Pro
+# route. Pro may remain in the model catalog for explicit user selection, but
+# every generated default and convenience alias is Flash-only.
+setup_config=$(sed -n '/^setup_config()/,/^}/p' setup.sh)
+grep -Fq 'default_model = "deepseek/deepseek-v4-flash"' <<<"$setup_config"
+grep -Fq 'models = ["deepseek/deepseek-v4-flash"]' <<<"$setup_config"
+grep -Fq 'models = ["deepseek-v4-flash"]' <<<"$setup_config"
+grep -Fq 'flash = "leju/deepseek/deepseek-v4-flash"' <<<"$setup_config"
+grep -Fq 'deepseek = "deepseek/deepseek-v4-flash"' <<<"$setup_config"
+if grep -Fq 'deepseek-v4-pro' <<<"$setup_config"; then
+  echo 'fresh-install defaults must not contain a DeepSeek Pro route' >&2
+  exit 1
+fi
+
 # Every local edit/verify profile preserves rustc incremental state. Only the
 # tagged distributable release job may opt out for its clean artifact lane.
 python3 - "$root/Cargo.toml" <<'PY'
