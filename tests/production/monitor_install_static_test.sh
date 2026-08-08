@@ -8,8 +8,18 @@ setup="$repo_root/setup.sh"
 grep -Fq 'python3 -m venv "$venv_dir"' "$install_lib"
 grep -Fq '"$venv_dir/bin/python" -m pip install' "$install_lib"
 grep -Fq 'exec "$venv_dir/bin/python" "$monitor_dir/run.py"' "$install_lib"
+grep -Fq 'exec "$venv_dir/bin/python" "$monitor_dir/run_lab.py"' "$install_lib"
 grep -Fq "from src.server import server" "$install_lib"
 grep -Fq 'cmd_monitor_install' "$install_lib"
+grep -Fq 'aletheon-nightwatch.user.service' "$install_lib"
+grep -Fq 'nightwatch.toml.example' "$install_lib"
+
+grep -Fq 'ExecStart=%h/.local/bin/aletheon-lab' \
+  "$repo_root/config/aletheon-nightwatch.user.service"
+grep -Fq 'ConditionPathExists=%h/.config/aletheon/nightwatch.toml' \
+  "$repo_root/config/aletheon-nightwatch.user.service"
+grep -Fq 'ProtectSystem=strict' \
+  "$repo_root/config/aletheon-nightwatch.user.service"
 
 grep -Fq 'python3 -m venv "$venv"' "$setup"
 grep -Fq 'exec "$venv/bin/python" "$MONITOR_DST/run.py"' "$setup"

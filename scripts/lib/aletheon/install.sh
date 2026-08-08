@@ -11,6 +11,10 @@ cmd_monitor_install() {
   local data_dir=${ALETHEON_USER_DATA_DIR:-$HOME/.local/share/aletheon}
   local monitor_dir="$data_dir/monitor"
   local venv_dir="$monitor_dir/.venv"
+  local config_dir=${ALETHEON_USER_CONFIG_DIR:-$HOME/.config/aletheon}
+  local unit_dir=${ALETHEON_USER_UNIT_DIR:-$HOME/.config/systemd/user}
+  local nightwatch_state_dir=${ALETHEON_NIGHTWATCH_STATE_DIR:-$HOME/.local/state/aletheon-nightwatch}
+  local cargo_cache_dir=${ALETHEON_CARGO_CACHE_ROOT:-$HOME/.cache/aletheon-cargo}
   local dependency_stamp="$monitor_dir/.dependency-spec.sha256"
   local expected_stamp
   expected_stamp=$(sha256sum "$source_dir/pyproject.toml" | awk '{print $1}')
@@ -43,9 +47,33 @@ fi
 exec "$venv_dir/bin/python" "$monitor_dir/run.py" "\$@"
 EOF
   chmod 0755 "$bin_dir/aletheon-monitor"
+  cat > "$bin_dir/aletheon-lab" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -f /etc/aletheon/.env ]]; then
+  set -a; source /etc/aletheon/.env; set +a
+elif [[ -f "\$HOME/.config/aletheon/.env" ]]; then
+  set -a; source "\$HOME/.config/aletheon/.env"; set +a
+fi
+
+exec "$venv_dir/bin/python" "$monitor_dir/run_lab.py" "\$@"
+EOF
+  chmod 0755 "$bin_dir/aletheon-lab"
+  install -d -m 0755 "$config_dir" "$unit_dir"
+  install -d -m 0700 "$nightwatch_state_dir" "$cargo_cache_dir"
+  install -m 0644 "$ALETHEON_ROOT/config/aletheon-nightwatch.user.service" \
+    "$unit_dir/aletheon-nightwatch.service"
+  if [[ ! -e "$config_dir/nightwatch.toml" ]]; then
+    install -m 0600 "$source_dir/config/nightwatch.example.toml" \
+      "$config_dir/nightwatch.toml.example"
+  fi
+  systemd-analyze --user verify "$unit_dir/aletheon-nightwatch.service"
+  systemctl --user daemon-reload
   "$venv_dir/bin/python" -c \
     "import sys; sys.path.insert(0, '$monitor_dir'); from src.server import server"
   aletheon_ok "MCP monitor installed at $bin_dir/aletheon-monitor"
+  aletheon_ok "Nightwatch installed at $bin_dir/aletheon-lab (disabled until nightwatch.toml exists)"
 }
 
 remove_user_cli_shadow() {
