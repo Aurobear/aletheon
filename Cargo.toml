@@ -67,3 +67,29 @@ tonic-build = "0.12"
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(feature, values("io_uring", "ebpf", "fuse", "vector-qdrant", "vector-lance"))',
 ] }
+
+# This workspace has hundreds of integration-test binaries. Full DWARF embeds
+# the dependency graph into every binary, which previously grew one all-feature
+# test build beyond 120 GiB and forced the shared cache to rebuild from scratch.
+# Test failures retain symbol names and backtraces; line-level debugging can be
+# requested locally with `CARGO_PROFILE_TEST_DEBUG=1` when needed.
+[profile.test]
+debug = 0
+incremental = true
+
+# Keep development binaries useful for backtraces without paying the full-DWARF
+# link and storage cost on every ordinary build.
+[profile.dev]
+debug = 1
+incremental = true
+
+# Local deployment is an edit/verify loop too. Preserve optimized codegen units
+# between deployments instead of rebuilding the 120k-line executive crate after
+# every source edit. The tagged release workflow explicitly overrides this with
+# CARGO_INCREMENTAL=0 for distributable artifacts.
+[profile.release]
+incremental = true
+
+# Benchmarks should measure runtime, not repeatedly pay cold optimized codegen.
+[profile.bench]
+incremental = true

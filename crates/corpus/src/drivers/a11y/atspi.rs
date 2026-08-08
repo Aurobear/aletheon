@@ -252,7 +252,7 @@ fn format_state_set(state_set: atspi::StateSet) -> Vec<String> {
     let mut result = Vec::new();
     for s in all_states {
         if state_set.contains(s) {
-            result.push(format!("{:?}", s));
+            result.push(format!("{s:?}"));
         }
     }
     result

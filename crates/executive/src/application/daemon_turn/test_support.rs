@@ -49,6 +49,8 @@ impl DaemonTurnTestBuilder {
                     result: fabric::TurnResult {
                         output,
                         stop: fabric::TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: fabric::TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -130,6 +132,7 @@ impl ActiveAgentProfilePort for StubActiveAgentProfile {
             max_iterations: 0,
             max_input_tokens: 0,
             max_output_tokens: 0,
+            tool_schema_tokens: 0.into(),
             max_tool_calls: 0,
             max_elapsed_ms: 0,
             approval_policy: fabric::AgentApprovalPolicy::AutoApprove,

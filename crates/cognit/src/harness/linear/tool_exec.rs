@@ -311,15 +311,18 @@ impl ReActLoop {
                 self.iteration,
                 self.turn_input_tokens,
                 self.config.context_window_tokens,
-                ordered_calls.iter().map(|(_, name, _)| name.as_str()),
+                self.repository_context_seen,
+                self.broad_discovery_batches,
+                ordered_calls
+                    .iter()
+                    .map(|(_, name, input)| (name.as_str(), input)),
             ) {
                 let budget =
                     super::exploration_input_token_budget(self.config.context_window_tokens);
                 let content = format!(
                     "Broad-scanning budget reached ({} / {} input tokens). \
-                     Stop broad scanning (glob/grep/search). You MAY still read a \
-                     specific file if it is essential to answer, but do not keep \
-                     scanning. Answer now from the evidence you have ACTUALLY \
+                     Stop repository scanning and answer now from the evidence \
+                     you have ACTUALLY \
                      gathered from tool output. Do not present unverified inferences \
                      as fact: mark any claim you could not confirm as \"(unverified)\" \
                      and say what you would need to check to confirm it.",
@@ -330,7 +333,46 @@ impl ReActLoop {
                     role: Role::User,
                     content: results,
                 });
-                continue;
+                self.messages.push(Message::user(
+                    "[synthesis] Tools are disabled for this final pass. Produce a substantive \
+                     answer using only the repository evidence already returned. Clearly mark \
+                     any unverified claim."
+                        .to_string(),
+                ));
+                let response = llm.complete(&self.messages, &[]).await?;
+                let final_text = response
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let final_text = if final_text.trim().is_empty() {
+                    "Repository exploration was closed after sufficient evidence, but the final synthesis returned no text."
+                        .to_string()
+                } else {
+                    final_text
+                };
+                event_sink.emit(Event::TextDelta {
+                    delta: final_text.clone(),
+                });
+                event_sink.emit(Event::TurnDone {
+                    result: Ok(final_text.clone()),
+                });
+                return Ok((
+                    final_text,
+                    TurnMetrics {
+                        tool_calls_made,
+                        tool_errors,
+                        provider_retries,
+                        elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
+                        iterations: self.iteration,
+                        completed_normally: true,
+                        stop: fabric::TurnStop::Completed,
+                    },
+                ));
             }
 
             // Deferred reflection — injected after all tool results to preserve
@@ -550,6 +592,9 @@ impl ReActLoop {
                     warn!(tool = name.as_str(), "tool returned error");
                 } else {
                     self.consecutive_errors = 0;
+                    if name == "repo_inspect" {
+                        self.repository_context_seen = true;
+                    }
                 }
                 // Record call in budget tracker
                 self.tool_budget.record_call(tool_budget::ToolCallRecord {
@@ -654,6 +699,23 @@ impl ReActLoop {
                     role: Role::User,
                     content: tool_result_blocks,
                 });
+            }
+            // Only broad-discovery batches (contains at least one repository-wide
+            // scan) count toward the cut-off allowance. Scoped/exact discovery
+            // calls do not consume the counter. Any read-only tool (including
+            // file_read) mixed with a broad scan does not hide the scan from
+            // the counter; any non-inspection tool prevents both increment and
+            // closure via the all_inspection gate in should_close_exploration.
+            if self.repository_context_seen
+                && !ordered_calls.is_empty()
+                && ordered_calls
+                    .iter()
+                    .any(|(_, name, input)| super::is_broad_discovery(name, input))
+                && ordered_calls.iter().all(|(_, name, _)| {
+                    matches!(name.as_str(), "glob" | "grep" | "file_search" | "file_read")
+                })
+            {
+                self.broad_discovery_batches = self.broad_discovery_batches.saturating_add(1);
             }
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {

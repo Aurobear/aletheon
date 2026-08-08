@@ -50,6 +50,18 @@ pub struct RecallCacheKey {
 struct RecallCacheEntry {
     stored_at: Instant,
     value: RecallSet,
+    load_latency_ms: u64,
+    output_bytes: u64,
+}
+
+enum RecallCacheLookup {
+    Hit {
+        value: RecallSet,
+        saved_latency_ms: u64,
+        saved_output_bytes: u64,
+    },
+    Miss,
+    Stale,
 }
 
 /// Bounded FIFO-with-TTL cache. The cap is enforced on insert and a hit
@@ -72,24 +84,34 @@ impl RecallCache {
         }
     }
 
-    fn get(&mut self, key: &RecallCacheKey, now: Instant) -> Option<RecallSet> {
-        let expired = match self.entries.get(key) {
-            Some(entry) => now.duration_since(entry.stored_at) > self.ttl,
-            None => true,
+    fn get(&mut self, key: &RecallCacheKey, now: Instant) -> RecallCacheLookup {
+        let Some(entry) = self.entries.get(key) else {
+            return RecallCacheLookup::Miss;
         };
-        if expired {
+        if now.duration_since(entry.stored_at) > self.ttl {
             self.entries.remove(key);
             self.order.retain(|candidate| candidate != key);
-            return None;
+            return RecallCacheLookup::Stale;
         }
-        let value = self.entries.get(key).map(|entry| entry.value.clone());
+        let entry = self.entries.get(key).expect("entry was checked above");
+        let lookup = RecallCacheLookup::Hit {
+            value: entry.value.clone(),
+            saved_latency_ms: entry.load_latency_ms,
+            saved_output_bytes: entry.output_bytes,
+        };
         // Refresh recency (approximate LRU via remove + push).
         self.order.retain(|candidate| candidate != key);
         self.order.push_back(key.clone());
-        value
+        lookup
     }
 
-    fn insert(&mut self, key: RecallCacheKey, value: RecallSet, now: Instant) {
+    fn insert(
+        &mut self,
+        key: RecallCacheKey,
+        value: RecallSet,
+        now: Instant,
+        load_latency_ms: u64,
+    ) {
         if self.entries.contains_key(&key) {
             self.order.retain(|candidate| candidate != &key);
         } else {
@@ -103,7 +125,9 @@ impl RecallCache {
             key.clone(),
             RecallCacheEntry {
                 stored_at: now,
+                output_bytes: serde_json::to_vec(&value).map_or(0, |encoded| encoded.len() as u64),
                 value,
+                load_latency_ms,
             },
         );
         self.order.push_back(key);
@@ -273,9 +297,18 @@ impl CachingMemoryService {
         // Fast path: cache hit. The bounded in-memory mutex has no external
         // failure mode; waiting here avoids turning ordinary contention into a
         // duplicate authoritative recall.
-        if let Some(set) = self.cache.lock().await.get(&key, Instant::now()) {
-            self.metrics.recall_cache_hit();
-            return Ok(set);
+        match self.cache.lock().await.get(&key, Instant::now()) {
+            RecallCacheLookup::Hit {
+                value,
+                saved_latency_ms,
+                saved_output_bytes,
+            } => {
+                self.metrics
+                    .recall_cache_hit(saved_latency_ms, saved_output_bytes);
+                return Ok(value);
+            }
+            RecallCacheLookup::Stale => self.metrics.recall_cache_stale_reject(),
+            RecallCacheLookup::Miss => {}
         }
         self.metrics.recall_cache_miss();
 
@@ -317,7 +350,9 @@ impl CachingMemoryService {
         // A prior leader can complete between the first cache lookup and our
         // in-flight insertion. Recheck after becoming leader to avoid a second
         // backend request in that race.
-        if let Some(set) = self.cache.lock().await.get(&key, Instant::now()) {
+        if let RecallCacheLookup::Hit { value: set, .. } =
+            self.cache.lock().await.get(&key, Instant::now())
+        {
             let released = self.inflight.lock().await.remove(&key);
             if let Some(entry) = released {
                 entry
@@ -329,15 +364,18 @@ impl CachingMemoryService {
         }
 
         // Leader path.
+        let load_started = Instant::now();
         let result = self.recall_inner(req, prefilter).await;
         if let Ok(set) = &result {
             // Do not publish a result under an obsolete generation if a memory
             // write committed while the authoritative recall was running.
             if self.generation.load(Ordering::Acquire) == key.memory_generation {
-                self.cache
-                    .lock()
-                    .await
-                    .insert(key.clone(), set.clone(), Instant::now());
+                self.cache.lock().await.insert(
+                    key.clone(),
+                    set.clone(),
+                    Instant::now(),
+                    u64::try_from(load_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                );
             }
         } else {
             self.metrics.recall_cache_load_error();
@@ -585,11 +623,35 @@ mod tests {
         let metrics = svc.metrics.snapshot();
         assert_eq!(metrics.memory_recall_cache_hit_total, 1);
         assert_eq!(metrics.memory_recall_cache_miss_total, 1);
+        assert!(metrics.memory_recall_cache_saved_output_bytes > 0);
 
         // A successful write bumps the generation; the next recall misses again.
         block_on(svc.consolidate(MemoryScope::Session("session-a".into()))).unwrap();
         block_on(svc.recall(req)).unwrap();
         assert_eq!(inner.recalls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn expired_recall_entry_is_counted_as_stale_and_reloaded() {
+        let inner = Arc::new(StubMemory::default());
+        let svc = CachingMemoryService::new(
+            inner.clone(),
+            "policy-v1".into(),
+            None,
+            4,
+            Duration::from_millis(1),
+        );
+        let req = request("question", "session-a");
+        block_on(svc.recall(req.clone())).unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+        block_on(svc.recall(req)).unwrap();
+        assert_eq!(inner.recalls.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            svc.metrics
+                .snapshot()
+                .memory_recall_cache_stale_reject_total,
+            1
+        );
     }
 
     #[test]

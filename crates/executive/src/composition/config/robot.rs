@@ -25,8 +25,8 @@ const MAX_PERCEPTION_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_RETRIES: u32 = 1;
 const MAX_REPLANS: u32 = 1;
 
-/// Operator-owned Robot harness configuration. It is optional for a Linear
-/// harness and mandatory when `agent.harness_kind = "robot"`.
+/// Operator-owned optional Robot capability configuration. Presence enables a
+/// per-turn Robot target; absence never changes the General default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct RobotIntegrationConfig {
@@ -39,7 +39,7 @@ pub struct RobotIntegrationConfig {
     /// Pinned device and reviewed evidence for HIL/real deployments. Simulation
     /// must omit this section; HIL and real must provide it.
     pub deployment_gate: Option<RobotDeploymentGateConfig>,
-    /// A Robot harness must name a real Policy gateway explicitly.
+    /// A Robot capability must name a real Policy gateway explicitly.
     pub policy: Option<RobotPolicyConfig>,
     /// Perception polling and world-state bounds.
     pub perception: RobotPerceptionConfig,
@@ -207,25 +207,16 @@ pub struct ResolvedRobotIntegrationConfig {
 impl IntegrationsConfig {
     /// Resolve Robot settings after all application layers have merged.
     ///
-    /// Legacy embodiment-only configuration remains valid for Linear harnesses,
-    /// but selecting Robot with that shape fails with an explicit migration
-    /// diagnostic instead of discovering policy state from the process environment.
+    /// `harness_kind` is retained only for migration diagnostics. A complete
+    /// Robot integration enables an optional per-turn capability regardless of
+    /// the legacy global value; an absent integration never prevents General
+    /// turns from starting.
     pub fn resolve_robot(
         &self,
-        harness_kind: cognit::harness::HarnessKind,
+        _harness_kind: cognit::harness::HarnessKind,
     ) -> Result<Option<ResolvedRobotIntegrationConfig>> {
-        if harness_kind == cognit::harness::HarnessKind::Linear {
-            return Ok(None);
-        }
         let Some(robot) = self.robot.as_ref() else {
-            if self.embodiment.is_some() {
-                bail!(
-                    "legacy integrations.embodiment-only config cannot start HarnessKind::Robot; add integrations.robot.policy and integrations.robot.scene_version"
-                );
-            }
-            bail!(
-                "HarnessKind::Robot requires integrations.robot.policy and integrations.robot.scene_version"
-            );
+            return Ok(None);
         };
 
         let provider = self.embodiment.as_ref().ok_or_else(|| {

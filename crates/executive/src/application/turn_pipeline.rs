@@ -5,6 +5,8 @@
 
 use crate::application::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::application::governed_capability::CapabilityExecutionContext;
+use crate::application::post_turn_projection::{PostTurnDispatch, PostTurnOutcome};
+use crate::application::turn_coordinator::TurnExecution;
 use crate::application::turn_lifecycle::{TurnPipelineEvent, TurnPipelineLifecycle};
 use crate::core::session_gateway::SessionGateway;
 use cognit::CanonicalTurnEventSink;
@@ -17,18 +19,52 @@ use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
 use fabric::CanonicalEventBus;
 use fabric::{
     AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock, ContextBinding, Intent,
-    IntentSource, OperationId, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId,
-    SpaceId, TurnRequest,
+    IntentSource, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId, SpaceId,
+    TurnRequest,
 };
 use kernel::operation::OperationScope;
 use kernel::KernelRuntime;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
+
+/// Typed outcome of a full turn pipeline run.
+///
+/// The pipeline owns every field of `TurnExecution` as a Rust type; this
+/// replaces the JSON-RPC envelope it previously returned so the daemon engine
+/// never reverse-indexes serialized turn/status JSON (R3).
+pub enum TurnPipelineOutcome {
+    Completed(Box<TurnExecution>),
+    Rejected(TurnPipelineRejection),
+}
+
+/// Typed pre-execution rejection. Each variant is a distinct domain value with
+/// a single meaning; `message()` preserves the error text clients saw from the
+/// former JSON error envelopes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnPipelineRejection {
+    IntentDeniedBySelfField { reason: String },
+    SelfFieldReviewFailed { reason: String },
+    HookBlocked { reason: String },
+}
+
+impl TurnPipelineRejection {
+    /// Human-readable message carried to the transport boundary.
+    pub fn message(&self) -> String {
+        match self {
+            Self::IntentDeniedBySelfField { reason } => {
+                format!("Intent denied by SelfField: {reason}")
+            }
+            Self::SelfFieldReviewFailed { reason } => {
+                format!("SelfField review failed (fail-closed): {reason}")
+            }
+            Self::HookBlocked { reason } => format!("Blocked by hook: {reason}"),
+        }
+    }
+}
 
 /// Shared turn orchestration pipeline.
 ///
@@ -46,7 +82,6 @@ pub struct TurnPipeline {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) agora: Option<Arc<dyn AgoraService>>,
     pub(crate) kernel: Arc<KernelRuntime>,
-    pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
     pub(crate) context_assembler: Arc<crate::application::context_assembler::ContextAssembler>,
     pub(crate) canonical_sessions: Arc<crate::application::session_service::SessionService>,
@@ -81,7 +116,6 @@ pub(crate) struct TurnPipelineResources {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) agora: Option<Arc<dyn AgoraService>>,
     pub(crate) kernel: Arc<KernelRuntime>,
-    pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel: Option<CancellationToken>,
     pub(crate) context: Arc<crate::application::context_assembler::ContextAssembler>,
     pub(crate) canonical_sessions: Arc<crate::application::session_service::SessionService>,
@@ -113,7 +147,6 @@ impl TurnPipeline {
             clock: resources.clock,
             agora: resources.agora,
             kernel: resources.kernel,
-            current_scope: resources.current_scope,
             daemon_cancel_token: resources.daemon_cancel,
             context_assembler: resources.context,
             canonical_sessions: resources.canonical_sessions,
@@ -134,11 +167,11 @@ impl TurnPipeline {
         }
     }
 
-    async fn main_delegation_authority(
+    fn main_delegation_authority(
         &self,
         workspace: fabric::WorkspacePolicy,
+        profile: &crate::application::turn_runtime_ports::ResolvedTurnProfile,
     ) -> anyhow::Result<fabric::AgentDelegationAuthority> {
-        let profile = self.active_profile.snapshot().await?;
         let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
         allowed_tools.sort();
         Ok(fabric::AgentDelegationAuthority::new(
@@ -334,6 +367,7 @@ impl TurnPipeline {
         main_pid: ProcessId,
         root: Option<(fabric::cognitive_workflow::CognitiveTaskNodeId, u64)>,
         cancellation: CancellationToken,
+        profile: &crate::application::turn_runtime_ports::ResolvedTurnProfile,
     ) -> anyhow::Result<
         Option<(
             crate::application::cognitive_role_workflow::CognitiveRoleWorkflow,
@@ -342,7 +376,6 @@ impl TurnPipeline {
     > {
         use cognit::TaskDecompositionPolicy;
         let config = self.runtime_ports.config.config().await;
-        let profile = self.active_profile.snapshot().await?;
         let process = self.kernel.inspect_process(main_pid).await?;
         let budget = fabric::AgentBudget {
             max_input_tokens: profile.max_input_tokens,
@@ -398,6 +431,8 @@ impl TurnPipeline {
                 cancellation,
             },
         )?;
+        let risk_level =
+            crate::application::cognitive_role_workflow::classify_task_risk(&allowed_capabilities);
         Ok(Some((
             workflow,
             crate::application::cognitive_role_workflow::CodingWorkflowRequest {
@@ -409,6 +444,7 @@ impl TurnPipeline {
                 project_instructions: Vec::new(),
                 allowed_capabilities,
                 expected_evidence,
+                risk_level,
             },
         )))
     }
@@ -514,21 +550,21 @@ impl TurnPipeline {
 
     /// Run the full Pre/Cognit/Post turn pipeline.
     ///
-    /// Takes kernel-registered ids and a scope token from the orchestrator,
+    /// Takes kernel-registered ids and the locally owned operation scope,
     /// then runs the entire turn: SelfField review, memory injection, hooks,
     /// tool setup, LLM selection, ReAct loop, event pumping, and post-turn
     /// settlement.
     pub async fn run(
         &self,
-        id: serde_json::Value,
         message: String,
         turn_request: TurnRequest,
-        operation_id: OperationId,
         main_pid: ProcessId,
-        scope_token: CancellationToken,
+        scope: &mut OperationScope,
         principal: PrincipalId,
         notification_sender: Option<mpsc::Sender<String>>,
-    ) -> anyhow::Result<serde_json::Value> {
+    ) -> anyhow::Result<TurnPipelineOutcome> {
+        let operation_id = scope.id;
+        let scope_token = scope.token();
         // Resolve the authoritative runtime session before policy review. The
         // read is non-mutating; denied turns still never call `begin_user`.
         let requested_session_id = turn_request.context.thread_id.0.clone();
@@ -537,6 +573,10 @@ impl TurnPipeline {
             .sessions
             .current(&requested_session_id)
             .await?;
+        // One owned profile snapshot governs budgeting, tool disclosure,
+        // execution authority, cache identity, and post-turn compaction. A
+        // concurrent profile switch becomes visible on the next turn only.
+        let turn_profile = self.active_profile.snapshot().await?;
 
         // TurnCoordinator durably appends the user message before invoking this
         // pipeline, so it is now safe to bind that canonical response to the
@@ -553,6 +593,7 @@ impl TurnPipeline {
                 main_pid,
                 cognitive_root,
                 scope_token.clone(),
+                &turn_profile,
             )
             .await?;
 
@@ -588,7 +629,7 @@ impl TurnPipeline {
             lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)).0
         );
         let mut pipeline_lifecycle = TurnPipelineLifecycle::default();
-        let turn_result: anyhow::Result<serde_json::Value> = async {
+        let turn_result: anyhow::Result<TurnPipelineOutcome> = async {
 
         pipeline_lifecycle.apply(TurnPipelineEvent::Admit)?;
 
@@ -642,9 +683,11 @@ impl TurnPipeline {
                     .self_policy
                     .narrate("chat_denied", reason)
                     .await;
-                return Ok(
-                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("Intent denied by SelfField: {}", reason)}}),
-                );
+                return Ok(TurnPipelineOutcome::Rejected(
+                    TurnPipelineRejection::IntentDeniedBySelfField {
+                        reason: reason.to_string(),
+                    },
+                ));
             }
             Ok(fabric::Verdict::SandboxFirst { ref reason }) => {
                 warn!(reason = %reason, "SelfField requires sandbox; tools will be gated through admission");
@@ -656,9 +699,11 @@ impl TurnPipeline {
             }
             Err(ref e) => {
                 warn!(error = %e, "SelfField review error — denying turn (fail-closed)");
-                return Ok(
-                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32010, "message": format!("SelfField review failed (fail-closed): {}", e)}}),
-                );
+                return Ok(TurnPipelineOutcome::Rejected(
+                    TurnPipelineRejection::SelfFieldReviewFailed {
+                        reason: e.to_string(),
+                    },
+                ));
             }
             _ => {}
         }
@@ -735,9 +780,11 @@ impl TurnPipeline {
             match self.runtime_ports.hooks.execute(ctx).await {
                 HookResult::Block { reason } => {
                     warn!(reason = %reason, "PreTurn hook blocked");
-                    return Ok(
-                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32015, "message": format!("Blocked by hook: {}", reason)}}),
-                    );
+                    return Ok(TurnPipelineOutcome::Rejected(
+                        TurnPipelineRejection::HookBlocked {
+                            reason: reason.to_string(),
+                        },
+                    ));
                 }
                 HookResult::Inject(text) => {
                     effective_message.push_str(&text);
@@ -748,13 +795,41 @@ impl TurnPipeline {
         }
         effective_message.push_str(&message);
 
+        let mut context_request = turn_request.clone();
+        context_request.input = effective_message;
+        let prepared_context = self.context_assembler.prepare(&context_request).await?;
+        let context_costs = prepared_context.budget_costs(&context_request.input)?;
+
+        // Select exactly once before budget planning. The same provider instance
+        // supplies authoritative capability facts, optional compaction, context
+        // binding, and inference for this turn.
+        let llm = self.runtime_ports.models.select(&message).await;
+        let model_runtime_facts = llm.runtime_facts();
         let begin = self
             .runtime_ports
             .sessions
-            .begin_user(&requested_session_id, &message)
+            .begin_user(
+                &requested_session_id,
+                &message,
+                llm.clone(),
+                turn_profile.clone(),
+                context_costs,
+            )
             .await?;
         let sess_id = begin.session_id;
         let turn_count = begin.turn_count;
+        let turn_id = turn_request
+            .context
+            .turn_id
+            .ok_or_else(|| anyhow::anyhow!("context budget projection requires a canonical turn id"))?;
+        self.canonical_sessions
+            .persist_turn_start_budget(
+                &fabric::SessionId(turn_request.context.thread_id.0.clone()),
+                turn_id,
+                begin.context_budget,
+                begin.compactions,
+            )
+            .await?;
 
         if let Err(error) = self
             .memory_gateway
@@ -808,28 +883,6 @@ impl TurnPipeline {
             }
             full_history
         };
-
-        let mut context_request = turn_request.clone();
-        context_request.input = effective_message;
-        let assembled_context = self
-            .context_assembler
-            .assemble(
-                &context_request,
-                &existing_messages,
-                begin.history_budget_tokens,
-            )
-            .await?;
-        let context_projection_receipt = assembled_context.projection_receipt;
-        let mut request_messages = assembled_context.messages;
-
-        pipeline_lifecycle.apply(TurnPipelineEvent::ContextPrepared)?;
-
-        // LLM selection. Bind the host-observed effective model identifier into
-        // the per-turn system context so the model never guesses its identity
-        // from training priors or a provider-compatible wire protocol.
-        let llm = self.runtime_ports.models.select(&message).await;
-        let model_runtime_facts = llm.runtime_facts();
-        bind_runtime_facts(&mut request_messages, &model_runtime_facts);
 
         // -- Governed capability setup --
         // Context Space seed — user turn input is private overlay data, not
@@ -899,31 +952,12 @@ impl TurnPipeline {
         // progress and cognitive events share the same per-turn spine.
         let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
         let config = self.runtime_ports.config.config().await;
-        let before_tools = self
-            .dispatch_lifecycle(
-                crate::application::lifecycle_contributors::LifecycleInput {
-                    phase: crate::application::lifecycle_contributors::LifecyclePhase::BeforeToolBatch,
-                    principal_id: lifecycle_principal.clone(),
-                    thread_id: lifecycle_thread.clone(),
-                    turn_id: lifecycle_turn,
-                    session_id: lifecycle_session.clone(),
-                    detail: serde_json::json!({"tool_count": 0}),
-                },
-                &scope_token,
-            )
-            .await?;
-        if let Some(reason) = before_tools.effects.iter().find_map(|effect| match effect {
-            crate::application::lifecycle_contributors::LifecycleEffect::RejectInput { reason } => {
-                Some(reason)
-            }
-            _ => None,
-        }) {
-            anyhow::bail!("lifecycle contributor rejected tool batch: {reason}");
-        }
         let main_delegator_authority = if main_agent_id.is_some() {
             Some(
-                self.main_delegation_authority(turn_request.context.workspace.clone())
-                    .await?,
+                self.main_delegation_authority(
+                    turn_request.context.workspace.clone(),
+                    &turn_profile,
+                )?,
             )
         } else {
             None
@@ -946,6 +980,7 @@ impl TurnPipeline {
                     turn_id: turn_request.context.turn_id.ok_or_else(|| {
                         anyhow::anyhow!("turn capability authority has no TurnId")
                     })?,
+                    execution_target: turn_request.execution_target.clone(),
                     workspace: turn_request.context.workspace.clone(),
                     permission_mode: if turn_request
                         .context
@@ -965,17 +1000,74 @@ impl TurnPipeline {
                     action_loop,
                     streaming_tools: config.streaming_tools,
                     turn_event_sender: Some(turn_sender.clone()),
-                })
+                }, turn_profile.clone())
                 .await?;
         let tool_defs = prepared.definitions;
         let capability = prepared.invoker;
+        let assembled_context = self.context_assembler.assemble_prepared(
+            &context_request,
+            &existing_messages,
+            begin.history_budget_tokens,
+            prepared_context,
+            &tool_defs,
+        )?;
+        let prompt_profile = serde_json::json!({
+            "schema_version": 1,
+            "tool_count": tool_defs.len(),
+            "total_serialized_bytes": assembled_context.profile.total_bytes(),
+            "partitions": assembled_context.profile.partitions.iter().map(|partition| {
+                serde_json::json!({
+                    "region": partition.region.as_str(),
+                    "items_or_chars": partition.chars,
+                    "serialized_bytes": partition.serialized_bytes,
+                    "construction_ns": partition.construction_ns,
+                    "content_digest": partition.content_digest,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        debug!(
+            prompt_construction_profile = %prompt_profile,
+            "turn prompt construction profile"
+        );
+        let context_projection_receipt = assembled_context.projection_receipt;
+        let mut request_messages = assembled_context.messages;
+        pipeline_lifecycle.apply(TurnPipelineEvent::ContextPrepared)?;
+
+        // Bind the host-observed effective model identifier into the per-turn
+        // system context so the model never guesses its identity from training
+        // priors or a provider-compatible wire protocol.
+        bind_runtime_facts(&mut request_messages, &model_runtime_facts);
+
+        let before_tools = self
+            .dispatch_lifecycle(
+                crate::application::lifecycle_contributors::LifecycleInput {
+                    phase: crate::application::lifecycle_contributors::LifecyclePhase::BeforeToolBatch,
+                    principal_id: lifecycle_principal.clone(),
+                    thread_id: lifecycle_thread.clone(),
+                    turn_id: lifecycle_turn,
+                    session_id: lifecycle_session.clone(),
+                    detail: serde_json::json!({
+                        "tool_count": tool_defs.len(),
+                        "prompt_construction_profile": prompt_profile,
+                    }),
+                },
+                &scope_token,
+            )
+            .await?;
+        if let Some(reason) = before_tools.effects.iter().find_map(|effect| match effect {
+            crate::application::lifecycle_contributors::LifecycleEffect::RejectInput { reason } => {
+                Some(reason)
+            }
+            _ => None,
+        }) {
+            anyhow::bail!("lifecycle contributor rejected tool batch: {reason}");
+        }
         let (prefix_shape_digest, local_cache_miss_reason, provider_miss_inference_allowed) = {
             let provider_id = model_runtime_facts
                 .provider_id
                 .as_deref()
                 .unwrap_or("unknown");
             let transport = model_runtime_facts.transport.as_deref().unwrap_or("unknown");
-            let profile = self.active_profile.snapshot().await?;
             let system_prefix = stable_system_prefix_wire(&request_messages);
             match crate::application::cache_shape::InferencePrefixShape::compute(
                 provider_id,
@@ -983,7 +1075,9 @@ impl TurnPipeline {
                 transport,
                 &system_prefix,
                 &tool_defs,
-                &crate::application::cache_shape::agent_profile_digest(&profile.profile_name),
+                &crate::application::cache_shape::agent_profile_digest(
+                    &turn_profile.profile_name,
+                ),
                 begin.rewrite_version,
             ) {
                 Ok(shape) => {
@@ -1076,51 +1170,82 @@ impl TurnPipeline {
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
         let evaluation_workspace = turn_request.context.workspace.clone();
-        let evaluation_profile_name = turn_request.context.permission_profile.0.clone();
+        let evaluation_input = turn_request.input.clone();
+        let evaluation_profile_name = turn_profile.profile_name.clone();
         let evaluation_effective_model_id = model_runtime_facts.effective_model_id.clone();
         let evaluation_model_display_name = model_runtime_facts.display_name.clone();
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ToolLoopStarted)?;
 
-        // Spawn ReAct loop
-        let mut react_task = if let Some((workflow, workflow_request)) = role_graph {
-            tokio::spawn(async move {
-                let started = std::time::Instant::now();
-                let receipt = workflow.run_full_coding_workflow(workflow_request).await?;
-                Ok(fabric::TurnResult {
-                    output: serde_json::to_string(&receipt)?,
-                    stop: fabric::TurnStop::Completed,
-                    metrics: fabric::TurnMetrics {
-                        elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                        completed_normally: true,
-                        ..Default::default()
-                    },
-                })
-            })
-        } else {
-            tokio::spawn(submit_streaming_daemon_turn(
-                turn_request,
-                DaemonStreamingTurnContext {
-                config,
-                llm: llm.clone(),
-                tool_defs,
-                execute_tool,
-                event_sink,
-                request_messages,
-                dasein_context,
-                cancel_token: scope_token.clone(),
-                sessions: self.cognitive_sessions.clone(),
-                batch_planner,
-                session_input: self.session_input.clone(),
-                prompt_queue_enabled: self.prompt_queue_enabled,
-                capability_receipts,
-                inference_items,
-                prefix_shape_digest,
-                local_cache_miss_reason,
-                provider_miss_inference_allowed,
-                },
-            ))
-        };
+        // The scope, not an untracked JoinHandle, owns the ReAct task. The
+        // result channel carries the domain result while scope drain remains
+        // authoritative for task termination and panic accounting.
+        let (react_result_tx, mut react_result_rx) = tokio::sync::oneshot::channel();
+        let cognitive_sessions = self.cognitive_sessions.clone();
+        let session_input = self.session_input.clone();
+        let prompt_queue_enabled = self.prompt_queue_enabled;
+        let react_cancel = scope_token.clone();
+        let react_llm = llm.clone();
+        scope.spawn("turn-react", async move {
+            let result: anyhow::Result<fabric::TurnResult> = async move {
+                if let Some((workflow, workflow_request)) = role_graph {
+                    let started = std::time::Instant::now();
+                    let receipt = workflow.run_full_coding_workflow(workflow_request).await?;
+                    Ok(fabric::TurnResult {
+                        output: serde_json::to_string(&receipt)?,
+                        stop: fabric::TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
+                        metrics: fabric::TurnMetrics {
+                            elapsed_ms: started
+                                .elapsed()
+                                .as_millis()
+                                .try_into()
+                                .unwrap_or(u64::MAX),
+                            completed_normally: true,
+                            ..Default::default()
+                        },
+                    })
+                } else {
+                    submit_streaming_daemon_turn(
+                        turn_request,
+                        DaemonStreamingTurnContext {
+                            config,
+                            llm: react_llm,
+                            tool_defs,
+                            execute_tool,
+                            event_sink,
+                            request_messages,
+                            dasein_context,
+                            cancel_token: react_cancel,
+                            sessions: cognitive_sessions,
+                            batch_planner,
+                            session_input,
+                            prompt_queue_enabled,
+                            capability_receipts,
+                            inference_items,
+                            prefix_shape_digest,
+                            local_cache_miss_reason,
+                            provider_miss_inference_allowed,
+                        },
+                    )
+                    .await
+                }
+            }
+            .await;
+            let reason = match &result {
+                Ok(turn) if turn.stop == fabric::TurnStop::Cancelled => {
+                    fabric::OperationExitReason::Cancelled(fabric::CancelReason::User)
+                }
+                Ok(turn) if turn.stop == fabric::TurnStop::Failed => {
+                    fabric::OperationExitReason::Failed(format!("{:?}", turn.stop))
+                }
+                Ok(_) => fabric::OperationExitReason::Completed,
+                Err(error) => fabric::OperationExitReason::Failed(error.to_string()),
+            };
+            let _ = react_result_tx.send(result);
+            reason
+        });
 
         // -- Event + approval pumping loop --
         // Snapshot the exact request connection once. A concurrent status or
@@ -1135,16 +1260,24 @@ impl TurnPipeline {
         let mut canonical_items: Vec<fabric::ItemPayload> = Vec::new();
         let mut acc_tokens_in: u64 = 0;
         let mut acc_tokens_out: u64 = 0;
+        let mut usage_seen = false;
+        let mut input_tokens_complete = true;
+        let mut output_tokens_complete = true;
         let mut acc_cache_read_tokens: u64 = 0;
         let mut cache_read_seen = false;
         let mut cache_read_complete = true;
+        let mut acc_cache_write_tokens: u64 = 0;
+        let mut cache_write_seen = false;
+        let mut cache_write_complete = true;
         let mut active_context_tokens: Option<u64> = None;
         let mut terminal_events = TerminalEventBuffer::default();
 
         let text = loop {
             tokio::select! {
-                result = &mut react_task => {
-                    break result.unwrap_or_else(|e| Err(anyhow::anyhow!("react task panicked: {e}")));
+                result = &mut react_result_rx => {
+                    break result.unwrap_or_else(|_| Err(anyhow::anyhow!(
+                        "react task terminated without returning a result"
+                    )));
                 }
                 event_result = turn_stream.recv() => {
                     let event = match event_result {
@@ -1259,16 +1392,7 @@ impl TurnPipeline {
                                 },
                                 &scope_token,
                             ).await {
-                                scope_token.cancel();
-                                react_task.abort();
-                                if let Err(join_error) = (&mut react_task).await {
-                                    if !join_error.is_cancelled() {
-                                        warn!(
-                                            error = %join_error,
-                                            "react task did not terminate cleanly after lifecycle failure"
-                                        );
-                                    }
-                                }
+                                scope.cancel();
                                 return Err(error);
                             }
                         }
@@ -1278,14 +1402,28 @@ impl TurnPipeline {
                             });
                         }
                         TurnEventV1::Usage { usage } => {
-                            acc_tokens_in = acc_tokens_in.saturating_add(usage.total_input_tokens.unwrap_or(0));
-                            acc_tokens_out = acc_tokens_out.saturating_add(usage.output_tokens.unwrap_or(0));
+                            usage_seen = true;
+                            match usage.total_input_tokens {
+                                Some(value) => acc_tokens_in = acc_tokens_in.saturating_add(value),
+                                None => input_tokens_complete = false,
+                            }
+                            match usage.output_tokens {
+                                Some(value) => acc_tokens_out = acc_tokens_out.saturating_add(value),
+                                None => output_tokens_complete = false,
+                            }
                             match usage.cache_read_tokens {
                                 Some(value) => {
                                     cache_read_seen = true;
                                     acc_cache_read_tokens = acc_cache_read_tokens.saturating_add(value);
                                 }
                                 None => cache_read_complete = false,
+                            }
+                            match usage.cache_write_tokens {
+                                Some(value) => {
+                                    cache_write_seen = true;
+                                    acc_cache_write_tokens = acc_cache_write_tokens.saturating_add(value);
+                                }
+                                None => cache_write_complete = false,
                             }
                         }
                         TurnEventV1::ContextUpdate { used_tokens, .. } => {
@@ -1352,14 +1490,28 @@ impl TurnPipeline {
                             });
                         }
                         TurnEventV1::Usage { usage } => {
-                            acc_tokens_in = acc_tokens_in.saturating_add(usage.total_input_tokens.unwrap_or(0));
-                            acc_tokens_out = acc_tokens_out.saturating_add(usage.output_tokens.unwrap_or(0));
+                            usage_seen = true;
+                            match usage.total_input_tokens {
+                                Some(value) => acc_tokens_in = acc_tokens_in.saturating_add(value),
+                                None => input_tokens_complete = false,
+                            }
+                            match usage.output_tokens {
+                                Some(value) => acc_tokens_out = acc_tokens_out.saturating_add(value),
+                                None => output_tokens_complete = false,
+                            }
                             match usage.cache_read_tokens {
                                 Some(value) => {
                                     cache_read_seen = true;
                                     acc_cache_read_tokens = acc_cache_read_tokens.saturating_add(value);
                                 }
                                 None => cache_read_complete = false,
+                            }
+                            match usage.cache_write_tokens {
+                                Some(value) => {
+                                    cache_write_seen = true;
+                                    acc_cache_write_tokens = acc_cache_write_tokens.saturating_add(value);
+                                }
+                                None => cache_write_complete = false,
                             }
                         }
                         TurnEventV1::ContextUpdate { used_tokens, .. } => {
@@ -1403,25 +1555,36 @@ impl TurnPipeline {
         let _buffered_terminal_events = terminal_events;
 
         let execution_returned = text.is_ok();
-        let result = text.unwrap_or_else(|e| fabric::TurnResult {
-            output: format!("error: {e}"),
-            stop: fabric::TurnStop::Failed,
-            metrics: fabric::TurnMetrics {
-                tool_calls_made: 0,
-                tool_errors: 0,
-                provider_retries: 0,
-                elapsed_ms: 0,
-                iterations: 0,
-                completed_normally: false,
-            },
-        });
+        let mut result = match text {
+            Ok(result) => result,
+            Err(error) => {
+                let (stop, failure) = classify_runtime_turn_failure(&error);
+                let output = if stop == fabric::TurnStop::Cancelled {
+                    String::new()
+                } else {
+                    format!("error: {error}")
+                };
+                fabric::TurnResult {
+                    output,
+                    stop,
+                    failure,
+                    usage: Default::default(),
+                    metrics: fabric::TurnMetrics {
+                        tool_calls_made: 0,
+                        tool_errors: 0,
+                        provider_retries: 0,
+                        elapsed_ms: 0,
+                        iterations: 0,
+                        completed_normally: false,
+                    },
+                }
+            }
+        };
         // A successfully returned runtime result can still be authoritatively
         // blocked (for example a Robot safety denial). Do not collapse "RPC
         // returned" into task success or let the rendered report advance the
         // Session as completed.
         let turn_succeeded = execution_returned && matches!(result.stop, fabric::TurnStop::Completed);
-        let text = result.output;
-        let metrics = result.metrics;
         canonical_items.extend(
             std::mem::take(&mut *completed_inference_items.lock().await),
         );
@@ -1444,6 +1607,14 @@ impl TurnPipeline {
                 canonical_items.push(fabric::ItemPayload::CapabilityReceipt { receipt });
             }
         }
+        result.usage = fabric::InferenceUsage::aggregate(canonical_items.iter().filter_map(
+            |item| match item {
+                fabric::ItemPayload::InferenceReceipt { receipt } => Some(&receipt.usage),
+                _ => None,
+            },
+        ));
+        let text = result.output.clone();
+        let metrics = result.metrics.clone();
         info!(len = text.len(), "ReAct loop completed");
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ExecutionFinished)?;
@@ -1498,7 +1669,7 @@ impl TurnPipeline {
             )
             .await;
 
-        let turn = self
+        let finish = self
             .runtime_ports
             .sessions
             .finish(
@@ -1507,8 +1678,17 @@ impl TurnPipeline {
                 &tool_calls_for_session,
                 &tool_results_for_session,
                 &text,
+                llm,
+                turn_profile,
+                context_costs,
             )
             .await?;
+        let turn = finish.turn_count;
+        canonical_items.extend(finish.compactions.into_iter().map(|projection| {
+            fabric::ItemPayload::ContextCompactionProjection {
+                projection: Box::new(projection),
+            }
+        }));
 
         if let Err(error) = self
             .memory_gateway
@@ -1531,21 +1711,6 @@ impl TurnPipeline {
             .await
         {
             warn!(%error, "native assistant memory observation degraded");
-        }
-
-        // -- PR-3: drain the per-turn OperationScope (guarantees no orphan tasks) --
-        {
-            let mut guard = self.current_scope.lock().await;
-            // TurnDone is streamed before post-turn hooks finish. A new client
-            // can therefore begin another turn while this turn is winding
-            // down. Never take and cancel that newer turn's global scope.
-            let owns_current_scope = guard.as_ref().is_some_and(|scope| scope.id == operation_id);
-            let owned_scope = owns_current_scope.then(|| guard.take()).flatten();
-            if let Some(mut scope) = owned_scope {
-                scope
-                    .cancel_and_drain(self.clock.as_ref(), Duration::from_secs(5))
-                    .await;
-            }
         }
 
         self.dispatch_lifecycle(
@@ -1591,33 +1756,48 @@ impl TurnPipeline {
                         provider_retries: Some(metrics.provider_retries),
                         tool_calls: Some(metrics.tool_calls_made as u64),
                         tool_errors: Some(metrics.tool_errors as u64),
-                        cumulative_input_tokens: Some(acc_tokens_in),
-                        cumulative_output_tokens: Some(acc_tokens_out),
+                        cumulative_input_tokens: (usage_seen && input_tokens_complete)
+                            .then_some(acc_tokens_in),
+                        cumulative_output_tokens: (usage_seen && output_tokens_complete)
+                            .then_some(acc_tokens_out),
                         active_context_tokens,
                         cache_read_tokens: (cache_read_seen && cache_read_complete)
                             .then_some(acc_cache_read_tokens),
+                        cache_write_tokens: (cache_write_seen && cache_write_complete)
+                            .then_some(acc_cache_write_tokens),
                         ..Default::default()
                     },
             };
 
-        Ok(json!({"jsonrpc": "2.0", "id": id, "result": {
-            "response": text, "turn": turn, "succeeded": turn_succeeded,
-                "metrics": {
-                    "tool_calls_made": metrics.tool_calls_made,
-                    "tool_errors": metrics.tool_errors,
-                    "provider_retries": metrics.provider_retries,
-                    "elapsed_ms": metrics.elapsed_ms,
-                    "iterations": metrics.iterations,
-                    "completed_normally": metrics.completed_normally
+        // The PostTurnOutcome `succeeded` flag must match the engine's former
+        // computation (stop==Completed AND completed_normally), not the
+        // `turn_succeeded` settlement flag which also gates on execution
+        // having returned.
+        let projection_succeeded = result.stop == fabric::TurnStop::Completed
+            && metrics.completed_normally;
+        Ok(TurnPipelineOutcome::Completed(Box::new(TurnExecution {
+            result,
+            items: canonical_items,
+            projection: Some(PostTurnDispatch {
+                projector: self.post_turn_projection.clone(),
+                outcome: PostTurnOutcome {
+                    session_id: session_id_for_agora,
+                    principal_id: principal,
+                    input: evaluation_input,
+                    output: text,
+                    turn: turn as usize,
+                    succeeded: projection_succeeded,
+                    tool_calls_made: metrics.tool_calls_made,
+                    tool_errors: metrics.tool_errors,
+                    elapsed_ms: metrics.elapsed_ms,
+                    iterations: metrics.iterations,
+                    completed_normally: metrics.completed_normally,
+                    agora_start_version,
                 },
-                "canonical_items": canonical_items,
-                "evaluation_artifacts": evaluation_artifacts,
-                "projection": {
-                    "session_id": session_id_for_agora,
-                    "agora_start_version": agora_start_version,
-                    "conscious_context": context_projection_receipt
-                }
-        }}))
+            }),
+            context_projection: context_projection_receipt,
+            evaluation_artifacts,
+        })))
         }
         .await;
 
@@ -1650,19 +1830,82 @@ impl TurnPipeline {
         }
 
         if let Some(checkpoint_id) = checkpoint_id {
-            let succeeded = turn_result
-                .as_ref()
-                .ok()
-                .and_then(|response| response.get("result"))
-                .and_then(|result| result.get("succeeded"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
+            let succeeded = matches!(
+                turn_result.as_ref().ok(),
+                Some(crate::application::TurnPipelineOutcome::Completed(execution))
+                    if execution.result.stop == fabric::TurnStop::Completed
+                        && execution.result.metrics.completed_normally
+            );
             self.workspace_checkpoint
                 .finalize_turn(checkpoint_id, succeeded)
                 .await?;
         }
         turn_result
     }
+}
+
+fn classify_runtime_turn_failure(
+    error: &anyhow::Error,
+) -> (fabric::TurnStop, Option<fabric::TurnFailure>) {
+    let (stop, kind, retryable) = match error.downcast_ref::<cognit::CognitError>() {
+        Some(cognitive) => match cognitive.kind() {
+            cognit::CognitErrorKind::Cancelled => {
+                return (fabric::TurnStop::Cancelled, None);
+            }
+            cognit::CognitErrorKind::ContextOverflow => (
+                fabric::TurnStop::Failed,
+                fabric::TurnFailureKind::ContextOverflow,
+                false,
+            ),
+            cognit::CognitErrorKind::TransientProvider => (
+                fabric::TurnStop::Failed,
+                fabric::TurnFailureKind::ProviderTransient,
+                true,
+            ),
+            cognit::CognitErrorKind::TerminalProvider => (
+                fabric::TurnStop::Failed,
+                fabric::TurnFailureKind::ProviderPermanent,
+                false,
+            ),
+            cognit::CognitErrorKind::TerminalRuntime => (
+                fabric::TurnStop::Failed,
+                fabric::TurnFailureKind::Runtime,
+                false,
+            ),
+        },
+        None => match error.downcast_ref::<cognit::inference::InferenceFailure>() {
+            Some(inference) => match inference.kind {
+                cognit::inference::InferenceFailureKind::Transient => (
+                    fabric::TurnStop::Failed,
+                    fabric::TurnFailureKind::ProviderTransient,
+                    true,
+                ),
+                cognit::inference::InferenceFailureKind::ContextOverflow => (
+                    fabric::TurnStop::Failed,
+                    fabric::TurnFailureKind::ContextOverflow,
+                    false,
+                ),
+                cognit::inference::InferenceFailureKind::Terminal => (
+                    fabric::TurnStop::Failed,
+                    fabric::TurnFailureKind::ProviderPermanent,
+                    false,
+                ),
+            },
+            None => (
+                fabric::TurnStop::Failed,
+                fabric::TurnFailureKind::Runtime,
+                false,
+            ),
+        },
+    };
+    (
+        stop,
+        Some(fabric::TurnFailure {
+            kind,
+            message: error.to_string(),
+            retryable,
+        }),
+    )
 }
 
 async fn publish_requested_lifecycle_event(
@@ -2075,6 +2318,32 @@ mod terminal_event_tests {
     }
 
     #[test]
+    fn runtime_failure_classification_preserves_cancel_provider_and_crash_semantics() {
+        let cancelled = anyhow::Error::new(cognit::CognitError::cancelled());
+        let (stop, failure) = classify_runtime_turn_failure(&cancelled);
+        assert_eq!(stop, fabric::TurnStop::Cancelled);
+        assert!(failure.is_none());
+
+        let transient = cognit::inference::InferenceFailure::transient("provider_unavailable");
+        let (stop, failure) = classify_runtime_turn_failure(&transient);
+        assert_eq!(stop, fabric::TurnStop::Failed);
+        let failure = failure.unwrap();
+        assert_eq!(failure.kind, fabric::TurnFailureKind::ProviderTransient);
+        assert!(failure.retryable);
+
+        let permanent = cognit::inference::InferenceFailure::terminal("provider_rejected_request");
+        let (_, failure) = classify_runtime_turn_failure(&permanent);
+        let failure = failure.unwrap();
+        assert_eq!(failure.kind, fabric::TurnFailureKind::ProviderPermanent);
+        assert!(!failure.retryable);
+
+        let crash = anyhow::anyhow!("react task panicked");
+        let (stop, failure) = classify_runtime_turn_failure(&crash);
+        assert_eq!(stop, fabric::TurnStop::Failed);
+        assert_eq!(failure.unwrap().kind, fabric::TurnFailureKind::Runtime);
+    }
+
+    #[test]
     fn reported_terminal_events_are_normalized_without_duplicates() {
         let mut buffered = TerminalEventBuffer::default();
         assert!(buffered.observe(&TurnEventV1::Error {
@@ -2127,6 +2396,59 @@ mod terminal_event_tests {
                 && tool == "bash_exec"
                 && kind == "text"
                 && payload == serde_json::json!("building")
+        ));
+    }
+}
+
+#[cfg(test)]
+mod turn_pipeline_outcome_tests {
+    use super::{TurnPipelineOutcome, TurnPipelineRejection};
+
+    #[test]
+    fn rejection_messages_preserve_the_former_json_error_text() {
+        assert_eq!(
+            TurnPipelineRejection::IntentDeniedBySelfField {
+                reason: "read denied".into()
+            }
+            .message(),
+            "Intent denied by SelfField: read denied"
+        );
+        assert_eq!(
+            TurnPipelineRejection::SelfFieldReviewFailed {
+                reason: "provider down".into()
+            }
+            .message(),
+            "SelfField review failed (fail-closed): provider down"
+        );
+        assert_eq!(
+            TurnPipelineRejection::HookBlocked {
+                reason: "guard rejected".into()
+            }
+            .message(),
+            "Blocked by hook: guard rejected"
+        );
+    }
+
+    #[test]
+    fn rejection_variants_are_distinct_domain_values() {
+        let denied = TurnPipelineRejection::IntentDeniedBySelfField {
+            reason: "same".into(),
+        };
+        let hook = TurnPipelineRejection::HookBlocked {
+            reason: "same".into(),
+        };
+        assert_ne!(denied, hook);
+    }
+
+    #[test]
+    fn outcome_carries_the_typed_rejection() {
+        let outcome = TurnPipelineOutcome::Rejected(TurnPipelineRejection::HookBlocked {
+            reason: "block".into(),
+        });
+        assert!(matches!(
+            outcome,
+            TurnPipelineOutcome::Rejected(TurnPipelineRejection::HookBlocked { reason })
+                if reason == "block"
         ));
     }
 }

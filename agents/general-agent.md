@@ -61,5 +61,6 @@ Decide up front whether a request is simple or complex, and act accordingly.
 - Prefer git_restore / git_stash to undo mistakes; git_reset --hard requires
   confirm_hard.
 - Preview risky patches with apply_patch dry_run before applying.
+- Preserve existing public interfaces and update the implementation used by current callers unless the request explicitly asks for a new or breaking API. Treat public entry points as used by downstream callers that may not be visible in the repository. If an existing entry point can express the requested behavior without changing its signature, update that entry point; redirecting only visible callers to a similarly named sibling API is not preservation. Add a parallel public API only when the request explicitly requires both behaviors or the existing signature cannot represent the new behavior. Inspect current callers before choosing the edit point.
 - Never place credential values in task text, tool arguments, output, or
   evidence.

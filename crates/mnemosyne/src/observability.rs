@@ -167,6 +167,12 @@ pub struct MemoryMetricsSnapshot {
     pub memory_recall_cache_hit_total: u64,
     /// Recall requests that were not present in the bounded local recall cache.
     pub memory_recall_cache_miss_total: u64,
+    /// Expired candidates rejected before authoritative recall.
+    pub memory_recall_cache_stale_reject_total: u64,
+    /// Backend latency avoided by accepted recall-cache hits.
+    pub memory_recall_cache_saved_latency_ms: u64,
+    /// Serialized recall-result bytes reused by accepted hits.
+    pub memory_recall_cache_saved_output_bytes: u64,
     /// Cache misses coalesced behind an already-running authoritative recall.
     pub memory_recall_cache_singleflight_wait_total: u64,
     /// Authoritative recalls that failed after a cache miss.
@@ -268,15 +274,28 @@ impl MemoryMetrics {
             .saturating_add(count as u64);
     }
 
-    pub fn recall_cache_hit(&self) {
+    pub fn recall_cache_hit(&self, saved_latency_ms: u64, saved_output_bytes: u64) {
         let mut guard = self.lock();
         guard.memory_recall_cache_hit_total = guard.memory_recall_cache_hit_total.saturating_add(1);
+        guard.memory_recall_cache_saved_latency_ms = guard
+            .memory_recall_cache_saved_latency_ms
+            .saturating_add(saved_latency_ms);
+        guard.memory_recall_cache_saved_output_bytes = guard
+            .memory_recall_cache_saved_output_bytes
+            .saturating_add(saved_output_bytes);
     }
 
     pub fn recall_cache_miss(&self) {
         let mut guard = self.lock();
         guard.memory_recall_cache_miss_total =
             guard.memory_recall_cache_miss_total.saturating_add(1);
+    }
+
+    pub fn recall_cache_stale_reject(&self) {
+        let mut guard = self.lock();
+        guard.memory_recall_cache_stale_reject_total = guard
+            .memory_recall_cache_stale_reject_total
+            .saturating_add(1);
     }
 
     pub fn recall_cache_singleflight_wait(&self) {

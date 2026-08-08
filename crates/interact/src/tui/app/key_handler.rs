@@ -32,7 +32,7 @@ async fn request_transaction_review(
     risk_acknowledged: bool,
 ) {
     let Some(session_id) = app.app_state.session_id.clone() else {
-        app.chat
+        app.compat_transcript
             .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
         return;
     };
@@ -42,7 +42,7 @@ async fn request_transaction_review(
         .and_then(|patch| patch.transaction_id)
         .map(|id| id.0.to_string())
     else {
-        app.chat.add_text(
+        app.compat_transcript.add_text(
             ChatRole::System,
             "当前差异没有 Host change transaction，无法执行 review action".to_string(),
         );
@@ -120,20 +120,22 @@ fn accept_selected_completion(app: &mut App) -> bool {
 pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
     use crossterm::event::MouseEventKind;
     match mouse.kind {
-        // Mouse wheel up: scroll up in pager, or scroll chat up
+        // Mouse wheel up: scroll the pager or the visible Task Console.
         MouseEventKind::ScrollUp => {
             if let Some(ref mut pager) = app.pager {
                 pager.scroll_up(3);
             } else {
-                app.chat.scroll_up(3);
+                app.app_state.conversation_scroll =
+                    app.app_state.conversation_scroll.saturating_add(3);
             }
         }
-        // Mouse wheel down: scroll down in pager, or scroll chat down
+        // Mouse wheel down: scroll the pager or the visible Task Console.
         MouseEventKind::ScrollDown => {
             if let Some(ref mut pager) = app.pager {
                 pager.scroll_down(3);
             } else {
-                app.chat.scroll_down(3);
+                app.app_state.conversation_scroll =
+                    app.app_state.conversation_scroll.saturating_sub(3);
             }
         }
         _ => {}
@@ -175,7 +177,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 );
                 app.projection_target_session_id = Some(session_id.clone());
                 app.projection_request_in_flight = true;
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, format!("恢复会话 {session_id}..."));
             }
         }
@@ -188,7 +190,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             CheckpointPickerAction::Close => {}
             CheckpointPickerAction::RewindCode { prompt_index } => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
                     return;
                 };
@@ -211,7 +213,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.pending_non_turn.insert(request_id);
                 app.streaming = true;
                 app.status.waiting = true;
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     format!("请求恢复工作区检查点 {prompt_index}…"),
                 );
@@ -219,7 +221,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             action @ (CheckpointPickerAction::ForkSession { .. }
             | CheckpointPickerAction::ForkAndRewind { .. }) => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat
+                    app.compat_transcript
                         .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
                     return;
                 };
@@ -251,7 +253,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.pending_non_turn.insert(request_id);
                 app.streaming = true;
                 app.status.waiting = true;
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     if prompt_index.is_some() {
                         "创建历史会话分支，成功后再恢复代码…".to_string()
@@ -281,8 +283,9 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Ctrl+T: open pager overlay
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('t') {
-        app.pager = Some(super::super::pager::PagerOverlay::from_chat(
-            &app.chat,
+        app.pager = Some(super::super::pager::PagerOverlay::from_state(
+            &app.app_state,
+            &app.caps,
             "Transcript",
         ));
         return;
@@ -367,19 +370,19 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                         Some(transaction_id),
                     ) => {
                         app.review_risk_confirmation = Some(transaction_id);
-                        app.chat.add_text(
+                        app.compat_transcript.add_text(
                             ChatRole::System,
                             "这是 best-effort rollback，可能残留外部副作用；再次按 x 显式确认风险"
                                 .to_string(),
                         );
                     }
                     (Some(fabric::change_transaction::MutationCoverage::NonRollbackable), _) => {
-                        app.chat.add_text(
+                        app.compat_transcript.add_text(
                             ChatRole::System,
                             "Host 声明该事务不可回滚；未发送 rollback 请求".to_string(),
                         );
                     }
-                    _ => app.chat.add_text(
+                    _ => app.compat_transcript.add_text(
                         ChatRole::System,
                         "缺少 Host transaction/coverage，未发送 rollback 请求".to_string(),
                     ),
@@ -474,7 +477,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 let framed = format!("{payload}\n");
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     format!(
                         "Approval: {} ({})",
@@ -488,7 +491,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         // Any other key while dialog is open: ignore (except Ctrl+C to dismiss)
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             app.pending_approval = None;
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, "Approval cancelled (deny)".to_string());
         }
         return;
@@ -546,7 +549,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Ctrl+L: clear screen
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
-        app.chat = ChatWidget::new(app.caps.clone());
+        app.compat_transcript = ChatWidget::new(app.caps.clone());
+        app.compat_projected_entries = 0;
         return;
     }
 
@@ -603,7 +607,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             .unwrap_or(0);
         let next = modes[(current + 1) % modes.len()];
         write_request(app, ClientRpcRequest::mode_switch(next)).await;
-        app.chat.add_text(
+        app.compat_transcript.add_text(
             ChatRole::System,
             format!("Switching to {} mode", next.display_name()),
         );
@@ -618,7 +622,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             CollaborationMode::Plan
         };
         write_request(app, ClientRpcRequest::mode_switch(target)).await;
-        app.chat.add_text(
+        app.compat_transcript.add_text(
             ChatRole::System,
             format!("Switching to {} mode", target.display_name()),
         );
@@ -706,9 +710,17 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
         // Enter: submit (or accept completion, or Shift+Enter / Alt+Enter: newline)
         KeyCode::Enter => {
-            // Accept completion if visible
+            // Accept completion if visible and it would change the input.  The
+            // renderer refreshes discovery on every frame, so an exact command
+            // remains visible after the first acceptance.  Treating that exact
+            // match as another acceptance would make commands such as
+            // `/context` impossible to submit.
             if app.completion.visible {
-                if accept_selected_completion(app) {
+                let selection_changes_input = app
+                    .completion
+                    .selected()
+                    .is_some_and(|selected| selected != app.input_buf);
+                if selection_changes_input && accept_selected_completion(app) {
                     return;
                 }
                 app.completion.hide();
@@ -823,7 +835,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.input_buf = entry.to_string();
                 app.cursor = app.input_buf.len();
             } else {
-                app.chat.scroll_up(5);
+                app.app_state.conversation_scroll =
+                    app.app_state.conversation_scroll.saturating_add(5);
             }
         }
         // Down: completion next, or history, or scroll chat
@@ -834,16 +847,17 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.input_buf = entry.to_string();
                 app.cursor = app.input_buf.len();
             } else {
-                app.chat.scroll_down(5);
+                app.app_state.conversation_scroll =
+                    app.app_state.conversation_scroll.saturating_sub(5);
             }
         }
 
-        // PageUp/PageDown: scroll chat
+        // PageUp/PageDown: scroll the visible Task Console conversation.
         KeyCode::PageUp => {
-            app.chat.scroll_up(5);
+            app.app_state.conversation_scroll = app.app_state.conversation_scroll.saturating_add(5);
         }
         KeyCode::PageDown => {
-            app.chat.scroll_down(5);
+            app.app_state.conversation_scroll = app.app_state.conversation_scroll.saturating_sub(5);
         }
 
         // Escape: hide completion, or clear input
@@ -1026,6 +1040,22 @@ mod tests {
         assert_eq!(app.input_buf, "/memory");
         assert_eq!(app.cursor, app.input_buf.len());
         assert!(!app.completion.visible);
+    }
+
+    #[tokio::test]
+    async fn enter_submits_an_exact_slash_command_instead_of_reaccepting_it() {
+        let mut app = idle_app().await;
+        app.input_buf = "/context".to_string();
+        app.cursor = app.input_buf.len();
+        refresh_command_completion(&mut app);
+        assert!(app.completion.visible);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter)).await;
+
+        assert!(app.input_buf.is_empty());
+        assert_eq!(app.cursor, 0);
+        assert!(!app.completion.visible);
+        assert!(app.pager.is_some());
     }
 
     #[tokio::test]

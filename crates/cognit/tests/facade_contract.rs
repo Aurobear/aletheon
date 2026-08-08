@@ -25,6 +25,7 @@ fn request() -> TurnRequest {
             fabric::ApprovalPolicy::OnRequest,
         ),
         input: "test facade".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),

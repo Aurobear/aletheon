@@ -6,6 +6,66 @@ use super::RequestHandler;
 use serde_json::json;
 
 impl RequestHandler {
+    pub(crate) async fn status_projection(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<fabric::contract::command::StatusProjectionV1> {
+        let turn_count = self.ports.sessions.current(session_id).await?.turn_count;
+        let compaction = self.ports.sessions.compaction_status(session_id).await?;
+        let status = self.ports.health.status().await?;
+        let memory = self.ports.memory_health_snapshot();
+
+        Ok(fabric::contract::command::StatusProjectionV1 {
+            session_id: session_id.to_owned(),
+            turn_count,
+            iteration: status.iteration,
+            reflection_count: status.reflection_count,
+            evolution_count: status.evolution_count,
+            care_weights: status
+                .care_weights
+                .into_iter()
+                .map(|care| fabric::contract::command::StatusCareWeightV1 {
+                    topic: care.topic,
+                    weight: care.weight,
+                })
+                .collect(),
+            boundary_rules: status.boundary_rules,
+            boundary_immutable: status.boundary_immutable,
+            attention_focus: status.attention_focus,
+            compaction: fabric::contract::command::StatusCompactionV1 {
+                attempts: compaction.attempts,
+                successful: compaction.successful,
+                last: compaction
+                    .last
+                    .map(|run| fabric::contract::command::StatusCompactionRunV1 {
+                        run_id: run.run_id,
+                        strategy: format!("{:?}", run.strategy).to_ascii_lowercase(),
+                        tokens_before: run.tokens_before,
+                        tokens_after: run.tokens_after,
+                        forced: run.forced,
+                        applied: run.applied,
+                        failure: run.failure,
+                    }),
+            },
+            memory: fabric::contract::command::StatusMemoryV1 {
+                provider: "composite".into(),
+                local: "healthy".into(),
+                supplemental: fabric::contract::command::StatusSupplementalMemoryV1 {
+                    enabled: memory.supplemental_enabled,
+                    state: if memory.degraded {
+                        "degraded".into()
+                    } else {
+                        "healthy".into()
+                    },
+                    error_category: memory
+                        .error_category
+                        .map(|value| format!("{value:?}").to_ascii_lowercase()),
+                    queue_depth: memory.queue_depth,
+                },
+            },
+        })
+    }
+
     pub(super) async fn handle_conscious_diagnostics(
         &self,
         connection: &super::super::super::server::ConnectionContext,
@@ -48,77 +108,6 @@ impl RequestHandler {
             Err(error) => {
                 json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32603,"message":error.to_string()}})
             }
-        }
-    }
-
-    pub(crate) async fn handle_status(
-        &self,
-        id: &serde_json::Value,
-        request: &serde_json::Value,
-    ) -> serde_json::Value {
-        let session_id = match request["params"].get("session_id").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                return json!({
-                    "jsonrpc": "2.0", "id": id,
-                    "error": { "code": -32602, "message": "Missing session_id parameter" }
-                })
-            }
-        };
-        let turn_count = match self.ports.sessions.current(session_id).await {
-            Ok(snapshot) => snapshot.turn_count,
-            Err(error) => {
-                return json!({
-                    "jsonrpc": "2.0", "id": id,
-                    "error": { "code": -32000, "message": error.to_string() }
-                });
-            }
-        };
-        let compaction = match self.ports.sessions.compaction_status(session_id).await {
-            Ok(status) => status,
-            Err(error) => {
-                return json!({
-                    "jsonrpc": "2.0", "id": id,
-                    "error": { "code": -32000, "message": error.to_string() }
-                });
-            }
-        };
-        match self.ports.health.status().await {
-            Ok(status) => {
-                let memory_health = self.ports.memory_health_snapshot();
-                json!({
-                    "jsonrpc": "2.0", "id": id,
-                    "result": { "status": {
-                        // Session-scoped fields above were resolved from the
-                        // explicitly requested session. Do not mix them with the
-                        // health service's process-global/default session id.
-                        "session_id": session_id,
-                        "turn_count": turn_count,
-                        "iteration": status.iteration,
-                        "reflection_count": status.reflection_count,
-                        "evolution_count": status.evolution_count,
-                        "care_weights": status.care_weights,
-                        "boundary_rules": status.boundary_rules,
-                        "boundary_immutable": status.boundary_immutable,
-                        "attention_focus": status.attention_focus,
-                        "compaction": compaction,
-                        "memory": {
-                            "provider": "composite",
-                            "local": "healthy",
-                            "supplemental": {
-                                "enabled": memory_health.supplemental_enabled,
-                                "state": if memory_health.degraded { "degraded" } else { "healthy" },
-                                "error_category": memory_health.error_category.map(|value| format!("{value:?}").to_ascii_lowercase()),
-                                "queue_depth": memory_health.queue_depth,
-                            }
-                        },
-                    }}
-                })
-            }
-            Err(error) => json!({
-                "jsonrpc": "2.0", "id": id,
-                "error": { "code": -32000, "message": error.to_string() }
-            }),
         }
     }
 

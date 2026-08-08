@@ -14,6 +14,45 @@ expected=(aletheon.sh cargo-agent.sh)
 ! grep -Eq '(^|[[:space:]])cargo (build|check|test|clippy|doc)' setup.sh
 grep -Fq 'scripts/cargo-agent.sh build -p aletheon --release' setup.sh
 
+# Fresh installs must not silently select or advertise the quota-expensive Pro
+# route. Pro may remain in the model catalog for explicit user selection, but
+# every generated default and convenience alias is Flash-only.
+setup_config=$(sed -n '/^setup_config()/,/^}/p' setup.sh)
+grep -Fq 'default_model = "deepseek/deepseek-v4-flash"' <<<"$setup_config"
+grep -Fq 'models = ["deepseek/deepseek-v4-flash"]' <<<"$setup_config"
+grep -Fq 'models = ["deepseek-v4-flash"]' <<<"$setup_config"
+grep -Fq 'flash = "leju/deepseek/deepseek-v4-flash"' <<<"$setup_config"
+grep -Fq 'deepseek = "deepseek/deepseek-v4-flash"' <<<"$setup_config"
+if grep -Fq 'deepseek-v4-pro' <<<"$setup_config"; then
+  echo 'fresh-install defaults must not contain a DeepSeek Pro route' >&2
+  exit 1
+fi
+for config in config/default.toml config/production.toml.example; do
+  grep -Fq 'deepseek-v4-flash[1m]' "$config"
+  if grep -Fq 'deepseek-v4-pro' "$config"; then
+    echo "configured defaults must not contain a DeepSeek Pro route: $config" >&2
+    exit 1
+  fi
+done
+
+# Every local edit/verify profile preserves rustc incremental state. Only the
+# tagged distributable release job may opt out for its clean artifact lane.
+python3 - "$root/Cargo.toml" <<'PY'
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as source:
+    manifest = tomllib.load(source)
+for name in ("dev", "test", "release", "bench"):
+    if manifest.get("profile", {}).get(name, {}).get("incremental") is not True:
+        raise SystemExit(f"Cargo profile {name} must enable incremental compilation")
+PY
+if grep -R -n -F 'CARGO_INCREMENTAL=0' scripts setup.sh justfile; then
+  echo 'local build/test/deployment paths must not disable incremental compilation' >&2
+  exit 1
+fi
+grep -Fq 'CARGO_INCREMENTAL: 0' .github/workflows/release.yml
+
 removed=(
   scripts/aletheon-healthcheck.sh
   scripts/aletheon-pi-scheduled-task.sh

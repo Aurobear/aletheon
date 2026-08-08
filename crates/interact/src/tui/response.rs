@@ -23,7 +23,8 @@ pub fn try_read_socket_with_recorder(
                 app.streaming = false;
                 app.status.waiting = false;
                 app.app_state.streaming = false;
-                app.chat.add_text(ChatRole::System, "连接断开".to_string());
+                app.compat_transcript
+                    .add_text(ChatRole::System, "连接断开".to_string());
                 break;
             }
             Ok(n) => {
@@ -35,7 +36,7 @@ pub fn try_read_socket_with_recorder(
                         Ok(Some(line)) => line.trim().to_string(),
                         Ok(None) => break,
                         Err(error) => {
-                            app.chat.add_text(
+                            app.compat_transcript.add_text(
                                 ChatRole::System,
                                 format!("Error: daemon protocol contained invalid UTF-8: {error}"),
                             );
@@ -96,6 +97,17 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
 
     match event {
         ClientEvent::TurnStarted { iteration } => {
+            let observed_at = app.clock.mono_now().0;
+            super::reducer::begin_live_turn(&mut app.app_state, None);
+            let _ = super::reducer::reduce(
+                &mut app.app_state,
+                super::reducer::UiAction::LiveActivity(
+                    super::reducer::LiveActivityEvent::InferenceStarted {
+                        iteration,
+                        observed_at,
+                    },
+                ),
+            );
             app.stream_ctrl.start_turn();
             app.status.waiting = false;
             app.status.elapsed_secs = 0.0;
@@ -109,27 +121,42 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::ThinkingDelta { text } => {
             app.stream_ctrl.push_thinking(&text);
-            app.chat
+            app.compat_transcript
                 .set_assistant_stream(app.stream_ctrl.current_text());
+            app.dispatch_live_assistant_text();
         }
         ClientEvent::TextDelta { text } => {
             app.stream_ctrl.push_text(&text);
-            app.chat
+            app.compat_transcript
                 .set_assistant_stream(app.stream_ctrl.current_text());
+            app.dispatch_live_assistant_text();
         }
         ClientEvent::TextSnapshot { text } => {
             app.stream_ctrl.replace_text(&text);
-            app.chat
+            app.compat_transcript
                 .set_assistant_stream(app.stream_ctrl.current_text());
+            app.dispatch_live_assistant_text();
         }
         ClientEvent::ToolCallStart {
             call_id,
             tool,
             args,
         } => {
-            app.chat.discard_trailing_assistant_draft();
+            let observed_at = app.clock.mono_now().0;
+            let _ = super::reducer::reduce(
+                &mut app.app_state,
+                super::reducer::UiAction::LiveActivity(
+                    super::reducer::LiveActivityEvent::ToolStarted {
+                        call_id: call_id.clone(),
+                        tool: tool.clone(),
+                        observed_at,
+                    },
+                ),
+            );
+            app.compat_transcript.discard_trailing_assistant_draft();
             let args_str = serde_json::to_string(&args).unwrap_or_default();
-            app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
+            app.compat_transcript
+                .add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
             app.app_state.turn_activity.tool_calls += 1;
         }
@@ -139,15 +166,28 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             args,
         } => {
             let args_str = serde_json::to_string(&args).unwrap_or_default();
-            app.chat.update_exec_args(&call_id, &args_str);
+            app.compat_transcript.update_exec_args(&call_id, &args_str);
         }
         ClientEvent::ToolCallResult {
             call_id,
             output,
             is_error,
+            elapsed_ms,
             patch_delta,
             ..
         } => {
+            let observed_at = app.clock.mono_now().0;
+            let _ = super::reducer::reduce(
+                &mut app.app_state,
+                super::reducer::UiAction::LiveActivity(
+                    super::reducer::LiveActivityEvent::ToolFinished {
+                        call_id: call_id.clone(),
+                        is_error,
+                        elapsed_ms,
+                        observed_at,
+                    },
+                ),
+            );
             if let Some(delta) = patch_delta.as_ref() {
                 app.latest_patch = Some(delta.clone());
             }
@@ -157,7 +197,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             {
                 app.latest_diff = Some(preview);
             }
-            app.chat
+            app.compat_transcript
                 .update_exec_with_delta(&call_id, &output, is_error, patch_delta);
             if is_error {
                 if output.starts_with("Policy denied:")
@@ -175,11 +215,23 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         ClientEvent::ToolProgress {
             call_id, payload, ..
         } => {
+            let observed_at = app.clock.mono_now().0;
+            let _ = super::reducer::reduce(
+                &mut app.app_state,
+                super::reducer::UiAction::LiveActivity(
+                    super::reducer::LiveActivityEvent::ToolProgress {
+                        call_id: call_id.clone(),
+                        payload: payload.clone(),
+                        observed_at,
+                    },
+                ),
+            );
             let progress = payload
                 .as_str()
                 .map(ToOwned::to_owned)
                 .unwrap_or_else(|| payload.to_string());
-            app.chat.update_exec_progress(&call_id, &progress);
+            app.compat_transcript
+                .update_exec_progress(&call_id, &progress);
         }
         ClientEvent::PatchProgress {
             status,
@@ -195,7 +247,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 (Some(applied), Some(failed)) => format!("{applied} applied, {failed} failed"),
                 _ => String::new(),
             });
-            app.chat.add_text(
+            app.compat_transcript.add_text(
                 ChatRole::System,
                 format!("Patch {status}: {operation} {target} {detail}")
                     .trim_end()
@@ -203,6 +255,16 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             );
         }
         ClientEvent::Usage { usage } => {
+            let observed_at = app.clock.mono_now().0;
+            let _ = super::reducer::reduce(
+                &mut app.app_state,
+                super::reducer::UiAction::LiveActivity(
+                    super::reducer::LiveActivityEvent::InferenceFinished {
+                        iteration: app.current_iteration,
+                        observed_at,
+                    },
+                ),
+            );
             app.app_state.turn_activity.inference_rounds += 1;
             let tokens_in = usage.total_input_tokens.unwrap_or(0);
             let tokens_out = usage.output_tokens.unwrap_or(0);
@@ -216,7 +278,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::TurnDone => {
             app.stream_ctrl.commit();
-            app.chat
+            app.compat_transcript
                 .set_assistant_stream(app.stream_ctrl.current_text());
             app.streaming = false;
             app.status.waiting = false;
@@ -225,7 +287,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.session_turns += 1;
         }
         ClientEvent::Error { message } => {
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, format!("Error: {message}"));
             app.streaming = false;
             app.status.waiting = false;
@@ -292,8 +354,8 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             max_tokens,
             used_tokens,
         } => {
-            app.app_state.context.used = used_tokens as usize;
-            app.app_state.context.max = max_tokens as usize;
+            app.app_state.context.used = Some(used_tokens as usize);
+            app.app_state.context.max = Some(max_tokens as usize);
             app.status.context_used_tokens = used_tokens as u32;
             app.status.context_window = max_tokens as u32;
         }
@@ -303,15 +365,15 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.model_name = model;
         }
         ClientEvent::Interrupted => {
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, "Interrupted".to_string());
         }
         ClientEvent::BudgetExceeded { limit } => {
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, format!("Budget exceeded: {limit} tokens"));
         }
         ClientEvent::CircuitBreakerTripped { reason } => {
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, format!("Circuit breaker: {reason}"));
         }
         ClientEvent::CompactionTriggered => {
@@ -328,7 +390,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             } else {
                 tokens_after as f64 / tokens_before as f64 * 100.0
             };
-            app.chat.add_text(
+            app.compat_transcript.add_text(
                 ChatRole::System,
                 format!(
                     "自动压缩完成：{tokens_before} → {tokens_after} tokens（{ratio:.1}%），\
@@ -340,7 +402,17 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             // Routine reflection is internal control flow, not conversation.
             // Surface only a reflection that changes strategy or stops work.
             if !(summary.contains("Spec: on track") && summary.ends_with("Continuing...")) {
-                app.chat.add_text(ChatRole::System, summary);
+                let observed_at = app.clock.mono_now().0;
+                let _ = super::reducer::reduce(
+                    &mut app.app_state,
+                    super::reducer::UiAction::LiveActivity(
+                        super::reducer::LiveActivityEvent::ProgressSummary {
+                            summary: summary.clone(),
+                            observed_at,
+                        },
+                    ),
+                );
+                app.compat_transcript.add_text(ChatRole::System, summary);
             }
         }
         ClientEvent::GoalSet {
@@ -407,89 +479,171 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
     if apply_pending_command_response(app, &msg) {
         return;
     }
+    if apply_typed_command_output(app, &msg) {
+        return;
+    }
     if apply_typed_protocol_event(app, &msg) {
         return;
     }
-    if let Some(result) = msg.get("result") {
-        if let Some(text) = result.get("response").and_then(|v| v.as_str()) {
-            // Standard chat response - deduplicate consecutive identical text
-            // Some models repeat thinking/reasoning text
-            let deduped = deduplicate_consecutive_text(text);
-            app.chat.set_assistant_stream(deduped);
-        } else if let Some(status) = result.get("status") {
-            // /status response — rich self-evolution state
-            let formatted = format_status(status);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(sessions) = result.get("sessions") {
-            // /sessions response
-            let formatted = format_sessions(sessions);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(_models) = result.get("models") {
-            // /model response
-            let formatted = format_models(result);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(skills) = result.get("skills") {
-            // Phase B: SkillsCatalog response — populate the command registry
-            // so Tab-completion and /help reflect daemon skills.
-            app.registry.set_skills_from_json(skills);
-            let formatted = format_skills_list(skills);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(facts) = result.get("facts") {
-            // /memory response — render fact list
-            let formatted = format_memory_facts(facts);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(memory) = result.get("memory") {
-            // /memory status response
-            app.chat.set_assistant_stream(format_memory_status(memory));
-        } else if let Some(receipt) = result.get("receipt") {
-            if receipt.is_null() {
-                app.chat.add_text(
-                    ChatRole::System,
-                    "No evaluation receipt is available for this session.".to_string(),
-                );
-            } else {
-                match serde_json::from_value::<fabric::EvaluationReceiptRef>(receipt.clone()) {
-                    Ok(receipt) => {
-                        app.app_state.latest_evaluation = Some(receipt.clone());
-                        app.chat.add_text(
-                            ChatRole::System,
-                            super::reducer::format_evaluation_receipt_ref(&receipt),
-                        );
-                    }
-                    Err(error) => app.chat.add_text(
-                        ChatRole::System,
-                        format!("Invalid evaluation receipt response: {error}"),
-                    ),
-                }
-            }
-        } else if let Some(content) = result.get("content").and_then(|value| value.as_str()) {
-            // session.memory returns bounded markdown owned by the daemon.
-            app.chat.set_assistant_stream(content.to_string());
-        } else if let Some(tools) = result.get("tools") {
-            // tools/list response
-            let formatted = format_tools_list(tools);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(agents) = result.get("agents") {
-            // /agents response
-            let formatted = format_agents(agents);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(msg_text) = result.get("message").and_then(|v| v.as_str()) {
-            // Generic message response (e.g. /resume, /compact)
-            app.chat.set_assistant_stream(msg_text.to_string());
-        }
-    } else if let Some(error) = msg.get("error") {
-        let err = error
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown error");
-        app.chat.add_text(ChatRole::System, format!("Error: {err}"));
-    }
+    // All unversioned response shapes are isolated in one V0 compatibility
+    // adapter. New daemon output must use CommandOutputEnvelopeV1 or
+    // ClientMessage<ClientEvent>; the main path never guesses business fields.
+    let _legacy_v0_consumed = apply_legacy_v0_response(app, &msg);
     // NOTE: Do NOT clear streaming/waiting here. The JSON-RPC result arrives
     // BEFORE the turn_done event. Clearing streaming here causes a visible UI
     // freeze between tool calls. Let turn_done handle the state transition.
     //
     // Also do NOT clear response_buf — streaming events may follow in the
     // same try_read chunk.
+}
+
+/// Temporary V0 response adapter. This is the only location allowed to inspect
+/// legacy result fields; remove after the compatibility window ending 2026-12-31.
+fn set_compat_assistant(app: &mut App, text: String) {
+    app.compat_transcript.set_assistant_stream(text.clone());
+    app.show_transient_assistant(text);
+}
+
+fn add_compat_notice(app: &mut App, text: String) {
+    app.compat_transcript.add_text(ChatRole::System, text);
+    app.sync_compat_notices();
+}
+
+fn apply_legacy_v0_response(app: &mut App, msg: &serde_json::Value) -> bool {
+    if let Some(result) = msg.get("result") {
+        if let Some(text) = result.get("response").and_then(|v| v.as_str()) {
+            // Standard chat response - deduplicate consecutive identical text
+            // Some models repeat thinking/reasoning text
+            let deduped = deduplicate_consecutive_text(text);
+            set_compat_assistant(app, deduped);
+        } else if let Some(status) = result.get("status") {
+            // /status response — rich self-evolution state
+            let formatted = format_status(status);
+            set_compat_assistant(app, formatted);
+        } else if let Some(sessions) = result.get("sessions") {
+            // /sessions response
+            let formatted = format_sessions(sessions);
+            set_compat_assistant(app, formatted);
+        } else if let Some(_models) = result.get("models") {
+            // /model response
+            let formatted = format_models(result);
+            set_compat_assistant(app, formatted);
+        } else if let Some(skills) = result.get("skills") {
+            // Phase B: SkillsCatalog response — populate the command registry
+            // so Tab-completion and /help reflect daemon skills.
+            app.registry.set_skills_from_json(skills);
+            let formatted = format_skills_list(skills);
+            set_compat_assistant(app, formatted);
+        } else if let Some(facts) = result.get("facts") {
+            // /memory response — render fact list
+            let formatted = format_memory_facts(facts);
+            set_compat_assistant(app, formatted);
+        } else if let Some(memory) = result.get("memory") {
+            // /memory status response
+            set_compat_assistant(app, format_memory_status(memory));
+        } else if let Some(receipt) = result.get("receipt") {
+            if receipt.is_null() {
+                add_compat_notice(
+                    app,
+                    "No evaluation receipt is available for this session.".to_string(),
+                );
+            } else {
+                match serde_json::from_value::<fabric::EvaluationReceiptRef>(receipt.clone()) {
+                    Ok(receipt) => {
+                        app.app_state.latest_evaluation = Some(receipt.clone());
+                        add_compat_notice(
+                            app,
+                            super::reducer::format_evaluation_receipt_ref(&receipt),
+                        );
+                    }
+                    Err(error) => add_compat_notice(
+                        app,
+                        format!("Invalid evaluation receipt response: {error}"),
+                    ),
+                }
+            }
+        } else if let Some(content) = result.get("content").and_then(|value| value.as_str()) {
+            // session.memory returns bounded markdown owned by the daemon.
+            set_compat_assistant(app, content.to_string());
+        } else if let Some(tools) = result.get("tools") {
+            // tools/list response
+            let formatted = format_tools_list(tools);
+            set_compat_assistant(app, formatted);
+        } else if let Some(agents) = result.get("agents") {
+            // /agents response
+            let formatted = format_agents(agents);
+            set_compat_assistant(app, formatted);
+        } else if let Some(msg_text) = result.get("message").and_then(|v| v.as_str()) {
+            // Generic message response (e.g. /resume, /compact)
+            set_compat_assistant(app, msg_text.to_string());
+        }
+    } else if let Some(error) = msg.get("error") {
+        let err = error
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        add_compat_notice(app, format!("Error: {err}"));
+    }
+    msg.get("result").is_some() || msg.get("error").is_some()
+}
+
+fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> bool {
+    use fabric::contract::command::{
+        CommandOutputEnvelopeV1, CommandOutputProtocol, CommandOutputV1,
+    };
+
+    let Some(result) = message.get("result") else {
+        return false;
+    };
+    let is_command_output =
+        result.get("protocol").and_then(serde_json::Value::as_str) == Some("command_output");
+    if !is_command_output {
+        return false;
+    }
+
+    let output = match serde_json::from_value::<CommandOutputEnvelopeV1>(result.clone()) {
+        Ok(output) if output.protocol == CommandOutputProtocol::CommandOutput => output,
+        Ok(_) => unreachable!("CommandOutputProtocol currently has one variant"),
+        Err(error) => {
+            add_compat_notice(app, format!("Command output protocol rejected: {error}"));
+            return true;
+        }
+    };
+    let output = match output.into_v1() {
+        Ok(output) => output,
+        Err(error) => {
+            add_compat_notice(app, format!("Command output protocol rejected: {error}"));
+            return true;
+        }
+    };
+
+    match output {
+        CommandOutputV1::PromptAccepted => {}
+        CommandOutputV1::PromptCompleted(completion) => {
+            set_compat_assistant(app, deduplicate_consecutive_text(&completion.response));
+            if completion.stop != fabric::TurnStop::Completed {
+                add_compat_notice(app, format!("Turn stopped: {:?}", completion.stop));
+            }
+        }
+        CommandOutputV1::Status(status) => {
+            set_compat_assistant(
+                app,
+                format!(
+                    "{}: {}",
+                    if status.ready { "ready" } else { "not ready" },
+                    status.summary
+                ),
+            );
+        }
+        CommandOutputV1::StatusProjected(status) => {
+            set_compat_assistant(app, format_status_projection(&status));
+        }
+        CommandOutputV1::Rejected(rejection) => add_compat_notice(
+            app,
+            format!("Error {}: {}", rejection.code, rejection.message),
+        ),
+    }
+    true
 }
 
 fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) -> bool {
@@ -541,11 +695,11 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                         }) {
                         Ok(picker) => app.session_picker = Some(picker),
                         Err(error) => app
-                            .chat
+                            .compat_transcript
                             .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
                     }
                 }
-                Ok(list) => app.chat.add_text(
+                Ok(list) => app.compat_transcript.add_text(
                     ChatRole::System,
                     format!(
                         "无法打开会话列表：unsupported schema {}",
@@ -553,7 +707,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                     ),
                 ),
                 Err(error) => app
-                    .chat
+                    .compat_transcript
                     .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
             }
         }
@@ -562,13 +716,13 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 Ok(snapshot) => {
                     match super::checkpoint_picker::CheckpointPicker::from_snapshot(snapshot) {
                         Ok(picker) => app.checkpoint_picker = Some(picker),
-                        Err(error) => app.chat.add_text(
+                        Err(error) => app.compat_transcript.add_text(
                             ChatRole::System,
                             format!("无法打开工作区检查点列表：{error}"),
                         ),
                     }
                 }
-                Err(error) => app.chat.add_text(
+                Err(error) => app.compat_transcript.add_text(
                     ChatRole::System,
                     format!("无法读取工作区检查点列表：{error}"),
                 ),
@@ -594,13 +748,13 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                     app.projection_target_session_id = Some(child_session_id.clone());
                     app.projection_session_id = None;
                     app.projection_polling = false;
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         format!("已分叉并切换到历史会话：{child_session_id}"),
                     );
                 }
             }
-            Err(error) => app.chat.add_text(
+            Err(error) => app.compat_transcript.add_text(
                 ChatRole::System,
                 format!("daemon 返回的会话分支无效：{error}；未恢复代码"),
             ),
@@ -610,12 +764,12 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 app.projection_target_session_id = Some(child_session_id.clone());
                 app.projection_session_id = None;
                 app.projection_polling = false;
-                app.chat.add_text(
+                app.compat_transcript.add_text(
                     ChatRole::System,
                     format!("代码已恢复；已切换到历史会话分支：{child_session_id}"),
                 );
             } else {
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, "代码检查点恢复完成".to_string());
             }
         }
@@ -625,7 +779,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                     if let Some(detail) = app.detail.as_mut() {
                         detail.project_settlement(snapshot.settlement.clone());
                     }
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         format!(
                             "Host review {:?}: {}",
@@ -633,7 +787,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                         ),
                     );
                 }
-                Err(error) => app.chat.add_text(
+                Err(error) => app.compat_transcript.add_text(
                     ChatRole::System,
                     format!("daemon 返回的 Host review snapshot 无效：{error}"),
                 ),
@@ -653,7 +807,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                         detail.project_settlement(receipt);
                     }
                 }
-                Err(error) => app.chat.add_text(
+                Err(error) => app.compat_transcript.add_text(
                     ChatRole::System,
                     format!("daemon 返回的 settlement receipt 无效：{error}"),
                 ),
@@ -669,6 +823,9 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
             {
                 Ok(snapshot) => {
+                    if app.app_state.session_id.as_deref() != Some(session_id.as_str()) {
+                        app.app_state.reset_execution_target_for_session();
+                    }
                     let effects = super::reducer::reduce(
                         &mut app.app_state,
                         super::reducer::UiAction::ReadSnapshot(snapshot),
@@ -685,7 +842,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 }
                 Err(error) => {
                     app.projection_polling = false;
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         format!("Session projection snapshot rejected: {error}"),
                     );
@@ -714,7 +871,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 Err(error) => {
                     app.projection_session_id = None;
                     app.projection_polling = false;
-                    app.chat.add_text(
+                    app.compat_transcript.add_text(
                         ChatRole::System,
                         format!("Session projection event page rejected: {error}"),
                     );
@@ -728,15 +885,17 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .is_some() =>
         {
             if clear_screen {
-                app.chat = super::chat::ChatWidget::new(app.caps.clone());
+                app.compat_transcript = super::chat::ChatWidget::new(app.caps.clone());
+                app.compat_projected_entries = 0;
             }
             let session_id = result
                 .get("session_id")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("unknown");
+            app.app_state.reset_execution_target_for_session();
             app.projection_target_session_id = Some(session_id.to_owned());
             app.projection_session_id = None;
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, format!("已创建新会话：{session_id}"));
         }
         (super::PendingCommand::InitializeSession, _, Some(error)) => {
@@ -744,7 +903,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("初始化会话失败");
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, format!("Error: {message}"));
         }
         (super::PendingCommand::InitializeSkills, _, Some(_)) => {
@@ -756,7 +915,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("会话分支创建失败");
-            app.chat.add_text(
+            app.compat_transcript.add_text(
                 ChatRole::System,
                 format!("Error: {message}。未恢复代码，原会话保持不变。"),
             );
@@ -766,7 +925,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("工作区恢复失败");
-            app.chat.add_text(
+            app.compat_transcript.add_text(
                 ChatRole::System,
                 format!("Error: {message}。请检查 terminal restore receipt 后重试或人工恢复。"),
             );
@@ -776,7 +935,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("Host review action 失败");
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, format!("Error: {message}"));
         }
         (super::PendingCommand::TransactionSettlementLatest, _, Some(error)) => {
@@ -787,7 +946,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("settlement receipt 查询失败");
             if message != "transaction settlement not found" {
-                app.chat
+                app.compat_transcript
                     .add_text(ChatRole::System, format!("Error: {message}"));
             }
         }
@@ -801,7 +960,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("恢复会话失败");
-            app.chat.add_text(
+            app.compat_transcript.add_text(
                 ChatRole::System,
                 format!("Error: {message}。旧会话保持不变。"),
             );
@@ -813,7 +972,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("会话事件读取失败");
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, format!("Error: {message}"));
         }
         (_, _, Some(error)) => {
@@ -821,13 +980,13 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("创建新会话失败");
-            app.chat.add_text(
+            app.compat_transcript.add_text(
                 ChatRole::System,
                 format!("Error: {message}。旧会话和界面保持不变。"),
             );
         }
         _ => {
-            app.chat.add_text(
+            app.compat_transcript.add_text(
                 ChatRole::System,
                 "Error: daemon 返回了无效的会话创建响应；旧会话和界面保持不变。".to_string(),
             );
@@ -847,7 +1006,7 @@ fn apply_projection_effects(app: &mut App, effects: Vec<super::reducer::UiEffect
                 }
             }
             super::reducer::UiEffect::AnnounceError(message) => {
-                app.chat.add_text(ChatRole::System, message);
+                app.compat_transcript.add_text(ChatRole::System, message);
             }
         }
     }
@@ -867,12 +1026,27 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
         .get("params")
         .or_else(|| message.get("result"))
         .unwrap_or(message);
-    let Ok(message) = serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone())
-    else {
-        return false;
+    let claims_typed_protocol = candidate.get("protocol_version").is_some();
+    let message = match serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone()) {
+        Ok(message) => message,
+        Err(error) if claims_typed_protocol => {
+            app.compat_transcript.add_text(
+                ChatRole::System,
+                format!("Typed client protocol rejected: {error}"),
+            );
+            return true;
+        }
+        Err(_) => return false,
     };
-    let Ok(event) = message.into_v1() else {
-        return false;
+    let event = match message.into_v1() {
+        Ok(event) => event,
+        Err(error) => {
+            app.compat_transcript.add_text(
+                ChatRole::System,
+                format!("Typed client protocol rejected: {error}"),
+            );
+            return true;
+        }
     };
     let evaluation = match &event {
         ProtocolEvent::Item(item) if item.phase == ItemPhase::Completed => {
@@ -909,13 +1083,19 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
         ProtocolEvent::Reconnected(value) => UiAction::Reconnected(value),
         ProtocolEvent::CommandCompleted { .. } => return true,
         ProtocolEvent::Failed { cursor, message } => UiAction::Failed(UiError { cursor, message }),
-        ProtocolEvent::TurnStarted { .. } => return true,
+        ProtocolEvent::TurnStarted {
+            thread_id, turn_id, ..
+        } => {
+            app.app_state.session_id = Some(thread_id.0);
+            super::reducer::begin_live_turn(&mut app.app_state, Some(turn_id));
+            return true;
+        }
         ProtocolEvent::TurnCompleted { .. } | ProtocolEvent::TurnStopped { .. } => unreachable!(),
     };
     let effects = reduce(&mut app.app_state, action);
     if !effects.is_empty() {
         if let Some(receipt) = evaluation {
-            app.chat
+            app.compat_transcript
                 .add_text(ChatRole::System, format_evaluation_receipt_ref(&receipt));
         }
     }
@@ -990,34 +1170,14 @@ pub fn format_models(result: &serde_json::Value) -> String {
 
 /// Format status response for display.
 pub fn format_status(status: &serde_json::Value) -> String {
-    let session_id = status
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let turn_count = status
-        .get("turn_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let reflection_count = status
-        .get("reflection_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let evolution_count = status
-        .get("evolution_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let boundary_rules = status
-        .get("boundary_rules")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let boundary_immutable = status
-        .get("boundary_immutable")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let attention_focus = status
-        .get("attention_focus")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    match serde_json::from_value::<fabric::contract::command::StatusProjectionV1>(status.clone()) {
+        Ok(status) => format_status_projection(&status),
+        Err(error) => format!("Invalid typed status projection: {error}"),
+    }
+}
+
+pub fn format_status_projection(status: &fabric::contract::command::StatusProjectionV1) -> String {
+    let session_id = status.session_id.as_str();
 
     let mut lines = Vec::new();
     lines.push("=== Aletheon Status ===".to_string());
@@ -1025,91 +1185,49 @@ pub fn format_status(status: &serde_json::Value) -> String {
         "Session: {}",
         &session_id[..8.min(session_id.len())]
     ));
-    lines.push(format!("Turns: {turn_count}"));
-    lines.push(format!("Reflections: {reflection_count}"));
-    lines.push(format!("Evolutions: {evolution_count}"));
-    if let Some(compaction) = status.get("compaction") {
-        let attempts = compaction
-            .get("attempts")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
-        let successful = compaction
-            .get("successful")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0);
-        lines.push(format!("Compactions: {successful}/{attempts} successful"));
-        if let Some(last) = compaction.get("last").filter(|value| !value.is_null()) {
-            let before = last
-                .get("tokens_before")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let after = last
-                .get("tokens_after")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let strategy = last
-                .get("strategy")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown");
-            lines.push(format!("Last compaction: {before} → {after} ({strategy})"));
-        }
-    }
-    if let Some(memory) = status.get("memory") {
-        lines.push(String::new());
-        lines.push("Memory:".to_string());
+    lines.push(format!("Turns: {}", status.turn_count));
+    lines.push(format!("Reflections: {}", status.reflection_count));
+    lines.push(format!("Evolutions: {}", status.evolution_count));
+    lines.push(format!(
+        "Compactions: {}/{} successful",
+        status.compaction.successful, status.compaction.attempts
+    ));
+    if let Some(last) = &status.compaction.last {
         lines.push(format!(
-            "  Provider: {}",
-            memory
-                .get("provider")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown")
+            "Last compaction: {} → {} ({})",
+            last.tokens_before, last.tokens_after, last.strategy
         ));
-        lines.push(format!(
-            "  Local: {}",
-            memory
-                .get("local")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown")
-        ));
-        if let Some(supplemental) = memory.get("supplemental") {
-            let enabled = supplemental
-                .get("enabled")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
-            let state = supplemental
-                .get("state")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown");
-            let depth = supplemental
-                .get("queue_depth")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            lines.push(format!(
-                "  Supplemental: {} (queue depth {depth})",
-                if enabled { state } else { "disabled" }
-            ));
-        }
     }
+    lines.push(String::new());
+    lines.push("Memory:".to_string());
+    lines.push(format!("  Provider: {}", status.memory.provider));
+    lines.push(format!("  Local: {}", status.memory.local));
+    lines.push(format!(
+        "  Supplemental: {} (queue depth {})",
+        if status.memory.supplemental.enabled {
+            status.memory.supplemental.state.as_str()
+        } else {
+            "disabled"
+        },
+        status.memory.supplemental.queue_depth
+    ));
     lines.push(String::new());
     lines.push("Care Weights:".to_string());
 
-    if let Some(cares) = status.get("care_weights").and_then(|v| v.as_array()) {
-        for care in cares {
-            let topic = care.get("topic").and_then(|v| v.as_str()).unwrap_or("?");
-            let weight = care.get("weight").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            lines.push(format!("  {topic}: {weight:.2}"));
-        }
+    for care in &status.care_weights {
+        lines.push(format!("  {}: {:.2}", care.topic, care.weight));
     }
 
     lines.push(String::new());
     lines.push(format!(
-        "Boundary Rules: {boundary_rules} (immutable: {boundary_immutable})"
+        "Boundary Rules: {} (immutable: {})",
+        status.boundary_rules, status.boundary_immutable
     ));
 
-    let focus_display = if attention_focus.is_empty() {
+    let focus_display = if status.attention_focus.is_empty() {
         "none"
     } else {
-        attention_focus
+        status.attention_focus.as_str()
     };
     lines.push(format!("Attention Focus: {focus_display}"));
 
@@ -1273,6 +1391,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn typed_command_completion_uses_the_shared_versioned_contract() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        let output = fabric::contract::command::CommandOutputEnvelopeV1::new(
+            "tui:1",
+            fabric::contract::command::CommandOutputV1::PromptCompleted(
+                fabric::contract::command::PromptCompletionV1 {
+                    response: "typed answer".into(),
+                    stop: fabric::TurnStop::Completed,
+                    failure: None,
+                    usage: Default::default(),
+                    metrics: Default::default(),
+                },
+            ),
+        );
+
+        process_response(&mut app, serde_json::json!({"id": 1, "result": output}));
+
+        assert!(matches!(
+            app.compat_transcript.entries.last(),
+            Some(ChatEntry::Text(message)) if message.content == "typed answer"
+        ));
+    }
+
+    #[tokio::test]
+    async fn claimed_command_protocol_mismatch_is_rejected_without_legacy_fallback() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+
+        process_response(
+            &mut app,
+            serde_json::json!({
+                "id": 1,
+                "result": {
+                    "protocol": "command_output",
+                    "schema_version": 99,
+                    "correlation_id": "tui:bad",
+                    "output": {"kind": "prompt_accepted"},
+                    "response": "must not be guessed as a legacy response"
+                }
+            }),
+        );
+
+        assert!(app.compat_transcript.entries.iter().any(|entry| {
+            matches!(entry, ChatEntry::Text(message)
+                if message.content.contains("unsupported command output schema 99"))
+        }));
+        assert!(!app.compat_transcript.entries.iter().any(|entry| {
+            matches!(entry, ChatEntry::Text(message)
+                if message.content.contains("must not be guessed"))
+        }));
+    }
+
+    #[tokio::test]
     async fn startup_skill_catalog_updates_registry_without_rendering_chat() {
         let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
@@ -1310,7 +1512,7 @@ mod tests {
         );
 
         assert!(app.registry.is_skill("test-skill"));
-        assert!(app.chat.entries.is_empty());
+        assert!(app.compat_transcript.entries.is_empty());
     }
 
     #[tokio::test]
@@ -1481,7 +1683,7 @@ mod tests {
             "complete authoritative answer."
         );
         assert!(matches!(
-            app.chat.entries.last(),
+            app.compat_transcript.entries.last(),
             Some(ChatEntry::Text(message))
                 if message.content == "complete authoritative answer."
         ));
@@ -1518,7 +1720,7 @@ mod tests {
 
         handle_event(&mut app, &serde_json::to_value(event).unwrap());
 
-        assert!(app.chat.entries.iter().any(|entry| {
+        assert!(app.compat_transcript.entries.iter().any(|entry| {
             matches!(entry, ChatEntry::Text(message)
                 if message.content.contains("Patch file_changed")
                     && message.content.contains("src/lib.rs"))
@@ -1547,6 +1749,28 @@ mod tests {
         );
         handle_event(
             &mut app,
+            &serde_json::to_value(fabric::ui_event::ClientEvent::TurnStarted { iteration: 0 })
+                .unwrap(),
+        );
+        handle_event(
+            &mut app,
+            &serde_json::to_value(fabric::ui_event::ClientEvent::Reflection {
+                summary: "Inspecting known entry files before scoped discovery".into(),
+            })
+            .unwrap(),
+        );
+        assert!(app.app_state.activities.iter().any(|activity| {
+            activity.activity_id.ends_with(":inference:0")
+                && activity.state == fabric::ActivityState::Running
+        }));
+        assert!(app.app_state.activities.iter().any(|activity| {
+            activity.activity_id.ends_with(":progress")
+                && activity
+                    .label
+                    .contains("Inspecting known entry files before scoped discovery")
+        }));
+        handle_event(
+            &mut app,
             &serde_json::to_value(fabric::ui_event::ClientEvent::ToolCallStart {
                 call_id: "call-e2e".into(),
                 tool: "bash_exec".into(),
@@ -1554,6 +1778,11 @@ mod tests {
             })
             .unwrap(),
         );
+        assert!(app.app_state.activities.iter().any(|activity| {
+            activity.activity_id.ends_with(":tool:call-e2e")
+                && activity.label == "bash_exec"
+                && activity.state == fabric::ActivityState::Running
+        }));
 
         let ToolStreamHandle { mut sink, event_rx } = ToolStreamHandle::new();
         let (mut daemon_stream, daemon_sender) =
@@ -1607,7 +1836,7 @@ mod tests {
             let client = turn_pipeline::turn_event_to_client_event(&event).unwrap();
             handle_event(&mut app, &serde_json::to_value(client).unwrap());
             if matches!(event, TurnEventV1::ToolProgress { .. }) {
-                let visible = app.chat.entries.iter().any(|entry| {
+                let visible = app.compat_transcript.entries.iter().any(|entry| {
                     matches!(entry, ChatEntry::Exec(execution)
                         if execution.call_id == "call-e2e" && !execution.output.is_empty())
                 });
@@ -1620,7 +1849,7 @@ mod tests {
         assert_eq!(tui_progress_observations, 2);
         assert_eq!(terminal_count, 1);
         let execution = app
-            .chat
+            .compat_transcript
             .entries
             .iter()
             .find_map(|entry| match entry {
@@ -1630,5 +1859,17 @@ mod tests {
             .unwrap();
         assert!(execution.finished);
         assert_eq!(execution.output, "finished");
+        assert!(
+            app.app_state.activities.iter().any(|activity| {
+                activity.activity_id.ends_with(":tool:call-e2e")
+                    && activity.state == fabric::ActivityState::Completed
+                    && activity.progress.as_ref().is_some_and(|progress| {
+                        progress.get("status").and_then(serde_json::Value::as_str)
+                            == Some("completed")
+                    })
+            }),
+            "canonical activities after terminal: {:#?}",
+            app.app_state.activities
+        );
     }
 }

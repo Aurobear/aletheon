@@ -4,7 +4,9 @@
 //! spine and deterministic reducers before the compatibility SQLite read model
 //! is materialized.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -24,6 +26,29 @@ use crate::application::event_projection::EventProjectionSink;
 const SESSION_EVENT_NAMESPACE: Uuid = Uuid::from_u128(0x01b2f7f1_0d98_441a_a30e_4f637b27be55);
 const FORK_ITEM_NAMESPACE: Uuid = Uuid::from_u128(0x97223947_4cbc_4e93_94fa_a71798f64a30);
 const RECONCILIATION_PAGE_SIZE: usize = 256;
+const APPEND_SEQUENCE_RETRY_LIMIT: u32 = 32;
+
+static APPEND_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static APPEND_SEQUENCE_RETRIES: AtomicU64 = AtomicU64::new(0);
+static APPEND_CONFLICTS: AtomicU64 = AtomicU64::new(0);
+static APPEND_IDEMPOTENT_REPLAYS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct SessionAppendMetrics {
+    pub attempts: u64,
+    pub sequence_retries: u64,
+    pub conflicts: u64,
+    pub idempotent_replays: u64,
+}
+
+pub fn session_append_metrics() -> SessionAppendMetrics {
+    SessionAppendMetrics {
+        attempts: APPEND_ATTEMPTS.load(Ordering::Acquire),
+        sequence_retries: APPEND_SEQUENCE_RETRIES.load(Ordering::Acquire),
+        conflicts: APPEND_CONFLICTS.load(Ordering::Acquire),
+        idempotent_replays: APPEND_IDEMPOTENT_REPLAYS.load(Ordering::Acquire),
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SessionEventReconcileReport {
@@ -71,7 +96,10 @@ pub struct EventSourcedSessionStore {
     read_model: Arc<dyn SessionProjectionStore>,
     event_spine: Arc<dyn EventSpine>,
     event_projections: Arc<dyn EventProjectionSink>,
-    writer: tokio::sync::Mutex<()>,
+    /// Short-lived registry of per-session writer locks. The registry mutex is
+    /// never held across I/O; different sessions therefore do not queue behind
+    /// one daemon-wide writer guard.
+    writer_locks: Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
 }
 
 impl EventSourcedSessionStore {
@@ -84,8 +112,40 @@ impl EventSourcedSessionStore {
             read_model,
             event_spine,
             event_projections,
-            writer: tokio::sync::Mutex::new(()),
+            writer_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn writer_lock(&self, session_id: &SessionId) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self
+            .writer_locks
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&session_id.0).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(session_id.0.clone(), Arc::downgrade(&lock));
+        lock
+    }
+
+    async fn lock_sessions(
+        &self,
+        sessions: impl IntoIterator<Item = SessionId>,
+    ) -> Vec<tokio::sync::OwnedMutexGuard<()>> {
+        let mut sessions = sessions.into_iter().collect::<Vec<_>>();
+        sessions.sort_by(|left, right| left.0.cmp(&right.0));
+        sessions.dedup();
+        let locks = sessions
+            .iter()
+            .map(|session| self.writer_lock(session))
+            .collect::<Vec<_>>();
+        let mut guards = Vec::with_capacity(locks.len());
+        for lock in locks {
+            guards.push(lock.lock_owned().await);
+        }
+        guards
     }
 
     async fn append_and_materialize(&self, input: UnsequencedEvent) -> Result<SpineEvent> {
@@ -142,6 +202,8 @@ impl EventSourcedSessionStore {
             | ItemPayload::RobotEpisodeReceipt { .. }
             | ItemPayload::EvaluationReceiptRef { .. }
             | ItemPayload::ModelContextProjection { .. }
+            | ItemPayload::ContextBudgetProjection { .. }
+            | ItemPayload::ContextCompactionProjection { .. }
             | ItemPayload::InferenceReceipt { .. }
             | ItemPayload::TaskProjection { .. }
             | ItemPayload::TurnRecovery { .. } => EventVisibility::Control,
@@ -234,7 +296,7 @@ impl SessionAppendStore for EventSourcedSessionStore {
                 session.schema_version
             );
         }
-        let _guard = self.writer.lock().await;
+        let _guards = self.lock_sessions([session.id.clone()]).await;
         let payload = serde_json::to_value(&session)?;
         self.append_and_materialize(Self::event(
             SchemaId::EVENT_SESSION_CREATED_V1,
@@ -266,34 +328,57 @@ impl SessionAppendStore for EventSourcedSessionStore {
         ) {
             bail!("unsupported Task projection fact schema version");
         }
-        let _guard = self.writer.lock().await;
-        let items = self.read_model.load_items(session, None).await?;
-        if let Some(existing) = items.iter().find(|existing| existing.id == item.id) {
-            if existing != &item {
-                bail!("item id retry conflicts with persisted content");
+        let session_lock = self.writer_lock(session);
+        for attempt in 0..=APPEND_SEQUENCE_RETRY_LIMIT {
+            APPEND_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+            let guard = session_lock.lock().await;
+            // Head-based admission: distinguish an idempotent replay from a
+            // sequence conflict using O(1) lookups instead of scanning the full
+            // session history (S1-AUDIT-001/002).
+            let replay = match self.read_model.item_by_id(session, &item.id).await? {
+                Some(existing) => {
+                    if existing != item {
+                        APPEND_CONFLICTS.fetch_add(1, Ordering::Relaxed);
+                        bail!("item id retry conflicts with persisted content");
+                    }
+                    true
+                }
+                None => false,
+            };
+            if !replay {
+                let next = self.read_model.next_sequence(session).await?.unwrap_or(1);
+                if next < expected_sequence && attempt < APPEND_SEQUENCE_RETRY_LIMIT {
+                    APPEND_SEQUENCE_RETRIES.fetch_add(1, Ordering::Relaxed);
+                    drop(guard);
+                    let delay_ms = 1u64 << attempt.min(4);
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+                if next != expected_sequence {
+                    APPEND_CONFLICTS.fetch_add(1, Ordering::Relaxed);
+                    bail!("sequence conflict: expected {expected_sequence}, current {next}");
+                }
             }
-        } else {
-            let next = items.last().map_or(1, |current| current.sequence + 1);
-            if next != expected_sequence {
-                bail!("sequence conflict: expected {expected_sequence}, current {next}");
+            let visibility = Self::item_visibility(&item.payload);
+            let payload = serde_json::to_value(&item)?;
+            // Idempotent spine append + materialization: a replay re-uses the same
+            // deterministic event id (spine returns the existing event) and the
+            // read model's `AlreadyPresent`, so no duplicate is committed.
+            self.append_and_materialize(Self::event(
+                SchemaId::TURN_EVENT_V1,
+                session,
+                &format!("session-item:{}", item.id.0),
+                visibility,
+                payload,
+            ))
+            .await?;
+            if replay {
+                APPEND_IDEMPOTENT_REPLAYS.fetch_add(1, Ordering::Relaxed);
+                return Ok(AppendOutcome::AlreadyPresent);
             }
+            return Ok(AppendOutcome::Appended);
         }
-        let already_present = items.iter().any(|existing| existing.id == item.id);
-        let visibility = Self::item_visibility(&item.payload);
-        let payload = serde_json::to_value(&item)?;
-        self.append_and_materialize(Self::event(
-            SchemaId::TURN_EVENT_V1,
-            session,
-            &format!("session-item:{}", item.id.0),
-            visibility,
-            payload,
-        ))
-        .await?;
-        Ok(if already_present {
-            AppendOutcome::AlreadyPresent
-        } else {
-            AppendOutcome::Appended
-        })
+        unreachable!("bounded append retry loop always returns or errors")
     }
 
     async fn fork(
@@ -302,7 +387,7 @@ impl SessionAppendStore for EventSourcedSessionStore {
         through_sequence: u64,
         child: SessionRecord,
     ) -> Result<()> {
-        let _guard = self.writer.lock().await;
+        let _guards = self.lock_sessions([parent.clone(), child.id.clone()]).await;
         let parent_link = child
             .parent
             .as_ref()
@@ -352,7 +437,7 @@ impl SessionAppendStore for EventSourcedSessionStore {
     }
 
     async fn bind_principal(&self, session: &SessionId, principal: &PrincipalId) -> Result<()> {
-        let _guard = self.writer.lock().await;
+        let _guards = self.lock_sessions([session.clone()]).await;
         if self.read_model.load_session(session).await?.is_none() {
             bail!("Session does not exist");
         }

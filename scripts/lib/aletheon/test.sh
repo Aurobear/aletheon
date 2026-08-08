@@ -12,6 +12,7 @@ cmd_test() {
   case "$suite" in
     operations)
       _run_test_script suites/operations/script_surface_test.sh
+      _run_test_script suites/operations/cargo_agent_cache_scan_test.sh
       _run_test_script suites/operations/cli_static_test.sh
       _run_test_script suites/operations/cli_test.sh
       _run_test_script suites/operations/installed_runtime_gate_test.sh

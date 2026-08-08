@@ -270,7 +270,7 @@ setup_config() {
 
 [agent]
 default_provider = "leju"
-default_model = "deepseek/deepseek-v4-pro"
+default_model = "deepseek/deepseek-v4-flash"
 max_iterations = 0
 max_tokens = 100000
 
@@ -281,7 +281,7 @@ name = "leju"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "anthropic"
-models = ["deepseek/deepseek-v4-pro"]
+models = ["deepseek/deepseek-v4-flash"]
 
 [[providers]]
 name = "mimo"
@@ -295,7 +295,7 @@ name = "deepseek"
 base_url = "https://api.deepseek.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek-v4-pro", "deepseek-v4-flash"]
+models = ["deepseek-v4-flash"]
 
 [[providers]]
 name = "openai"
@@ -321,9 +321,8 @@ models = ["qwen3:8b", "llama3:8b"]
 # ── Model Aliases ────────────────────────────────────────────────
 
 [model_aliases]
-pro = "leju/deepseek/deepseek-v4-pro"
-flash = "mimo/mimo-v2.5-flash"
-deepseek = "deepseek/deepseek-v4-pro"
+flash = "leju/deepseek/deepseek-v4-flash"
+deepseek = "deepseek/deepseek-v4-flash"
 local = "ollama/qwen3:8b"
 TOML
         log "Config written to $cfg"

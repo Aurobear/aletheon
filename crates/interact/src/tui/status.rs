@@ -40,7 +40,7 @@ impl StatusBar {
             token_count: None,
             total_tokens: 0,
             context_used_tokens: 0,
-            context_window: 128_000,
+            context_window: 0,
             session_turns: 0,
         }
     }
@@ -133,13 +133,13 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
 
         // Context
-        let ctx_color = if self.state.context.usage_percent() > 80.0 {
+        let ctx_color = if self.state.context_pressure_percent().unwrap_or_default() > 80.0 {
             Color::Red
         } else {
             Color::DarkGray
         };
         spans.push(Span::styled(
-            self.state.context.display(),
+            self.state.context_status(),
             Style::default().fg(ctx_color),
         ));
 

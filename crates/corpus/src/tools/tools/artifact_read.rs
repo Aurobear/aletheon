@@ -62,6 +62,16 @@ impl Tool for ArtifactReadTool {
         fabric::tool::ToolCachePolicy::Session { ttl_ms: 60_000 }
     }
 
+    fn cache_implementation_version(&self) -> &'static str {
+        "artifact-read/v1"
+    }
+
+    fn cache_dependencies(&self) -> Option<fabric::tool::ToolCacheDependencies> {
+        Some(fabric::tool::ToolCacheDependencies::ContentAddressed {
+            argument_names: &["artifact_ref"],
+        })
+    }
+
     fn exposure(&self) -> ToolExposure {
         ToolExposure::Deferred
     }

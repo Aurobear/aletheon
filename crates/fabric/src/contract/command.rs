@@ -16,9 +16,149 @@ use crate::types::evaluation::TaskKind;
 use crate::types::local_authority::WorkspacePolicy;
 use crate::types::permission::HostPermissionMode;
 use crate::types::space::SessionId;
-use crate::TurnRequirement;
+use crate::{InferenceUsage, TurnFailure, TurnMetrics, TurnRequirement, TurnStop};
 
 pub const CLIENT_INTENT_SCHEMA_V1: u16 = 1;
+pub const COMMAND_OUTPUT_SCHEMA_V1: u16 = 1;
+
+/// Versioned daemon-to-client command envelope. JSON-RPC is only the transport
+/// frame; once `result` is decoded, clients consume this typed contract rather
+/// than guessing a command from the presence of arbitrary JSON fields.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommandOutputEnvelopeV1 {
+    pub protocol: CommandOutputProtocol,
+    pub schema_version: u16,
+    pub correlation_id: String,
+    pub output: CommandOutputV1,
+}
+
+impl CommandOutputEnvelopeV1 {
+    pub fn new(correlation_id: impl Into<String>, output: CommandOutputV1) -> Self {
+        Self {
+            protocol: CommandOutputProtocol::CommandOutput,
+            schema_version: COMMAND_OUTPUT_SCHEMA_V1,
+            correlation_id: correlation_id.into(),
+            output,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), CommandOutputError> {
+        if self.schema_version != COMMAND_OUTPUT_SCHEMA_V1 {
+            return Err(CommandOutputError::UnsupportedSchema(self.schema_version));
+        }
+        if self.correlation_id.trim().is_empty() {
+            return Err(CommandOutputError::EmptyCorrelationId);
+        }
+        Ok(())
+    }
+
+    pub fn into_v1(self) -> Result<CommandOutputV1, CommandOutputError> {
+        self.validate()?;
+        Ok(self.output)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandOutputProtocol {
+    CommandOutput,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
+pub enum CommandOutputV1 {
+    PromptAccepted,
+    PromptCompleted(PromptCompletionV1),
+    Status(StatusSummaryV1),
+    StatusProjected(StatusProjectionV1),
+    Rejected(CommandRejectionV1),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PromptCompletionV1 {
+    pub response: String,
+    pub stop: TurnStop,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<TurnFailure>,
+    #[serde(default)]
+    pub usage: InferenceUsage,
+    #[serde(default)]
+    pub metrics: TurnMetrics,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusSummaryV1 {
+    pub ready: bool,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandRejectionV1 {
+    pub code: i64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatusProjectionV1 {
+    pub session_id: String,
+    pub turn_count: usize,
+    pub iteration: usize,
+    pub reflection_count: usize,
+    pub evolution_count: usize,
+    pub care_weights: Vec<StatusCareWeightV1>,
+    pub boundary_rules: usize,
+    pub boundary_immutable: usize,
+    pub attention_focus: String,
+    pub compaction: StatusCompactionV1,
+    pub memory: StatusMemoryV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatusCareWeightV1 {
+    pub topic: String,
+    pub weight: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusCompactionV1 {
+    pub attempts: usize,
+    pub successful: usize,
+    pub last: Option<StatusCompactionRunV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusCompactionRunV1 {
+    pub run_id: u64,
+    pub strategy: String,
+    pub tokens_before: usize,
+    pub tokens_after: usize,
+    pub forced: bool,
+    pub applied: bool,
+    pub failure: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusMemoryV1 {
+    pub provider: String,
+    pub local: String,
+    pub supplemental: StatusSupplementalMemoryV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusSupplementalMemoryV1 {
+    pub enabled: bool,
+    pub state: String,
+    pub error_category: Option<String>,
+    pub queue_depth: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CommandOutputError {
+    #[error("unsupported command output schema {0}; supported schema is 1")]
+    UnsupportedSchema(u16),
+    #[error("command output correlation id is empty")]
+    EmptyCorrelationId,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -205,6 +345,9 @@ pub struct SubmitPromptIntent {
     pub requirements: Vec<TurnRequirement>,
     pub task_kind: Option<TaskKind>,
     pub permission_mode: HostPermissionMode,
+    /// Explicit per-turn cognition target. Missing legacy fields remain General.
+    #[serde(default)]
+    pub execution_target: crate::ExecutionTargetSelection,
 }
 
 /// A user-authored shell action that must enter the ordinary governed turn
@@ -279,6 +422,10 @@ impl ClientIntent {
             ClientCommand::SubmitPrompt(prompt) if prompt.content.trim().is_empty() => {
                 return Err(ClientIntentError::EmptyPrompt);
             }
+            ClientCommand::SubmitPrompt(prompt) => prompt
+                .execution_target
+                .validate()
+                .map_err(ClientIntentError::InvalidExecutionTarget)?,
             ClientCommand::ExecuteShell(shell)
                 if shell.command.trim().is_empty()
                     || shell.command.len() > 128 * 1024
@@ -302,6 +449,8 @@ pub enum ClientIntentError {
     EmptyCorrelationId,
     #[error("client intent prompt is empty")]
     EmptyPrompt,
+    #[error("invalid execution target: {0}")]
+    InvalidExecutionTarget(String),
     #[error("shell command must contain 1..=131072 bytes and no NUL")]
     InvalidShellCommand,
 }
@@ -427,6 +576,7 @@ mod tests {
                     requirements: vec![],
                     task_kind: None,
                     permission_mode: HostPermissionMode::Safe,
+                    execution_target: crate::ExecutionTargetSelection::default(),
                 }),
             )
             .validate()
@@ -453,6 +603,7 @@ mod tests {
                 }],
                 task_kind: Some(TaskKind::Coding),
                 permission_mode: HostPermissionMode::Developer,
+                execution_target: crate::ExecutionTargetSelection::default(),
             }),
         );
 

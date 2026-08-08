@@ -584,6 +584,7 @@ pub trait TurnUseCases: Send + Sync {
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
         task_kind: Option<fabric::TaskKind>,
+        execution_target: fabric::ExecutionTargetSelection,
         notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value;
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult>;
@@ -613,6 +614,12 @@ pub trait TurnUseCases: Send + Sync {
     async fn cancel_current(&self) -> usize;
     async fn cancel_current_for_principal(&self, principal_id: PrincipalId) -> usize;
     async fn cancel_current_with_thread(&self, thread_id: String);
+    /// Cancel exactly the active turns admitted by one transport connection.
+    /// The disconnect path invokes this so a dropped connection terminates the
+    /// turns it owns without touching other connections' work.
+    async fn cancel_active_for_connection(&self, _connection_id: fabric::ConnectionId) -> usize {
+        0
+    }
     async fn session_resume(&self, id: SessionId) -> anyhow::Result<ResumeResult>;
     async fn session_fork(
         &self,
@@ -673,10 +680,19 @@ impl TurnUseCases for ProductionTurnUseCases {
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
         task_kind: Option<fabric::TaskKind>,
+        execution_target: fabric::ExecutionTargetSelection,
         notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
         self.orchestrator
-            .execute_turn(id, &message, context, requirements, task_kind, notify)
+            .execute_turn_targeted(
+                id,
+                &message,
+                context,
+                requirements,
+                task_kind,
+                execution_target,
+                notify,
+            )
             .await
     }
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult> {
@@ -751,6 +767,11 @@ impl TurnUseCases for ProductionTurnUseCases {
             token.cancel();
         }
         let _ = thread_id;
+    }
+    async fn cancel_active_for_connection(&self, connection_id: fabric::ConnectionId) -> usize {
+        self.orchestrator
+            .cancel_turns_for_connection(&connection_id)
+            .await
     }
     async fn session_resume(&self, id: SessionId) -> anyhow::Result<ResumeResult> {
         self.sessions.resume(&id).await

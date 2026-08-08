@@ -166,6 +166,12 @@ impl OperationTable {
         ordered
     }
 
+    pub(crate) async fn tree_ids(&self, root: OperationId) -> Vec<OperationId> {
+        let mut ids = self.collect_descendants(root).await;
+        ids.push(root);
+        ids
+    }
+
     pub(crate) async fn ids_for_owner(&self, owner: fabric::ProcessId) -> Vec<OperationId> {
         self.records
             .lock()
@@ -236,9 +242,7 @@ impl OperationManager for OperationTable {
     }
 
     async fn cancel(&self, id: OperationId, reason: CancelReason) -> anyhow::Result<()> {
-        let mut all = self.collect_descendants(id).await;
-        all.push(id);
-        for op in all {
+        for op in self.tree_ids(id).await {
             self.cancel_one(op, reason.clone()).await?;
         }
         Ok(())

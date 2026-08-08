@@ -2,7 +2,7 @@
 
 > 架构边界：[runtime authority ADR 的 Robot contracts and safety boundaries](../decisions/adr-runtime-authority-and-contract-governance.md#robot-contracts-and-safety-boundaries)
 > 历史基线：`origin/dev@c080b08bf3170dd8a09acdb738a255133abbf11b`（2026-08-05）。
-> 安装态验收：2026-08-07，R8/X13 MuJoCo 链路 `accepted`，实现由 PR #182 合入。
+> 安装态验收：2026-08-07，R8/X13 MuJoCo 链路 `passed`，实现由 PR #182 合入。
 > 范围边界：**不包含物理实机验证**；HIL/real 独立 hard-stop/watchdog 证据仍是单独 gate。
 
 ## 1. 外部依赖（本仓库不复制源码）

@@ -342,7 +342,8 @@ mod tests {
         assert_eq!(loaded.count(), 2);
         assert_eq!(loaded.experiences[0].task_description, "open browser");
         assert_eq!(loaded.experiences[1].task_description, "write doc");
-        assert!(!loaded.experiences[0].success || loaded.experiences[0].success); // just access
+        assert!(loaded.experiences[0].success);
+        assert!(!loaded.experiences[1].success);
 
         // cleanup
         std::fs::remove_file(&path).ok();

@@ -309,7 +309,7 @@ impl HookRegistry {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        let child = command.spawn();
+        let child = crate::process_spawn::spawn_with_transient_retry(&mut command).await;
 
         let mut child = match child {
             Ok(c) => c,
@@ -808,7 +808,8 @@ mod tests {
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let mut reg = HookRegistry::default();
+        let spine = Arc::new(RecordingSpine::default());
+        let mut reg = HookRegistry::default().with_event_spine(Some(spine.clone()));
         reg.register(RegisteredHook {
             name: "test:inject".into(),
             source: "test".into(),
@@ -831,7 +832,16 @@ mod tests {
 
         match reg.execute(&ctx).await {
             HookResult::Inject(text) => assert_eq!(text, "injected text"),
-            other => panic!("Expected Inject, got {other:?}"),
+            other => {
+                let events = spine
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                panic!(
+                    "Expected Inject, got {other:?}; receipt={:?}",
+                    events.last().map(|event| &event.payload)
+                );
+            }
         }
     }
 

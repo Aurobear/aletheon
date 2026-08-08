@@ -4,8 +4,8 @@ use crate::application::daemon_turn::helpers::{build_request_messages, select_te
 use crate::application::prompt_partition::{build_partitions, PromptConstructionProfile};
 use async_trait::async_trait;
 use fabric::{
-    AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, LatestConsciousContextPort,
-    Message, TurnRequest, WorkspaceContent,
+    AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, HistoryBudgetTokens,
+    LatestConsciousContextPort, Message, ToolDefinition, TurnRequest, WorkspaceContent,
 };
 use mnemosyne::{MemoryService, RecallRequest, RecallSet};
 use serde::Serialize;
@@ -70,6 +70,47 @@ pub struct AssembledContext {
     /// Per-region construction profile (diagnostic; never affects the wire
     /// messages). See `prompt_partition`.
     pub profile: PromptConstructionProfile,
+}
+
+pub struct PreparedContext {
+    system_prefix: String,
+    dynamic_context: String,
+    effective_user_message: String,
+    projection_receipt: Option<ContextProjectionReceipt>,
+}
+
+impl PreparedContext {
+    pub fn budget_costs(
+        &self,
+        raw_input: &str,
+    ) -> Result<crate::application::turn_runtime_ports::TurnContextBudgetCosts, ContextAssemblyError>
+    {
+        let system_tokens = Message::system(self.system_prefix.clone()).estimate_tokens();
+        let effective_input_tokens =
+            Message::user(self.effective_user_message.clone()).estimate_tokens();
+        let pending_input_tokens = Message::user(raw_input).estimate_tokens();
+        let dynamic_context_tokens = effective_input_tokens.saturating_sub(pending_input_tokens);
+        Ok(
+            crate::application::turn_runtime_ports::TurnContextBudgetCosts {
+                system_and_skill_tokens: u64::try_from(
+                    system_tokens.saturating_add(dynamic_context_tokens),
+                )
+                .map_err(|_| {
+                    ContextAssemblyError::Source(
+                        "prepared context token estimate exceeds u64".into(),
+                    )
+                })?
+                .into(),
+                pending_input_tokens: u64::try_from(pending_input_tokens)
+                    .map_err(|_| {
+                        ContextAssemblyError::Source(
+                            "pending input token estimate exceeds u64".into(),
+                        )
+                    })?
+                    .into(),
+            },
+        )
+    }
 }
 
 #[derive(Debug, Error)]
@@ -211,8 +252,23 @@ impl ContextAssembler {
         &self,
         request: &TurnRequest,
         canonical_history: &[Message],
-        history_budget_tokens: usize,
+        history_budget_tokens: HistoryBudgetTokens,
+        tool_definitions: &[ToolDefinition],
     ) -> Result<AssembledContext, ContextAssemblyError> {
+        let prepared = self.prepare(request).await?;
+        self.assemble_prepared(
+            request,
+            canonical_history,
+            history_budget_tokens,
+            prepared,
+            tool_definitions,
+        )
+    }
+
+    pub async fn prepare(
+        &self,
+        request: &TurnRequest,
+    ) -> Result<PreparedContext, ContextAssemblyError> {
         let fragments = self.source.load(request).await?;
         let projection_receipt = fragments
             .conscious
@@ -245,20 +301,42 @@ impl ContextAssembler {
         } else {
             format!("{dynamic_context}\n{}", request.input)
         };
+        Ok(PreparedContext {
+            system_prefix: truncate(&fragments.system_prefix, MAX_SYSTEM_PREFIX_CHARS),
+            dynamic_context,
+            effective_user_message: effective,
+            projection_receipt,
+        })
+    }
+
+    pub fn assemble_prepared(
+        &self,
+        request: &TurnRequest,
+        canonical_history: &[Message],
+        history_budget_tokens: HistoryBudgetTokens,
+        prepared: PreparedContext,
+        tool_definitions: &[ToolDefinition],
+    ) -> Result<AssembledContext, ContextAssemblyError> {
+        let history_budget_tokens = usize::try_from(history_budget_tokens.get()).map_err(|_| {
+            ContextAssemblyError::Source("history budget exceeds this platform's usize".into())
+        })?;
         let history = select_text_history(canonical_history, history_budget_tokens);
-        let system_prefix = truncate(&fragments.system_prefix, MAX_SYSTEM_PREFIX_CHARS);
-        let messages = build_request_messages(system_prefix.clone(), &history, effective.clone());
-        let profile = build_partitions(
-            &system_prefix,
+        let messages = build_request_messages(
+            prepared.system_prefix.clone(),
             &history,
-            &dynamic_context,
+            prepared.effective_user_message.clone(),
+        );
+        let profile = build_partitions(
+            &prepared.system_prefix,
+            &history,
+            &prepared.dynamic_context,
             &request.input,
-            0,
+            tool_definitions,
         );
         Ok(AssembledContext {
             messages,
-            effective_user_message: effective,
-            projection_receipt,
+            effective_user_message: prepared.effective_user_message,
+            projection_receipt: prepared.projection_receipt,
             profile,
         })
     }

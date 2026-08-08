@@ -1,7 +1,7 @@
 # X12 installed acceptance evidence — 2026-08-05
 
-Status: `code_complete` (the installed provenance lanes pass; the 20-task
-engineering success threshold is still open).
+Status: `failed` (the installed provenance lanes pass, but the recorded
+20-task engineering run reached 18/20 and does not satisfy the release gate).
 
 ## Installed runtime lanes
 

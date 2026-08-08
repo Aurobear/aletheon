@@ -65,6 +65,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
         process_id: process.id,
         context: turn_request_support::context("projection-order", std::env::temp_dir()),
         input: "hello".into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
@@ -82,6 +83,8 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
                     result: TurnResult {
                         output: "answer".into(),
                         stop: TurnStop::Completed,
+                        failure: None,
+                        usage: Default::default(),
                         metrics: TurnMetrics {
                             completed_normally: true,
                             ..Default::default()
@@ -156,7 +159,9 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
         );
     }
 
-    let context = pipeline.find("let assembled_context").unwrap();
+    // Context preparation (including its budget costs) must precede model
+    // selection. Full assembly can then use that model's authoritative budget.
+    let context = pipeline.find("let prepared_context").unwrap();
     let model = pipeline.find(".models.select").unwrap();
     let capability = pipeline.find(".capabilities").unwrap();
     assert!(context < model && model < capability);

@@ -1,0 +1,22 @@
+# FIXED: Multi-stage Dockerfile with correct layer ordering.
+# Requirements are copied and installed before source code.
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# Copy and install requirements first for layer caching
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Now copy source - only this layer is invalidated on source changes
+COPY . /app
+
+# Lint stage
+RUN pip install --no-cache-dir pylint
+
+FROM python:3.11-slim AS runtime
+WORKDIR /app
+COPY --from=builder /app /app
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+CMD ["python", "main.py"]

@@ -144,6 +144,26 @@ pub(super) async fn run_agent(
         }
         Err(error) => (AgentRunStatus::Failed, None, Some(error.message.clone())),
     };
+    // Quiesce the companion mailbox task before any terminal settlement. A
+    // successful runtime still cancels the now-obsolete mailbox waiter, then
+    // records the scope as normally settled; failures share the abort path.
+    scope.cancel();
+    let scope_cleanup = if candidate_status == AgentRunStatus::Succeeded {
+        scope
+            .settle_and_drain(clock.as_ref(), Duration::from_secs(5))
+            .await
+    } else {
+        scope
+            .abort_and_drain(clock.as_ref(), Duration::from_secs(5))
+            .await
+    };
+    if scope_cleanup.forced_abort {
+        tracing::warn!(
+            agent = ?agent,
+            exits = ?scope_cleanup.exits,
+            "Agent operation scope exceeded its cleanup grace period"
+        );
+    }
     let settlement_usage = result.as_ref().map(|result| result.usage.clone());
     let terminal_receipt = AgentTerminalReceipt {
         agent_id: agent,

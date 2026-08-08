@@ -63,6 +63,7 @@ impl Fixture {
             process_id: self.process_id,
             context: turn_request_support::context(&self.thread, std::env::temp_dir()),
             input: "make the typed code change".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
             model_policy: None,
             deadline: None,
             requirements: vec![],
@@ -105,6 +106,8 @@ impl Fixture {
                         result: TurnResult {
                             output: "runner output".into(),
                             stop: TurnStop::Completed,
+                            failure: None,
+                            usage: Default::default(),
                             metrics: TurnMetrics {
                                 completed_normally: true,
                                 ..Default::default()

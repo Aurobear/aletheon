@@ -245,6 +245,7 @@ mod tests {
         let items = vec![
             ItemPayload::UserMessage {
                 content: "u".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
             },
             ItemPayload::ToolCall {
                 call_id: "c1".into(),

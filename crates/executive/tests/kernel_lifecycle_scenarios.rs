@@ -60,6 +60,7 @@ struct Scenario {
     kernel: Arc<KernelRuntime>,
     process: fabric::ProcessHandle,
     operation: fabric::OperationHandle,
+    process_budget_baseline: usize,
 }
 
 impl Scenario {
@@ -70,6 +71,7 @@ impl Scenario {
             .signal_process(process.id, ProcessSignal::Start)
             .await
             .unwrap();
+        let process_budget_baseline = kernel.budget_controller().active_reservation_count().await;
         let operation = kernel
             .submit_operation(OperationRequest {
                 owner: process.id,
@@ -84,6 +86,7 @@ impl Scenario {
             kernel,
             process,
             operation,
+            process_budget_baseline,
         }
     }
 
@@ -154,16 +157,22 @@ impl Scenario {
         );
         assert_eq!(self.kernel.mailbox_service().len().await, 0);
     }
+
+    async fn assert_no_turn_residue(&self) {
+        self.assert_no_capability_residue(self.process_budget_baseline)
+            .await;
+        assert_eq!(
+            self.kernel
+                .active_permits_for_operation(self.operation.id)
+                .await,
+            0
+        );
+    }
 }
 
 #[tokio::test]
 async fn successful_turn_settles_capability_while_process_stays_healthy() {
     let scenario = Scenario::running().await;
-    let baseline = scenario
-        .kernel
-        .budget_controller()
-        .active_reservation_count()
-        .await;
     let invoker = DefaultCapabilityInvoker::new(
         scenario.kernel.admission(),
         Arc::new(ResultExecutor { fail: false }),
@@ -177,7 +186,7 @@ async fn successful_turn_settles_capability_while_process_stays_healthy() {
         .succeed_operation(scenario.operation.id)
         .await
         .unwrap();
-    scenario.assert_no_capability_residue(baseline).await;
+    scenario.assert_no_turn_residue().await;
     assert_eq!(
         scenario
             .kernel
@@ -208,11 +217,6 @@ async fn tool_failure_settles_once_and_parent_cancel_cancels_descendants() {
         .await
         .unwrap();
     scenario.kernel.start_operation(child.id).await.unwrap();
-    let baseline = scenario
-        .kernel
-        .budget_controller()
-        .active_reservation_count()
-        .await;
     let invoker = DefaultCapabilityInvoker::new(
         scenario.kernel.admission(),
         Arc::new(ResultExecutor { fail: true }),
@@ -239,7 +243,7 @@ async fn tool_failure_settles_once_and_parent_cancel_cancels_descendants() {
         .unwrap()
         .state
         .is_terminal());
-    scenario.assert_no_capability_residue(baseline).await;
+    scenario.assert_no_turn_residue().await;
 }
 
 #[tokio::test]
@@ -278,6 +282,52 @@ async fn user_cancellation_revokes_one_permit_and_releases_every_hold() {
         .revoke(result.usage.permit_id, RevokeReason::OperationCancelled)
         .await
         .unwrap();
+    scenario.assert_no_capability_residue(baseline).await;
+}
+
+#[tokio::test]
+async fn task_abort_triggers_permit_drop_fallback_and_releases_every_hold() {
+    let scenario = Scenario::running().await;
+    let baseline = scenario
+        .kernel
+        .budget_controller()
+        .active_reservation_count()
+        .await;
+    let started = Arc::new(Notify::new());
+    let invoker = Arc::new(DefaultCapabilityInvoker::new(
+        scenario.kernel.admission(),
+        Arc::new(BlockingExecutor {
+            started: started.clone(),
+        }),
+    ));
+    let request = scenario.request(CancellationToken::new());
+    let task = tokio::spawn(async move { invoker.invoke(request).await });
+    started.notified().await;
+    assert_eq!(
+        scenario
+            .kernel
+            .active_permits_for_process(scenario.process.id)
+            .await,
+        1
+    );
+
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if scenario
+                .kernel
+                .active_permits_for_process(scenario.process.id)
+                .await
+                == 0
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("permit Drop fallback must complete");
     scenario.assert_no_capability_residue(baseline).await;
 }
 

@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use fabric::{
     wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
     MemoryHandle, MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext,
-    SubsystemHealth, Version, WallTime,
+    SubsystemHealth, Version,
 };
 use rusqlite::{params, Connection};
 use uuid::Uuid;
@@ -136,8 +136,7 @@ impl MemoryBackend for SelfMemory {
                     .unwrap_or(false);
                 if !parent_exists {
                     bail!(
-                        "parent_id {} does not exist in self_memory",
-                        parent_uuid
+                        "parent_id {parent_uuid} does not exist in self_memory"
                     );
                 }
             }
@@ -183,20 +182,19 @@ impl MemoryBackend for SelfMemory {
 
             if let Some(ref text) = query.text {
                 sql += &format!(
-                    " AND (CAST(m.content AS TEXT) LIKE ?{idx} OR EXISTS (
+                    " AND (CAST(m.content AS TEXT) LIKE ?{param_idx} OR EXISTS (
                         SELECT 1 FROM self_entries se WHERE se.memory_id = m.id
-                        AND (se.description LIKE ?{idx} OR se.change_type LIKE ?{idx} OR se.reason LIKE ?{idx})
-                    ))",
-                    idx = param_idx
+                        AND (se.description LIKE ?{param_idx} OR se.change_type LIKE ?{param_idx} OR se.reason LIKE ?{param_idx})
+                    ))"
                 );
-                param_values.push(Box::new(format!("%{}%", text)));
+                param_values.push(Box::new(format!("%{text}%")));
                 param_idx += 1;
             }
 
             if let Some(ref tags) = query.tags {
                 for tag in tags {
-                    sql += &format!(" AND m.tags LIKE ?{idx}", idx = param_idx);
-                    param_values.push(Box::new(format!("%{}%", tag)));
+                    sql += &format!(" AND m.tags LIKE ?{param_idx}");
+                    param_values.push(Box::new(format!("%{tag}%")));
                     param_idx += 1;
                 }
             }
@@ -204,7 +202,7 @@ impl MemoryBackend for SelfMemory {
             // Fetch without ORDER BY — activation sort happens in Rust.
             // If a limit is set, fetch 2x to give re-ranking room.
             if query.limit > 0 {
-                sql += &format!(" LIMIT ?{idx}", idx = param_idx);
+                sql += &format!(" LIMIT ?{param_idx}");
                 param_values.push(Box::new((query.limit as i64) * 2));
             }
 
@@ -261,8 +259,8 @@ impl MemoryBackend for SelfMemory {
 
             if let Some(ref tags) = filter.tags {
                 for tag in tags {
-                    sql += &format!(" AND tags LIKE ?{idx}", idx = param_idx);
-                    param_values.push(Box::new(format!("%{}%", tag)));
+                    sql += &format!(" AND tags LIKE ?{param_idx}");
+                    param_values.push(Box::new(format!("%{tag}%")));
                     param_idx += 1;
                 }
             }
@@ -270,7 +268,7 @@ impl MemoryBackend for SelfMemory {
             sql += " ORDER BY created_at DESC";
 
             if filter.limit > 0 {
-                sql += &format!(" LIMIT ?{idx}", idx = param_idx);
+                sql += &format!(" LIMIT ?{param_idx}");
                 param_values.push(Box::new(filter.limit as i64));
             }
 
@@ -300,9 +298,8 @@ impl MemoryBackend for SelfMemory {
 
             if approved == 0 {
                 bail!(
-                    "Cannot forget unapproved self_memory entry {}. \
-                     Approval required (approved != 0).",
-                    id
+                    "Cannot forget unapproved self_memory entry {id}. \
+                     Approval required (approved != 0)."
                 );
             }
 

@@ -33,6 +33,7 @@ fn request(input: &str) -> TurnRequest {
         process_id: ProcessId::new(),
         context: turn_request_support::context("session", PathBuf::from("/workspace")),
         input: input.into(),
+        execution_target: fabric::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
@@ -103,7 +104,12 @@ async fn fragments_have_one_deterministic_order_before_raw_input() {
         memory_context: String::new(),
     })));
     let assembled = assembler
-        .assemble(&request("raw user"), &[Message::assistant("prior")], 1_000)
+        .assemble(
+            &request("raw user"),
+            &[Message::assistant("prior")],
+            1_000.into(),
+            &[],
+        )
         .await
         .unwrap();
     let positions: Vec<_> = ["<conscious-context>", "<skills>", "raw user"]
@@ -117,6 +123,29 @@ async fn fragments_have_one_deterministic_order_before_raw_input() {
     assert_eq!(
         text(assembled.messages.last().unwrap()),
         assembled.effective_user_message
+    );
+}
+
+#[tokio::test]
+async fn prepared_budget_costs_include_dynamic_context_without_relabeling_user_input() {
+    let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {
+        system_prefix: "stable system".into(),
+        skills: "selected skill body".into(),
+        conscious: None,
+        memory_context: "recalled memory evidence".into(),
+    })));
+    let request = request("raw user input");
+    let prepared = assembler.prepare(&request).await.unwrap();
+    let costs = prepared.budget_costs(&request.input).unwrap();
+
+    assert_eq!(
+        costs.pending_input_tokens.get(),
+        u64::try_from(Message::user("raw user input").estimate_tokens()).unwrap()
+    );
+    assert!(
+        costs.system_and_skill_tokens.get()
+            > u64::try_from(Message::system("stable system").estimate_tokens()).unwrap(),
+        "selected skills and recalled context must consume non-history capacity"
     );
 }
 
@@ -135,7 +164,12 @@ async fn partition_profile_covers_tool_memory_and_compacted_history_without_raw_
         Message::tool_result("tool-1", "tool-secret-result", false),
     ];
     let assembled = assembler
-        .assemble(&request("current-secret-input"), &history, 1_000)
+        .assemble(
+            &request("current-secret-input"),
+            &history,
+            1_000.into(),
+            &[],
+        )
         .await
         .unwrap();
 
@@ -173,7 +207,8 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
         .assemble(
             &request("raw"),
             &[Message::user("x".repeat(200_000))],
-            8_000,
+            8_000.into(),
+            &[],
         )
         .await
         .unwrap();
@@ -197,7 +232,12 @@ async fn host_projected_fragments_rescrub_legacy_secrets_without_rewriting_user_
     })));
 
     let assembled = assembler
-        .assemble(&request("current user sk-userSecret123"), &[], 1_000)
+        .assemble(
+            &request("current user sk-userSecret123"),
+            &[],
+            1_000.into(),
+            &[],
+        )
         .await
         .unwrap();
 
@@ -236,14 +276,30 @@ fn working_directory_prompt_distinguishes_policy_from_host_mounts() {
 }
 
 #[test]
-fn turn_pipeline_has_one_context_assembly_route() {
+fn turn_pipeline_prepares_and_assembles_context_once() {
     let pipeline = include_str!("../src/application/turn_pipeline.rs");
     assert!(pipeline.contains(".context_assembler"));
-    assert!(pipeline.contains(
-        ".assemble(
-                &context_request,
-                &existing_messages,"
-    ));
+    assert_eq!(
+        pipeline.matches(".prepare(&context_request)").count(),
+        1,
+        "the exact projected context must be prepared once before budget planning"
+    );
+    assert_eq!(
+        pipeline.matches(".assemble_prepared(").count(),
+        1,
+        "the prepared context must be assembled once after history budgeting"
+    );
+    assert!(pipeline.contains("prepared_context.budget_costs(&context_request.input)"));
+    assert!(pipeline.contains("\"prompt_construction_profile\": prompt_profile"));
+    assert!(pipeline.contains("\"tool_count\": tool_defs.len()"));
+    assert!(!pipeline.contains("serde_json::json!({\"tool_count\": 0})"));
+    assert_eq!(
+        pipeline
+            .matches("self.active_profile.snapshot().await?")
+            .count(),
+        1,
+        "one immutable profile snapshot must govern the entire turn"
+    );
     assert!(pipeline.contains(".canonical_sessions"));
     assert!(pipeline.contains(".resume(&fabric::SessionId"));
     for removed in [
@@ -263,3 +319,41 @@ fn turn_pipeline_has_one_context_assembly_route() {
     assert!(!daemon_modules.contains("mod injection"));
 }
 mod turn_request_support;
+
+#[tokio::test]
+async fn assemble_records_the_real_tool_count_in_the_prompt_profile() {
+    let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {
+        system_prefix: "system".into(),
+        skills: String::new(),
+        conscious: None,
+        memory_context: String::new(),
+    })));
+    let tools = (0..23)
+        .map(|index| fabric::ToolDefinition {
+            name: format!("tool_{index}"),
+            description: format!("tool {index}"),
+            input_schema: serde_json::json!({"type": "object"}),
+        })
+        .collect::<Vec<_>>();
+    let assembled = assembler
+        .assemble(&request("tool profile"), &[], 1_000.into(), &tools)
+        .await
+        .unwrap();
+    let tool_region = assembled
+        .profile
+        .partitions
+        .iter()
+        .find(|partition| {
+            partition.region == executive::application::prompt_partition::PromptRegion::StableTools
+        })
+        .expect("stable tools partition must exist");
+    assert_eq!(
+        tool_region.chars, 23,
+        "the real tool count must be recorded in the prompt profile"
+    );
+    assert!(tool_region.serialized_bytes > 0);
+    assert!(tool_region
+        .content_digest
+        .as_deref()
+        .is_some_and(|digest| digest.starts_with("sha256:")));
+}

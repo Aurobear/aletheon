@@ -4,36 +4,22 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::contract::command::{
-    ClientCommand, ClientIntent, ExecuteShellIntent, StatusIntent, SubmitPromptIntent,
+    ClientCommand, ClientIntent, CommandOutputEnvelopeV1, ExecuteShellIntent, StatusIntent,
+    SubmitPromptIntent,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommandOutput {
-    PromptAccepted {
-        correlation_id: String,
-    },
-    /// Completed prompt result projected by a synchronous host adapter.
-    ///
-    /// `result` is the application result object, not a JSON-RPC envelope;
-    /// presentation transports remain responsible for their own framing.
-    PromptCompleted {
-        correlation_id: String,
-        result: serde_json::Value,
-    },
-    Status {
-        ready: bool,
-        summary: String,
-    },
-    /// Full status projection retained for compatibility clients while the
-    /// versioned read model is introduced by the later Session nodes.
-    StatusProjected {
-        correlation_id: String,
-        result: serde_json::Value,
-    },
-    Rejected {
-        code: i64,
-        message: String,
-    },
+pub use fabric::contract::command::{CommandOutputV1, PromptCompletionV1 as PromptCompletion};
+
+/// The application returns the same versioned output contract consumed by all
+/// clients. JSON-RPC framing is added only by the host adapter.
+pub type CommandOutput = CommandOutputEnvelopeV1;
+
+/// The only V0 prompt-result migration adapter. Remove after legacy direct
+/// orchestrator callers have moved to `CommandOutputEnvelopeV1`.
+pub fn prompt_completion_from_rpc_result(
+    result: serde_json::Value,
+) -> anyhow::Result<PromptCompletion> {
+    serde_json::from_value(result).map_err(anyhow::Error::from)
 }
 
 #[async_trait]

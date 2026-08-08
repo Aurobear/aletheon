@@ -253,6 +253,26 @@ pub enum ToolCachePolicy {
     },
 }
 
+/// Host-validated dependency model for a cached read-only result. A tool that
+/// declares a cache policy but no dependency model is deliberately bypassed.
+/// This prevents TTL from being mistaken for correctness on mutable state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCacheDependencies {
+    /// The named input fields are immutable content identities (for example a
+    /// SHA-256 artifact reference). The values themselves are bound into the
+    /// cache key after canonical argument validation.
+    ContentAddressed {
+        argument_names: &'static [&'static str],
+    },
+    /// The named input fields resolve to regular files under the authoritative
+    /// workspace. File contents, metadata, and optional Git HEAD/index state
+    /// are hashed on every lookup.
+    WorkspaceFiles {
+        argument_names: &'static [&'static str],
+        include_repo_state: bool,
+    },
+}
+
 /// Host-authored execution identity for structured tools.
 ///
 /// This value is obtained from the registered `Tool` implementation, never
@@ -306,6 +326,19 @@ pub trait Tool: Send + Sync {
     /// never bypasses permission checks.
     fn cache_policy(&self) -> ToolCachePolicy {
         ToolCachePolicy::Never
+    }
+
+    /// Stable implementation revision included in the result-cache key.
+    /// Implementations must change this when result semantics change without a
+    /// corresponding input-schema change.
+    fn cache_implementation_version(&self) -> &'static str {
+        "1"
+    }
+
+    /// Explicit dependencies used to validate a read-only cache entry. The
+    /// safe default is no declaration, which forces the executor to bypass.
+    fn cache_dependencies(&self) -> Option<ToolCacheDependencies> {
+        None
     }
 
     /// Trusted, host-only execution identity for isolated structured dispatch.

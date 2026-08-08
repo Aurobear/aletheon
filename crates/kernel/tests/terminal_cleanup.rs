@@ -127,6 +127,64 @@ async fn terminal_transaction_cleans_all_owned_resources_before_publishing_exit(
 }
 
 #[tokio::test]
+async fn operation_terminal_cleanup_revokes_turn_permits_leases_and_budget_once() {
+    let runtime = KernelRuntime::new();
+    let (process, operation) = running_process_with_operation(&runtime).await;
+    runtime
+        .admission()
+        .admit(AdmissionRequest {
+            operation_id: operation.id,
+            process_id: process.id,
+            principal: PrincipalId("turn-owner".into()),
+            capability: CapabilityId("tool".into()),
+            action: "execute".into(),
+            input_summary: String::new(),
+            risk: RiskLevel::ReadOnly,
+            requested_scope: CapabilityScope::default(),
+            budget: Some(BudgetRequest {
+                max_tokens: Some(5),
+                max_cost_micro: None,
+            }),
+            lease: Some(LeaseRequest {
+                resource: "turn-terminal-test".into(),
+                duration_ms: 60_000,
+            }),
+            sandbox: SandboxRequirement::NotRequired,
+        })
+        .await
+        .unwrap();
+    assert_eq!(runtime.active_permits_for_operation(operation.id).await, 1);
+
+    runtime
+        .cancel_operation(operation.id, fabric::CancelReason::User)
+        .await
+        .unwrap();
+    assert_eq!(runtime.active_permits_for_operation(operation.id).await, 0);
+    assert_eq!(
+        runtime
+            .lease_manager()
+            .active_count(runtime.clock().mono_now().0)
+            .await,
+        0
+    );
+    // The process reservation remains live; the operation and capability
+    // reservations are both closed before terminal publication.
+    assert_eq!(
+        runtime.budget_controller().active_reservation_count().await,
+        1
+    );
+
+    runtime
+        .cancel_operation(operation.id, fabric::CancelReason::User)
+        .await
+        .unwrap();
+    assert_eq!(
+        runtime.budget_controller().active_reservation_count().await,
+        1
+    );
+}
+
+#[tokio::test]
 async fn cleanup_failure_is_retryable_before_terminal_publication() {
     let runtime = KernelRuntime::with_clock_and_faults(
         Arc::new(kernel::chronos::TestClock::default()),
@@ -275,4 +333,48 @@ async fn retry_after_restart_spawn_failure_does_not_repeat_cleanup_or_decision()
         .unwrap()
         .state
         .is_terminal());
+}
+
+#[tokio::test]
+async fn repeated_operation_drain_is_idempotent_and_never_double_settles() {
+    let runtime = Arc::new(KernelRuntime::new());
+    let process = runtime.spawn_process(SpawnSpec::default()).await.unwrap();
+    runtime
+        .signal_process(process.id, ProcessSignal::Start)
+        .await
+        .unwrap();
+    let operation = runtime
+        .submit_operation(OperationRequest {
+            owner: process.id,
+            parent: None,
+            kind: OperationKind::Turn,
+            deadline: None,
+        })
+        .await
+        .unwrap();
+    runtime.start_operation(operation.id).await.unwrap();
+
+    runtime.succeed_operation(operation.id).await.unwrap();
+    let record = runtime.inspect_operation(operation.id).await.unwrap();
+    assert!(
+        record.state.is_terminal(),
+        "operation must be terminal after succeed"
+    );
+
+    // A second terminal settle is rejected (illegal transition), not silently
+    // applied twice.
+    let second = runtime
+        .succeed_operation(operation.id)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        second.contains("illegal operation transition"),
+        "got: {second}"
+    );
+    let after = runtime.inspect_operation(operation.id).await.unwrap();
+    assert_eq!(
+        after.state, record.state,
+        "terminal state must not change on re-settle"
+    );
 }

@@ -4,9 +4,7 @@
 //! knowledge. High-activation reflections become long-term semantic entries.
 
 use anyhow::Result;
-use chrono::Utc;
 use fabric::wall_to_datetime;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use fabric::{MemoryBackend, MemoryEntry, MemoryType};
@@ -187,6 +185,7 @@ mod tests {
     use fabric::{
         ReflectionEntry, ReflectionOutcome, ReflectionTrigger, Subsystem, SubsystemContext,
     };
+    use std::sync::Arc;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
         Arc::new(kernel::chronos::TestClock::default())
@@ -413,8 +412,7 @@ mod tests {
         let final_importance = ep.get_importance(memory_id).unwrap();
         assert!(
             (final_importance - 0.1).abs() < f64::EPSILON,
-            "importance should be lowered to 0.1, got {}",
-            final_importance
+            "importance should be lowered to 0.1, got {final_importance}"
         );
     }
 

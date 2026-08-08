@@ -73,6 +73,12 @@ pub use types::cognitive_workflow;
 pub use types::conscious_arbitration;
 pub use types::conscious_core;
 pub use types::context;
+pub use types::context_budget::{
+    BudgetMissingReason, ContextBudgetProjection, ContextBudgetSource, ContextBudgetSourceKind,
+    ContextCompactionMode, ContextCompactionProjection, ContextCostTokens, HistoryBudgetTokens,
+    HistoryTokens, ModelContextWindowTokens, ProfileInputLimitTokens, RolloutBudgetProjection,
+    RolloutBudgetTokens, RolloutBudgetValue,
+};
 pub use types::evidence;
 pub use types::extension;
 pub use types::external_event;
@@ -119,6 +125,9 @@ pub use types::conscious_core_trace::{
 pub use types::conscious_field_metrics::{
     quantize, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
     MAX_FIELD_METRIC_HISTORY, QUIET_CONVERGENCE_WINDOW,
+};
+pub use types::execution_target::{
+    ExecutionTarget, ExecutionTargetSelection, ExecutionTargetSource,
 };
 pub use types::prompt_queue::{
     evaluate_cancel, evaluate_edit, truncate_prompt_content, PromptEnvelope, PromptId, PromptKind,
@@ -324,7 +333,8 @@ pub use types::time::{wall_to_datetime, MonoDeadline, MonoTime, WallTime};
 pub use types::tool::{
     AgentToolContext, ApprovalOwner, PatchDelta, PatchDeltaApplied, PatchDeltaFailed,
     PatchDeltaFileChange, PendingApprovalKey, PermissionLevel as ToolPermissionLevel,
-    ThreadGrantKey, Tool, ToolApprovalAuthority, ToolContext, ToolResult, ToolResultMeta,
+    ThreadGrantKey, Tool, ToolApprovalAuthority, ToolCacheDependencies, ToolContext, ToolResult,
+    ToolResultMeta,
 };
 pub use types::tool_stream::{
     tool_event_channel, tool_event_channel_for_call, BoundToolEventReceiver, ToolEventSink,
@@ -332,7 +342,8 @@ pub use types::tool_stream::{
     TOOL_PROGRESS_CHANNEL_CAP,
 };
 pub use types::turn::{
-    TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop, TurnTerminalStatus,
+    TurnEvent, TurnFailure, TurnFailureKind, TurnMetrics, TurnRequest, TurnResult, TurnStop,
+    TurnTerminalStatus,
 };
 
 // Event types

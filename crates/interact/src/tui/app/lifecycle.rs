@@ -33,9 +33,13 @@ enum InitialRequest {
 }
 
 enum LineModeAction {
-    Request(InitialRequest),
+    Request(Box<InitialRequest>),
     Display(String),
     Quit,
+}
+
+fn line_mode_request(request: InitialRequest) -> LineModeAction {
+    LineModeAction::Request(Box::new(request))
 }
 
 fn resolve_line_mode_input(
@@ -46,7 +50,7 @@ fn resolve_line_mode_input(
     task_kind: Option<fabric::TaskKind>,
 ) -> LineModeAction {
     if !looks_like_command(trimmed) {
-        return LineModeAction::Request(InitialRequest::Legacy(crate::intent::rpc(
+        return line_mode_request(InitialRequest::Legacy(crate::intent::rpc(
             crate::intent::submit_prompt(crate::intent::PromptIntent {
                 surface: fabric::contract::command::ClientSurface::Tui,
                 correlation_id: format!("line:{}", uuid::Uuid::new_v4()),
@@ -56,6 +60,7 @@ fn resolve_line_mode_input(
                 requirements: turn_requirements.to_vec(),
                 task_kind,
                 permission_mode: crate::host::permission_mode_from_environment(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
             }),
         )));
     }
@@ -65,9 +70,9 @@ fn resolve_line_mode_input(
             LineModeAction::Display(registry.help_text())
         }
         Some(CommandType::Builtin(BuiltinCommand::Clear)) => {
-            LineModeAction::Request(InitialRequest::Legacy(ClientRpcRequest::Clear))
+            line_mode_request(InitialRequest::Legacy(ClientRpcRequest::Clear))
         }
-        Some(CommandType::Builtin(BuiltinCommand::Status)) => LineModeAction::Request(
+        Some(CommandType::Builtin(BuiltinCommand::Status)) => line_mode_request(
             InitialRequest::Legacy(crate::intent::rpc(crate::intent::status(
                 fabric::contract::command::ClientSurface::Tui,
                 format!("line-status:{}", uuid::Uuid::new_v4()),
@@ -75,22 +80,22 @@ fn resolve_line_mode_input(
             ))),
         ),
         Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-            LineModeAction::Request(InitialRequest::Projection(ClientRequest::ReadSessions))
+            line_mode_request(InitialRequest::Projection(ClientRequest::ReadSessions))
         }
         Some(CommandType::Builtin(BuiltinCommand::Resume { id })) if !id.is_empty() => {
-            LineModeAction::Request(InitialRequest::Projection(ClientRequest::ReadSnapshot(
+            line_mode_request(InitialRequest::Projection(ClientRequest::ReadSnapshot(
                 SnapshotRequest {
                     session_id: fabric::SessionId(id),
                 },
             )))
         }
         Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
-            LineModeAction::Request(InitialRequest::Legacy(ClientRpcRequest::Compact))
+            line_mode_request(InitialRequest::Legacy(ClientRpcRequest::Compact))
         }
         Some(CommandType::Builtin(BuiltinCommand::Model)) => {
-            LineModeAction::Request(InitialRequest::Legacy(ClientRpcRequest::ModelList))
+            line_mode_request(InitialRequest::Legacy(ClientRpcRequest::ModelList))
         }
-        Some(CommandType::Skill { name, args }) => LineModeAction::Request(InitialRequest::Legacy(
+        Some(CommandType::Skill { name, args }) => line_mode_request(InitialRequest::Legacy(
             ClientRpcRequest::skill_invoke(name, args, workspace),
         )),
         Some(CommandType::Unknown {
@@ -245,7 +250,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         // Resize handling
         if let Ok(size) = terminal.size() {
-            app.chat.set_width(size.width);
+            app.compat_transcript.set_width(size.width);
         }
 
         // Redraw only when state changed. This keeps idle and scroll handling
@@ -297,7 +302,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                         needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {
-                        app.chat.set_width(w);
+                        app.compat_transcript.set_width(w);
                         needs_redraw = true;
                     }
                     Event::Mouse(mouse) => {
@@ -506,7 +511,7 @@ pub async fn simple_line_mode(
             }
             LineModeAction::Quit => break,
         };
-        let msg = match request {
+        let msg = match *request {
             InitialRequest::Legacy(request) => request.to_json_rpc(Some(1))?,
             InitialRequest::Projection(request) => request.to_json_rpc(1)?,
         };
@@ -633,7 +638,37 @@ pub async fn simple_line_mode(
                             }
 
                             // This is the actual JSON-RPC response — process it
-                            if let Ok(message) = serde_json::from_value::<
+                            if msg["result"]["protocol"].as_str() == Some("command_output") {
+                                match serde_json::from_value::<
+                                    fabric::contract::command::CommandOutputEnvelopeV1,
+                                >(msg["result"].clone())
+                                .map_err(anyhow::Error::from)
+                                .and_then(|output| output.into_v1().map_err(anyhow::Error::from))
+                                {
+                                    Ok(fabric::contract::command::CommandOutputV1::PromptCompleted(
+                                        completion,
+                                    )) => println!("\n{}\n", completion.response),
+                                    Ok(fabric::contract::command::CommandOutputV1::PromptAccepted) => {}
+                                    Ok(fabric::contract::command::CommandOutputV1::Status(status)) => {
+                                        println!("\n{}: {}\n", if status.ready { "ready" } else { "not ready" }, status.summary);
+                                    }
+                                    Ok(fabric::contract::command::CommandOutputV1::StatusProjected(
+                                        status,
+                                    )) => println!(
+                                        "\n{}\n",
+                                        super::super::response::format_status_projection(&status)
+                                    ),
+                                    Ok(fabric::contract::command::CommandOutputV1::Rejected(
+                                        rejection,
+                                    )) => eprintln!(
+                                        "Error {}: {}\n",
+                                        rejection.code, rejection.message
+                                    ),
+                                    Err(error) => eprintln!(
+                                        "Error: command output protocol rejected: {error}\n"
+                                    ),
+                                }
+                            } else if let Ok(message) = serde_json::from_value::<
                                 fabric::protocol::client::ClientMessage<
                                     fabric::protocol::client::SessionListSnapshot,
                                 >,
@@ -694,7 +729,7 @@ fn format_read_snapshot(snapshot: &fabric::protocol::client::SessionReadSnapshot
     )];
     for item in &snapshot.items {
         match &item.payload {
-            fabric::ItemPayload::UserMessage { content } => {
+            fabric::ItemPayload::UserMessage { content, .. } => {
                 lines.push(format!("user: {content}"));
             }
             fabric::ItemPayload::AssistantMessage { content } => {
@@ -739,7 +774,7 @@ mod tests {
             LineModeAction::Request(request) => request,
             LineModeAction::Display(_) | LineModeAction::Quit => return None,
         };
-        let wire = match request {
+        let wire = match *request {
             InitialRequest::Legacy(request) => request.to_json_rpc(Some(1)).unwrap(),
             InitialRequest::Projection(request) => request.to_json_rpc(1).unwrap(),
         };

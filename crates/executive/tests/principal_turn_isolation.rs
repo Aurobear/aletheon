@@ -63,6 +63,7 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
                         process_id,
                         context,
                         input: "hello".into(),
+                        execution_target: fabric::ExecutionTargetSelection::default(),
                         model_policy: Some("test-policy".into()),
                         deadline: None,
                         requirements: Vec::new(),
@@ -78,6 +79,8 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
                             result: TurnResult {
                                 output: "ok".into(),
                                 stop: TurnStop::Completed,
+                                failure: None,
+                                usage: Default::default(),
                                 metrics: TurnMetrics {
                                     completed_normally: true,
                                     ..Default::default()
@@ -133,7 +136,7 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
         )
         .await
         .unwrap();
-    assert!(alice_active.cancel.is_cancelled());
+    assert!(alice_active.is_cancelled());
 
     release.add_permits(2);
     alice_task.await.unwrap().unwrap();
@@ -157,6 +160,8 @@ fn completed() -> TurnExecution {
         result: TurnResult {
             output: "ok".into(),
             stop: TurnStop::Completed,
+            failure: None,
+            usage: Default::default(),
             metrics: TurnMetrics {
                 completed_normally: true,
                 ..Default::default()
@@ -200,6 +205,7 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
             process_id: process.id,
             context: context(uid, thread, "/tmp"),
             input: "capacity".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
             model_policy: None,
             deadline: None,
             requirements: Vec::new(),
@@ -253,6 +259,7 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
             process_id: process.id,
             context: shared_context.clone(),
             input: "first".into(),
+            execution_target: fabric::ExecutionTargetSelection::default(),
             model_policy: None,
             deadline: None,
             requirements: Vec::new(),
@@ -278,6 +285,7 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
                 process_id: process.id,
                 context: shared_context,
                 input: "duplicate".into(),
+                execution_target: fabric::ExecutionTargetSelection::default(),
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),

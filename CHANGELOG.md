@@ -1,23 +1,61 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to the Aletheon runtime are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The authoritative release evidence for any tagged release is the
+machine-generated acceptance scoreboard bound to the immutable RC,
+not this changelog. See `docs/release/known-limitations.md` for
+current known limitations.
 
 ## [Unreleased]
 
 ### Added
-- Open-source readiness: CI/CD pipeline with GitHub Actions
-- Open-source readiness: MIT license badges and quick start links
-- Open-source readiness: Contributing guidelines
-- Open-source readiness: Crate descriptions for all workspace members
+- Release workflow source identity gate: semver tag validation, explicit
+  `origin/main` and `origin/dev` ref fetch, origin/main commit equality,
+  origin/dev ancestor-of-main check.
+- Workspace-level `fmt`, `clippy --workspace --all-targets --all-features`,
+  `test --workspace --all-features`, architecture check, and
+  migration-matrix verification in the release validate job.
+- Mandatory simulation Robot R8 evidence gate: the release fails closed
+  unless fresh positive (completed) and negative (safe-stop) receipts are
+  downloaded and verified for the exact GITHUB_SHA and RC digest.
+- Two-job R8 evidence handoff workflow (`r8-evidence-handoff.yml`) with
+  protected operator-pause environment for self-hosted simulation acceptance.
+- Python R8 evidence verifier (`tests/coding/harness/r8_evidence_verifier.py`)
+  with metadata binding, archive/installed/receipt digest cross-checks, and
+  deterministic unit tests.
+- Post-release smoke job consuming the published x86_64 release asset with
+  exact SHA256SUMS line match (not `--ignore-missing`) and `aletheon
+  version --json` commit-binding validation.
+- Machine-readable smoke receipt with tag, commit, binary digest, acceptance
+  run ID, R8 receipt digests, and actual previous-tag rollback point.
+- Machine-generated release notes requiring (not optionally omitting)
+  acceptance run ID, installed digest, R8 positive/negative receipt
+  digests, and R8 evidence archive digest; first-release handling without
+  malformed compare URL.
+- `docs/release/known-limitations.md` documenting all known limitations.
+- Per-turn operation scopes with bounded cancellation/deadline cleanup and
+  exactly-once terminal settlement (R2).
+- Versioned typed command output and a canonical live/durable TUI reducer
+  (R3/U1).
+- Machine-generated installed acceptance manifests and scoreboards (A1).
+- A reproducible 30-task synthetic Robot Engineering benchmark with
+  deterministic independent oracles (E1).
+- Indexed per-session event append, bounded conflict retries, and the
+  1k/10k/100k by 1/10/100-session benchmark matrix (S1).
+- Dependency-aware read-only tool caching, configurable recall caching, and
+  observable prompt/tool profiles (C1).
+- A bounded evidence-driven role workflow with explicit transition reasons
+  and repair-loop limits (M1).
 
-### Changed
-- Refactored runtime structure to core/bridge/impl/ pattern
-- Refactored self-field to core/bridge/impl/ pattern
-- Refactored brain-core to core/bridge/impl/ pattern
-- Refactored body to core/bridge/impl/ pattern
+### Known Limitations (Unresolved)
+- Physical HIL (H1): Not performed. Simulation R8 is the highest Robot
+  evidence accepted by the release workflow; no physical-support claim is made.
+- Release promotion: `dev` to `main`, immutable RC acceptance, semantic tag,
+  and post-release smoke remain release-time operational gates; this unreleased
+  entry does not assert they have run.
+- Live post-stage positive/negative Robot tasks, tag/publish/smoke, and
+  environment protection/configuration remain operator-driven gates.
 
 ## [0.1.0] - 2026-06-06
 

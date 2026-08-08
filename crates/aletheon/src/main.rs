@@ -206,7 +206,11 @@ enum Commands {
     /// Print the generated shell completion script.
     Completion { shell: CompletionShell },
     /// Print version
-    Version,
+    Version {
+        /// Output the version contract as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Restore terminal modes after an interrupted TUI session
     RestoreTerminal,
     /// Inspect effective configuration (merged layers)
@@ -549,8 +553,18 @@ async fn main() -> Result<()> {
             print!("{script}");
             Ok(())
         }
-        (Some(Commands::Version), _) => {
-            println!("aletheon {}", env!("CARGO_PKG_VERSION"));
+        (Some(Commands::Version { json }), _) => {
+            if *json {
+                let output = serde_json::json!({
+                    "schema_version": 1,
+                    "name": "aletheon",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "protocol_version": fabric::CLIENT_PROTOCOL_VERSION,
+                });
+                println!("{output}");
+            } else {
+                println!("aletheon {}", env!("CARGO_PKG_VERSION"));
+            }
             Ok(())
         }
         (Some(Commands::Config { sub }), _) => {

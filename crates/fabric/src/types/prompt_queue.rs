@@ -65,6 +65,10 @@ pub struct PromptEnvelope {
     /// evaluation mode, rubric, thresholds, and the issued contract.
     #[serde(default)]
     pub requested_task_kind: Option<crate::TaskKind>,
+    /// Typed target survives durable queueing and can never be reconstructed
+    /// from natural-language prompt content.
+    #[serde(default)]
+    pub execution_target: crate::ExecutionTargetSelection,
     pub created_at_unix: u64,
     pub updated_at_unix: u64,
     pub state: PromptState,
@@ -192,6 +196,7 @@ mod tests {
             content: "hello".to_string(),
             requirements: Vec::new(),
             requested_task_kind: None,
+            execution_target: crate::ExecutionTargetSelection::default(),
             created_at_unix: 1,
             updated_at_unix: 1,
             state: PromptState::Queued,

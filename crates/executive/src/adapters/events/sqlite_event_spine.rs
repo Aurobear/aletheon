@@ -1,6 +1,7 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    sync::Mutex,
     time::Duration,
 };
 
@@ -9,7 +10,7 @@ use fabric::{
     EventPosition, EventSpine, EventVisibility, ParentEventId, SchemaId, SpineEvent, TreeSequence,
     UnsequencedEvent,
 };
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EventAppendMetrics {
@@ -28,11 +29,21 @@ pub struct EventReadFilter {
 }
 
 pub struct SqliteEventSpine {
-    connection: parking_lot::Mutex<Connection>,
+    locator: EventDatabaseLocator,
+    /// Keeps a shared in-memory database alive. File-backed production
+    /// operations never acquire this mutex; every read/append opens its own
+    /// bounded-busy connection and relies on SQLite's transactional writer
+    /// arbitration instead of a process-wide application lock.
+    _memory_keeper: Option<Mutex<Connection>>,
     max_bytes: Option<u64>,
     accepted: AtomicU64,
     rejected: AtomicU64,
     backpressure_rejections: AtomicU64,
+}
+
+enum EventDatabaseLocator {
+    File(PathBuf),
+    SharedMemory(String),
 }
 
 pub fn default_event_spine_path() -> std::path::PathBuf {
@@ -45,11 +56,24 @@ impl SqliteEventSpine {
     }
 
     pub fn open_bounded(path: impl AsRef<Path>, max_bytes: Option<u64>) -> Result<Self> {
-        let connection = Connection::open(path).context("open event spine")?;
+        let path = path.as_ref();
+        let (locator, memory_keeper, connection) = if path == Path::new(":memory:") {
+            let uri = format!(
+                "file:aletheon-event-spine-{}?mode=memory&cache=shared",
+                uuid::Uuid::new_v4()
+            );
+            let connection = open_shared_memory(&uri).context("open in-memory event spine")?;
+            (EventDatabaseLocator::SharedMemory(uri), true, connection)
+        } else {
+            (
+                EventDatabaseLocator::File(path.to_path_buf()),
+                false,
+                Connection::open(path).context("open event spine")?,
+            )
+        };
+        configure_connection(&connection, !memory_keeper)?;
         connection.execute_batch(
-            "PRAGMA foreign_keys = ON;
-             PRAGMA journal_mode = WAL;
-             CREATE TABLE IF NOT EXISTS event_trees(
+            "CREATE TABLE IF NOT EXISTS event_trees(
                tree_id TEXT PRIMARY KEY,
                next_sequence INTEGER NOT NULL CHECK(next_sequence > 0)
              );
@@ -69,12 +93,22 @@ impl SqliteEventSpine {
                ON spine_events(tree_id, sequence, schema_id, visibility);",
         )?;
         Ok(Self {
-            connection: parking_lot::Mutex::new(connection),
+            locator,
+            _memory_keeper: memory_keeper.then(|| Mutex::new(connection)),
             max_bytes,
             accepted: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
             backpressure_rejections: AtomicU64::new(0),
         })
+    }
+
+    fn open_connection(&self) -> Result<Connection> {
+        let connection = match &self.locator {
+            EventDatabaseLocator::File(path) => Connection::open(path)?,
+            EventDatabaseLocator::SharedMemory(uri) => open_shared_memory(uri)?,
+        };
+        configure_connection(&connection, false)?;
+        Ok(connection)
     }
 
     pub fn metrics(&self) -> EventAppendMetrics {
@@ -97,7 +131,7 @@ impl SqliteEventSpine {
             .map_or(i64::MAX as u64, |value| value.0.min(i64::MAX as u64));
         let schema = filter.schema.map(|value| value.0);
         let visibility = filter.visibility.map(visibility_name);
-        let connection = self.connection.lock();
+        let connection = self.open_connection()?;
         let mut statement = connection.prepare(
             "SELECT event_json FROM spine_events
              WHERE tree_id=?1 AND sequence>=?2 AND sequence<=?3
@@ -126,8 +160,7 @@ impl SqliteEventSpine {
     /// Capture the committed prefix used by bounded startup reconciliation.
     /// Events appended after this watermark belong to the live writer path.
     fn committed_row_watermark(&self) -> Result<u64> {
-        self.connection
-            .lock()
+        self.open_connection()?
             .query_row(
                 "SELECT COALESCE(MAX(rowid),0) FROM spine_events",
                 [],
@@ -146,7 +179,7 @@ impl SqliteEventSpine {
         limit: usize,
     ) -> Result<Vec<(u64, SpineEvent)>> {
         let limit = limit.clamp(1, 10_000);
-        let connection = self.connection.lock();
+        let connection = self.open_connection()?;
         let mut statement = connection.prepare(
             "SELECT rowid,event_json FROM spine_events
              WHERE rowid>?1 AND rowid<=?2
@@ -195,11 +228,21 @@ impl SqliteEventSpine {
     fn append_inner(&self, event: UnsequencedEvent) -> Result<SpineEvent> {
         event.validate()?;
         let input_json = serde_json::to_string(&event)?;
-        let Some(mut connection) = self.connection.try_lock_for(Duration::from_secs(1)) else {
-            self.backpressure_rejections.fetch_add(1, Ordering::Relaxed);
-            bail!("event spine overloaded: append admission timed out");
+        let mut connection = self.open_connection()?;
+        let transaction = match connection.transaction_with_behavior(TransactionBehavior::Immediate)
+        {
+            Ok(transaction) => transaction,
+            Err(error)
+                if matches!(
+                    error.sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                ) =>
+            {
+                self.backpressure_rejections.fetch_add(1, Ordering::Relaxed);
+                bail!("event spine overloaded: append admission timed out");
+            }
+            Err(error) => return Err(error.into()),
         };
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         if let Some((existing_input, existing_event)) = transaction
             .query_row(
@@ -288,6 +331,25 @@ impl SqliteEventSpine {
         transaction.commit()?;
         Ok(persisted)
     }
+}
+
+fn open_shared_memory(uri: &str) -> rusqlite::Result<Connection> {
+    Connection::open_with_flags(
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_URI,
+    )
+}
+
+fn configure_connection(connection: &Connection, file_backed: bool) -> Result<()> {
+    connection.busy_timeout(Duration::from_secs(1))?;
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    if file_backed {
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+    }
+    Ok(())
 }
 
 fn visibility_name(visibility: EventVisibility) -> &'static str {

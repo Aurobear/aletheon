@@ -4,7 +4,10 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
-use corpus::{security::AuditLogger, CorpusToolExecutor, ToolRegistry, ToolRunnerWithGuard};
+use corpus::{
+    security::AuditLogger, CorpusToolExecutor, ToolRegistry, ToolResultCacheConfig,
+    ToolRunnerWithGuard,
+};
 use fabric::tool::{PermissionLevel, ToolCachePolicy};
 use fabric::types::admission::RiskLevel;
 use fabric::{
@@ -76,6 +79,11 @@ impl Tool for CountingTool {
             ToolCachePolicy::Never
         }
     }
+    fn cache_dependencies(&self) -> Option<fabric::tool::ToolCacheDependencies> {
+        Some(fabric::tool::ToolCacheDependencies::ContentAddressed {
+            argument_names: &["fixture_version"],
+        })
+    }
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         self.calls.fetch_add(1, Ordering::SeqCst);
         ToolResult {
@@ -104,7 +112,7 @@ fn request(operation_id: OperationId, process_id: ProcessId) -> CapabilityReques
             operation_id,
             process_id,
             name: "counting_tool".into(),
-            input: serde_json::json!({}),
+            input: serde_json::json!({"fixture_version": "sha256:test-fixture-v1"}),
             call_id: "call-1".into(),
             deadline: None,
         },
@@ -160,6 +168,20 @@ async fn fixture_with_options(
     Arc<AtomicUsize>,
     tempfile::TempDir,
 ) {
+    fixture_with_executor_cache(cache_enabled, emits_patch, ToolResultCacheConfig::default()).await
+}
+
+async fn fixture_with_executor_cache(
+    cache_enabled: bool,
+    emits_patch: bool,
+    cache_config: ToolResultCacheConfig,
+) -> (
+    CorpusToolExecutor,
+    CapabilityRequest,
+    ExecutionPermit,
+    Arc<AtomicUsize>,
+    tempfile::TempDir,
+) {
     let temp = tempfile::tempdir().unwrap();
     let clock = Arc::new(TestClock::new(0, 0));
     let calls = Arc::new(AtomicUsize::new(0));
@@ -175,10 +197,11 @@ async fn fixture_with_options(
         AuditLogger::new(temp.path().join("audit.jsonl")).unwrap(),
         clock.clone(),
     );
-    let executor = CorpusToolExecutor::new(
+    let executor = CorpusToolExecutor::new_with_cache_config(
         Arc::new(tokio::sync::Mutex::new(registry)),
         Arc::new(tokio::sync::Mutex::new(runner)),
         clock,
+        cache_config,
     );
     let operation_id = OperationId::new();
     let process_id = ProcessId::new();
@@ -376,6 +399,31 @@ async fn patch_producing_result_is_never_cached_even_if_tool_declares_policy() {
 }
 
 #[tokio::test]
+async fn disabling_result_cache_preserves_authoritative_result_semantics() {
+    let (executor, request, permit, calls, _temp) = fixture_with_executor_cache(
+        true,
+        false,
+        ToolResultCacheConfig {
+            enabled: false,
+            ..ToolResultCacheConfig::default()
+        },
+    )
+    .await;
+
+    let first = executor.execute_with_permit(&request, &permit).await;
+    let second = executor.execute_with_permit(&request, &permit).await;
+    assert_eq!(first.output, second.output);
+    assert_eq!(first.is_error, second.is_error);
+    assert!(!first.served_from_cache);
+    assert!(!second.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        executor.read_only_cache_metrics()["counting_tool"].bypass_total,
+        2
+    );
+}
+
+#[tokio::test]
 async fn a_cap_002_cancelled_invocation_fails_closed_before_tool_lookup_and_emits_terminal() {
     let (executor, request, permit, calls, _temp) = fixture().await;
     request.control.cancel.cancel();
@@ -419,6 +467,198 @@ async fn streaming_rejected_permits_emit_a_failed_terminal_without_tool_executio
         ))) if message == "permit expired or sandbox unavailable"
     ));
     assert!(sink.terminal_sent());
+}
+
+#[derive(Clone)]
+struct WorkspaceFileTool {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for WorkspaceFileTool {
+    fn name(&self) -> &str {
+        "workspace_file_tool"
+    }
+    fn description(&self) -> &str {
+        "reads a workspace file"
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L0
+    }
+    fn cache_policy(&self) -> ToolCachePolicy {
+        ToolCachePolicy::PerTurn
+    }
+    fn cache_dependencies(&self) -> Option<fabric::tool::ToolCacheDependencies> {
+        Some(fabric::tool::ToolCacheDependencies::WorkspaceFiles {
+            argument_names: &["path"],
+            include_repo_state: false,
+        })
+    }
+    async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        ToolResult {
+            content: "workspace-file-result".into(),
+            is_error: false,
+            metadata: ToolResultMeta::default(),
+        }
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(self.clone())
+    }
+}
+
+async fn workspace_file_fixture() -> (
+    CorpusToolExecutor,
+    CapabilityRequest,
+    ExecutionPermit,
+    Arc<AtomicUsize>,
+    tempfile::TempDir,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let data_path = temp.path().join("data.txt");
+    std::fs::write(&data_path, "version-1").unwrap();
+    let clock = Arc::new(TestClock::new(0, 0));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::new(WorkspaceFileTool {
+            calls: calls.clone(),
+        }))
+        .unwrap();
+    let runner = ToolRunnerWithGuard::with_default_sandbox(
+        AuditLogger::new(temp.path().join("audit.jsonl")).unwrap(),
+        clock.clone(),
+    );
+    let executor = CorpusToolExecutor::new_with_cache_config(
+        Arc::new(tokio::sync::Mutex::new(registry)),
+        Arc::new(tokio::sync::Mutex::new(runner)),
+        clock,
+        ToolResultCacheConfig::default(),
+    );
+    let operation_id = OperationId::new();
+    let process_id = ProcessId::new();
+    let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+        std::fs::canonicalize(temp.path()).unwrap(),
+        vec![],
+    )
+    .unwrap();
+    let request = CapabilityRequest {
+        call: CapabilityCall {
+            operation_id,
+            process_id,
+            name: "workspace_file_tool".into(),
+            input: serde_json::json!({"path": "data.txt"}),
+            call_id: "call-1".into(),
+            deadline: None,
+        },
+        authority: CapabilityAuthority {
+            agent: None,
+            principal: PrincipalId("test".into()),
+            action: "execute".into(),
+            requested_scope: CapabilityScope::default(),
+            risk: RiskLevel::ReadOnly,
+            budget: Some(BudgetRequest {
+                max_tokens: None,
+                max_cost_micro: None,
+            }),
+            lease: None,
+            sandbox: SandboxRequirement::NotRequired,
+            connection_id: fabric::ConnectionId::new(),
+            thread_id: fabric::ThreadId("session-1".into()),
+            turn_id: fabric::TurnId::new(),
+            workspace,
+            session_id: "session-1".into(),
+            working_dir: temp.path().to_path_buf(),
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
+        },
+        control: InvocationControl {
+            cancel: CancellationToken::new(),
+            turn_event_sender: None,
+        },
+    };
+    let permit = ExecutionPermit {
+        id: fabric::PermitId::new(),
+        operation_id,
+        process_id,
+        capability: CapabilityId("workspace_file_tool".into()),
+        granted_scope: CapabilityScope::default(),
+        expires_at: MonoDeadline::after(MonoTime(0), 10_000),
+        sandbox: SandboxDecision::NotApplicable,
+        budget_reservation: None,
+        lease: None,
+    };
+    (executor, request, permit, calls, temp)
+}
+
+#[tokio::test]
+async fn workspace_file_change_invalidates_read_only_cache() {
+    let (executor, request, permit, calls, temp) = workspace_file_fixture().await;
+
+    // First call — authoritative execution, not from cache.
+    let first = executor.execute_with_permit(&request, &permit).await;
+    assert!(!first.is_error, "{}", first.output);
+    assert!(!first.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // Second call — same file, should hit cache.
+    let mut second_req = request.clone();
+    second_req.call.call_id = "call-2".into();
+    let second = executor.execute_with_permit(&second_req, &permit).await;
+    assert!(!second.is_error, "{}", second.output);
+    assert!(second.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // Modify the file — the dependency fingerprint changes.
+    std::fs::write(temp.path().join("data.txt"), "version-2").unwrap();
+
+    // Third call — stale cache, must re-execute.
+    let mut third_req = request.clone();
+    third_req.call.call_id = "call-3".into();
+    let third = executor.execute_with_permit(&third_req, &permit).await;
+    assert!(!third.is_error, "{}", third.output);
+    assert!(!third.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    let metrics = executor.read_only_cache_metrics();
+    let tool_metrics = metrics.get("workspace_file_tool").unwrap();
+    assert_eq!(tool_metrics.miss_total, 2);
+    assert_eq!(tool_metrics.hit_total, 1);
+}
+
+#[tokio::test]
+async fn permission_isolation_prevents_cache_cross_contamination() {
+    let (executor, request, permit, calls, _temp) = fixture_with_cache(true).await;
+
+    // First call — Safe mode, authoritative execution.
+    let first = executor.execute_with_permit(&request, &permit).await;
+    assert!(!first.is_error, "{}", first.output);
+    assert!(!first.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // Second call — Same permission mode, should hit cache.
+    let mut second_req = request.clone();
+    second_req.call.call_id = "call-2".into();
+    let second = executor.execute_with_permit(&second_req, &permit).await;
+    assert!(!second.is_error, "{}", second.output);
+    assert!(second.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // Third call — Different permission mode, must re-execute.
+    let mut third_req = request.clone();
+    third_req.call.call_id = "call-3".into();
+    third_req.authority.permission_mode = fabric::permission::HostPermissionMode::Full;
+    let third = executor.execute_with_permit(&third_req, &permit).await;
+    assert!(!third.is_error, "{}", third.output);
+    assert!(!third.served_from_cache);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    let metrics = executor.read_only_cache_metrics();
+    let tool_metrics = metrics.get("counting_tool").unwrap();
+    assert_eq!(tool_metrics.miss_total, 2);
+    assert_eq!(tool_metrics.hit_total, 1);
 }
 
 #[tokio::test]

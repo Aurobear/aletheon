@@ -10,7 +10,9 @@ use fabric::contract::command::{
 };
 use fabric::permission::HostPermissionMode;
 use fabric::protocol::client::ClientRpcRequest;
-use fabric::{PrincipalId, SessionId, TaskKind, TurnRequirement, WorkspacePolicy};
+use fabric::{
+    ExecutionTargetSelection, PrincipalId, SessionId, TaskKind, TurnRequirement, WorkspacePolicy,
+};
 use nix::unistd::Uid;
 
 fn local_principal() -> PrincipalId {
@@ -26,6 +28,7 @@ pub(crate) struct PromptIntent<'a> {
     pub requirements: Vec<TurnRequirement>,
     pub task_kind: Option<TaskKind>,
     pub permission_mode: HostPermissionMode,
+    pub execution_target: ExecutionTargetSelection,
 }
 
 pub(crate) fn submit_prompt(input: PromptIntent<'_>) -> ClientIntent {
@@ -40,6 +43,7 @@ pub(crate) fn submit_prompt(input: PromptIntent<'_>) -> ClientIntent {
             requirements: input.requirements,
             task_kind: input.task_kind,
             permission_mode: input.permission_mode,
+            execution_target: input.execution_target,
         }),
     )
 }

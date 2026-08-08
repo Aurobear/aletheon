@@ -69,7 +69,7 @@ request = {
             "--mode", "json", "--no-session", "--no-context-files",
             "--no-extensions", "--no-skills", "--no-prompt-templates",
             "--no-themes", "--no-approve", "--offline",
-            "--provider", "leju", "--model", "deepseek/deepseek-v4-pro",
+            "--provider", "leju", "--model", "deepseek/deepseek-v4-flash",
         ],
         "timeout_ms": 180000,
         "output_cap_bytes": 8388608,

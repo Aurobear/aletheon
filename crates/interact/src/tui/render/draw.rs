@@ -17,6 +17,7 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
     // completion correct for key events, bracketed paste, IME replacement and
     // test/terminal backends that coalesce input differently.
     super::super::app::key_handler::refresh_command_completion(app);
+    app.sync_compat_notices();
     let caps_ref = &app.caps;
     let input_buf = &app.input_buf;
     let cursor = app.cursor;
@@ -25,7 +26,12 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
     let pending_approval_ref = &app.pending_approval;
     let detail_ref = &app.detail;
     let completion_ref = &app.completion;
-    let tool_count = app.chat.active_exec_count();
+    let tool_count = app
+        .app_state
+        .activities
+        .iter()
+        .filter(|activity| activity.kind == fabric::protocol::client::ActivityKind::Tool)
+        .count();
     let thinking_visible = app.stream_ctrl.is_thinking();
 
     let pager_ref = &app.pager;

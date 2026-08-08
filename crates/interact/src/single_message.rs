@@ -15,7 +15,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use crate::tui::host_time::ClientTimer;
-use crate::tui::response::{deduplicate_consecutive_text as deduplicate_response, format_status};
+use crate::tui::response::{
+    deduplicate_consecutive_text as deduplicate_response, format_status, format_status_projection,
+};
 
 /// Default timeout for single-message mode (seconds).
 const SINGLE_MESSAGE_TIMEOUT_SECS: u64 = 120;
@@ -130,7 +132,39 @@ pub(crate) async fn run(
                     continue;
                 }
 
-                if let Some(text) = response["result"]["response"].as_str() {
+                if response["result"]["protocol"].as_str() == Some("command_output") {
+                    let output = serde_json::from_value::<
+                        fabric::contract::command::CommandOutputEnvelopeV1,
+                    >(response["result"].clone())
+                    .map_err(anyhow::Error::from)?
+                    .into_v1()
+                    .map_err(anyhow::Error::from)?;
+                    match output {
+                        fabric::contract::command::CommandOutputV1::PromptCompleted(completion) => {
+                            println!("{}", deduplicate_response(&completion.response));
+                        }
+                        fabric::contract::command::CommandOutputV1::PromptAccepted => {
+                            return Err(anyhow::anyhow!(
+                                "one-shot request was accepted without a terminal result"
+                            ));
+                        }
+                        fabric::contract::command::CommandOutputV1::Status(status) => println!(
+                            "{}: {}",
+                            if status.ready { "ready" } else { "not ready" },
+                            status.summary
+                        ),
+                        fabric::contract::command::CommandOutputV1::StatusProjected(status) => {
+                            println!("{}", format_status_projection(&status));
+                        }
+                        fabric::contract::command::CommandOutputV1::Rejected(rejection) => {
+                            return Err(anyhow::anyhow!(
+                                "command rejected ({}): {}",
+                                rejection.code,
+                                rejection.message
+                            ));
+                        }
+                    }
+                } else if let Some(text) = response["result"]["response"].as_str() {
                     println!("{}", deduplicate_response(text));
                 } else if response["result"]["queued"].as_bool() == Some(true) {
                     let prompt_id = response["result"]["prompt_id"]
@@ -212,6 +246,7 @@ fn prompt_intent(
         requirements,
         task_kind,
         permission_mode,
+        execution_target: fabric::ExecutionTargetSelection::default(),
     })
 }
 

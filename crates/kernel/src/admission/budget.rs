@@ -396,6 +396,7 @@ impl InMemoryBudgetController {
         if state.scopes.get(&scope_id).is_none_or(|scope| scope.closed) {
             return Ok(());
         }
+        let before = state.clone();
         let mut post_order = Vec::new();
         Self::descendants_post_order(&state, scope_id, &mut post_order);
         if state
@@ -412,8 +413,15 @@ impl InMemoryBudgetController {
                 .get(&child)
                 .and_then(|scope| scope.reservation_id);
             if let Some(reservation) = reservation {
-                Self::close_locked(&mut state, reservation, None)?;
+                if let Err(error) = Self::close_locked(&mut state, reservation, None) {
+                    *state = before;
+                    return Err(error);
+                }
             }
+        }
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            return Err(error);
         }
         Ok(())
     }
@@ -445,6 +453,26 @@ impl InMemoryBudgetController {
             .await
             .operation_scopes
             .insert(operation, scope);
+    }
+
+    /// Remove the operation lookup after its scope tree has been closed. This
+    /// is intentionally idempotent so terminal cleanup can resume after a
+    /// partial crash without restoring a stale admission parent.
+    pub async fn unbind_operation_scope(
+        &self,
+        operation: OperationId,
+    ) -> Result<(), AdmissionError> {
+        let mut state = self.state.lock().await;
+        if !state.operation_scopes.contains_key(&operation) {
+            return Ok(());
+        }
+        let before = state.clone();
+        state.operation_scopes.remove(&operation);
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub async fn has_operation_scope(&self, operation: OperationId) -> bool {

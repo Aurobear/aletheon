@@ -4,6 +4,56 @@ from src import tui_session as ts
 from src.tools import tui as tui_tools
 
 
+def test_tui_start_derives_user_runtime_environment_from_official_socket(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    async def fake_tmux(*args, timeout=5.0):
+        calls.append(args)
+        return 0, "", ""
+
+    monkeypatch.setattr(ts, "_tmux", fake_tmux)
+    monkeypatch.setenv(
+        "ALETHEON_SOCKET", "/run/user/1234/aletheon/aletheon.sock"
+    )
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+
+    result = asyncio.run(
+        ts.start("aletheon", session="test-tui", working_dir=str(tmp_path))
+    )
+
+    assert result["ok"] is True
+    launch = calls[-1]
+    assert "XDG_RUNTIME_DIR=/run/user/1234" in launch
+    assert "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1234/bus" in launch
+
+
+def test_tui_start_preserves_explicit_user_runtime_environment(monkeypatch, tmp_path):
+    calls = []
+
+    async def fake_tmux(*args, timeout=5.0):
+        calls.append(args)
+        return 0, "", ""
+
+    monkeypatch.setattr(ts, "_tmux", fake_tmux)
+    monkeypatch.setenv(
+        "ALETHEON_SOCKET", "/run/user/1234/aletheon/aletheon.sock"
+    )
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/operator/runtime")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/operator/bus")
+
+    result = asyncio.run(
+        ts.start("aletheon", session="test-tui", working_dir=str(tmp_path))
+    )
+
+    assert result["ok"] is True
+    launch = calls[-1]
+    assert "XDG_RUNTIME_DIR=/operator/runtime" in launch
+    assert "DBUS_SESSION_BUS_ADDRESS=unix:path=/operator/bus" in launch
+
+
 def test_tui_capture_waits_for_stable(monkeypatch):
     frames = iter(["a", "b", "done", "done", "done", "done"])
 

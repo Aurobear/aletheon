@@ -137,7 +137,8 @@ impl SessionManager {
     }
 
     pub fn compaction_needed_for(&self, plan: &ContextBudgetPlan) -> bool {
-        self.estimate_tokens() >= plan.soft_watermark && self.compressor.can_compact(&self.messages)
+        u64::try_from(self.estimate_tokens()).unwrap_or(u64::MAX) >= plan.soft_watermark.get()
+            && self.compressor.can_compact(&self.messages)
     }
 
     pub fn compaction_needed(&self) -> bool {
@@ -169,8 +170,10 @@ impl SessionManager {
         plan: &ContextBudgetPlan,
         aggressive_retry: bool,
     ) -> Result<bool> {
+        let history_budget = usize::try_from(plan.history_budget.get())
+            .map_err(|_| anyhow::anyhow!("history budget exceeds this platform's usize"))?;
         self.compressor
-            .configure_budget(plan.history_budget, aggressive_retry);
+            .configure_budget(history_budget, aggressive_retry);
         self.force_compact(llm).await
     }
 

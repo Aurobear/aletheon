@@ -120,7 +120,7 @@ impl MemoryBackend for SemanticMemory {
                      ORDER BY rank
                      {}",
                     if fetch_limit > 0 {
-                        format!("LIMIT {}", fetch_limit)
+                        format!("LIMIT {fetch_limit}")
                     } else {
                         String::new()
                     }
@@ -164,20 +164,20 @@ impl MemoryBackend for SemanticMemory {
 
                 if let Some(ref tags) = query.tags {
                     for tag in tags {
-                        sql += &format!(" AND tags LIKE ?{idx}", idx = param_idx);
-                        param_values.push(Box::new(format!("%{}%", tag)));
+                        sql += &format!(" AND tags LIKE ?{param_idx}");
+                        param_values.push(Box::new(format!("%{tag}%")));
                         param_idx += 1;
                     }
                 }
 
                 if let Some(min_imp) = query.min_importance {
-                    sql += &format!(" AND importance >= ?{idx}", idx = param_idx);
+                    sql += &format!(" AND importance >= ?{param_idx}");
                     param_values.push(Box::new(min_imp));
                     param_idx += 1;
                 }
 
                 if query.limit > 0 {
-                    sql += &format!(" LIMIT ?{idx}", idx = param_idx);
+                    sql += &format!(" LIMIT ?{param_idx}");
                     param_values.push(Box::new((query.limit as i64) * 2));
                 }
 
@@ -233,8 +233,8 @@ impl MemoryBackend for SemanticMemory {
 
             if let Some(ref tags) = filter.tags {
                 for tag in tags {
-                    sql += &format!(" AND tags LIKE ?{idx}", idx = param_idx);
-                    param_values.push(Box::new(format!("%{}%", tag)));
+                    sql += &format!(" AND tags LIKE ?{param_idx}");
+                    param_values.push(Box::new(format!("%{tag}%")));
                     param_idx += 1;
                 }
             }
@@ -242,7 +242,7 @@ impl MemoryBackend for SemanticMemory {
             sql += " ORDER BY importance DESC";
 
             if filter.limit > 0 {
-                sql += &format!(" LIMIT ?{idx}", idx = param_idx);
+                sql += &format!(" LIMIT ?{param_idx}");
                 param_values.push(Box::new(filter.limit as i64));
             }
 
