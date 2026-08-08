@@ -614,7 +614,7 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
 /// legacy result fields; remove after the compatibility window ending 2026-12-31.
 fn set_compat_assistant(app: &mut App, text: String) {
     app.compat_transcript.set_assistant_stream(text.clone());
-    app.show_transient_assistant(text);
+    app.replace_transient_assistant(text);
 }
 
 fn add_compat_notice(app: &mut App, text: String) {
@@ -1583,6 +1583,29 @@ mod tests {
             app.compat_transcript.entries.last(),
             Some(ChatEntry::Text(message)) if message.content == "typed answer"
         ));
+        assert_eq!(
+            app.app_state
+                .items
+                .values()
+                .filter(|item| item.kind == "assistant")
+                .count(),
+            1,
+            "multiple completion transports must replace the same transient item"
+        );
+
+        process_response(
+            &mut app,
+            serde_json::json!({"id": 2, "result": {"response": "typed answer"}}),
+        );
+        assert_eq!(
+            app.app_state
+                .items
+                .values()
+                .filter(|item| item.kind == "assistant")
+                .count(),
+            1,
+            "legacy and typed completion envelopes must not render separately"
+        );
     }
 
     #[tokio::test]

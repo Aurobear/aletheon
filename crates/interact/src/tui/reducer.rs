@@ -224,7 +224,9 @@ fn clear_live_assistant_overlay(state: &mut AppState, record: &ItemRecord) {
         record.session_id.0, record.turn_id.0
     );
     state.items.retain(|id, _| {
-        id != &canonical_id && !(id.starts_with("live:") && id.ends_with(":assistant"))
+        id != &canonical_id
+            && !(id.starts_with("live:") && id.ends_with(":assistant"))
+            && !(id.starts_with("local:") && id.contains(":assistant:"))
     });
 }
 

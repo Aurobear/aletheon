@@ -535,6 +535,19 @@ impl App {
         );
     }
 
+    /// Replace any in-flight assistant compatibility representation with one
+    /// bounded transient item. The daemon can deliver the same completion as
+    /// live text, a typed command result, and the legacy response envelope;
+    /// those transports must not become separate conversation messages.
+    pub(crate) fn replace_transient_assistant(&mut self, text: impl Into<String>) {
+        self.app_state.items.retain(|id, item| {
+            item.kind != "assistant"
+                || item.status != self::state::UiItemStatus::Streaming
+                || !(id.starts_with("live:") || id.starts_with("local:"))
+        });
+        self.show_transient_assistant(text);
+    }
+
     /// Mirror only new V0 system notices into reducer-owned visible state.
     /// User/assistant/tool business truth is never read from this recorder.
     pub(crate) fn sync_compat_notices(&mut self) {
