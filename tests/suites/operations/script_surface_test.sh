@@ -14,6 +14,24 @@ expected=(aletheon.sh cargo-agent.sh)
 ! grep -Eq '(^|[[:space:]])cargo (build|check|test|clippy|doc)' setup.sh
 grep -Fq 'scripts/cargo-agent.sh build -p aletheon --release' setup.sh
 
+# Every local edit/verify profile preserves rustc incremental state. Only the
+# tagged distributable release job may opt out for its clean artifact lane.
+python3 - "$root/Cargo.toml" <<'PY'
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as source:
+    manifest = tomllib.load(source)
+for name in ("dev", "test", "release", "bench"):
+    if manifest.get("profile", {}).get(name, {}).get("incremental") is not True:
+        raise SystemExit(f"Cargo profile {name} must enable incremental compilation")
+PY
+if grep -R -n -F 'CARGO_INCREMENTAL=0' scripts setup.sh justfile; then
+  echo 'local build/test/deployment paths must not disable incremental compilation' >&2
+  exit 1
+fi
+grep -Fq 'CARGO_INCREMENTAL: 0' .github/workflows/release.yml
+
 removed=(
   scripts/aletheon-healthcheck.sh
   scripts/aletheon-pi-scheduled-task.sh
