@@ -71,8 +71,6 @@ crates/executive/src/adapters/session/prompt_queue_sqlite.rs	adapter	executive	c
 crates/executive/src/adapters/session/projection_store.rs	adapter	executive	private Session materialized read-model port
 crates/executive/src/adapters/session/store.rs	adapter	executive	concrete infrastructure integration
 crates/executive/src/application/admin_service.rs	application	executive	use-case orchestration and ports
-crates/executive/src/application/agent/harness.rs	application	executive	use-case orchestration and ports
-crates/executive/src/application/agent/mod.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/admission.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/candidate_projection.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/cleanup.rs	application	executive	use-case orchestration and ports

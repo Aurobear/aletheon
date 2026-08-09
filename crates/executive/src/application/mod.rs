@@ -1,5 +1,4 @@
 pub mod admin_service;
-pub mod agent;
 pub mod agent_control;
 pub mod approval;
 pub mod approval_service;

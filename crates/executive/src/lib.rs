@@ -40,8 +40,6 @@ pub use application::{approval, conscious, goal, orchestration};
 /// Hosts construct these concrete local components, then inject application
 /// ports. Request handlers must not use this facade as a domain shortcut.
 pub mod runtime {
-    pub use crate::application::agent::AgentRuntime;
-
     pub mod health {
         pub use crate::application::health::*;
     }
@@ -101,8 +99,6 @@ pub mod testing {
 }
 
 pub use composition::TurnService;
-pub use runtime::AgentRuntime;
-
 // ── Re-exports for CLI exec path (bin crate uses these via executive) ───
 pub use crate::composition::exec_session::ExecSessionBuilder;
 pub use fabric::types::admission::RiskLevel;
