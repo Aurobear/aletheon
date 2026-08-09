@@ -1204,6 +1204,42 @@ if "empty" not in ext and "zero extensions" not in ext:
 PY
 fi
 
+# CGP-01 composition-skeleton gate: the skeleton must have no
+# ComponentGraph/ServiceBag, and `compose` must perform no I/O or spawn.
+if [[ ${ARCH_SKIP_CGP01_GATES:-0} != 1 && -f crates/aletheon/src/composition.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+comp = (root / "crates/aletheon/src/composition.rs").read_text(errors="replace")
+
+# No ComponentGraph/ServiceBag in Rust code (doc comments may reference the
+# constraint, so skip comment lines).
+code_only = "\n".join(
+    l for l in comp.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+for needle in ("ComponentGraph", "ServiceBag"):
+    if re.search(rf"\b{needle}\b", code_only):
+        raise SystemExit(f"architecture-check: CGP-01 skeleton carries a {needle}")
+
+# compose() must not do I/O or spawn: reject socket/fs/command/tokio spawn in
+# the compose body (ignore doc comments and pure-wiring lines).
+for lineno, line in enumerate(comp.splitlines(), 1):
+    if re.search(r"Command::new|\.spawn\(\)|std::fs|UnixStream|UnixListener|tokio::net|TcpListener", line):
+        raise SystemExit(f"architecture-check: CGP-01 compose does I/O/spawn at {lineno}")
+
+# Explicit lifecycle phases must be present.
+for phase in ("preflight", "open", "compose", "bootstrap", "serve", "drain"):
+    if phase not in comp.lower():
+        raise SystemExit(f"architecture-check: CGP-01 skeleton missing lifecycle phase {phase}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

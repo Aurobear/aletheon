@@ -1,5 +1,6 @@
 //! Pure host routing contracts used by the launcher and tests.
 
+pub mod composition;
 pub mod workspace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
