@@ -1067,6 +1067,47 @@ for path in sorted((root / "crates/runtime/src").rglob("*.rs")):
 PY
 fi
 
+# K1 durable Operation seam gate: the journal module is read/shadow only — it
+# must not write to the legacy OperationTable or introduce a second writer.
+if [[ ${ARCH_SKIP_K1_GATES:-0} != 1 && -f crates/kernel/src/operation/journal.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+journal = (root / "crates/kernel/src/operation/journal.rs").read_text(errors="replace")
+
+# The journal must not mutate the legacy in-memory OperationTable (double
+# writer forbidden by kernel plan §K1).  It defines ports/contracts only.
+# Doc comments and string literals are ignored; only Rust code is checked.
+code_only = "\n".join(
+    l for l in journal.splitlines()
+    if not l.lstrip().startswith("//") and not l.lstrip().startswith("///")
+    and not l.lstrip().startswith("//!")
+    and not l.strip().startswith("use ") and not l.strip().startswith("pub use ")
+)
+for lineno, line in enumerate(code_only.splitlines(), 1):
+    if re.search(r"\bOperationTable\b", line):
+        raise SystemExit(f"architecture-check: K1 journal touches legacy OperationTable at {lineno}")
+    if re.search(r"\binsert\b|\bremove\b|\bwrite\b|\bappend\b", line, re.I):
+        raise SystemExit(f"architecture-check: K1 journal carries a write/append at {lineno}")
+    # async fn is allowed only for read/replay; a mutable write signature fails.
+    if re.search(r"async fn [a-z_]+\(&mut self.*\)", line):
+        raise SystemExit(f"architecture-check: K1 journal exposes a mutating write at {lineno}")
+
+# The ExecutionJournal trait may only expose read/replay, never write.
+trait_body = journal.split("pub trait ExecutionJournal", 1)
+if len(trait_body) == 2:
+    trait_src = trait_body[1].split("\n}", 1)[0]
+    for lineno, line in enumerate(trait_src.splitlines(), 1):
+        if "fn " in line and not re.search(r"\b(read|replay_after)\b", line):
+            raise SystemExit(f"architecture-check: K1 ExecutionJournal exposes non-read method at {lineno}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
