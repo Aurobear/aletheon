@@ -22,6 +22,8 @@
 
 mod adapters;
 pub mod contract;
+/// D1 ownerless-primitive seed (gated; rich types stay out).
+pub mod contracts;
 pub mod dasein;
 pub mod events;
 pub mod include;

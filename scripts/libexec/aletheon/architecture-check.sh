@@ -874,10 +874,12 @@ root = Path.cwd()
 census = root / "config/architecture/fabric-boundary-census.tsv"
 public = root / "config/architecture/fabric-public-types.tsv"
 
-# 1. Fabric source set == 174.
+# 1. Fabric source set == 175 (174 baseline + D1 contracts.rs ownerless seed).
+#    The D1 seed is the only permitted fabric source growth before AK2-25;
+#    it re-exports existing ownerless primitives and adds no public symbol.
 fabric_files = list((root / "crates/fabric/src").rglob("*.rs"))
-if len(fabric_files) != 174:
-    raise SystemExit(f"architecture-check: D0 fabric source set {len(fabric_files)} != 174")
+if len(fabric_files) != 175:
+    raise SystemExit(f"architecture-check: D0 fabric source set {len(fabric_files)} != 175")
 
 # 2. Public surface == 1110 (7-col inventory rows).
 pub_rows = [l for l in public.read_text().splitlines()
@@ -975,6 +977,58 @@ if missing:
 compats = [cols[0] for cols in rows if cols[2] == "COMPAT"]
 if len(compats) != 2:
     raise SystemExit(f"architecture-check: XRET-00 COMPAT cardinality {len(compats)} != 2: {compats}")
+PY
+fi
+
+# D1 contracts seed gate: the fabric `contracts` module may only re-export
+# ownerless value primitives (ID wrappers, version).  It must not import or
+# define rich aggregates/repositories/services/policies/live permits/state
+# machines/UI-wire models, and it must not declare new public types (pure
+# re-export keeps the Fabric rich surface from growing).
+if [[ ${ARCH_SKIP_D1_GATES:-0} != 1 && -f crates/fabric/src/contracts.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+contracts = root / "crates/fabric/src/contracts.rs"
+body = contracts.read_text(errors="replace")
+
+# Forbidden: new public type/struct/enum/trait declarations (must be re-export only).
+decls = re.findall(r"^\s*pub\s+(?:struct|enum|trait|type)\s+(\w+)", body, re.M)
+if decls:
+    raise SystemExit(f"architecture-check: D1 contracts seed declares new public types: {decls}")
+
+# Forbidden: imports from rich modules (types::repository, types::tool, policy,
+# security, events::spine as a trait object, etc.) and any `impl` block that
+# adds behavior beyond the pure re-export.
+for lineno, line in enumerate(body.splitlines(), 1):
+    if re.search(r"use\s+crate::(?:types::(?:repository|tool|permission|workspace|goal|objective)|policy|security|kernel|ipc::bus|events::spine)", line):
+        raise SystemExit(f"architecture-check: D1 contracts seed imports a rich module at {lineno}")
+    if re.search(r"^\s*(pub\s+)?impl\b", line):
+        raise SystemExit(f"architecture-check: D1 contracts seed carries behavior impl at {lineno}")
+
+# Allowed: re-exports must be from the ownerless primitive set.
+allowed_prefixes = (
+    "crate::types::admission::{PermitId, PrincipalId}",
+    "crate::types::attempt::RuntimeId",
+    "crate::types::channel::MessageId",
+    "crate::types::operation::{OperationId, ProcessId}",
+    "crate::types::process::{AgentId, NamespaceId}",
+    "crate::types::session::TurnId",
+    "crate::types::space::SessionId",
+    "crate::ipc::envelope_v2::SchemaId",
+    "crate::include::subsystem::Version",
+)
+for lineno, line in enumerate(body.splitlines(), 1):
+    m = re.match(r"^\s*pub use\s+(\S+);", line)
+    if not m:
+        continue
+    if not any(m.group(1) == p for p in allowed_prefixes):
+        raise SystemExit(f"architecture-check: D1 contracts seed re-exports non-ownerless symbol at {lineno}: {m.group(1)}")
 PY
 fi
 
