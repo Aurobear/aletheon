@@ -1615,6 +1615,34 @@ if "CatalogPort" not in ports or "ExecutorPort" not in ports:
 PY
 fi
 
+# K4 single-path gate: the invocation state machine must have one
+# admit/observe/settle/recover path with explicit crash-window reconciliation
+# and no standalone permit issuer/settler or public component getter.
+if [[ ${ARCH_SKIP_K4_GATES:-0} != 1 && -f crates/kernel/src/capability/invocation.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+inv = (root / "crates/kernel/src/capability/invocation.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in inv.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# No standalone permit issuer/settler or public component getter.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bpub fn (issue_permit|settle_permit|get_admission|get_lease)\b", line):
+        raise SystemExit(f"architecture-check: K4 exposes a standalone permit getter at {lineno}")
+
+if "NeedsReconciliation" not in inv or "AlreadyTerminal" not in inv:
+    raise SystemExit("architecture-check: K4 must handle crash-window reconciliation + terminal fence")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

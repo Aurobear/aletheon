@@ -4,6 +4,7 @@
 //! tool invocations. The production path goes through `DefaultCapabilityInvoker`;
 //! direct tool calls that bypass this are forbidden.
 
+pub mod invocation;
 pub mod registry;
 pub mod verifier;
 
