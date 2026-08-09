@@ -5,6 +5,7 @@
 //! direct tool calls that bypass this are forbidden.
 
 pub mod registry;
+pub mod verifier;
 
 use async_trait::async_trait;
 use fabric::{

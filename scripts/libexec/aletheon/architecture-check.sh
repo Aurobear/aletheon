@@ -1472,6 +1472,40 @@ for word in ("AttemptWorker", "GoalWorker", "BudgetLedger", "Verifier"):
 PY
 fi
 
+# K3 authorization evidence verifier gate: the verifier must enforce
+# single-use, expiry, scope, generation and fail-closed-on-unavailable; it
+# must never construct a DecisionRequestId/permit.
+if [[ ${ARCH_SKIP_K3_GATES:-0} != 1 && -f crates/kernel/src/capability/verifier.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+ver = (root / "crates/kernel/src/capability/verifier.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in ver.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("AlreadyConsumed", "missing single-use check"),
+    ("Expired", "missing expiry check"),
+    ("WrongScope", "missing scope check"),
+    ("VerifierUnavailable", "missing unavailable fail-closed"),
+):
+    if needle not in ver:
+        raise SystemExit(f"architecture-check: K3 verifier {msg}")
+
+# The verifier must never construct a permit/DecisionRequestId (static gate).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\b(?:DecisionRequestId|ExecutionPermit)\(", line):
+        raise SystemExit(f"architecture-check: K3 verifier constructs a permit at {lineno}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
