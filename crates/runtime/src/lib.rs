@@ -15,6 +15,7 @@ pub mod query;
 pub mod selector;
 pub mod session_authority;
 pub mod session_head;
+pub mod session_shadow;
 pub mod session_writer;
 pub mod turn_outcome;
 pub mod turn_reducer;
@@ -47,6 +48,7 @@ pub use selector::{
 };
 pub use session_authority::{ContextWorkingSet, SessionAuthority, TurnProjection};
 pub use session_head::{PendingAppend, SessionHead, SessionHeadIndex};
+pub use session_shadow::{SessionShadowVerifier, ShadowReport};
 pub use session_writer::RuntimeSessionWriter;
 pub use turn_outcome::{
     BlockReason, CancelReason, StopReason, TurnExecutionResult, TurnFailure, TurnOutcome, TurnUsage,
