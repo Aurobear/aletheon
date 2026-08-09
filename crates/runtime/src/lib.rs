@@ -5,6 +5,7 @@ pub mod command;
 pub mod error;
 pub mod event;
 pub mod ids;
+pub mod journal;
 pub mod manifest;
 pub mod ports;
 pub mod query;
@@ -17,6 +18,7 @@ pub use command::{
 pub use error::RuntimeError;
 pub use event::{RuntimeEvent, TurnTerminal};
 pub use ids::{AgentRunId, Generation, SessionId, TurnId};
+pub use journal::{RuntimeJournalShadow, ShadowEntry, ShadowMismatch, StreamKind};
 pub use manifest::{
     InteractionMode, RuntimeCapability, RuntimeManifest, RuntimeResourceRequirements, TaskEncoding,
     ToolGovernance, WorkspaceMode, MAX_RUNTIME_STORAGE_BYTES, MAX_RUNTIME_STORAGE_ITEMS,

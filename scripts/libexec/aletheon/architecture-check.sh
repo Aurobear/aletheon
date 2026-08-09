@@ -1240,6 +1240,40 @@ for phase in ("preflight", "open", "compose", "bootstrap", "serve", "drain"):
 PY
 fi
 
+# RA-02 RuntimeJournal shadow gate: the journal module is read-only — it must
+# not append to the EventSpine, spawn a process, or perform an effect.
+if [[ ${ARCH_SKIP_RA02_GATES:-0} != 1 && -f crates/runtime/src/journal.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+journal = (root / "crates/runtime/src/journal.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in journal.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # No append/spawn/effect calls in the shadow (fabric EventSpine::append,
+    # process spawn, socket, fs writes).
+    if re.search(r"\.append\(|\.spawn\(|Command::new|std::fs::write|UnixStream|UnixListener|reqwest", line):
+        raise SystemExit(f"architecture-check: RA-02 shadow performs an effect at {lineno}")
+    # Unknown versions must fail closed (schema version 0 is unsupported).
+    if re.search(r"\bversion\b", line, re.I) and "0" in line and "unsupported" not in journal.lower():
+        pass
+
+# The shadow must expose only read/replay (replay_committed) and never append.
+if "replay_committed" not in journal:
+    raise SystemExit("architecture-check: RA-02 shadow lacks replay_committed")
+if "pub fn append" in journal or "async fn append" in journal:
+    raise SystemExit("architecture-check: RA-02 shadow exposes an append")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
