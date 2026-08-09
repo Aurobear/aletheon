@@ -29,36 +29,48 @@ for retired in core bridge impl; do
   fi
 done
 
-# Runtime authority cleanup is monotonic. These Executive paths had no
-# workspace production callers; remaining references were their own
-# definitions, re-exports, or local tests. They represented parallel
-# Session/Agent authorities or a duplicate profile loader. A canonical
-# AgentRuntime may eventually live in the Runtime owner crate; it must not
-# return under the retired Executive application path.
-retired_session=crates/executive/src/core/session.rs
-if [[ -e "$ROOT/$retired_session" ]]; then
-  echo "architecture-check: retired Executive authority path returned: $retired_session" >&2
+# Runtime authority cleanup is monotonic. Keep retired paths and symbols in a
+# reviewed inventory so later slices can add entries without growing another
+# block of bespoke shell checks. A path entry also rejects empty directories
+# and broken symlinks: neither is a valid compatibility seam.
+retired_authorities="$ROOT/config/architecture/retired-authorities.tsv"
+if [[ ! -f "$retired_authorities" ]]; then
+  echo "architecture-check: missing retired authority inventory: $retired_authorities" >&2
   exit 1
 fi
-for retired_dir in \
-  crates/executive/src/application/agent \
-  crates/executive/src/composition/agents; do
-  if [[ -d "$ROOT/$retired_dir" ]] && \
-      find "$ROOT/$retired_dir" -type f -name '*.rs' -print -quit | grep -q .; then
-    echo "architecture-check: retired Executive authority root returned: $retired_dir" >&2
+while IFS=$'\t' read -r kind scope target deletion_owner evidence; do
+  [[ -z "$kind" || "$kind" == \#* ]] && continue
+  if [[ -z "$scope" || -z "$target" || -z "$deletion_owner" || -z "$evidence" ]]; then
+    echo "architecture-check: incomplete retired authority row: $kind $scope $target" >&2
     exit 1
   fi
-done
-if [[ -d crates/executive/src ]] && \
-    rg -n '\bTuiSessionManager\b' crates/executive/src -g '*.rs'; then
-  echo "architecture-check: retired Executive TuiSessionManager returned" >&2
-  exit 1
-fi
-if [[ -d crates/executive/src/application ]] && \
-    rg -n '\bpub\s+struct\s+AgentRuntime\b' crates/executive/src/application -g '*.rs'; then
-  echo "architecture-check: retired Executive application AgentRuntime returned" >&2
-  exit 1
-fi
+  case "$kind" in
+    path)
+      if [[ -e "$ROOT/$scope" || -L "$ROOT/$scope" ]]; then
+        echo "architecture-check: retired authority path returned: $scope ($deletion_owner)" >&2
+        exit 1
+      fi
+      ;;
+    rust_symbol)
+      if [[ ! "$target" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "architecture-check: invalid retired Rust symbol: $target" >&2
+        exit 1
+      fi
+      if [[ -d "$ROOT/$scope" ]] && rg -n \
+          -e "\\b(struct|enum|trait|type)\\s+$target\\b" \
+          -e "\\bimpl([[:space:]]*<[^>]*>)?[[:space:]]+$target\\b" \
+          -e "\\bpub([[:space:]]*\\([^)]*\\))?[[:space:]]+use[^;]*\\b$target\\b" \
+          "$ROOT/$scope" -g '*.rs'; then
+        echo "architecture-check: retired Rust authority returned: $target under $scope ($deletion_owner)" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "architecture-check: unknown retired authority kind: $kind" >&2
+      exit 1
+      ;;
+  esac
+done < "$retired_authorities"
 
 # Phase 0 architecture inventory and semantic ratchets.  The inventories are
 # deliberately data files: later refactor phases update ownership and lower
