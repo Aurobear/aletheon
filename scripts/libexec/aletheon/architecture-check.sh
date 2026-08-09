@@ -1032,6 +1032,41 @@ for lineno, line in enumerate(body.splitlines(), 1):
 PY
 fi
 
+# RA-01 Runtime owner-seam gate: canonical aggregate IDs (SessionId/TurnId/
+# AgentRunId) may only be defined in crates/runtime/src/ids.rs.  A new mint
+# constructor elsewhere, or a runtime dependency on Executive, fails.
+if [[ ${ARCH_SKIP_RA01_GATES:-0} != 1 && -f crates/runtime/src/ids.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+
+# 1. Runtime must not depend on Executive or legacy concrete adapters.
+manifest = root / "crates/runtime/Cargo.toml"
+toml = manifest.read_text()
+for forbidden in ("executive", "interact", "gateway", "corpus", "kernel", "mnemosyne"):
+    if re.search(rf'^\s*{forbidden}\s*=\s*{{', toml, re.M):
+        raise SystemExit(f"architecture-check: RA-01 runtime depends on forbidden crate {forbidden}")
+
+# 2. Canonical aggregate-ID `new` mints may only be defined in ids.rs.
+ids_body = (root / "crates/runtime/src/ids.rs").read_text(errors="replace")
+for path in sorted((root / "crates/runtime/src").rglob("*.rs")):
+    rel = path.relative_to(root).as_posix()
+    if rel.endswith("ids.rs"):
+        continue
+    body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    for lineno, line in enumerate(body.splitlines(), 1):
+        # A definition of SessionId/TurnId/AgentRunId/Generation struct is
+        # only allowed in ids.rs (single ID source).
+        if re.search(r"^\s*pub\s+struct\s+(SessionId|TurnId|AgentRunId|Generation)\b", line):
+            raise SystemExit(f"architecture-check: RA-01 aggregate ID defined outside ids.rs at {rel}:{lineno}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
