@@ -344,6 +344,148 @@ for row in data_lines("compatibility-debt.tsv"):
 PY
 fi
 
+# RA-00 runtime authority census is monotonic. New production constructor /
+# ID mint / writer / registry / Session-shaped type sites must be registered
+# in runtime-authority-census.tsv before they are acceptable.  The inventory
+# also pins the file/symbol facts so a later slice cannot silently drop a row
+# the code still carries (absence requires a zero-match command, not deletion).
+if [[ ${ARCH_SKIP_RA00_GATES:-0} != 1 && -f config/architecture/runtime-authority-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/runtime-authority-census.tsv"
+
+ROLES = {"constructor", "id_mint", "state_machine", "journal_writer",
+         "projection_writer", "registry", "composition", "compatibility",
+         "cache", "transport", "reader"}
+KINDS = {"authority", "projection", "cache", "transport", "compatibility", "dead"}
+
+# A hit in one of these authority patterns is a production authority point
+# that must be covered by a census row.  Wrapper/type-*use* sites (field types,
+# function signatures, config DTOs) are deliberately NOT matched: only
+# unambiguous constructor/mint/writer/registry markers, so the gate classifies
+# by owner/scope instead of banning every `::new()`.
+AUTHORITY_PATTERNS = (
+    re.compile(r"\b(?:SessionId|TurnId|AgentId|AgentRunId|DelegateId)::\s*(?:new|default)\s*\("),
+    re.compile(r"\b(?:RuntimeRegistry|AgentRuntimeRegistry|CanonicalEventBus|SqliteEventSpine|EventSourcedSessionStore|CanonicalSessionStore)::\s*(?:new|default)\s*\("),
+    re.compile(r"(?:INSERT|UPDATE|DELETE)\s+INTO\s+(?:sessions|session_items|session_principals|protocol_events|agent_runs|agent_messages_v2|agent_runtime_processes|agent_resource_leases|agent_terminal_receipts)\b", re.I),
+)
+
+# Test-support modules are whole-file `#[cfg(test)] mod` bodies or test helpers;
+# they are never production authority and must not be flagged by the new-site
+# scan (their fixtures already carry production_callers=0 in the census).
+TEST_BASENAMES = {"tests.rs", "test_support.rs", "test_infra.rs", "fixtures.rs"}
+def production_sources():
+    for path in sorted((root / "crates").rglob("*.rs")):
+        rel = path.relative_to(root).as_posix()
+        if "/tests/" in rel or "/examples/" in rel:
+            continue
+        if path.name in TEST_BASENAMES or path.name.endswith(("_test.rs", "_tests.rs")):
+            continue
+        body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+        yield rel, body.splitlines()
+
+# 1. Validate every census row and record its target file/directory.
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    if line.startswith("fact_id\t"):
+        continue  # header row
+    cols = line.split("\t")
+    if len(cols) != 17:
+        raise SystemExit(f"architecture-check: RA-00 census row {lineno} has {len(cols)} cols (want 17)")
+    fact_id, aggregate, role, path, symbol, owner, kind, pc, tc, icc, sw, cw, to, cs, ds, status, cmd = cols
+    if not fact_id.startswith("RA-"):
+        raise SystemExit(f"architecture-check: RA-00 census row {lineno} invalid fact_id {fact_id!r}")
+    if role not in ROLES:
+        raise SystemExit(f"architecture-check: RA-00 census {fact_id} invalid role {role!r}")
+    if kind not in KINDS:
+        raise SystemExit(f"architecture-check: RA-00 census {fact_id} invalid authority_kind {kind!r}")
+    if not (status == "CLOSED" or status.startswith("INVESTIGATE:")):
+        raise SystemExit(f"architecture-check: RA-00 census {fact_id} invalid status {status!r}")
+    if status == "CLOSED" and not cmd.strip():
+        raise SystemExit(f"architecture-check: RA-00 census {fact_id} CLOSED row lacks evidence command")
+    rows.append(dict(fact_id=fact_id, role=role, path=path, kind=kind, status=status, cmd=cmd, symbol=symbol))
+
+# 2. Every production authority site must be attributable to a census row that
+#    (a) names this file/directory and (b) whose CLOSED evidence command matches
+#    the line.  A new mint/writer/registry marker without a matching row fails,
+#    as does a dropped row whose code is still present.
+covered = set()
+row_evidence = []
+for row in rows:
+    target = row["path"].split(":")[0]
+    full = root / target
+    if not full.exists():
+        raise SystemExit(f"architecture-check: RA-00 census {row['fact_id']} path missing: {target}")
+    covered.add(target)
+    if row["status"] == "CLOSED" and row["cmd"].startswith("rg -n '"):
+        m = re.match(r"^rg -n '(.+)' (.+)$", row["cmd"])
+        if m:
+            try:
+                row_evidence.append((target, re.compile(m.group(1))))
+            except re.error:
+                raise SystemExit(f"architecture-check: RA-00 census {row['fact_id']} invalid evidence regex")
+            continue
+    row_evidence.append((target, None))
+
+def attributable(rel, line):
+    for target, rx in row_evidence:
+        if not (rel == target or rel.startswith(target + "/") or target.startswith(rel + "/")):
+            continue
+        if rx is None or rx.search(line):
+            return True
+    return False
+
+uncovered_hits = []
+for rel, lines in production_sources():
+    for lineno, line in enumerate(lines, 1):
+        if any(rx.search(line) for rx in AUTHORITY_PATTERNS) and not attributable(rel, line):
+            uncovered_hits.append(f"{rel}:{lineno}")
+            break
+if uncovered_hits:
+    raise SystemExit(
+        "architecture-check: RA-00 unregistered authority sites (add a census row): "
+        + ", ".join(uncovered_hits[:20])
+        + (f" (+{len(uncovered_hits)-20} more)" if len(uncovered_hits) > 20 else ""))
+
+# 3. CLOSED evidence commands must still match their target (file-level rg
+#    commands only; directory scans are covered by section 2).  An absence
+#    claim must be an explicit zero-match command, not a dropped row.
+for row in rows:
+    if row["status"] != "CLOSED":
+        continue
+    cmd = row["cmd"]
+    m = re.match(r"^rg -n '(.+)' (.+)$", cmd)
+    if not m:
+        continue
+    pattern, target = m.group(1), m.group(2).strip()
+    full = root / target
+    if full.is_dir():
+        continue
+    if not full.is_file():
+        raise SystemExit(f"architecture-check: RA-00 census {row['fact_id']} evidence target missing: {target}")
+    try:
+        haystack = full.read_text(errors="replace")
+    except OSError:
+        continue
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        continue
+    if not rx.search(haystack):
+        raise SystemExit(
+            f"architecture-check: RA-00 census {row['fact_id']} evidence no longer matches "
+            f"{target} for {pattern!r}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
