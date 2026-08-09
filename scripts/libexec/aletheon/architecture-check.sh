@@ -1923,6 +1923,39 @@ if "is_side_effectful" not in cache or "is_permission_sensitive" not in cache or
 PY
 fi
 
+# M1 evidence-driven orchestration gate: the stage machine must trigger on
+# missing evidence (not fixed role counts), cap the fixer loop, skip low-risk
+# stages, and never become a second engine (no new settlement path).
+if [[ ${ARCH_SKIP_M1_GATES:-0} != 1 && -f crates/runtime/src/orchestration.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+orch = (root / "crates/runtime/src/orchestration.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in orch.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub enum EvidenceGap", "missing evidence-gap trigger"),
+    ("fix_loop_cap", "missing fixer loop cap"),
+    ("RiskLowSkip", "missing low-risk skip"),
+    ("TransitionReason", "missing transition reason code"),
+):
+    if needle not in orch:
+        raise SystemExit(f"architecture-check: M1 orchestration {msg}")
+
+# Must not create a second settlement path (only settle to the single reducer).
+if "Settle" not in orch or "settlement" not in orch.lower():
+    raise SystemExit("architecture-check: M1 orchestration must settle to the single reducer")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
