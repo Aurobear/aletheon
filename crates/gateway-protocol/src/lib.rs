@@ -10,6 +10,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// R3 typed command-output surface (closure plan §11).
+pub mod command_output;
+
+pub use command_output::{
+    validate_version, TypedCommandOutput, TypedCommandOutputEnvelope, TypedCompletion, TypedError,
+    TypedStatusProjection, TypedToolLifecycle, TypedUsage, VersionError, COMMAND_OUTPUT_VERSION,
+};
+
 /// Negotiated wire protocol version.  Additive only; a bumped minor keeps
 /// reading old fields (CGP-02 rollback rule: never re-use a published tag to
 /// change semantics).
