@@ -1506,6 +1506,33 @@ for lineno, line in enumerate(code.splitlines(), 1):
 PY
 fi
 
+# D2 Cognit/Provider split gate: the CognitiveRun/InferencePort seam must not
+# import Robot concrete types or the Executive native Cognit (E5/Runtime own
+# those cutovers).
+if [[ ${ARCH_SKIP_D2_GATES:-0} != 1 && -f crates/cognit/src/ports/cognitive_run.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+cr = (root / "crates/cognit/src/ports/cognitive_run.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in cr.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bRobot\w*\b|\bExecutive\b|\bnative_cognit\b", line):
+        raise SystemExit(f"architecture-check: D2 cognitive_run leaks Robot/Executive at {lineno}")
+
+if "InferencePort" not in cr or "CognitiveRun" not in cr:
+    raise SystemExit("architecture-check: D2 seam must define both InferencePort and CognitiveRun")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
