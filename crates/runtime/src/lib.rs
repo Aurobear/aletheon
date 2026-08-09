@@ -2,6 +2,7 @@
 //! Runtime owner contract (RA-01).
 
 pub mod agent_supervisor;
+pub mod agent_writer;
 pub mod command;
 pub mod error;
 pub mod event;
@@ -25,6 +26,7 @@ pub use agent_supervisor::{
     AgentSupervisorSeam, DelegateBackend, DelegateBackendId, DelegateBackendRegistry,
     DelegateReceipt, DelegateSpawnRequest,
 };
+pub use agent_writer::RuntimeAgentSupervisor;
 pub use command::{
     CancelTurnCommand, CommandReceipt, CreateSessionCommand, ResumeSessionCommand, RuntimeCommand,
     SpawnAgentRunCommand, StartTurnCommand,

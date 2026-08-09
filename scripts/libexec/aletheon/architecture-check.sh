@@ -2088,6 +2088,39 @@ if "TurnPipeline" in code or "TurnCoordinator" in code:
 PY
 fi
 
+# RA-05 PR-C Agent writer gate: the writer must assign run/generation IDs via
+# the generic registry, pin the running binding to its backend, and not
+# migrate Pi concrete files (that is E6-K6d).
+if [[ ${ARCH_SKIP_RA05C_GATES:-0} != 1 && -f crates/runtime/src/agent_writer.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+aw = (root / "crates/runtime/src/agent_writer.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in aw.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub struct RuntimeAgentSupervisor", "missing runtime agent supervisor"),
+    ("DelegateBackendRegistry", "must use the generic registry"),
+    ("bindings", "must pin the running binding"),
+):
+    if needle not in aw:
+        raise SystemExit(f"architecture-check: RA-05 writer {msg}")
+
+# No Pi concrete migration in the generic writer (E6-K6d owns Pi).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bPiRuntime\b|\bPiRpcRuntime\b|register_pi_runtime", line):
+        raise SystemExit(f"architecture-check: RA-05 writer migrates Pi at {lineno}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
