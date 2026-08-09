@@ -486,6 +486,124 @@ for row in rows:
 PY
 fi
 
+# K0 kernel effect census is monotonic.  New production effect executors (OS
+# spawn, admission, operation terminal) and new kernel effect-row facts must be
+# registered in kernel-effect-census.tsv.  The gate re-verifies CLOSED evidence
+# commands and rejects uncovered production spawn/admission sites.
+if [[ ${ARCH_SKIP_K0_GATES:-0} != 1 && -f config/architecture/kernel-effect-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/kernel-effect-census.tsv"
+
+# Unambiguous production effect-authority markers: OS process spawn,
+# admission-controller binding, kernel operation terminal, execd spawn.
+EFFECT_PATTERNS = (
+    re.compile(r"\bCommand::new\s*\("),
+    re.compile(r"\b(?:tokio::process::Command|std::process::Command|std::os::unix::process)\b"),
+    re.compile(r"\.spawn\(\)"),
+    re.compile(r"\bProcessManager::new\b|\bProcessManager\s*\{"),
+    re.compile(r"\bProductionAdmissionController::new\b|\bDefaultCapabilityInvoker::new\b"),
+    re.compile(r"kernel\.(?:start_operation|succeed_operation|fail_operation)\s*\("),
+    re.compile(r"\bOperationTable::new\b"),
+)
+
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    if line.startswith("fact_id\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 13:
+        raise SystemExit(f"architecture-check: K0 census row {lineno} has {len(cols)} cols (want 13)")
+    fact_id = cols[0]
+    if not fact_id.startswith("K0-"):
+        raise SystemExit(f"architecture-check: K0 census row {lineno} invalid fact_id {fact_id!r}")
+    status = cols[11]
+    if not (status == "CLOSED" or status.startswith("INVESTIGATE:")):
+        raise SystemExit(f"architecture-check: K0 census {fact_id} invalid status {status!r}")
+    rows.append(dict(fact_id=fact_id, path=cols[3].split(":")[0].removesuffix(" (dir)"), status=status, cmd=cols[12]))
+
+covered = set()
+for row in rows:
+    target = row["path"]
+    if not (root / target).exists():
+        raise SystemExit(f"architecture-check: K0 census {row['fact_id']} path missing: {target}")
+    covered.add(target)
+    # Evidence commands may scan additional files/directories; those are
+    # covered by this row too so a multi-file evidence command does not
+    # require one row per file.
+    for extra in re.findall(r"crates/[^ ']+", row["cmd"]):
+        covered.add(extra.rstrip(","))
+
+def file_covered(rel):
+    return any(rel == c or rel.startswith(c + "/") or c.startswith(rel + "/") for c in covered)
+
+# New production spawn/admission/operation sites in files with no registered
+# census row must fail.  Classified by owner (file) per plan §10 K0, not by
+# banning every `Command::new`/`.spawn()` occurrence.
+def production_sources():
+    for path in sorted((root / "crates").rglob("*.rs")):
+        rel = path.relative_to(root).as_posix()
+        if "/tests/" in rel or "/examples/" in rel:
+            continue
+        if path.name in {"tests.rs", "test_support.rs", "test_infra.rs", "fixtures.rs"} \
+           or path.name.endswith(("_test.rs", "_tests.rs")):
+            continue
+        body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+        yield rel, body.splitlines()
+
+uncovered = []
+for rel, lines in production_sources():
+    if file_covered(rel):
+        continue
+    for n, line in enumerate(lines, 1):
+        if any(rx.search(line) for rx in EFFECT_PATTERNS):
+            uncovered.append(f"{rel}:{n}")
+            break
+if uncovered:
+    raise SystemExit(
+        "architecture-check: K0 unregistered effect sites (add a census row): "
+        + ", ".join(uncovered[:20])
+        + (f" (+{len(uncovered)-20} more)" if len(uncovered) > 20 else ""))
+
+# CLOSED evidence commands must still match their target.  A command may
+# name one file/directory or several whitespace-separated paths.
+for row in rows:
+    if row["status"] != "CLOSED":
+        continue
+    cmd = row["cmd"]
+    m = re.match(r"^rg -n '(.+)' (.+)$", cmd)
+    if not m:
+        continue
+    pattern, targets = m.group(1), m.group(2).strip().split()
+    matched_any = False
+    for target in targets:
+        full = root / target
+        if full.is_dir():
+            matched_any = True
+            continue
+        if not full.is_file():
+            raise SystemExit(f"architecture-check: K0 census {row['fact_id']} evidence target missing: {target}")
+        try:
+            rx = re.compile(pattern)
+        except re.error:
+            continue
+        if rx.search(full.read_text(errors="replace")):
+            matched_any = True
+    if not matched_any:
+        raise SystemExit(
+            f"architecture-check: K0 census {row['fact_id']} evidence no longer matches "
+            f"{targets} for {pattern!r}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
