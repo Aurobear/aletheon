@@ -255,7 +255,6 @@ crates/executive/src/core/permission_manager.rs	domain	executive	Executive domai
 crates/executive/src/core/runtime_core.rs	domain	executive	Executive domain/runtime coordination
 crates/executive/src/core/runtime_registry.rs	domain	executive	Executive domain/runtime coordination
 crates/executive/src/core/security_group.rs	domain	executive	Executive domain/runtime coordination
-crates/executive/src/core/session.rs	domain	executive	Executive domain/runtime coordination
 crates/executive/src/core/session_gateway/approval_flow.rs	domain	executive	Executive domain/runtime coordination
 crates/executive/src/core/session_gateway/gateway.rs	domain	executive	Executive domain/runtime coordination
 crates/executive/src/core/session_gateway/mod.rs	domain	executive	Executive domain/runtime coordination
