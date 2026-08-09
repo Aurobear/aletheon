@@ -8,6 +8,7 @@ pub mod event;
 pub mod ids;
 pub mod journal;
 pub mod manifest;
+pub mod per_turn_scope;
 pub mod ports;
 pub mod query;
 pub mod selector;
@@ -31,6 +32,7 @@ pub use manifest::{
     InteractionMode, RuntimeCapability, RuntimeManifest, RuntimeResourceRequirements, TaskEncoding,
     ToolGovernance, WorkspaceMode, MAX_RUNTIME_STORAGE_BYTES, MAX_RUNTIME_STORAGE_ITEMS,
 };
+pub use per_turn_scope::{PerTurnScope, ScopeExit, ScopeGuard, ScopedResource};
 pub use ports::{RuntimeCommandPort, RuntimeEventPort, RuntimeQueryPort};
 pub use query::{AgentRunQuery, RuntimeQuery, SessionSnapshotQuery};
 pub use selector::{

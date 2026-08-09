@@ -1787,6 +1787,39 @@ for lineno, line in enumerate(code.splitlines(), 1):
 PY
 fi
 
+# R2 per-turn scope gate: the scope must be local per-turn (no daemon-global
+# current_scope), drains idempotently, and RAII-drop triggers fallback cleanup.
+if [[ ${ARCH_SKIP_R2_GATES:-0} != 1 && -f crates/runtime/src/per_turn_scope.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+pt = (root / "crates/runtime/src/per_turn_scope.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in pt.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# No daemon-global current_scope slot.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bcurrent_scope\b|\bset_current_scope\b|\btake_current_scope\b", line):
+        raise SystemExit(f"architecture-check: R2 scope reintroduces a global slot at {lineno}")
+
+for needle, msg in (
+    ("settle_and_drain", "missing settle_and_drain"),
+    ("abort_and_drain", "missing abort_and_drain"),
+    ("Drop for ScopeGuard", "missing RAII Drop cleanup"),
+    ("drained", "missing idempotent drain flag"),
+):
+    if needle not in pt:
+        raise SystemExit(f"architecture-check: R2 per-turn scope {msg}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
