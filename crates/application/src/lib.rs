@@ -9,6 +9,7 @@
 pub mod approval;
 pub mod error;
 pub mod extension;
+pub mod goal_draft;
 pub mod use_case;
 
 pub use approval::{
@@ -19,6 +20,7 @@ pub use error::ApplicationError;
 pub use extension::{
     ExtensionFlags, ExtensionId, ExtensionPort, ExtensionRegistration, InMemoryExtensionRegistry,
 };
+pub use goal_draft::{create_goal_draft, ingest_external_stimulus, ExternalStimulus, GoalDraft};
 pub use use_case::{
     ApplicationFacade, CreateSession, DeleteSession, ForkSession, GetSession, ListSessions,
     ResumeSession,

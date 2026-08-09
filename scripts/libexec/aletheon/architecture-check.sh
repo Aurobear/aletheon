@@ -1442,6 +1442,36 @@ for lineno, line in enumerate(code.splitlines(), 1):
 PY
 fi
 
+# APX-03 Goal Draft gate: the use cases must be provider-neutral — no
+# Gmail/Google/OAuth/transport names in the Application goal-draft module
+# (those stay in the extension adapter).  Goal attempt/worker/budget/
+# verification must not be copied into Application.
+if [[ ${ARCH_SKIP_APX03_GATES:-0} != 1 && -f crates/application/src/goal_draft.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+gd = (root / "crates/application/src/goal_draft.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in gd.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\b(?:Gmail|Google|OAuth|oauth|Transport|send\b)", line):
+        raise SystemExit(f"architecture-check: APX-03 goal draft leaks a provider name at {lineno}")
+
+# Goal attempt/worker/budget/verification must not be copied into Application.
+for word in ("AttemptWorker", "GoalWorker", "BudgetLedger", "Verifier"):
+    if word in gd:
+        raise SystemExit(f"architecture-check: APX-03 goal draft copies {word} into Application")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
