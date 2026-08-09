@@ -13,7 +13,7 @@ Aletheon 进入以 Agent 核心为唯一主线的架构收敛阶段。
 本次重构作出以下不可逆转的方向性决策：
 
 1. `Dasein` 自我意识与 `metacog` 元认知继续作为核心能力，不冻结、不降级为应用插件。
-2. Robot、非 Linux 多平台适配以及非核心应用功能冻结，不再进入当前生产依赖图。
+2. 核心优先不等于删除已有可用能力：Gmail、Robot VLA 和 `hardware` 作为受支持扩展保留；非 Linux 多平台和未形成真实闭环的实验能力冻结。
 3. `fabric` 重命名为 `contracts`，package 名为 `aletheon-contracts`，Rust 路径为 `aletheon_contracts`。
 4. `contracts` 只保存跨核心子系统的稳定数据契约，不保存 Application、UI、Robot、Coding 或基础设施实现。
 5. `kernel` 成为唯一的机制与强制执行根，负责进程、操作、时间、空间、权限、资源、配额、预算、监督和 Capability 调用纪律。
@@ -75,25 +75,64 @@ Aletheon 进入以 Agent 核心为唯一主线的架构收敛阶段。
 - 最小 CLI/TUI/Daemon 壳；
 - Nightwatch、tester 和安装态验收，但它们属于外部工程设施，不属于 Agent Kernel。
 
-### 2.2 冻结范围
+### 2.2 受支持扩展
+
+以下能力不是 Agent Kernel 的内部组成，但已有实际价值，必须在重构后继续可用：
+
+- Gmail channel/integration；
+- Robot VLA application；
+- `hardware` embodiment/capability boundary；
+- 已有 MuJoCo/Robot simulation 与验证入口；
+- GBrain supplemental memory adapter；
+- Pi external Agent Runtime adapter；
+- 已经证明真实可用的 Linux tool/provider/channel adapters。
+
+受支持扩展遵守以下规则：
+
+1. 不进入默认核心启动，必须由显式配置、profile 或 typed execution target 启用；
+2. 不拥有第二套 TurnEngine、Session、Event、Self、Permission 或 Settlement 权威；
+3. 通过 Gateway/Application/Runtime/Kernel 的同一条生产路径接入；
+4. provider-specific、Robot-specific 和 hardware-specific 类型留在扩展所有者内部，不进入 Contracts；
+5. 在重构期间以 maintenance-only 为主：修复回归、适配新端口、保持已有闭环，不扩张新产品功能；
+6. 保留各自最小 compile/smoke/safety lane，不进入默认核心快速测试。
+
+典型调用链：
+
+```text
+Gmail event
+  -> Gmail Gateway Adapter
+  -> Minimal Application
+  -> Agent Runtime
+
+Robot VLA request
+  -> explicit typed Robot target
+  -> same Agent Runtime
+  -> Kernel permit/budget/lease
+  -> Hardware Capability Adapter
+  -> typed execution receipt
+```
+
+`hardware` 不是普通 Application。它负责受治理的 embodiment contract、设备身份、permit、lease、deadline、safe-stop 和执行 receipt；Robot VLA 是使用该边界的上层扩展。
+
+### 2.3 冻结范围
 
 以下能力保留 Git 历史和必要回归证据，但不再新增生产功能：
 
-- Robot Harness、embodiment、episode、Robot Policy 和硬件设备适配；
 - Android、macOS、Windows、Embedded；
 - eBPF、FUSE、io_uring 等尚未成为核心真实调用路径的能力；
-- Extension marketplace 与非核心 channel；
+- 未形成真实闭环的 Extension marketplace 与 channel；
 - 新的应用产品工作流；
 - 与核心闭环无关的新顶层 crate。
 
-冻结不等于立即删除源码。第一步是从默认配置、生产启动、`aletheon` 依赖图和核心 CI 中移除；当不存在调用者后，再决定保留为独立实验代码还是只由 Git 历史保存。
+冻结不等于立即删除源码。冻结能力先停止新增功能并退出默认启动；受支持扩展则继续保留显式生产路径和专属验收。只有没有真实调用者、没有维护价值的实验代码，才在迁移后决定删除或只由 Git 历史保存。
 
-### 2.3 明确不冻结
+### 2.4 明确不冻结
 
 - `Dasein`；
 - `metacog`；
 - Native Cognit；
 - Pi 等外部 Agent Runtime 适配；
+- Gmail、Robot VLA 与 `hardware` 的已有可用闭环；
 - 记忆与工作空间；
 - 最小交互与运行观测；
 - 核心安全与恢复机制。
@@ -760,8 +799,10 @@ TUI 不得：
 | GBrain adapter | Mnemosyne adapter |
 | Pi process adapter | Runtime/Corpus host adapter |
 | application commands | minimal `application` |
-| Robot modules | frozen, remove from production graph |
-| Extension install/manage | frozen outer application |
+| Robot VLA workflow | supported outer extension, explicit typed target only |
+| Hardware embodiment/runtime | supported `hardware` extension behind Kernel capability path |
+| Gmail integration | supported Gateway/channel adapter |
+| Unused extension marketplace | frozen outer application |
 | evaluation/benchmark/host acceptance | `tests/` and `tools/` |
 | compatibility re-export | migrate then delete |
 
@@ -787,11 +828,12 @@ crates/
 ├── interact/        # TUI/CLI presentation
 ├── platform/        # Linux-only host adapter，非核心
 ├── execd/           # 可选隔离执行 sidecar，非核心
+├── hardware/        # 受支持 embodiment extension，非默认核心依赖
 └── aletheon/        # 唯一 composition root
 
 frozen/retired from production graph:
 ├── executive/
-├── hardware/
+├── unused experimental extensions
 └── non-Linux platform implementations
 ```
 
@@ -833,7 +875,7 @@ refactor/agent-kernel-v2
 
 - 记录当前 `dev` commit、release hash 和 installed hash；
 - 建立 30 个真实 Agent 任务基线；
-- 标记 Robot、多平台和 Application feature freeze；
+- 将能力标记为 `CORE / SUPPORTED-EXTENSION / FROZEN / RETIRED`，禁止把“核心冻结”误写成删除已有 Gmail/Robot/Hardware 能力；
 - 增加 crate dependency inventory；
 - 增加“禁止 Executive 新增职责”的 ratchet；
 - 禁止新代码继续进入 `fabric`；
@@ -966,7 +1008,8 @@ refactor/agent-kernel-v2
 - RequestHandler 和 socket 迁入 Gateway；
 - client/UI read model 从 Contracts 移入 Gateway/Interact；
 - TUI 只消费可信 Runtime projection；
-- 删除 Robot dashboard 和非核心 application workflow；
+- 从默认 TUI 移除强制 Robot dashboard；显式 Robot extension 可保留独立、按需打开的可信视图；
+- 保留 Gmail/Robot VLA/Hardware 的薄 Application/Adapter 接入，不把其业务状态搬入核心；
 - `aletheon` 成为唯一 composition root。
 
 验收：
@@ -976,7 +1019,7 @@ refactor/agent-kernel-v2
 - TUI 没有第二套 Session/Task 状态；
 - headless CLI 与 TUI 使用同一 Application/Runtime。
 
-### Phase 7：拆除 Executive 与冻结依赖
+### Phase 7：拆除 Executive 与分层扩展依赖
 
 目标：完成最终依赖图。
 
@@ -987,14 +1030,15 @@ refactor/agent-kernel-v2
 - 删除空模块和重复 builder；
 - 从 `aletheon` 移除 `executive` 依赖；
 - 从 active workspace/production graph 移除 Executive；
-- 从默认配置和启动中移除 Robot；
+- 从默认配置和启动中移除隐式 Robot 激活，同时保留显式 typed Robot target；
+- 保留 Gmail、Robot VLA 和 Hardware 的 supported-extension 构建与验收入口；
 - 将 Platform 收缩为 Linux-only adapter；
 - 更新 README、design index 和 contributor guide。
 
 验收：
 
 - `executive` crate 不再存在于 active graph；
-- `cargo tree -p aletheon` 不包含 `hardware`/Robot；
+- 默认 core profile 的依赖图不包含 Hardware/Robot implementation；显式 Robot profile 能装配同一个 Runtime 与 Kernel；
 - 不存在非 Linux 生产分支；
 - 所有架构检查与文档路径检查通过。
 
@@ -1066,7 +1110,7 @@ AK2-15  installed acceptance and dev promotion
 
 以下测试默认删除，不随旧实现迁移：
 
-- Robot、Hardware、非 Linux 平台的常规测试；
+- 已废弃 Robot/Hardware 实现的重复常规测试；仍受支持的 Robot VLA/Hardware safety 与 smoke 测试迁往扩展专属 lane；
 - 已冻结 Application/Extension/Channel 功能测试；
 - compatibility facade、旧 re-export、旧路径存在性测试；
 - getter、constructor、Default、简单 enum 和无业务价值 serde round-trip；
@@ -1249,7 +1293,8 @@ Bug 修复只有在满足以下任一条件时才增加阻塞测试：
 
 ### Product-scope gates
 
-- `aletheon` 默认依赖图无 Robot；
+- `aletheon` 默认 core profile 不隐式激活 Robot；
+- Gmail/Robot VLA/Hardware supported-extension profile 必须继续编译并完成专属 smoke/safety gate；
 - Linux-only 声明与实现一致；
 - Application/TUI 新增模块需要架构审查；
 - Metacog 变更必须保持 proposal/governance/rollback 路径。
@@ -1272,7 +1317,7 @@ Bug 修复只有在满足以下任一条件时才增加阻塞测试：
 - [ ] `executive` 已从 active workspace 和生产依赖图删除；
 - [ ] Application 只包含最小通用 use case；
 - [ ] TUI 是可信、薄、可取消和可恢复的 presentation shell；
-- [ ] Robot、硬件和非 Linux 平台不在生产依赖图；
+- [ ] 默认核心路径不隐式激活 Robot/Hardware，Gmail、Robot VLA 与 Hardware 仍可通过受支持扩展路径工作；
 - [ ] Native、Pi、CLI、TUI、Daemon 使用同一个 Agent Runtime；
 - [ ] compatibility re-export 和第二执行路径已经清零；
 - [ ] 30 个真实任务达到稳定性门槛；
