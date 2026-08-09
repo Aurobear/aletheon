@@ -12,6 +12,8 @@
 //! - `contracts` depends on nothing (it only re-exports within `fabric`);
 //! - Fabric rich public surface does **not** grow (pure re-export, no new type).
 
+pub use crate::include::subsystem::Version;
+pub use crate::ipc::envelope_v2::SchemaId;
 pub use crate::types::admission::{PermitId, PrincipalId};
 pub use crate::types::attempt::RuntimeId;
 pub use crate::types::channel::MessageId;
@@ -19,5 +21,3 @@ pub use crate::types::operation::{OperationId, ProcessId};
 pub use crate::types::process::{AgentId, NamespaceId};
 pub use crate::types::session::TurnId;
 pub use crate::types::space::SessionId;
-pub use crate::ipc::envelope_v2::SchemaId;
-pub use crate::include::subsystem::Version;
