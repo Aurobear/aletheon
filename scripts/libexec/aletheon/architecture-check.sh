@@ -29,6 +29,37 @@ for retired in core bridge impl; do
   fi
 done
 
+# Runtime authority cleanup is monotonic. These Executive paths had no
+# workspace production callers; remaining references were their own
+# definitions, re-exports, or local tests. They represented parallel
+# Session/Agent authorities or a duplicate profile loader. A canonical
+# AgentRuntime may eventually live in the Runtime owner crate; it must not
+# return under the retired Executive application path.
+retired_session=crates/executive/src/core/session.rs
+if [[ -e "$ROOT/$retired_session" ]]; then
+  echo "architecture-check: retired Executive authority path returned: $retired_session" >&2
+  exit 1
+fi
+for retired_dir in \
+  crates/executive/src/application/agent \
+  crates/executive/src/composition/agents; do
+  if [[ -d "$ROOT/$retired_dir" ]] && \
+      find "$ROOT/$retired_dir" -type f -name '*.rs' -print -quit | grep -q .; then
+    echo "architecture-check: retired Executive authority root returned: $retired_dir" >&2
+    exit 1
+  fi
+done
+if [[ -d crates/executive/src ]] && \
+    rg -n '\bTuiSessionManager\b' crates/executive/src -g '*.rs'; then
+  echo "architecture-check: retired Executive TuiSessionManager returned" >&2
+  exit 1
+fi
+if [[ -d crates/executive/src/application ]] && \
+    rg -n '\bpub\s+struct\s+AgentRuntime\b' crates/executive/src/application -g '*.rs'; then
+  echo "architecture-check: retired Executive application AgentRuntime returned" >&2
+  exit 1
+fi
+
 # Phase 0 architecture inventory and semantic ratchets.  The inventories are
 # deliberately data files: later refactor phases update ownership and lower
 # metrics without having to rewrite this checker.
