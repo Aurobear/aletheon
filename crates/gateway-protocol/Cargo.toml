@@ -1,0 +1,21 @@
+[package]
+name = "gateway-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Aletheon Gateway typed protocol contract"
+
+# CGP-02 owner-seam crate: versioned commands, queries, events, cursor and
+# error codes shared by the typed Gateway client and server.  Depends only on
+# fabric for ownerless ID/correlation primitives (per runbook §3.2: contracts
+# not imported here; Gateway protocol owns its DTOs).  No traffic cut.
+[dependencies]
+fabric = { path = "../fabric" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+
+[lints]
+workspace = true

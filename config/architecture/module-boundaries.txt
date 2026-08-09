@@ -11,6 +11,8 @@ executive|crates/executive|agora,cognit,corpus,dasein,fabric,gateway,hardware,ke
 evolution_loop|examples/evolution_loop|cognit,corpus,dasein,executive,fabric,kernel,metacog,mnemosyne|-|false|-
 fabric|crates/fabric|-|contract,dasein,events,include,ipc,kernel,policy,primitives,protocol,security,types|false|-
 gateway|crates/gateway|fabric|dispatcher,effect,handlers,intent,notify,ports,registry|false|adapters
+gateway-client|crates/gateway-client|fabric,gateway-protocol|-|false|-
+gateway-protocol|crates/gateway-protocol|fabric|-|false|-
 hardware|crates/hardware|fabric|broker,clock,command,deployment_gate,device,emergency_stop,grpc,lease,observation,provider,registry,safety,simulator,skill,telemetry|false|grpc
 interact|crates/interact|executive,fabric|acix,acp,host,tui|false|-
 kernel|crates/kernel|fabric|admission,capability,chronos,operation,process,runtime,space,supervision|false|-

@@ -12,6 +12,8 @@ members = [
     "crates/metacog",
     "crates/kernel",
     "crates/gateway",
+    "crates/gateway-protocol",
+    "crates/gateway-client",
     "crates/executive",
     "crates/execd",
     "crates/platform",
