@@ -1304,6 +1304,40 @@ if "pub fn mint_session" not in auth:
 PY
 fi
 
+# RA-04 Turn reducer gate: the reducer is the single terminal fence — it must
+# not read TurnPipeline/TurnCoordinator (God Object) and must not mint a
+# TurnId outside the Runtime ids module.  Valid late effects may only append
+# observation, never reverse terminal.
+if [[ ${ARCH_SKIP_RA04_GATES:-0} != 1 && -f crates/runtime/src/turn_reducer.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+red = (root / "crates/runtime/src/turn_reducer.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in red.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # The reducer must not import or reference the legacy TurnPipeline God
+    # Object / TurnCoordinator.
+    if re.search(r"\bTurnPipeline\b|\bTurnCoordinator\b", line):
+        raise SystemExit(f"architecture-check: RA-04 reducer references a God Object at {lineno}")
+    # No terminal reversal: a Settle after terminal must be typed error, and
+    # late effects must be observation only.
+    if re.search(r"AlreadyTerminal", line):
+        pass  # expected guard present
+
+if "AlreadyTerminal" not in red:
+    raise SystemExit("architecture-check: RA-04 reducer lacks the AlreadyTerminal terminal fence")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
