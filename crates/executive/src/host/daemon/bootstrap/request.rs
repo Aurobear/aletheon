@@ -258,6 +258,7 @@ impl RequestHandler {
                 context_window,
                 compaction_threshold_percent: config.agent_compaction_threshold_percent,
                 clock: clock.clone(),
+                session_writer_runtime: config.session_writer_runtime,
             })
             .await?;
         info!(

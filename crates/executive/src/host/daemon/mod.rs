@@ -76,6 +76,11 @@ pub struct DaemonConfig {
     pub embodiment_provider: crate::composition::config::EmbodimentProviderConfig,
     /// Fully validated optional Robot capability settings.
     pub robot: Option<crate::composition::config::ResolvedRobotIntegrationConfig>,
+    /// RA-03 PR-C gate: when true, session creation routes through the Runtime
+    /// SessionAuthority writer (Runtime mints SessionId + appends
+    /// SessionCreated); when false (default), the legacy SessionStore path
+    /// stays authoritative.  Reversible: flip false + redeploy to roll back.
+    pub session_writer_runtime: bool,
 }
 
 pub fn parse_conscious_arbitration_mode(

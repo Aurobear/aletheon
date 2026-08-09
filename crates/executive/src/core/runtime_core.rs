@@ -137,6 +137,9 @@ impl RuntimeCore {
                 .clone()
                 .unwrap_or_default(),
             robot,
+            // RA-03 PR-C gate: default legacy writer; flip to runtime after the
+            // maintenance-window switch + installed acceptance.
+            session_writer_runtime: false,
         };
 
         // ── Event bus ───────────────────────────────────────────────

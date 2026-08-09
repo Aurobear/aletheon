@@ -121,6 +121,8 @@ impl UserRuntimeConfig {
             integrations,
             embodiment_provider: app.integrations.embodiment.clone().unwrap_or_default(),
             robot,
+            // RA-03 PR-C gate: default legacy writer.
+            session_writer_runtime: false,
         };
         Ok(Self {
             request,
