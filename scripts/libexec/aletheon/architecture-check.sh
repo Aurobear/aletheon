@@ -1755,6 +1755,38 @@ if "gateway_client" not in tc or "GatewayClient" not in tc:
 PY
 fi
 
+# R1 typed Turn Outcome gate: the outcome type must map every outcome to an
+# authoritative terminal (no inference path) and must not swallow failures.
+if [[ ${ARCH_SKIP_R1_GATES:-0} != 1 && -f crates/runtime/src/turn_outcome.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+to = (root / "crates/runtime/src/turn_outcome.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in to.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub enum TurnOutcome", "missing TurnOutcome"),
+    ("TurnExecutionResult", "missing TurnExecutionResult"),
+    ("TurnUsage", "missing TurnUsage"),
+):
+    if needle not in to:
+        raise SystemExit(f"architecture-check: R1 turn outcome {msg}")
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # No failure-swallowing: an error outcome must carry a typed TurnFailure.
+    if re.search(r"TurnOutcome::Failed", line) and "TurnFailure" not in to:
+        raise SystemExit(f"architecture-check: R1 turn outcome swallows failures at {lineno}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

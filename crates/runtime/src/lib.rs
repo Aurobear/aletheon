@@ -12,6 +12,7 @@ pub mod ports;
 pub mod query;
 pub mod selector;
 pub mod session_authority;
+pub mod turn_outcome;
 pub mod turn_reducer;
 
 pub use agent_supervisor::{
@@ -37,4 +38,7 @@ pub use selector::{
     RuntimeSelectionRequest, RuntimeSelector,
 };
 pub use session_authority::{ContextWorkingSet, SessionAuthority, TurnProjection};
+pub use turn_outcome::{
+    BlockReason, CancelReason, StopReason, TurnExecutionResult, TurnFailure, TurnOutcome, TurnUsage,
+};
 pub use turn_reducer::{TransitionOutcome, TurnReducerSeam, TurnTransition};
