@@ -16,7 +16,7 @@ gateway-client|crates/gateway-client|fabric,gateway-protocol|-|false|-
 gateway-protocol|crates/gateway-protocol|fabric|-|false|-
 hardware|crates/hardware|fabric|broker,clock,command,deployment_gate,device,emergency_stop,grpc,lease,observation,provider,registry,safety,simulator,skill,telemetry|false|grpc
 interact|crates/interact|executive,fabric|acix,acp,host,tui|false|-
-kernel|crates/kernel|fabric|admission,capability,chronos,operation,process,runtime,space,supervision|false|-
+kernel|crates/kernel|fabric|admission,capability,chronos,enforcement,operation,process,runtime,space,supervision|false|-
 metacog|crates/metacog|fabric,kernel|adapters,evaluation,evidence,evolution,experience,genome,governance,improvement,problem,reflection|false|-
 mnemosyne|crates/mnemosyne|fabric,kernel|agent_scope,composite_service,consolidation,credential,embodied_episode,fact_service,knowledge_graph,lifecycle,memory_tools,model,observability,ops,projection,promotion,retention,runtime,service,supplemental,testing|false|backends
 platform|crates/platform|-|artifact_store,backend,desktop,error,filesystem,manifest,path,process,process_controller,pty,receipt,registry,sandbox,selector,service,structured_patch|false|-

@@ -3,6 +3,7 @@
 pub mod admission;
 pub mod capability;
 pub mod chronos;
+pub mod enforcement;
 pub mod operation;
 pub mod process;
 pub mod runtime;

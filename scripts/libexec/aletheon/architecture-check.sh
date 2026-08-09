@@ -1671,6 +1671,39 @@ for lineno, line in enumerate(code.splitlines(), 1):
 PY
 fi
 
+# K6 enforcement seam gate: the seam must reject duplicate writers/executors
+# per family and never perform a shadow effect (Kernel receipts never replace
+# domain-owned Hardware veto / Gmail outbox / Pi terminal evidence).
+if [[ ${ARCH_SKIP_K6_GATES:-0} != 1 && -f crates/kernel/src/enforcement.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+enf = (root / "crates/kernel/src/enforcement.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in enf.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("DuplicateWriter", "missing per-family writer uniqueness"),
+    ("DuplicateExecutor", "missing per-family executor uniqueness"),
+    ("ShadowEffect", "missing shadow-effect rejection"),
+):
+    if needle not in enf:
+        raise SystemExit(f"architecture-check: K6 enforcement {msg}")
+
+# Kernel must not drive an extension writer itself (no concrete adapter import).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\b(?:gmail|hardware|robot|pi)_\w*\b.*\b(?:transport|adapter|send|spawn)\b", line, re.I):
+        raise SystemExit(f"architecture-check: K6 enforcement drives an extension at {lineno}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
