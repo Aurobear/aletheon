@@ -13,6 +13,7 @@ pub mod ports;
 pub mod query;
 pub mod selector;
 pub mod session_authority;
+pub mod session_head;
 pub mod turn_outcome;
 pub mod turn_reducer;
 
@@ -40,6 +41,7 @@ pub use selector::{
     RuntimeSelectionRequest, RuntimeSelector,
 };
 pub use session_authority::{ContextWorkingSet, SessionAuthority, TurnProjection};
+pub use session_head::{PendingAppend, SessionHead, SessionHeadIndex};
 pub use turn_outcome::{
     BlockReason, CancelReason, StopReason, TurnExecutionResult, TurnFailure, TurnOutcome, TurnUsage,
 };
