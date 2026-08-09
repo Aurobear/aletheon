@@ -1170,6 +1170,40 @@ for lineno, line in enumerate(src.splitlines(), 1):
 PY
 fi
 
+# E1 extension seam gate: the extension module carries registration
+# descriptors only — no rich types, no concrete adapter, no secret material,
+# no second composition root.  Core constructs with zero extensions.
+if [[ ${ARCH_SKIP_E1_GATES:-0} != 1 && -f crates/application/src/extension.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+ext = (root / "crates/application/src/extension.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in ext.splitlines()
+    if not l.lstrip().startswith("//")
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # No rich aggregate/repository/service definitions in the seam.
+    if re.search(r"^\s*pub\s+struct\s+\w*(?:Repository|Service|Store|Worker|Scheduler)\b", line):
+        raise SystemExit(f"architecture-check: E1 extension seam carries a rich type at {lineno}")
+    # No secret material fields.
+    if re.search(r"\b(?:secret|token|password|credential)\s*:", line, re.I):
+        raise SystemExit(f"architecture-check: E1 extension seam exposes a secret field at {lineno}")
+
+# The registry must construct empty (zero-extension core).
+if "::new()" not in ext:
+    raise SystemExit("architecture-check: E1 extension registry lacks an empty constructor")
+if "empty" not in ext and "zero extensions" not in ext:
+    raise SystemExit("architecture-check: E1 extension seam must document zero-extension construction")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

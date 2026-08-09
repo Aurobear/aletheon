@@ -7,9 +7,13 @@
 //! primitives) and `runtime`.  No concrete adapter, no Executive.
 
 pub mod error;
+pub mod extension;
 pub mod use_case;
 
 pub use error::ApplicationError;
+pub use extension::{
+    ExtensionFlags, ExtensionId, ExtensionPort, ExtensionRegistration, InMemoryExtensionRegistry,
+};
 pub use use_case::{
     ApplicationFacade, CreateSession, DeleteSession, ForkSession, GetSession, ListSessions,
     ResumeSession,
