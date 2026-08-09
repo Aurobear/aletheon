@@ -9,6 +9,8 @@
 > 上位计划：[`2026-08-08-agent-kernel-v2-complete-rearchitecture.md`](./2026-08-08-agent-kernel-v2-complete-rearchitecture.md)
 >
 > 规范索引：[`2026-08-08-executive-decomposition-plan-series.md`](./2026-08-08-executive-decomposition-plan-series.md)
+>
+> 文件级任务包：[`2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md`](./2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md)
 
 ## 1. 目的与使用边界
 
