@@ -6,10 +6,15 @@
 //! port and translates results.  Depends only on `contracts` (fabric ownerless
 //! primitives) and `runtime`.  No concrete adapter, no Executive.
 
+pub mod approval;
 pub mod error;
 pub mod extension;
 pub mod use_case;
 
+pub use approval::{
+    resolve_decision, ApprovalError, ApprovalRecord, ApprovalScope, ApprovalStore,
+    ApprovingPrincipal, DecisionRequestId, OpaqueApprovalGrant,
+};
 pub use error::ApplicationError;
 pub use extension::{
     ExtensionFlags, ExtensionId, ExtensionPort, ExtensionRegistration, InMemoryExtensionRegistry,

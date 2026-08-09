@@ -1401,6 +1401,47 @@ if "translate_and_dispatch" not in typed:
 PY
 fi
 
+# APX-02 Approval gate: the approval seam must enforce single-use, expiry,
+# wrong-principal, wrong-scope and nonce fail-closed; it must not mint a
+# DecisionRequestId (owner-assigned).
+if [[ ${ARCH_SKIP_APX02_GATES:-0} != 1 && -f crates/application/src/approval.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+appr = (root / "crates/application/src/approval.rs").read_text(errors="replace")
+# Production code only (test fixtures are owner-local mints and exempt).
+code = "\n".join(
+    l for l in appr.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("AlreadyConsumed", "missing single-use check"),
+    ("Expired", "missing expiry check"),
+    ("WrongPrincipal", "missing principal check"),
+    ("WrongScope", "missing scope check"),
+    ("NonceMismatch", "missing nonce check"),
+    ("RevisionMismatch", "missing revision check"),
+):
+    if needle not in appr:
+        raise SystemExit(f"architecture-check: APX-02 approval {msg}")
+
+# No client mint of DecisionRequestId: the only permitted occurrence is the
+# struct *definition* (pub struct DecisionRequestId(...)); any other
+# `DecisionRequestId(` (a value construction / mint) is rejected.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bDecisionRequestId\(", line) and not re.search(
+        r"^\s*pub\s+struct\s+DecisionRequestId\(", line
+    ):
+        raise SystemExit(f"architecture-check: APX-02 approval mints a DecisionRequestId at {lineno}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
