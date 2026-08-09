@@ -838,6 +838,8 @@ refactor/agent-kernel-v2
 - 增加“禁止 Executive 新增职责”的 ratchet；
 - 禁止新代码继续进入 `fabric`；
 - 为 Turn/Session/Capability/Self authority 建立现状清单。
+- 对现有约 1,700 个测试建立 `KEEP / REWRITE / DELETE / MOVE-TO-SOAK` 清单；
+- 在迁移核心代码前先删除与冻结范围、兼容层和旧内部结构绑定的测试。
 
 验收：
 
@@ -1042,7 +1044,181 @@ AK2-15  installed acceptance and dev promotion
 
 ---
 
-## 16. 架构 Fitness Gates
+## 16. 测试体系清仓与真实验收
+
+### 16.1 当前判断
+
+当前测试数量已经不能代表产品可靠性。工作区约 19 个 crate、约 1,700 个测试，历史全量测试单次需要数分钟，并曾生成超过 120 GiB 的测试构建产物；与此同时，真实使用仍然暴露：
+
+- Pi wait 被外层固定超时截断；
+- child 没有 terminal evidence；
+- API Key 出现在进程 argv；
+- cancel 污染下一轮目标；
+- monitor 选择错误 Session；
+- TUI 隐藏真实执行进度；
+- 内部测试 PASS 与安装态失败不一致。
+
+原因不是“测试还不够多”，而是大量测试验证内部实现、mock、兼容路径和静态结构，没有验证用户真正运行的已安装二进制、官方 socket、真实 provider、真实 child process 和恢复路径。
+
+本次重构不追求测试数量或覆盖率。目标是删除测试债务，只保留能够保护核心不变量或捕获真实产品失败的测试。
+
+### 16.2 直接删除的测试
+
+以下测试默认删除，不随旧实现迁移：
+
+- Robot、Hardware、非 Linux 平台的常规测试；
+- 已冻结 Application/Extension/Channel 功能测试；
+- compatibility facade、旧 re-export、旧路径存在性测试；
+- getter、constructor、Default、简单 enum 和无业务价值 serde round-trip；
+- 为内部函数逐个建立但不保护外部不变量的白盒测试；
+- 重复 snapshot/golden test；
+- 使用 mock provider、mock daemon、mock child 却宣称 E2E/production success 的测试；
+- 绑定某条 acceptance prompt、固定仓库、固定自然语言或固定答案的测试；
+- 只检查 module count、文件行数或旧目录布局的测试；
+- 已被更高层真实测试完全覆盖、且没有更快故障定位价值的重复集成测试；
+- 长时间调用真实网络但没有独立环境、预算和证据归档的普通 Cargo test。
+
+删除旧代码时不要求“一条生产代码对应一条测试”保留。测试不能成为维持错误架构的理由。
+
+### 16.3 必须保留的少量核心测试
+
+以下测试保护不可从普通真实任务稳定穷举的系统不变量：
+
+#### Kernel invariants
+
+- Process/Operation 合法状态转换；
+- generation fence；
+- cancel/timeout descendant propagation；
+- permit-before-execution；
+- settle/revoke exactly once；
+- Budget/Quota/Lease accounting；
+- path/scope escape fail-closed；
+- child exit、cleanup 和 resource leak。
+
+#### Runtime invariants
+
+- 一个 Turn 只能拥有一个 terminal settlement；
+- Session/Turn replay 幂等；
+- restart recovery 不产生 false success；
+- async child 必须 wait/terminal receipt；
+- Native/Pi 结果映射一致；
+- late/old-generation evidence 被拒绝。
+
+#### Self/Metacog invariants
+
+- Dasein 是唯一 SelfState mutation authority；
+- Cognit/Metacog 不能绕过 Self Gate；
+- material MetaChange 必须审批；
+- experiment 具备 evaluator、范围、预算和 rollback；
+- outcome assimilation 保留 provenance。
+
+#### Durable contracts
+
+- 持久化 migration；
+- public RPC/schema backward reading；
+- conflicting receipt 拒绝；
+- crash-safe/atomic durable write。
+
+这些测试数量必须小、行为稳定、失败原因明确。只有保护上述不变量的测试才允许阻塞普通开发。
+
+### 16.4 新的四级验证体系
+
+#### L0 — 编译和静态边界
+
+普通修改默认执行：
+
+- changed package check；
+- formatting；
+- dependency/authority fitness gate；
+- banned dependency/symbol check。
+
+目标：常规本地反馈在约一分钟级，而不是默认运行 workspace 全量测试。
+
+#### L1 — 核心不变量
+
+仅运行受影响的 Kernel/Runtime/Dasein/Metacog 状态机与安全测试。
+
+要求：
+
+- 无网络；
+- 无真实 provider pacing；
+- 不启动完整 daemon；
+- 可重复；
+- 精确定位不变量失败。
+
+#### L2 — 最小安装态黑盒 Smoke
+
+只保留少量高价值场景，运行新安装的 `/usr/bin/aletheon` 和官方 user socket：
+
+1. 普通 Turn 完成并产生可信 terminal receipt；
+2. 受控文件修改、验证和 settlement；
+3. Pi spawn -> wait -> terminal result；
+4. Ctrl+C/cancel 后下一轮不受污染；
+5. daemon restart 后 Session/child/Operation 正确恢复；
+6. 权限拒绝与 sandbox unavailable 必须 fail closed。
+
+L2 才能证明当前构建具备基本可用性。Mock、临时 daemon、替代 socket 和直接 provider 调用都不能替代它。
+
+#### L3 — Nightwatch/Soak
+
+长时间、20/30 任务、Provider failure、重复 session、资源泄漏和性能退化交给外部 Nightwatch 定时运行，不阻塞每次开发迭代。
+
+Nightwatch 负责：
+
+- 使用固定 commit 和干净 worktree；
+- 安装态 provenance；
+- 多轮同 Session 与新 Session 混合；
+- timeout、crash、provider rejection 和 restart 注入；
+- sealed evidence；
+- failure clustering；
+- 生成 issue draft，而不是自动改代码或合并。
+
+用户不需要全天手动测试。
+
+### 16.5 Mock 使用规则
+
+Mock 只允许用于：
+
+- 确定性注入 timeout/error；
+- 纯状态机边界；
+- 不可安全制造的异常；
+- 快速验证错误映射。
+
+任何依赖 Mock 的测试都不得命名或报告为：
+
+```text
+production accepted
+installed accepted
+real E2E
+provider/runtime verified
+```
+
+### 16.6 不为每个 Bug 增加测试
+
+Bug 修复只有在满足以下任一条件时才增加阻塞测试：
+
+- 破坏核心不变量；
+- 有较高概率重复出现；
+- 静态类型和架构 gate 无法阻止；
+- 真实安装态测试成本过高，且存在可靠的较低层复现。
+
+一次性 UI 文案、内部布局或已经删除的兼容行为不自动增加永久测试。真实逃逸 Bug 优先转化为更高层 acceptance 场景或架构不变量，而不是继续堆叠局部单元测试。
+
+### 16.7 测试清仓验收
+
+- 不设代码覆盖率目标；
+- 不以 test count 增长作为质量指标；
+- 普通 PR 不运行 1,700-test workspace suite；
+- frozen scope 测试不进入默认 CI；
+- full workspace test 仅在明确迁移里程碑按需运行，最终由新的核心 suite 取代；
+- 每一个保留测试必须标注保护的不变量或真实失败类型；
+- 每一个 installed acceptance 必须绑定 source/release/installed/running digest；
+- monitor PASS 与 TUI/session/log/receipt 不一致时，整体仍然 FAIL；
+- 零 false success、零 scope violation、零 resource leak、零 hanging terminal task。
+
+---
+
+## 17. 架构 Fitness Gates
 
 需要新增自动检查：
 
@@ -1080,7 +1256,7 @@ AK2-15  installed acceptance and dev promotion
 
 ---
 
-## 17. 完成定义
+## 18. 完成定义
 
 只有以下条件全部满足，Agent Kernel V2 才算完成：
 
@@ -1100,11 +1276,14 @@ AK2-15  installed acceptance and dev promotion
 - [ ] Native、Pi、CLI、TUI、Daemon 使用同一个 Agent Runtime；
 - [ ] compatibility re-export 和第二执行路径已经清零；
 - [ ] 30 个真实任务达到稳定性门槛；
+- [ ] 旧测试已完成 KEEP/REWRITE/DELETE/MOVE-TO-SOAK 清仓；
+- [ ] 默认 CI 只运行静态边界和少量核心不变量；
+- [ ] 安装态 Smoke 与 Nightwatch 替代 mock-heavy “E2E”；
 - [ ] 安装态来源、真实请求、恢复、取消和资源清理验收通过。
 
 ---
 
-## 18. 最终原则
+## 19. 最终原则
 
 Aletheon 不再以 `Executive` 为中心，也不再以功能数量证明成熟度。
 
