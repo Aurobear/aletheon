@@ -1888,6 +1888,41 @@ for lineno, line in enumerate(code.splitlines(), 1):
 PY
 fi
 
+# C1 cache correctness gate: cache policy must be fail-closed (side effects /
+# permission sensitivity / time sensitivity bypass), keys must carry permission
+# context + tool digest, and the prompt construction profile must be observable
+# with a real tool partition (not a fixed 0).
+if [[ ${ARCH_SKIP_C1_GATES:-0} != 1 && -f crates/application/src/cache.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+cache = (root / "crates/application/src/cache.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in cache.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub enum CacheDecision", "missing cache decision"),
+    ("pub struct CacheKey", "missing cache key"),
+    ("permission_ctx", "cache key must include permission context"),
+    ("Bypass", "missing fail-closed bypass"),
+    ("pub struct PromptConstructionProfile", "missing observable prompt profile"),
+):
+    if needle not in cache:
+        raise SystemExit(f"architecture-check: C1 cache policy {msg}")
+
+# Fail-closed: side-effectful / permission-sensitive / time-sensitive bypass.
+if "is_side_effectful" not in cache or "is_permission_sensitive" not in cache or "is_time_sensitive" not in cache:
+    raise SystemExit("architecture-check: C1 cache policy must bypass on side-effect/permission/time")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

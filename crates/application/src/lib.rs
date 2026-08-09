@@ -7,6 +7,7 @@
 //! primitives) and `runtime`.  No concrete adapter, no Executive.
 
 pub mod approval;
+pub mod cache;
 pub mod error;
 pub mod extension;
 pub mod goal_draft;
@@ -16,6 +17,7 @@ pub use approval::{
     resolve_decision, ApprovalError, ApprovalRecord, ApprovalScope, ApprovalStore,
     ApprovingPrincipal, DecisionRequestId, OpaqueApprovalGrant,
 };
+pub use cache::{decide_cache, CacheDecision, CacheKey, CacheLayer, PromptConstructionProfile};
 pub use error::ApplicationError;
 pub use extension::{
     ExtensionFlags, ExtensionId, ExtensionPort, ExtensionRegistration, InMemoryExtensionRegistry,
