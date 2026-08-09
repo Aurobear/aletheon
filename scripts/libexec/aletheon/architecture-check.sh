@@ -859,6 +859,70 @@ if seen != EXTENSIONS:
 PY
 fi
 
+# D0 fabric boundary census is monotonic.  The Fabric source set and public
+# surface must stay at 174 files / 1110 public symbols; every symbol must have
+# a boundary-census row with valid disposition and blocker vocab.
+if [[ ${ARCH_SKIP_D0_GATES:-0} != 1 && -f config/architecture/fabric-boundary-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/fabric-boundary-census.tsv"
+public = root / "config/architecture/fabric-public-types.tsv"
+
+# 1. Fabric source set == 174.
+fabric_files = list((root / "crates/fabric/src").rglob("*.rs"))
+if len(fabric_files) != 174:
+    raise SystemExit(f"architecture-check: D0 fabric source set {len(fabric_files)} != 174")
+
+# 2. Public surface == 1110 (7-col inventory rows).
+pub_rows = [l for l in public.read_text().splitlines()
+            if l.strip() and not l.startswith("#") and not l.startswith("path\t")]
+if len(pub_rows) != 1110:
+    raise SystemExit(f"architecture-check: D0 public surface {len(pub_rows)} != 1110")
+
+# 3. Boundary census: one row per public symbol, valid columns.
+#    Columns: path symbol kind prod_caller_path prod_caller_symbol cfg
+#             wire_role persistence_role schema_or_format_version
+#             last_writer last_reader target_owner cutover_pr deletion_pr
+#             deadline evidence_commit
+DELETION_OWNERS = {"D6", "E7", "XRET-04"}
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#") or line.startswith("path\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 16:
+        raise SystemExit(f"architecture-check: D0 boundary census row {lineno} has {len(cols)} cols (want 16)")
+    rows.append(cols)
+if len(rows) != len(pub_rows):
+    raise SystemExit(f"architecture-check: D0 boundary rows {len(rows)} != public symbols {len(pub_rows)}")
+
+# 4. Every boundary row maps to a real fabric file with valid deletion owner.
+fabric_set = {p.relative_to(root).as_posix() for p in fabric_files}
+for cols in rows:
+    path = cols[0]
+    if path not in fabric_set:
+        raise SystemExit(f"architecture-check: D0 boundary census unknown path {path}")
+    del_pr = cols[13]
+    if del_pr not in DELETION_OWNERS:
+        raise SystemExit(f"architecture-check: D0 boundary row {cols[1]} invalid deletion_pr {del_pr!r}")
+    # INVESTIGATE last_writer must carry a blocker code in evidence_commit.
+    if cols[9] == "INVESTIGATE" and not re.search(r"B[0-7]", cols[15]):
+        raise SystemExit(f"architecture-check: D0 boundary row {cols[1]} INVESTIGATE without blocker")
+
+# 5. Cross-check symbol sets match between public inventory and boundary census.
+pub_symbols = {c[2] for c in (l.split("\t") for l in pub_rows)}
+bc_symbols = {c[1] for c in rows}
+if pub_symbols != bc_symbols:
+    raise SystemExit("architecture-check: D0 boundary census symbol set differs from fabric-public-types.tsv")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
