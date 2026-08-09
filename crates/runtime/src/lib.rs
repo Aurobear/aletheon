@@ -10,6 +10,7 @@ pub mod manifest;
 pub mod ports;
 pub mod query;
 pub mod selector;
+pub mod session_authority;
 
 pub use command::{
     CancelTurnCommand, CommandReceipt, CreateSessionCommand, ResumeSessionCommand, RuntimeCommand,
@@ -29,3 +30,4 @@ pub use selector::{
     RuntimeCandidateRejection, RuntimeSelectionDecision, RuntimeSelectionError,
     RuntimeSelectionRequest, RuntimeSelector,
 };
+pub use session_authority::{ContextWorkingSet, SessionAuthority, TurnProjection};

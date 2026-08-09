@@ -1274,6 +1274,36 @@ if "pub fn append" in journal or "async fn append" in journal:
 PY
 fi
 
+# RA-03 SessionAuthority gate: canonical SessionId mint lives only in the
+# runtime session_authority module; the authority seam must not write the
+# legacy SessionStore/EventSpine (PR-A seam, writer cutover is PR-C).
+if [[ ${ARCH_SKIP_RA03_GATES:-0} != 1 && -f crates/runtime/src/session_authority.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+auth = (root / "crates/runtime/src/session_authority.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in auth.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# The authority seam must not write the legacy SessionStore/EventSpine
+# (legacy writer stays authoritative until PR-C).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bSessionStore\b|\bSessionAppendStore\b|\.append\(|INSERT INTO sessions", line):
+        raise SystemExit(f"architecture-check: RA-03 authority writes legacy store at {lineno}")
+
+# SessionId mint must be inside this module (Runtime is the single ID source).
+if "pub fn mint_session" not in auth:
+    raise SystemExit("architecture-check: RA-03 authority lacks a canonical mint_session")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
