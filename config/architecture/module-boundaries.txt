@@ -20,7 +20,7 @@ kernel|crates/kernel|fabric|admission,capability,chronos,enforcement,operation,p
 metacog|crates/metacog|fabric,kernel|adapters,evaluation,evidence,evolution,experience,genome,governance,improvement,problem,reflection|false|-
 mnemosyne|crates/mnemosyne|fabric,kernel|agent_scope,composite_service,consolidation,credential,embodied_episode,fact_service,knowledge_graph,lifecycle,memory_tools,model,observability,ops,projection,promotion,retention,runtime,service,supplemental,testing|false|backends
 platform|crates/platform|-|artifact_store,backend,desktop,error,filesystem,manifest,path,process,process_controller,pty,receipt,registry,sandbox,selector,service,structured_patch|false|-
-runtime|crates/runtime|-|agent_supervisor,command,error,event,ids,journal,manifest,orchestration,per_turn_scope,ports,query,selector,session_authority,session_head,turn_outcome,turn_reducer|false|-
+runtime|crates/runtime|-|agent_supervisor,command,error,event,ids,journal,manifest,orchestration,per_turn_scope,ports,query,selector,session_authority,session_head,session_writer,turn_outcome,turn_reducer|false|-
 # ownership|owner|responsibility
 ownership|runtime|runtime manifests, capabilities, interaction/workspace/tool-governance contracts, deterministic selection
 ownership|kernel|governed process/operation lifecycle, supervision, admission, budget, lease, mailbox authority

@@ -1989,6 +1989,39 @@ for bad in ("code_complete", "looks_good", "evidence_complete"):
 PY
 fi
 
+# RA-03 PR-C Session writer gate: the Runtime writer must mint the canonical
+# SessionId itself (no caller ID), append through the single SessionAppendStore,
+# and return a typed receipt.
+if [[ ${ARCH_SKIP_RA03C_GATES:-0} != 1 && -f crates/runtime/src/session_writer.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sw = (root / "crates/runtime/src/session_writer.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in sw.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub struct RuntimeSessionWriter", "missing runtime session writer"),
+    ("mint_session", "writer must mint the canonical SessionId"),
+    ("SessionAppendStore", "writer must append through the single store"),
+    ("CommandReceipt", "writer must return a typed receipt"),
+):
+    if needle not in sw:
+        raise SystemExit(f"architecture-check: RA-03 writer {msg}")
+
+# No caller-supplied ID: create_session must not accept an ID parameter.
+if "session_id: SessionId" in code or "session_id: &SessionId" in code:
+    raise SystemExit("architecture-check: RA-03 writer accepts a caller session id")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
