@@ -923,6 +923,57 @@ if pub_symbols != bc_symbols:
 PY
 fi
 
+# XRET-00 Executive surface freeze is monotonic.  The Executive source set is
+# frozen; every file must have a ledger row and every live ledger path must
+# exist.  COMPAT cardinality stays exactly 2.
+if [[ ${ARCH_SKIP_XRET00_GATES:-0} != 1 && -f config/architecture/executive-surface-ledger.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/executive-surface-ledger.tsv"
+DISPO = {"SPLIT", "MERGE", "MOVE", "INVESTIGATE", "DELETE", "COMPAT"}
+
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#") or line.startswith("path\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 7:
+        raise SystemExit(f"architecture-check: XRET-00 ledger row {lineno} has {len(cols)} cols (want 7)")
+    path, semantics, disp, owner, mig, gate, blocker = cols
+    if disp not in DISPO and "RETIRED" not in disp:
+        raise SystemExit(f"architecture-check: XRET-00 ledger {path} invalid disposition {disp!r}")
+    rows.append(cols)
+
+# 1. Every live ledger path must exist; retired paths must not.
+for path, semantics, disp, owner, mig, gate, blocker in rows:
+    exists = (root / path).exists()
+    if "RETIRED" in owner:
+        if exists:
+            raise SystemExit(f"architecture-check: XRET-00 retired path reappeared: {path}")
+    elif not exists:
+        raise SystemExit(f"architecture-check: XRET-00 ledger path missing: {path}")
+
+# 2. Every live Executive source file must have a ledger row.
+exec_files = {p.relative_to(root).as_posix() for p in (root / "crates/executive/src").rglob("*.rs")}
+ledger_paths = {cols[0] for cols in rows}
+missing = sorted(exec_files - ledger_paths)
+if missing:
+    raise SystemExit("architecture-check: XRET-00 unregistered Executive files (update ledger): "
+                     + ", ".join(missing[:20]))
+
+# 3. COMPAT cardinality == 2.
+compats = [cols[0] for cols in rows if cols[2] == "COMPAT"]
+if len(compats) != 2:
+    raise SystemExit(f"architecture-check: XRET-00 COMPAT cardinality {len(compats)} != 2: {compats}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
