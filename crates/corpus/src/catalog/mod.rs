@@ -1,5 +1,8 @@
 //! Corpus-owned immutable extension catalog.
 
+/// D5 catalog/executor split ports.
+pub mod ports;
+
 use std::collections::BTreeMap;
 
 use fabric::types::admission::RiskLevel;

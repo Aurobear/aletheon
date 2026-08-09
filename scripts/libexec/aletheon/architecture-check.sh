@@ -1588,6 +1588,33 @@ if "ActiveWorkspacePort" not in port or "degraded" not in port:
 PY
 fi
 
+# D5 Corpus catalog/executor split gate: the catalog stays in Corpus, the
+# executor port is separated, and neither leaks Executive exec_corpus /
+# corpus_group business logic.
+if [[ ${ARCH_SKIP_D5_GATES:-0} != 1 && -f crates/corpus/src/catalog/ports.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+ports = (root / "crates/corpus/src/catalog/ports.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in ports.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bexec_corpus\b|\bcorpus_group\b", line):
+        raise SystemExit(f"architecture-check: D5 corpus port leaks Executive exec_corpus at {lineno}")
+
+if "CatalogPort" not in ports or "ExecutorPort" not in ports:
+    raise SystemExit("architecture-check: D5 seam must define CatalogPort + ExecutorPort")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
