@@ -86,6 +86,8 @@ Aletheon 当前真正的问题不是 crate 数量多，也不是目录名字不�
 |---|---|---|
 | `executive` | 直接依赖 Fabric、Gateway、Kernel、Agora、Cognit、Corpus、Mnemosyne、Runtime、Dasein、Metacog、Hardware | 它是当前 God Crate，职责必须逐项迁出，不能整体改名 |
 | `runtime` | 目前只有 external runtime manifest 与 selector | 不能假装它已经是 Agent Runtime；需要纵向迁入 Turn/Session/Agent 权威 |
+| `interact`/TUI | 不直接创建 canonical Agent/Harness，但直接依赖 Executive，并组装 principal、permission、workspace、runtime requirement、TaskKind、Session/Turn compatibility state | TUI 尚未成为纯 Presentation；必须切断 authority claim、策略计算和 legacy lifecycle 推断 |
+| daemon composition | 真正 Agent/Self/Session/Kernel/Runtime 构造集中在 Executive `RequestHandler::new`、`RuntimeCore::bootstrap` 和并存的 `UserRuntime` 路径 | 核心不是“仍在 TUI”，而是仍被 RPC Handler/Host bootstrap 巨型构造器吞没；必须建立唯一 composition root |
 | `kernel` | `KernelRuntime` 持有 Process/Operation/Space/Mailbox/Admission/Budget/Lease/Supervision 等多组内存表和 getter | Kernel 已经有膨胀趋势，应先缩小再成为 enforcement root |
 | `fabric` | 包含 Agent、Turn、Operation、Approval、Robot、Embodiment、UI protocol、IPC、Policy、Repository 等大量模型与实现 | 必须先按所有者拆出，最后才进行机械 rename |
 | Gmail | 实现横跨 Executive Gmail/Google adapters、Goal/Approval、Gateway、共享 SQLite migration 和验收脚本 | 先建立保存舱和等价 smoke，后迁移 |
@@ -95,8 +97,22 @@ Aletheon 当前真正的问题不是 crate 数量多，也不是目录名字不�
 | Metacog | 已有 evidence/evaluation/problem/reflection/evolution/governance | 保留活跃闭环，但不能让 proposal 自己批准或直接改源码/安全策略 |
 | Agora | 既有内存 workspace，也有持久化 commit/broadcast | 需明确持久化内容只是记录/观察，不能成为 Session/Turn 权威 |
 | Mnemosyne | 同时包含领域模型、SQLite/remote adapter、GBrain supplemental memory | 保留记忆领域，具体 adapter 必须退出核心依赖面 |
+| 命名与 lint | `SessionManager/SessionService/TuiSessionManager/LegacySessionService/SessionGateway`、多套 `RuntimeRegistry/AgentRuntime` 并存；Executive/Interact/Dasein 有 crate 级 Clippy blanket allow | 仅移动文件无法消除语义重复；必须把词汇、构造动词、错误类型和 lint 债务纳入迁移 gate |
 
 这张表是迁移起点，不是对当前架构的认可。
+
+### 2.1 Agent/Session 构造审计
+
+在本基线中，TUI 对新 Session 主要发送 RPC，canonical Session 的写入发生在 daemon；因此不能简单表述成“Agent Core 在 TUI”。真实问题是构造权和语义散落：
+
+- `executive::core::session` 仍公开无生产调用者的 `TuiSessionManager`，内部还能计算 permission/tool policy；
+- CLI one-shot 会自行生成新的 `SessionId`，TUI reducer 会为兼容 overlay 生成真实 `TurnId`；
+- `interact::intent` 从客户端 UID 组装 `PrincipalId`，并把 requested permission/workspace/runtime route 表达成像权威事实一样的 payload；
+- `RequestHandler::new` 同时构造 Self、Memory、Kernel、Session、Agent runtime、Robot、Pi、store 和 worker；
+- ACP composition 仍手工拼接 Session workflow；
+- canonical Session、protocol journal、legacy working context 和多组 read model 同时存在。
+
+V2 的目标不是把这些代码机械搬到 `runtime`，而是收回 aggregate creation、ID assignment、effective policy 和 journal writer 的单一所有权。
 
 ---
 
@@ -107,7 +123,7 @@ Aletheon 当前真正的问题不是 crate 数量多，也不是目录名字不�
 V2 只主动建设以下核心闭环：
 
 - Agent、Session、Turn、Agent Run、Delegate 生命周期；
-- Native Cognit 与受监督的外部 Agent Runtime（Pi）；
+- Native `CognitiveRun` 与受监督的 Pi `DelegateBackend`；
 - Cognit 单 Turn 认知循环；
 - Dasein 身份、自我模型、价值边界、承诺和连续性；
 - Metacog 跨 Turn 观察、评估、问题发现和改进提案；
@@ -126,7 +142,7 @@ V2 只主动建设以下核心闭环：
 - Gmail inbound/sync/Goal/Approval/report 等已验证路径；
 - Robot VLA 高层任务与认知路径；
 - Hardware simulation、现有 bridge、lease、watchdog、safe-stop 和 receipt；
-- Pi external Agent Runtime；
+- Pi external delegate backend；
 - GBrain supplemental memory；
 - 当前真实可用的 Linux channel/provider/tool adapters。
 
@@ -304,7 +320,7 @@ Robot Bridge 是外部实时/设备系统，不是 Aletheon daemon 的子 Runtim
 | Agent/Delegate lifecycle | Runtime | `RuntimeJournal::AgentStream` | Kernel 只返回 execution facts |
 | Session/Turn/settlement/recovery | Runtime | `RuntimeJournal::{SessionStream, TurnStream}` | Gateway 读取 projection facts |
 | ExecutionProcess/Operation/Permit/Resource receipt | Kernel | `ExecutionJournal` | Runtime 保存引用，不复制权威状态 |
-| Approval request/resolution | Application | `ApprovalStore` | `DecisionRequestId` 只做关联；Kernel/Dasein 通过各自 verifier mint opaque grant |
+| Approval aggregate/presentation/resolution | Application | `ApprovalStore` | 等待方 owner 先持久化 challenge/`DecisionRequestId`；Application 只做关联与人类 resolution；Kernel/Dasein 通过各自 verifier mint opaque grant |
 | Active cognitive workspace | Agora | 默认内存；可选 observation log | 不用于 Session/Turn 恢复 |
 | Long-term memory | Mnemosyne | Memory repository | 只能作为带来源的召回证据 |
 | Capability catalog | Corpus | Catalog repository | Kernel 通过 port 调用 executor |
@@ -359,7 +375,7 @@ crates/
 ├── mnemosyne/              # 长期记忆领域
 ├── corpus/                 # capability catalog/executor adapters
 ├── application/            # 通用 use cases 与 approval
-├── gateway/                # RPC/channel protocol
+├── gateway/                # public boundary；物理拆分 protocol/client/server，避免 TUI 拉入 host 实现
 ├── interact/               # TUI/CLI presentation
 ├── hardware/               # embodiment/device safety domain
 ├── extensions/
@@ -394,9 +410,9 @@ gateway       -> application
 interact      -> gateway
 hardware      -> contracts, kernel CapabilityExecutor/receipt ports
 gmail         -> gateway/application, kernel descriptor/executor/resource ports
-robot-vla     -> cognit CognitiveSession, runtime extension ports, hardware
-provider      -> cognit InferenceService, kernel generic resource port
-pi            -> runtime ExternalAgentExecutor, kernel process/lease ports
+robot-vla     -> cognit CognitiveRun, runtime extension ports, hardware
+provider      -> cognit InferencePort, kernel generic resource port
+pi            -> runtime DelegateBackend, kernel process/lease ports
 gbrain        -> mnemosyne supplemental port, kernel generic resource port（reconcile 由 GBrain adapter 拥有）
 adapters      -> only the ports they implement/use
 aletheon      -> all concrete components required for composition
@@ -428,9 +444,9 @@ Port 必须由需要保护该不变量的一侧拥有，而不是统一塞入 Co
 | `AuthorizationEvidenceVerifier` | Kernel | outer adapter backed by Application ApprovalStore/owner evidence |
 | `ProcessController` | Kernel | Linux/execd adapter |
 | `RuntimeJournal` | Runtime | SQLite adapter |
-| `ExternalAgentExecutor` | Runtime | Governed Pi adapter backed by Kernel process permit/lease; no direct OS spawn |
-| `CognitiveSession` | Cognit | Native Cognit / Robot VLA session adapter |
-| `InferenceService` | Cognit | Governed provider adapter using Kernel generic resource + provider-owned admission |
+| `DelegateBackend` | Runtime | Governed Pi adapter backed by Kernel process permit/lease; no direct OS spawn |
+| `CognitiveRun` | Cognit | Native Cognit / Robot VLA per-Turn adapter |
+| `InferencePort` | Cognit | Governed inference adapter using Kernel generic resource + provider-owned admission |
 | `SelfPolicy` | Dasein | Dasein service |
 | `SelfStore` / `OwnerManifestSource` | Dasein | SQLite/file/admin adapter |
 | `OwnerAuthorizationVerifier` | Dasein | outer adapter backed by Application ApprovalStore/owner evidence |
@@ -713,14 +729,40 @@ Runtime 是以下语义的唯一 owner：
 - Agent Run；
 - parent/child delegate；
 - wait/send/cancel/reparent/settlement；
-- Native/Pi runtime route；
+- Native/Pi delegate backend route；
 - context assembly 与 compaction policy；
 - restart/replay/reconciliation；
 - authoritative projection facts 与 domain query snapshots 的 source。
 
 Runtime 不 materialize TUI/client-specific Session list、Task snapshot 或 presentation model；Gateway/adapter 根据 Runtime projection facts/query snapshots 构造 public read model。
 
-### 10.2 内部组件，而不是新 God Object
+### 10.2 核心构造权与 ID assignment
+
+“ID 类型可跨边界传递”不代表“任何调用者都能创建新的领域实体”。V2 的 assignment authority 固定为：
+
+| 身份/实体 | 唯一 assignment/creation owner | 外层允许做什么 |
+|---|---|---|
+| `AgentId`、Agent generation、`AgentRunId` | Runtime | 查询、引用已有 ID，提交 `SpawnDelegate` command |
+| `SessionId` | Runtime | 提交无 caller-supplied ID 的 `CreateSession`；用已有 ID resume/query |
+| `TurnId`、`ActionBindingId` | Runtime | 提交 command、保存已有 correlation，不得声明新 Turn/Action 已存在 |
+| `DecisionRequestId` | 发起等待的 authority owner（普通 Turn 为 Runtime；Self/Kernel/Application workflow 分别由各自 owner） | Application 只能用该 ID 创建/展示 Approval aggregate 和记录 resolution，不能伪造已有 authority challenge |
+| `SelfId`/Self revision | Owner enrollment + Dasein | 读取受限 projection，不得由 Agent/Client 自行创建 |
+| `OperationId`、execution epoch、Permit identity | Kernel | Runtime 通过窄 port 请求，不得预造或替换 |
+| `PrincipalId`、connection identity | Gateway/Host 根据可信 peer credential 建立 | Client payload 不声明 effective principal |
+| `CorrelationId`、client request id | Ingress 可生成 | 仅用于关联，永不授权或创建 aggregate |
+
+硬规则：
+
+- `CreateSession` 不接受客户端指定的新 `SessionId`，Runtime 先 durable append，再返回 `SessionCreated` receipt；
+- 首次 `SubmitTurn` 若允许隐式建 Session，也必须由 Runtime 在同一 command boundary 内分配并持久化，不能由 TUI/CLI 预造；
+- `SpawnDelegate` 只能由 Runtime `AgentSupervisor` 生成 child identity/generation；
+- Contracts 中 ID wrapper 的解析能力只表示“引用已有 identity”，不能被任何 `create` API 当作创建凭证；
+- 客户端只提交 `RequestedWorkspace`、`RequestedPermissionProfile`、`RequestedExecutionTarget` 和 route hint；Gateway/Application/Runtime 根据可信身份返回 `Effective*` projection；
+- daemon bootstrap 只恢复/组装服务，不隐式创建业务 Session、Turn 或 Agent；
+- TUI 临时 streaming/optimistic state 使用 `UiOverlayId`，不得调用 `TurnId::new`；
+- 删除 `executive::core::session::{Session, ContextState, TuiSessionManager}`；其中 context cache、permission 和 tool policy 分别迁给 Runtime `ContextWorkingSet`、Gateway/Application 请求模型和 Kernel/Dasein policy owner，不能整块复制。
+
+### 10.3 内部组件，而不是新 God Object
 
 ```text
 runtime/
@@ -736,7 +778,7 @@ runtime/
 
 这些组件共享同一套 aggregate 和 journal protocol，但不能通过 service locator 互相获取全部内部状态。
 
-### 10.3 Canonical Turn 状态机
+### 10.4 Canonical Turn 状态机
 
 建议状态：
 
@@ -762,7 +804,7 @@ Accepted
 - 调用者不能传入任意 `TurnContext` 绕过 memory、Self 和 authority assembly；
 - Native、Pi、CLI、TUI、Gmail、Robot 最终使用同一个 Turn 状态机。
 
-### 10.4 Runtime 与 Kernel 的绑定
+### 10.5 Runtime 与 Kernel 的绑定
 
 ```text
 AgentExecutionBinding {
@@ -779,7 +821,7 @@ AgentExecutionBinding {
 - Kernel 不反向维护 `AgentId -> ProcessIdentity` 语义 registry；
 - Runtime 不复制 Kernel Permit/Resource 的权威状态。
 
-### 10.5 子 Agent 与 Self
+### 10.6 子 Agent 与 Self
 
 V2 默认不是多主体系统：
 
@@ -806,9 +848,9 @@ ChildSelfBinding {
 - Pi 是 external delegate executor，不是第二个 Runtime、Session 或 Self authority；
 - 独立 Self、多主体治理和 Self 间社会关系延期到 V2 之后。
 
-### 10.6 Pi 的真实治理等级
+### 10.7 Pi 的真实治理等级
 
-Runtime manifest 已区分治理能力，计划必须诚实保留：
+当前 `RuntimeManifest` 已区分治理能力；迁入 Runtime 时改为 `DelegateBackendManifest`，并诚实保留：
 
 - `Intercepted/Mediated`：每个 tool call 回到 Kernel，逐次 permit；
 - `Observed/Opaque`：Kernel 只能授予进程级 sandbox lease，限制 workspace、network、budget、credential 和 deadline；
@@ -1066,7 +1108,7 @@ Kernel 拥有 `CapabilityExecutor` 与 bootstrap-only descriptor registration po
 
 这些 I/O 使用专属 port 和协议，并接受对应 budget/admission/reconciliation，而不是混入通用 Tool executor。
 
-Cognit 拥有 `InferenceService` port；外层 `GovernedInferenceAdapter` 实现该 port，并使用 Kernel `ResourceLedger` 与 provider-owned machine admission/backpressure：调用前 reservation，调用后记录真实 usage/provider receipt。Cognit 不依赖 Kernel 或 HTTP，Kernel 不理解 provider route，Provider adapter 也不进入通用 `CapabilityExecutor` registry。
+Cognit 拥有 `InferencePort`；外层 `GovernedInferenceAdapter` 实现该 port，并使用 Kernel `ResourceLedger` 与 provider-owned machine admission/backpressure：调用前 reservation，调用后记录真实 usage/provider receipt。Cognit 不依赖 Kernel 或 HTTP，Kernel 不理解 provider route，Provider adapter 也不进入通用 `CapabilityExecutor` registry。
 
 Gmail inbound worker 使用只读、可撤销、有限期的 sync lease；GBrain outbox 使用自身 idempotency/remote-ack reconciliation。它们不拥有 Turn authority，也不能因 core service I/O 成功而自行宣告 Agent Turn 成功。
 
@@ -1091,16 +1133,17 @@ Application 是用户用例层，不是 Agent Core。第一阶段只保留：
 - `SubmitTurn`；
 - `ContinueTurn`；
 - `CancelTurn`；
+- `CreateSession/ResumeSession/ForkSession/ListSessions`；
 - `GetSession/GetTurn`；
 - `SpawnDelegate/WaitDelegate/SendDelegate`；
 - `IngestExternalStimulus`；
 - `CreateGoalDraft`；
-- `RequestApproval/ResolveApproval`；
+- `OpenApproval/ResolveApproval`（消费 owner 已持久化的 `DecisionRequestId` challenge）；
 - `GetRuntimeProjection`。
 
 Goal Draft 和 Approval 留在 Application，是为了给 Gmail、Robot 和普通用户交互提供通用入口；它们不进入 Contracts 或 Kernel。
 
-Runtime 不反向依赖 Application：当一个 Turn 需要人工决定时，Runtime 只持久化 `WaitingForAuthority` 和不可猜测的 `DecisionRequestId`。Application 创建/展示/持久化审批，并在用户解决后通过明确的 `ResumeWithDecision(DecisionRequestId)` command 通知 Runtime 重新验证。该 command 只提交 resolution evidence 的关联，不宣告 Dasein/Kernel 已授权；Dasein/Kernel 各自通过 verifier 检查 digest、principal、scope、generation/revision、expiry、nonce 和 single-use，再 mint 领域内部 opaque grant。Application 不能直接修改 Runtime journal，Runtime 也不直接读取 ApprovalStore。
+Runtime 不反向依赖 Application：当一个 Turn 需要人工决定时，Runtime 先持久化 `WaitingForAuthority` challenge，并为该 challenge 分配不可猜测的 `DecisionRequestId`。Application 以这个既有 ID 创建/展示/持久化 Approval aggregate；它拥有 `ApprovalId` 和 resolution，但不能自己制造一个 ID 冒充 Runtime 正在等待的 challenge。Self/Kernel/Application 自己发起的非 Turn challenge 同理由发起 owner 先持久化并分配 `DecisionRequestId`。用户解决后，Application 通过明确的 `ResumeWithDecision(DecisionRequestId)` command 通知原 owner 重新验证。该 command 只提交 resolution evidence 的关联，不宣告 Dasein/Kernel 已授权；Dasein/Kernel 各自通过 verifier 检查 digest、principal、scope、generation/revision、expiry、nonce 和 single-use，再 mint 领域内部 opaque grant。Application 不能直接修改 Runtime journal，Runtime 也不直接读取 ApprovalStore。
 
 Application 不得包含：
 
@@ -1135,6 +1178,100 @@ TUI 是 Presentation：
 - 不把 Robot dashboard 强制放入默认界面。
 
 TUI 可以维护本地 reducer/UI state，但任何“运行中/成功/失败”都必须来自可信 host projection。
+
+### 13.4 TUI 的物理边界
+
+目标依赖必须是：
+
+```text
+interact/TUI
+-> gateway-client（typed commands/subscription/reconnect）
+-> gateway-protocol（public DTO/error code/version）
+
+interact/TUI -X-> executive/runtime/kernel/domain store/concrete adapter
+```
+
+TUI 只保留：
+
+- 输入编辑、命令选择和本地展示偏好；
+- `SessionProjection/TurnProjection/AgentProjection` 的 reducer；
+- `SelectedSession`、scroll/cursor/modal 等 view state；
+- `UiOverlayId` 标识尚未被 durable event 替换的临时渲染项；
+- 调用 typed client 后的 pending request/cancel UI。
+
+TUI 不再拥有：
+
+- `UnixStream` framing、JSON-RPC serialization、protocol retry/poll 算法；这些属于 `gateway-client`；
+- `ClientIntent` 中的 effective principal、permission、workspace policy 或 authority grant；
+- Session/Turn/Agent ID mint；
+- runtime hint → `TaskKind::Coding` 等业务推导；
+- 根据错误文本判断 policy denial/success/failure；
+- legacy `session.new/session.create/new_session` 分支和本地 terminal 推断；
+- daemon bootstrap/ensure 的 Executive 直接依赖。
+
+`App` 必须拆成 `TuiModel + TuiController + TuiRenderer + GatewayClient` 四个窄边界。Renderer 不发 command，GatewayClient 不操作 widget，Reducer 不读 socket/clock/environment，Controller 不生成领域权威事实。输入草稿、历史、选择光标可本地持久化；Agent/Session/Turn truth 不可。
+
+### 13.5 项目词汇、函数命名与 Rust 代码规范
+
+这不是一次单独的大规模 rename。每个 owner 的纵向迁移 PR 必须同时清理自己范围内的命名、错误边界和 lint 债务，避免把旧混乱复制到新 crate。
+
+#### 保留词与角色后缀
+
+- `Runtime` 只表示 canonical Agent Runtime；Pi child backend 叫 `DelegateBackend`，Native 单 Turn 循环叫 `CognitiveRun`，Provider adapter 实现 `InferencePort`，受治理副作用实现才叫 `CapabilityExecutor`；禁止裸 `Executor` 和继续新增含混的 `*Runtime`；
+- Runtime 的长期交互 aggregate 才叫 `Session`；Cognit 单 Turn 循环统一叫 `CognitiveRun`，TUI 使用 `SessionView`/`SelectedSession`；
+- `Kernel` 只表示执行 enforcement boundary；机器级 inference 服务叫 `InferenceBroker`，不能叫 `SystemCoreRuntime`；
+- `Manager` 默认禁止。按真实职责使用 `Authority`、`Coordinator`、`Supervisor`、`Registry`、`Store`、`Projector`、`Broker`、`Adapter`；
+- `Service` 只用于 Application use-case facade；`Handler` 只用于 transport request adaptation；`Adapter` 名称必须指出它实现的 Port；
+- `Core`、`Common`、`Utils`、`Context`、`Data` 等无 owner 名称不得作为新的 public module/type；确有必要须 Architecture Review；
+- command/event/result 明确使用 `Command`、`Event`、`Receipt`、`Snapshot`、`Projection`、`Proposal`、`Verdict` 后缀，不用一个裸 `Result/State/Info` 覆盖多个语义。
+
+当前冲突必须在对应 owner cutover 时收敛：
+
+```text
+SessionManager            -> ContextWorkingSet
+SessionService            -> SessionAuthority
+RuntimeRegistry           -> DelegateBackendRegistry
+Kernel descriptor registry-> ExecutorRegistry
+CognitiveSession          -> CognitiveRun
+TuiSessionManager         -> 删除
+legacy AgentRuntime       -> 删除
+duplicate AgentLoader     -> MarkdownAgentProfileLoader（唯一）
+IPC AgentId(u64)          -> IpcEndpointId 或删除
+```
+
+#### 构造与生命周期动词
+
+| 动词 | 唯一允许语义 |
+|---|---|
+| `new` | 纯内存、无 I/O、不可失败、不 spawn、不读环境 |
+| `try_new` | 纯内存验证，可返回 typed error |
+| `open` | 打开 durable store/file/socket 等已有资源，不隐式 migrate |
+| `load` | 从配置/持久化读取并解析，不启动 worker |
+| `compose` | composition root 装配已构造依赖，不启动后台任务 |
+| `bootstrap` | composition root 的进程启动阶段，可做恢复、I/O 和启动 worker |
+| `create_*` | 由 aggregate owner 创建领域实体并提交 authoritative journal |
+| `spawn_*` | 创建受监督 Agent/Process/task，必须返回 handle/receipt |
+| `start` | 启动可停止的后台组件并返回 lifecycle handle |
+| `run/serve` | 占用当前 task 直到退出的事件循环/服务循环 |
+| `append_*` | 追加 owner journal，不等价于 projection update |
+| `project_*` | 生成可重建 read model，不推进 authority |
+| `admit/authorize` | 权威校验并产生 opaque grant/verdict |
+| `invoke` | Kernel 消费 permit 后执行一次 bound invocation |
+| `settle` | owner 唯一终态提交 |
+| `from_*/with_*` | 无 I/O、无 spawn 的转换或 builder 配置 |
+
+禁止 `new` 内部 `expect` fallible resource、async `new` 无真实异步、忽略形参、读环境或建立数据库；当前 `RequestHandler::new` 必须拆为 component constructors 与唯一 `bootstrap`，不能只改名为 `Runtime::new`。
+
+#### Public API、错误和代码规模
+
+- domain public API 不用裸 `String` 表示 ID/status/kind，不返回 `anyhow::Result`；
+- 内部调用使用 `AdapterError -> owning Domain/Kernel/Runtime typed error`，保留 category、retry/reconcile disposition 与 source；公开请求使用 `Domain/Runtime typed error -> ApplicationError -> GatewayErrorCode -> Presentation`；两条链都禁止 `message.contains(...)` 分类、把错误压成裸 `String` 或忽略 I/O result；
+- production crate 禁止 crate-level blanket `#![allow(clippy::...)]`；临时例外必须局部、写明理由、owner 和删除 milestone；
+- 一个 production module 只有一个主要 public owner type；`mod.rs` 只声明/重导出，不实现业务；
+- 新 production 普通文件目标 `<= 500` 行、`mod.rs <= 200` 行、普通函数 `<= 60` 行、状态机 transition `<= 100` 行、constructor 显式依赖 `<= 5`；超过即触发拆分或记录有期限的 Architecture Exception；
+- 不允许为过行数而机械切 helper。拆分必须减少一个 authority、I/O、state 或 lifecycle responsibility；
+- 不新增全局 service bag。`*Dependencies`/`*BootstrapInput` 只可汇集同一 bounded component 的具名依赖，不能隐藏跨领域 getter；
+- public trait/type 只有真实生产消费者才保留；repository-unreferenced re-export 先标记、验证后删除。
 
 ---
 
@@ -1251,7 +1388,7 @@ Fabric 中的 embodiment/device 类型迁入 Hardware；Robot VLA 依赖 Hardwar
 
 ### 14.4 Pi
 
-目标 owner：`adapters/pi`，实现 Runtime 的 `ExternalAgentExecutor` port。
+目标 owner：`adapters/pi`，实现 Runtime 的 `DelegateBackend` port。
 
 该 adapter 只实现 Pi manifest/protocol/event/result 语义；实际 OS spawn、process group、sandbox、credential grant、deadline 和 kill 必须由 Kernel process-level governed permit/lease 驱动，不能在 adapter 内直接旁路启动。
 
@@ -1484,6 +1621,10 @@ v2-authoritative      V2 唯一写入/执行，旧路径仅单向 facade
 - 冻结新 crate、新平台、新 Robot skill 和新应用 workflow；
 - 生成 dependency graph、public symbol inventory、runtime call graph；
 - 生成 Authority Map 与 Storage Topology Inventory；
+- 生成所有 Agent/Session/Turn/Self/Operation 构造点和 ID assignment inventory；
+- 将所有 Session-like 类型标记为 authority/projection/cache/transport/compatibility/dead，并记录唯一目标 owner；
+- 建立重复词汇与 public API inventory：`Runtime/Core/Session/Manager/Service/Handler/Registry/AgentId/Capability`；
+- 记录 crate-level lint suppression、`anyhow` domain API、超大 constructor/function/file 基线，建立只减不增 gate；
 - 记录 running PID/exe/socket/data-dir/schema/profile；
 - 交付 `core-linux`/`full-linux` Cargo feature/package 组合和最小 compile gate；
 - 明确 official `/usr/bin/aletheon` 使用 `full-linux`，扩展由运行配置决定是否激活；
@@ -1497,6 +1638,8 @@ v2-authoritative      V2 唯一写入/执行，旧路径仅单向 facade
 
 - 没有未知 SQLite writer；
 - 每个 durable table/stream 有 owner；
+- 每个 authority identity/aggregate 有唯一 creation/assignment owner，客户端 mint 点全部进入删除清单；
+- 命名/lint/代码规模债务有 owner 和最晚删除 milestone，baseline 后不得增长；
 - 每个受支持扩展有可重复 smoke/safety baseline；
 - 当前支持等级有证据，文档不夸大。
 
@@ -1544,7 +1687,7 @@ v2-authoritative      V2 唯一写入/执行，旧路径仅单向 facade
 工作项：
 
 - 为 Cognit、Dasein、Agora、Mnemosyne 提取无 HTTP/SQL/gRPC/system dependency 的 domain API package；
-- 提取 Cognit `InferenceService` 和 Runtime 所需的最小 service facade；
+- 提取 Cognit `InferencePort` 和 Runtime 所需的最小 domain facade；
 - 将 SQLite、Provider、gRPC、GBrain、path/config 实现迁入独立 adapter package；
 - Runtime 后续只依赖 domain API package；
 - 先保留旧 Executive composition adapter，不切换生产 writer；
@@ -1580,9 +1723,13 @@ v2-authoritative      V2 唯一写入/执行，旧路径仅单向 facade
 工作项：
 
 - 建立 Runtime aggregate/journal；
+- 建立 Runtime-owned `SessionAuthority::create_session`、Agent/Session/Turn ID assignment 与 durable creation receipt；
 - 迁入 canonical Turn state machine；
 - 建立 AgentExecutionBinding；
 - 迁入 Session authority；
+- 统一 canonical Session journal，区分 `SessionAggregate`、`SessionProjection` 与 `ContextWorkingSet`；
+- daemon/bootstrap 不再创建默认业务 Session；首次 Session 由 Runtime command 原子创建；
+- 删除 `TuiSessionManager` 及本纵向切片内已证明无调用者的 Native/Session 重复 authority；Pi 仍依赖的 legacy delegate/`AgentRuntime` facade 保留到 Milestone 5 cutover；
 - 迁入 cancel/recovery/reconcile；
 - Native Cognit 先走新路径；
 - 旧 Executive Turn path 只保留单向 facade。
@@ -1590,6 +1737,7 @@ v2-authoritative      V2 唯一写入/执行，旧路径仅单向 facade
 退出条件：
 
 - 只有一个生产 Turn state machine；
+- 只有一个 Session aggregate constructor 和 journal writer；Runtime 外不能分配新 Agent/Session/Turn identity；
 - Native CLI/TUI 使用同一 Runtime；
 - restart/cancel/timeout 不产生 false success 或下一轮污染。
 
@@ -1599,10 +1747,11 @@ v2-authoritative      V2 唯一写入/执行，旧路径仅单向 facade
 
 - 迁入 AgentSupervisor、spawn/wait/send/settlement；
 - 明确 child same-Self attenuation；
-- Pi adapter 实现 ExternalAgentExecutor；
+- Pi adapter 实现 `DelegateBackend`；
 - Pi child 绑定 Kernel execution process group；
 - 支持 mediated/delegated sandbox governance；
 - terminal receipt、reconnect 和 unknown reconciliation 收敛。
+- Pi installed equivalence 通过后，删除 legacy delegate/`AgentRuntime` facade 和重复 registry；
 
 退出条件：
 
@@ -1637,15 +1786,21 @@ v2-authoritative      V2 唯一写入/执行，旧路径仅单向 facade
 工作项：
 
 - 创建最小 Application crate；
+- Application 增加 typed `CreateSession/ResumeSession/ForkSession/ListSessions` 用例，只调用 Runtime command/query ports；
 - 迁入 generic approval/goal-draft/external-stimulus use cases；
-- RPC DTO 和 public error 移入 Gateway；
-- TUI 只消费 projection；
+- RPC DTO、typed error code、authenticated principal establishment 移入 Gateway；客户端 principal 字段退出 public authority contract；
+- 提取轻量 `gateway-protocol/gateway-client` 边界，统一 command、subscription、reconnect 和 framing；
+- TUI 只消费 projection，使用 `UiOverlayId`，不再 mint core ID、推导 TaskKind/effective policy 或按错误文本分类；
+- `App` 拆成 `TuiModel/TuiController/TuiRenderer/GatewayClient`；
+- ACP composition 不再手写 create-session/JSON-RPC workflow；
 - daemon host/composition 移出 Executive；
 - 建立唯一 user daemon topology。
 
 退出条件：
 
 - TUI/CLI/Gateway 没有 Runtime repository 写权限；
+- `interact` 不依赖 Executive、Kernel 或 concrete adapters；presentation module 不直接读写 Unix framing/JSON；
+- Gateway 只从可信 peer/host facts 建立 principal，requested policy 与 effective policy 类型分离；
 - Application 无具体 adapter；
 - official socket 使用同一个 Runtime；
 - system daemon 不再持有重复 Agent state。
@@ -1723,30 +1878,34 @@ v2-authoritative      V2 唯一写入/执行，旧路径仅单向 facade
 建议使用短生命周期、可直接合入 `dev` 的纵向 PR：
 
 ```text
-AK2-00  baseline + core/full profiles + runtime/storage/topology manifests
+AK2-00a baseline + core/full profiles + runtime/storage/topology manifests
+AK2-00b construction/ID-assignment inventory + vocabulary/lint debt gate
 AK2-01  preserve Gmail facade and installed smoke
 AK2-02  preserve Pi delegate facade and installed smoke
 AK2-03  preserve GBrain outbox/reconcile facade and smoke
 AK2-04  introduce Hardware target API + legacy conversion adapter
 AK2-05  introduce Robot VLA facade without cutover
 AK2-06  introduce minimal Contracts and freeze Fabric surface
-AK2-07a extract Cognit API/InferenceService from provider I/O
+AK2-07a extract Cognit API/InferencePort from provider I/O
 AK2-07b extract Dasein API/store from SQLite/host I/O
 AK2-07c extract Metacog API/store from host/Kernel dependencies
 AK2-07d extract Agora API from persistence I/O
 AK2-07e extract Mnemosyne API from SQLite/HTTP/GBrain adapters
 AK2-08  move Kernel-owned types/ports out of Fabric
 AK2-09  durable Kernel registry/operation/permit/resource vertical slice
-AK2-10  Runtime journal + canonical Native Turn
-AK2-11  AgentSupervisor + Pi delegate/wait/recovery cutover
+AK2-10a Runtime Agent/Session authority + owner-assigned IDs + creation receipts
+AK2-10b Runtime journal + canonical Native Turn + remove dead duplicate authorities
+AK2-11  AgentSupervisor + Pi delegate/wait/recovery cutover + post-smoke legacy facade removal
 AK2-12  OwnerManifest + Dasein authority chain
 AK2-13  Metacog post-settlement proposal/experiment boundary
 AK2-14  Agora non-authoritative workspace boundary
 AK2-15  Mnemosyne admission/recall and GBrain boundary
 AK2-16  Corpus capability descriptor/executor boundary
 AK2-17  minimal Application and Approval flow
-AK2-18  Gateway/RPC/socket + authoritative user daemon topology
-AK2-19  TUI projection-only cutover
+AK2-18a Gateway typed protocol/client + authenticated identity + requested/effective policy split
+AK2-18b RPC/socket + authoritative user daemon topology + ACP workflow cutover
+AK2-19a TUI/CLI command-only Session cutover + UiOverlayId
+AK2-19b split TUI model/controller/renderer and remove Executive/legacy protocol dependency
 AK2-20  Gmail type ownership and new-path cutover
 AK2-21  Hardware type ownership and simulation/bridge cutover
 AK2-22  Robot VLA type ownership and new-path cutover
@@ -1761,6 +1920,7 @@ AK2-27  final installed provenance and soak
 
 - 一个 PR 只迁移一个 owner 或一条纵向路径；
 - mechanical rename、type ownership 和 behavior change 分开 commit；
+- 每个 owner 迁移 PR 同时清理该 owner 范围内的重复词汇、blanket lint allow、无类型错误和 oversized constructor；不另建最后一次全仓 rename PR；
 - 每个 PR 有 rollback note；
 - feature flag 不能永久存在；
 - 每个迁移 PR 在等价 smoke 后立即删除自己负责的 Executive 业务模块；AK2-26 只能删除空壳；
@@ -1803,8 +1963,10 @@ AK2-27  final installed provenance and soak
 
 - changed package check；
 - format；
+- changed packages + reverse dependents 的 Clippy；禁止新增 crate-level blanket allow；
 - dependency gate；
 - banned symbol/content gate；
+- construction/ID-assignment、typed-error、naming-debt 和 hotspot burn-down gate；
 - migration manifest check。
 
 普通开发默认只跑 L0，目标约一分钟级。
@@ -1913,6 +2075,7 @@ Nightwatch 不自动修改代码、不自动合并。
 - Kernel 只依赖 Contracts 和通用运行库；
 - Runtime 不依赖 Gateway/TUI/SQLite/HTTP/Gmail/Robot/Hardware；
 - Cognit/Dasein/Metacog/Agora/Mnemosyne 不依赖 Application/Host；
+- Interact/TUI 只依赖 Gateway protocol/client 与 presentation 库，不依赖 Executive、Runtime、Kernel、Corpus、domain stores 或 concrete adapters；
 - Core 不依赖 extensions；
 - adapters 依赖 ports，ports 不依赖 adapters；
 - composition root 不被任何领域反向依赖。
@@ -1923,13 +2086,16 @@ Nightwatch 不自动修改代码、不自动合并。
 - Kernel 禁止 Agent Profile、Session、prompt、provider route、Self、Robot、SQLite；
 - Runtime 禁止 socket、systemd、HTTP client、SQL、OAuth；
 - Cognit 禁止直接 ToolExecutor/Hardware driver；
-- TUI 禁止 repository；
+- TUI 禁止 repository、raw Unix framing、JSON-RPC 构造、effective policy 计算、runtime→TaskKind 推导、policy/error 文本分类和 core ID mint；
+- TUI 临时状态只能使用 `UiOverlayId` 等 presentation identity；禁止 `TurnId::new/SessionId::new/AgentId::new`；
 - source 中禁止永久 `fabric::`/`executive::` compatibility path；
 - source/log/test artifacts 中禁止 Secret plaintext/argv exposure。
 
 ### 21.3 Authority gates
 
 - 一个 canonical Turn implementation；
+- 一个 Agent/Session/Turn aggregate creation path；新 `AgentId/SessionId/TurnId` 只由 Runtime assignment owner 产生；
+- principal 只由 Gateway/Host 从可信 peer facts 建立；客户端 payload 不产生 effective principal；
 - 一个 Runtime journal writer；
 - 一个 Kernel execution journal writer；
 - 一个 Self mutation authority；
@@ -1948,12 +2114,25 @@ Nightwatch 不自动修改代码、不自动合并。
 
 - 核心 facade 不暴露 component getters；
 - constructor 参数不允许无边界 context/service bag；
+- `RequestHandler`/transport handler 不能作为 composition root 或持有跨领域 component graph；
+- 超过代码规模阈值不能只靠切 helper 通过，必须减少 authority/I/O/state/lifecycle responsibility；
 - 单个 crate 新增跨三个领域的 type/port 必须 Architecture Review；
 - `aletheon` composition 不实现 repository/domain policy；
 - Runtime public API 不暴露 Kernel internal IDs 给 Application；
 - Contracts public symbol 数量和依赖预算只能下降或经审查增加。
 
-### 21.5 Product gates
+### 21.5 Naming、error 与 lint gates
+
+- `Runtime` 只用于 Agent Runtime；Pi 使用 `DelegateBackend`，Native 使用 `CognitiveRun`，Provider 使用 `InferencePort/InferenceAdapter`，Agent-requested effect 使用 `CapabilityExecutor`；
+- `Session` 不与 Thread、connection、context cache、Cognit run 或 TUI view 混用；
+- 每个 owner 只有一套 Authority/Store/Registry 名称；重复 `AgentLoader/RuntimeRegistry/AgentId/Capability` 必须收敛；
+- construction verb 必须符合 §13.5；`new` 内无 I/O/spawn/environment/`expect`；
+- domain public API 无裸 `String` identity/status、无 `anyhow::Result`；transport 不以字符串判断错误类别；
+- production crate 无 crate-level blanket Clippy allow；局部例外包含理由、owner 和删除 milestone；
+- hotspot budget 对新代码执行 §13.5 目标并对 legacy 只减不增，不能把现有 1000+ 行文件当永久预算；
+- architecture check 对这些规则运行于 L0，而不是依赖人工记忆。
+
+### 21.6 Product gates
 
 - `core-linux` 独立编译和运行；
 - `full-linux` 编译所有 supported extensions，但默认按配置激活；
@@ -1977,7 +2156,7 @@ Nightwatch 不自动修改代码、不自动合并。
 | process/operation/cancel/resource | Kernel |
 | Context assembly | Runtime |
 | Cognit harness | Cognit |
-| LLM inference/provider scheduling | Cognit `InferenceService` + provider adapter + Kernel generic resource ledger |
+| LLM inference/provider scheduling | Cognit `InferencePort` + provider adapter + Kernel generic resource ledger |
 | Self/intent/action gate | Dasein |
 | Metacog observation/proposal | Metacog |
 | active workspace | Agora |
@@ -2009,7 +2188,10 @@ Nightwatch 不自动修改代码、不自动合并。
 - [ ] Capability Permit 绑定 sealed descriptor/executor registry revision 与 invocation digest，调用方不能替换 executor；
 - [ ] Approval workflow 仍由 Application 拥有，但 Dasein/Kernel 通过 verifier 内部 mint opaque grant；任何 ID 本身都不授权；
 - [ ] Runtime 是 Agent/Session/Turn/Delegate 唯一语义权威；
+- [ ] 新 Agent/Session/Turn identity 只由 Runtime assignment owner 产生；`CreateSession` 不接受 caller-supplied 新 ID；
+- [ ] Gateway/Host 从可信 peer facts 建立 principal；客户端只能提交 requested policy，不能声明 effective principal/permission；
 - [ ] 只有一个 canonical Turn state machine；
+- [ ] 只有一个 Session aggregate constructor/journal writer；`SessionAggregate/SessionProjection/ContextWorkingSet/SessionView` 名称和责任不混用；
 - [ ] Runtime 与 Kernel 通过 AgentExecutionBinding 对齐，不复制权威；
 - [ ] 每个 aggregate 有一个 journal writer；
 - [ ] `DispatchCommitted` 后缺少 finalized receipt 时进入有 owner/deadline 的 `ReconciliationPending`，超时后明确 settle 为 `Indeterminate`；
@@ -2021,7 +2203,11 @@ Nightwatch 不自动修改代码、不自动合并。
 - [ ] Agora 不承担 durable control authority；
 - [ ] Mnemosyne 不用于 Runtime 恢复；
 - [ ] Cognit/Dasein/Metacog/Agora/Mnemosyne domain API 不通过 feature 间接拉入 HTTP/SQL/gRPC/system adapters；
-- [ ] Application/Gateway/TUI 均为薄外层；
+- [ ] Application/Gateway/TUI 均为薄外层；Interact 不依赖 Executive/Runtime/Kernel/concrete adapters；
+- [ ] TUI/CLI 中零核心 aggregate constructor、零 authority ID mint、零 effective policy/TaskKind 推导、零按错误文本分类；
+- [ ] TUI 使用 typed Gateway client，只拥有 view/input/render/pending state；`TuiSessionManager` 和 legacy Session RPC 分支已删除；
+- [ ] `Runtime/Core/Session/Manager/Service/Handler/Registry` 词汇符合 §13.5，重复 AgentLoader/RuntimeRegistry/AgentId/Capability 已收敛；
+- [ ] production crate 无 crate-level blanket Clippy allow；domain public API 无 `anyhow::Result`/裸 String identity/status；legacy hotspot 按预算归零；
 - [ ] 唯一 user daemon 拥有 Agent 状态；
 - [ ] system daemon 若存在则无 Agent 状态且不共享 DB；
 - [ ] Executive 从 active workspace 和生产依赖图删除；
@@ -2052,6 +2238,8 @@ Agora 保存此刻正在发生的认知工作集
 Mnemosyne 保存可追溯但非权威的长期经验
 Corpus 与 adapters 提供可治理的外部能力
 Application/Gateway/TUI 只让人和扩展使用核心
+核心 identity 与 aggregate 只由 owner 构造，客户端只提交请求和读取 projection
+名称、构造动词和错误类型必须暴露真实责任，不能用 Core/Manager/Runtime 掩盖混合层
 Gmail、Robot VLA、Hardware 保留价值，但不反向塑造核心
 ```
 
