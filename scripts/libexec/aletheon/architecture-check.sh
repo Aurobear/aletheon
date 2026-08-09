@@ -1956,6 +1956,39 @@ if "Settle" not in orch or "settlement" not in orch.lower():
 PY
 fi
 
+# A1 scoreboard gate: only the allowed status enum is accepted (no prose
+# states), and a waived P0 gate must fail the release judgment.
+if [[ ${ARCH_SKIP_A1_GATES:-0} != 1 && -f crates/aletheon/src/scoreboard.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sb = (root / "crates/aletheon/src/scoreboard.rs").read_text(errors="replace")
+
+for needle, msg in (
+    ("pub enum AcceptanceStatus", "missing status enum"),
+    ("pub struct Waiver", "missing waiver"),
+    ("overall_passed", "missing P0 gate judgment"),
+):
+    if needle not in sb:
+        raise SystemExit(f"architecture-check: A1 scoreboard {msg}")
+
+# No prose states in the enum (doc comments that mention them only to reject
+# them are exempt).
+sb_code = "\n".join(
+    l for l in sb.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+for bad in ("code_complete", "looks_good", "evidence_complete"):
+    if re.search(rf"\b{bad}\b", sb_code):
+        raise SystemExit(f"architecture-check: A1 scoreboard uses prose state {bad}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

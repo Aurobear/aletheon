@@ -16,10 +16,14 @@ use gateway_protocol::{
 
 /// Typed ACP session create/prompt/cancel/recover translation to Gateway
 /// commands.  Holds a typed client; never raw JSON-RPC business methods.
+///
+/// PR-A seam: not yet constructed in production (the CGP-05 cutover wires it).
+#[allow(dead_code)]
 pub struct AcpTypedClient<T: GatewayTransport> {
     client: GatewayClient<T>,
 }
 
+#[allow(dead_code)]
 impl<T: GatewayTransport> AcpTypedClient<T> {
     pub fn new(client: GatewayClient<T>) -> Self {
         Self { client }

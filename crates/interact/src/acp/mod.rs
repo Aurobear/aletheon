@@ -23,7 +23,9 @@ pub use gateway::{
     run_transport_loop, AcpBackend, AcpEventSource, AcpServerFrame, AcpSessionEvent,
     AuthenticatedAcpConnection, CreatedAcpSession,
 };
-pub(crate) use typed_client::AcpTypedClient;
+// CGP-05 typed-client seam (PR-A): declared as a module; the cutover imports
+// it from `crate::acp::typed_client` when wiring.  Not re-exported yet to
+// avoid an unused-import warning on the additive seam.
 
 /// First-version ACP method subset. Unsupported methods are deliberately not
 /// represented, so the edge cannot accidentally advertise unfinished features.

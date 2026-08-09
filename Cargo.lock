@@ -94,6 +94,7 @@ dependencies = [
  "futures",
  "interact",
  "libc",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
