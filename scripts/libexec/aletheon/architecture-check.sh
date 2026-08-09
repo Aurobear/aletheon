@@ -912,8 +912,12 @@ for cols in rows:
     if del_pr not in DELETION_OWNERS:
         raise SystemExit(f"architecture-check: D0 boundary row {cols[1]} invalid deletion_pr {del_pr!r}")
     # INVESTIGATE last_writer must carry a blocker code in evidence_commit.
-    if cols[9] == "INVESTIGATE" and not re.search(r"B[0-7]", cols[15]):
-        raise SystemExit(f"architecture-check: D0 boundary row {cols[1]} INVESTIGATE without blocker")
+    if cols[9] == "INVESTIGATE" or cols[10] == "INVESTIGATE":
+        if not re.search(r"B[0-7]", cols[15]):
+            raise SystemExit(f"architecture-check: D0 boundary row {cols[1]} INVESTIGATE without blocker")
+        raise SystemExit(
+            f"architecture-check: D0 boundary row {cols[1]} has unresolved writer/reader "
+            "(B2/B4 closure required before D1)")
 
 # 5. Cross-check symbol sets match between public inventory and boundary census.
 pub_symbols = {c[2] for c in (l.split("\t") for l in pub_rows)}

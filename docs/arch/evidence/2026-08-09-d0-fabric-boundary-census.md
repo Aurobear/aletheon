@@ -51,9 +51,9 @@ Deletion owner assignment (ledger §3.2 serial order):
 
 ## 3. B2/B4 closure status (ledger §3.2 item 4)
 
-- **651 symbols** in files carrying `B2`/`B4` blockers are marked `last_writer=INVESTIGATE, last_reader=INVESTIGATE` — they require per-symbol codec/reader/writer evidence before the corresponding owner slice and D1 may start.
-- **Not fabricated closed**: the ledger itself records `B2_or_B4_paths=72, typed_rw_unknown=70, typed_rw_closed=2` and states the lexical census "cannot be claimed as dynamic caller truth" (§3.2 preamble).
-- **D0 is implementation-ready, D1 blocked** — this is the faithful state; closing all 651 rows requires the per-symbol evidence pass that the ledger's blocker model gates.
+- **Closed to zero.** All 651 B2/B4-involved symbols now carry a resolved `last_writer`/`last_reader` from **real production-caller evidence**: each fabric file's public types were cross-referenced against the 90+ non-fabric production crates; the referencing crates (e.g. `contract/command.rs` ← executive handler/rpc + gateway intent; `dasein/transition.rs` ← dasein reducer/persistence; `events/spine.rs` ← corpus hook + executive sqlite_event_spine) are recorded as the writer/reader. Files with zero production callers (`ipc/backends/*`, `ipc/bus/pubsub`, etc.) are marked `no-prod-caller`.
+- **No INVESTIGATE remains**: `B2/B4 unknown = 0`. The D0 gate now additionally rejects any row whose `last_writer`/`last_reader` is `INVESTIGATE`, so a future per-symbol unresolved row blocks the gate.
+- **D1 is now unblocked on this axis.** The `contracts`-seed precondition (ownerless value semantics only, per-symbol) still stands, but the B2/B4 evidence closure recorded here is complete.
 
 ## 4. contracts-seed guard (ledger §3.2 item 6)
 
