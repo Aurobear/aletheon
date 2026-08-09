@@ -807,6 +807,58 @@ if rpc_path.is_file():
 PY
 fi
 
+# E0 extension preservation manifest is monotonic.  Every preserved extension
+# row must be structurally valid with an existing evidence target.
+if [[ ${ARCH_SKIP_E0_GATES:-0} != 1 && -f config/architecture/extension-preservation.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/extension-preservation.tsv"
+
+EXTENSIONS = {"Gmail/Google", "GBrain", "Hardware", "Robot VLA", "Pi"}
+seen = set()
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#") or line.startswith("fact_id\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 17:
+        raise SystemExit(f"architecture-check: E0 census row {lineno} has {len(cols)} cols (want 17)")
+    fact_id, ext = cols[0], cols[1]
+    if not fact_id.startswith("E0-EXT-"):
+        raise SystemExit(f"architecture-check: E0 census row {lineno} invalid fact_id {fact_id!r}")
+    if ext not in EXTENSIONS:
+        raise SystemExit(f"architecture-check: E0 census {fact_id} unknown extension {ext!r}")
+    if ext in seen:
+        raise SystemExit(f"architecture-check: E0 census duplicate extension {ext!r}")
+    seen.add(ext)
+    if cols[15] != "CLOSED" and not cols[15].startswith("INVESTIGATE:"):
+        raise SystemExit(f"architecture-check: E0 census {fact_id} invalid status {cols[15]!r}")
+    m = re.match(r"^rg -n '(.+)' (.+)$", cols[16])
+    if not m:
+        continue
+    pattern = m.group(1)
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        continue
+    for target in m.group(2).strip().split():
+        full = root / target
+        if full.is_dir():
+            continue
+        if not full.is_file():
+            raise SystemExit(f"architecture-check: E0 census {fact_id} evidence target missing: {target}")
+        if not rx.search(full.read_text(errors="replace")):
+            raise SystemExit(f"architecture-check: E0 census {fact_id} evidence no longer matches {target}")
+if seen != EXTENSIONS:
+    raise SystemExit(f"architecture-check: E0 census missing extensions: {sorted(EXTENSIONS - seen)}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
