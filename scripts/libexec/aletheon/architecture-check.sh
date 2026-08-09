@@ -604,6 +604,127 @@ for row in rows:
 PY
 fi
 
+# APX-00 application use-case census is monotonic.  New concrete I/O in the
+# Executive Application layer (SQLite/filesystem/process/network) and new
+# use-case modules must be registered in application-use-case-census.tsv
+# before they are acceptable.  Classified by owner, not banned outright.
+if [[ ${ARCH_SKIP_APX00_GATES:-0} != 1 && -f config/architecture/application-use-case-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/application-use-case-census.tsv"
+
+CLS = {"basic-use-case", "optional-supported", "optional-unproven",
+       "adapter-io", "compatibility", "dead"}
+
+# Unambiguous concrete-I/O markers inside the Application layer.
+IO_PATTERNS = (
+    re.compile(r"\brusqlite::\b|\bConnection::open\b"),
+    re.compile(r"\bstd::fs::(?:write|read|create|remove|File::)\b"),
+    re.compile(r"\bstd::process::Command\b|\bCommand::new\s*\("),
+    re.compile(r"\breqwest::\b|\btokio::net::\b|\bUnixStream\b|\bUnixListener\b"),
+)
+
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    if line.startswith("fact_id\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 11:
+        raise SystemExit(f"architecture-check: APX-00 census row {lineno} has {len(cols)} cols (want 11)")
+    fact_id = cols[0]
+    if not fact_id.startswith("APX-"):
+        raise SystemExit(f"architecture-check: APX-00 census row {lineno} invalid fact_id {fact_id!r}")
+    cls = cols[2]
+    if cls not in CLS:
+        raise SystemExit(f"architecture-check: APX-00 census {fact_id} invalid classification {cls!r}")
+    status = cols[9]
+    if not (status == "CLOSED" or status.startswith("INVESTIGATE:")):
+        raise SystemExit(f"architecture-check: APX-00 census {fact_id} invalid status {status!r}")
+    rows.append(dict(fact_id=fact_id, cls=cls, path=cols[4], status=status, cmd=cols[10]))
+
+covered = set()
+for row in rows:
+    # path column may carry prose + multiple files + line refs; collect every
+    # crates-relative file/directory token that actually exists.
+    candidates = re.findall(r"crates/[^ ,:]+", row["path"])
+    for cand in candidates:
+        if (root / cand).exists():
+            covered.add(cand)
+    for extra in re.findall(r"crates/[^ ']+", row["cmd"]):
+        extra = extra.rstrip(",")
+        # cmd extras that are directories (directory-wide scans) must not
+        # blanket-cover; only file extras add coverage.
+        if (root / extra).is_file():
+            covered.add(extra)
+
+def file_covered(rel):
+    return any(rel == c or rel.startswith(c + "/") or c.startswith(rel + "/") for c in covered)
+
+# New concrete I/O in an unregistered Executive application file must fail.
+def application_sources():
+    base = root / "crates/executive/src/application"
+    for path in sorted(base.rglob("*.rs")):
+        rel = path.relative_to(root).as_posix()
+        if "/tests/" in rel:
+            continue
+        if path.name in {"tests.rs", "test_support.rs", "test_infra.rs", "fixtures.rs"} \
+           or path.name.endswith(("_test.rs", "_tests.rs")):
+            continue
+        body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+        yield rel, body.splitlines()
+
+uncovered = []
+for rel, lines in application_sources():
+    if file_covered(rel):
+        continue
+    for n, line in enumerate(lines, 1):
+        if any(rx.search(line) for rx in IO_PATTERNS):
+            uncovered.append(f"{rel}:{n}")
+            break
+if uncovered:
+    raise SystemExit(
+        "architecture-check: APX-00 unregistered Application I/O (add a census row): "
+        + ", ".join(uncovered[:20])
+        + (f" (+{len(uncovered)-20} more)" if len(uncovered) > 20 else ""))
+
+# CLOSED evidence commands must still match.
+for row in rows:
+    if row["status"] != "CLOSED":
+        continue
+    cmd = row["cmd"]
+    m = re.match(r"^rg -n '(.+)' (.+)$", cmd)
+    if not m:
+        continue
+    pattern = m.group(1)
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        continue
+    matched = False
+    for target in m.group(2).strip().split():
+        full = root / target
+        if full.is_dir():
+            matched = True
+            continue
+        if not full.is_file():
+            raise SystemExit(f"architecture-check: APX-00 census {row['fact_id']} evidence target missing: {target}")
+        if rx.search(full.read_text(errors="replace")):
+            matched = True
+    if not matched:
+        raise SystemExit(
+            f"architecture-check: APX-00 census {row['fact_id']} evidence no longer matches "
+            f"{m.group(2)} for {pattern!r}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
