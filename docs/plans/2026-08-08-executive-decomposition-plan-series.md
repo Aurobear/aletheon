@@ -5,6 +5,8 @@
 > 基线：`dev@bd1ceac2965832f15cf45b811fd34e052e7e9a67`
 >
 > 上位计划：[`2026-08-08-agent-kernel-v2-complete-rearchitecture.md`](./2026-08-08-agent-kernel-v2-complete-rearchitecture.md)
+>
+> 执行手册：[`2026-08-09-deepseek-rearchitecture-execution-runbook.md`](./2026-08-09-deepseek-rearchitecture-execution-runbook.md)
 
 ## 1. 为什么需要这一组专项计划
 
@@ -335,6 +337,7 @@ K7 + RA-06 + APX-05 + CGP-08 + D6 + E7 + AK2-25 -> XRET-04 -> XRET-05
 | `docs(plan): extract composition Gateway and presentation` | `plan/composition-gateway-presentation` | daemon/Gateway/TUI/ACP | Runtime/Application command surface 稳定 |
 | `docs(plan): preserve and cut over supported extensions` | `plan/preserved-extensions-cutover` | Gmail/Pi/GBrain/Robot/Hardware | preservation E0 可先行；最终切换依赖 owner ports |
 | `docs(plan): retire Executive with fitness gates` | `plan/executive-retirement-gates` | compatibility 与最终删除 | 前七条的 deletion gates；最后删除必须晚于 Contracts rename |
+| `docs(plan): add DeepSeek execution runbook` | `plan/deepseek-rearchitecture-runbook` | 上下文回执、证据关闭、单 writer 切换、回滚、验证和任务模板 | 上述 owner/DAG 决议稳定；不产生新的 authority 决议 |
 
 以上分支都应从最新 `dev` 独立创建 Draft PR，避免 plans PR 彼此堆叠造成审阅假依赖；正文用链接表达逻辑依赖。真正的实现 PR 再按各专项编号执行。
 
@@ -381,7 +384,7 @@ K7 + RA-06 + APX-05 + CGP-08 + D6 + E7 + AK2-25 -> XRET-04 -> XRET-05
 - 每个 authority 只有一个 owner、一个 ID assignment point、一个 writer；
 - 每个 Executive production 模块都有目标 package 和删除 PR；
 - 每个 compatibility seam 有最后消费者、deadline 和删除 gate；
-- 七份专项计划的阶段/PR 顺序无循环依赖；
+- 七份专项计划的阶段/PR 顺序无循环依赖，且执行手册能把每个 canonical slice 独立交给实施者；
 - Gmail/Pi/GBrain/Robot/Hardware 的迁移门早于相关旧代码删除；
 - 最终 resolved dependency graph 中不存在 `executive`，也不存在 `interact -> runtime/kernel/domain adapter`；
 - `contracts` public surface 通过预算检查且无 rich domain aggregate。

@@ -2263,6 +2263,9 @@ Gmail、Robot VLA、Hardware 保留价值，但不反向塑造核心
 - [`Composition Root、Gateway、TUI/ACP 提取`](./2026-08-08-composition-gateway-presentation-extraction.md)；
 - [`Gmail/Pi/GBrain/Robot/Hardware 保留迁移`](./2026-08-08-preserved-extensions-cutover.md)；
 - [`Executive 退休与 Fitness Gates`](./2026-08-08-executive-retirement-and-fitness-gates.md)；
-- [`Executive 逐源文件处置账本`](./2026-08-08-executive-source-disposition-ledger.md)。
+- [`Executive 逐源文件处置账本`](./2026-08-08-executive-source-disposition-ledger.md)；
+- [`Fabric 逐源文件处置与证据账本`](./2026-08-09-fabric-source-disposition-ledger.md)；
+- [`Interact authority census`](./2026-08-09-interact-authority-census.md)；
+- [`DeepSeek 重构执行手册`](./2026-08-09-deepseek-rearchitecture-execution-runbook.md)。
 
-专项计划不得放宽本文 §1.1、§6、§7、§10、§13 和 §23 的约束。若实现审计发现新事实，先用单独 plans PR 同时更新上位 owner 表和受影响专项计划，再开始 writer cutover；不得让互相矛盾的计划并行成为两个事实来源。
+专项计划和执行手册不得放宽本文 §1.1、§6、§7、§10、§13 和 §23 的约束。若实现审计发现新事实，先用单独 plans PR 同时更新上位 owner 表和受影响专项计划，再开始 writer cutover；不得让互相矛盾的计划并行成为两个事实来源。实现者必须按执行手册逐 slice 提交上下文回执、证据、切换与回滚报告，不能把整套计划作为一次性代码生成任务。
