@@ -14,6 +14,7 @@ pub mod evolution_validator;
 pub mod identity;
 pub mod mutation;
 pub mod narrative;
+pub mod ports;
 pub mod store;
 
 use anyhow::Result;

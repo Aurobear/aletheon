@@ -1533,6 +1533,33 @@ if "InferencePort" not in cr or "CognitiveRun" not in cr:
 PY
 fi
 
+# D3 Dasein authority gate: the Dasein authority seam must not depend on
+# Metacog or the Executive facade (Metacog observes/proposes, never mutates;
+# the Executive facade is deleted at XRET-02).
+if [[ ${ARCH_SKIP_D3_GATES:-0} != 1 && -f crates/dasein/src/core/ports.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+ports = (root / "crates/dasein/src/core/ports.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in ports.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bMetacog\w*\b|\bExecutive\b", line):
+        raise SystemExit(f"architecture-check: D3 dasein authority leaks Metacog/Executive at {lineno}")
+
+if "SelfMutationAuthority" not in ports or "PostSettlementConsumer" not in ports:
+    raise SystemExit("architecture-check: D3 seam must define SelfMutationAuthority + PostSettlementConsumer")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
