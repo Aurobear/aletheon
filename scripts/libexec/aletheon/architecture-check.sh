@@ -1108,6 +1108,39 @@ if len(trait_body) == 2:
 PY
 fi
 
+# K2 sealed-descriptor gate: the CapabilityRegistry must reject duplicate/
+# version-0/empty-digest bindings and must be immutable after seal; no
+# Runtime/Executive can replace a binding post-seal.
+if [[ ${ARCH_SKIP_K2_GATES:-0} != 1 && -f crates/kernel/src/capability/registry.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+reg = (root / "crates/kernel/src/capability/registry.rs").read_text(errors="replace")
+
+# The registry must enforce immutability after seal and reject bad descriptors.
+for needle, msg in (
+    ("registry is sealed; binding cannot be replaced", "missing post-seal immutability guard"),
+    ("descriptor version must be >= 1", "missing version>=1 validation"),
+    ("descriptor digest must not be empty", "missing digest validation"),
+    ("duplicate capability", "missing duplicate rejection"),
+    ("pub fn seal", "missing seal()"),
+    ("pub fn resolve", "missing resolve()"),
+):
+    if needle not in reg:
+        raise SystemExit(f"architecture-check: K2 registry {msg}")
+
+# Re-export must be reachable from kernel capability module.
+cap_mod = (root / "crates/kernel/src/capability/mod.rs").read_text(errors="replace")
+if "pub mod registry;" not in cap_mod:
+    raise SystemExit("architecture-check: K2 registry module not declared in capability/mod.rs")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

@@ -4,6 +4,8 @@
 //! tool invocations. The production path goes through `DefaultCapabilityInvoker`;
 //! direct tool calls that bypass this are forbidden.
 
+pub mod registry;
+
 use async_trait::async_trait;
 use fabric::{
     AdmissionController, AdmissionRequest, AuditEventId, CapabilityInvoker, CapabilityRequest,
