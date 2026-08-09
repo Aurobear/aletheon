@@ -19,6 +19,7 @@ pub mod session_shadow;
 pub mod session_writer;
 pub mod turn_outcome;
 pub mod turn_reducer;
+pub mod turn_writer;
 
 pub use agent_supervisor::{
     AgentSupervisorSeam, DelegateBackend, DelegateBackendId, DelegateBackendRegistry,
@@ -54,3 +55,4 @@ pub use turn_outcome::{
     BlockReason, CancelReason, StopReason, TurnExecutionResult, TurnFailure, TurnOutcome, TurnUsage,
 };
 pub use turn_reducer::{TransitionOutcome, TurnReducerSeam, TurnTransition};
+pub use turn_writer::RuntimeTurnWriter;

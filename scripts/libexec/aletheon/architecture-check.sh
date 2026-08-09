@@ -2055,6 +2055,39 @@ for needle, msg in (
 PY
 fi
 
+# RA-04 PR-C Turn writer gate: the writer must mint the canonical TurnId
+# itself, settle only through the single reducer terminal fence, and reject a
+# duplicate settle (no terminal reversal).
+if [[ ${ARCH_SKIP_RA04C_GATES:-0} != 1 && -f crates/runtime/src/turn_writer.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+tw = (root / "crates/runtime/src/turn_writer.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in tw.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub struct RuntimeTurnWriter", "missing runtime turn writer"),
+    ("TurnId(format!", "writer must mint the canonical TurnId"),
+    ("TurnReducerSeam", "writer must settle through the single reducer fence"),
+    ("AlreadyTerminal", "writer must reject terminal reversal"),
+):
+    if needle not in tw:
+        raise SystemExit(f"architecture-check: RA-04 writer {msg}")
+
+# No TurnPipeline/TurnCoordinator reference (single reducer, not the God Object).
+if "TurnPipeline" in code or "TurnCoordinator" in code:
+    raise SystemExit("architecture-check: RA-04 writer references the God Object")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
