@@ -1560,6 +1560,34 @@ if "SelfMutationAuthority" not in ports or "PostSettlementConsumer" not in ports
 PY
 fi
 
+# D4 Agora/Mnemosyne gate: the Agora workspace port is non-authoritative
+# (rebuild/degraded only, never a second authority) and must not import the
+# Executive memory/workspace modules.
+if [[ ${ARCH_SKIP_D4_GATES:-0} != 1 && -f crates/agora/src/workspace/port.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+port = (root / "crates/agora/src/workspace/port.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in port.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # Non-authoritative: no canonical session/turn write, no Executive import.
+    if re.search(r"\bExecutive\b|INSERT INTO sessions|SessionAppendStore|AgentRunRepository", line):
+        raise SystemExit(f"architecture-check: D4 agora workspace leaks authority at {lineno}")
+
+if "ActiveWorkspacePort" not in port or "degraded" not in port:
+    raise SystemExit("architecture-check: D4 seam must define ActiveWorkspacePort with rebuild + degraded")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

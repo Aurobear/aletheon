@@ -27,6 +27,9 @@ pub use fabric::include::agora::{
     WorkspaceCommitPermit,
 };
 
+/// D4 non-authoritative active-workspace port.
+pub mod port;
+
 // ---------------------------------------------------------------------------
 // Workspace
 // ---------------------------------------------------------------------------
