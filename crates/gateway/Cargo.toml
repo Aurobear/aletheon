@@ -8,6 +8,7 @@ description = "Aletheon Gateway - neutral channel dispatch engine"
 
 [dependencies]
 fabric = { path = "../fabric" }
+gateway-protocol = { path = "../gateway-protocol" }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }

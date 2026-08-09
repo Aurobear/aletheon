@@ -1369,6 +1369,38 @@ if "duplicate backend" not in sup:
 PY
 fi
 
+# CGP-03 typed route handler gate: the typed handler must call only the
+# Application/Runtime port — no Kernel/domain store/concrete adapter import,
+# no business logic in the legacy adapter (translate only).
+if [[ ${ARCH_SKIP_CGP03_GATES:-0} != 1 && -f crates/gateway/src/handlers/typed.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+typed = (root / "crates/gateway/src/handlers/typed.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in typed.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # No Kernel/domain store/concrete adapter imports in the typed handler.
+    if re.search(r"use\s+crate::(?:kernel|executive)|\bAgentRunRepository\b|\bSessionAppendStore\b|\bSqlite", line):
+        raise SystemExit(f"architecture-check: CGP-03 typed handler imports a store/adapter at {lineno}")
+
+# The legacy adapter must be translation-only (dispatch through the typed
+# handler, never business logic).
+if "LegacyJsonRpcAdapter" not in typed:
+    raise SystemExit("architecture-check: CGP-03 lacks the LegacyJsonRpcAdapter")
+if "translate_and_dispatch" not in typed:
+    raise SystemExit("architecture-check: CGP-03 legacy adapter must be translation-only")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

@@ -1519,6 +1519,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "fabric",
+ "gateway-protocol",
  "reqwest",
  "rusqlite",
  "serde",

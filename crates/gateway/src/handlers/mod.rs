@@ -5,3 +5,4 @@ pub mod chat;
 pub mod external_read;
 pub mod goal;
 pub mod greeting;
+pub mod typed;
