@@ -215,8 +215,6 @@ crates/executive/src/compatibility/legacy_session_service.rs	compatibility	execu
 crates/executive/src/compatibility/mod.rs	compatibility	executive	legacy public path or crate facade
 crates/executive/src/composition/adapter_registry.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/agent_loader/mod.rs	composition	executive	validated runtime composition
-crates/executive/src/composition/agents/loader.rs	composition	executive	validated runtime composition
-crates/executive/src/composition/agents/mod.rs	composition	executive	validated runtime composition
 crates/executive/src/composition/config/agent.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/backpressure.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/channel.rs	composition	executive	configuration and dependency construction
