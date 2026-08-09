@@ -2113,6 +2113,8 @@ dependencies = [
  "dirs-next",
  "executive",
  "fabric",
+ "gateway-client",
+ "gateway-protocol",
  "nix 0.29.0",
  "pulldown-cmark",
  "ratatui",

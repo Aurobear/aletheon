@@ -726,7 +726,7 @@ PY
 fi
 
 # CGP-00 composition/Gateway/Interact census is monotonic.  The Interact
-# source-file set must stay mechanically equal to the 56-file baseline in
+# source-file set must stay mechanically equal to the 57-file baseline (56 + CGP-05 seam) in
 # interact-authority-census.md; new daemon RPC route methods must be
 # registered in gateway-route-census.tsv.
 if [[ ${ARCH_SKIP_CGP00_GATES:-0} != 1 && -f config/architecture/gateway-route-census.tsv ]]; then
@@ -768,12 +768,14 @@ for lineno, line in enumerate(route.read_text().splitlines(), 1):
         if not rx.search(full.read_text(errors="replace")):
             raise SystemExit(f"architecture-check: CGP-00 route {cols[0]} evidence no longer matches {target}")
 
-# 2. Interact source set must equal the 56-file baseline.
+# 2. Interact source set must equal the 57-file baseline (56 census + CGP-05
+#    typed_client.rs seam).  Any further addition must update the census and
+#    ledger together.
 interact = sorted(p.relative_to(root).as_posix()
                   for p in (root / "crates/interact/src").rglob("*.rs"))
 actual = len(interact)
-if actual != 56:
-    raise SystemExit(f"architecture-check: CGP-00 interact source set {actual} != 56 baseline; "
+if actual != 57:
+    raise SystemExit(f"architecture-check: CGP-00 interact source set {actual} != 57 baseline; "
                      "update interact-authority-census.md and the ledger together")
 
 # 3. Every daemon RPC dispatch method must be registered in a route row.
@@ -1723,6 +1725,33 @@ for path in sorted(app_dir.rglob("*.rs")):
     for lineno, line in enumerate(body.splitlines(), 1):
         if re.search(r"rusqlite|Connection::open|std::fs::|std::process::|Command::new|nix::|reqwest::|UnixStream|UnixListener|TcpListener", line):
             raise SystemExit(f"architecture-check: APX-04 Application imports concrete I/O at {rel}:{lineno}")
+PY
+fi
+
+# CGP-05 ACP typed-client gate: the ACP typed adapter must use gateway-client
+# typed commands — no raw JSON-RPC business methods, no Executive repository,
+# no Session/Turn ID mint.
+if [[ ${ARCH_SKIP_CGP05_GATES:-0} != 1 && -f crates/interact/src/acp/typed_client.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+tc = (root / "crates/interact/src/acp/typed_client.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in tc.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bExecutiveAcpBackend\b|\bRequestHandler\b|\bUnixStream\b|raw JSON-RPC", line):
+        raise SystemExit(f"architecture-check: CGP-05 ACP typed client leaks a legacy path at {lineno}")
+
+if "gateway_client" not in tc or "GatewayClient" not in tc:
+    raise SystemExit("architecture-check: CGP-05 ACP typed client must use gateway-client")
 PY
 fi
 

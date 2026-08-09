@@ -9,6 +9,8 @@ description = "User interaction: TUI, CLI, and ACIX"
 [dependencies]
 fabric = { path = "../fabric" }
 executive = { path = "../executive" }
+gateway-client = { path = "../gateway-client" }
+gateway-protocol = { path = "../gateway-protocol" }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }

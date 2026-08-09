@@ -7,6 +7,7 @@
 mod event_map;
 mod gateway;
 pub mod transport;
+mod typed_client;
 
 use std::{collections::VecDeque, path::PathBuf};
 
@@ -22,6 +23,7 @@ pub use gateway::{
     run_transport_loop, AcpBackend, AcpEventSource, AcpServerFrame, AcpSessionEvent,
     AuthenticatedAcpConnection, CreatedAcpSession,
 };
+pub(crate) use typed_client::AcpTypedClient;
 
 /// First-version ACP method subset. Unsupported methods are deliberately not
 /// represented, so the edge cannot accidentally advertise unfinished features.
