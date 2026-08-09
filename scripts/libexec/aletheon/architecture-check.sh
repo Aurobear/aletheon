@@ -1643,6 +1643,34 @@ if "NeedsReconciliation" not in inv or "AlreadyTerminal" not in inv:
 PY
 fi
 
+# K5 ProcessController gate: the controller must fail closed on spawn failure
+# (no silent in-process fallback) and expose PID generation for stale-handle
+# fencing.
+if [[ ${ARCH_SKIP_K5_GATES:-0} != 1 && -f crates/platform/src/process_controller.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+pc = (root / "crates/platform/src/process_controller.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in pc.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+if "FailedToStart" not in pc:
+    raise SystemExit("architecture-check: K5 process controller lacks fail-closed FailedToStart")
+if "generation" not in pc:
+    raise SystemExit("architecture-check: K5 process controller lacks PID generation")
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\b(?:Command::new)\b", line) and not re.search(r"request\.command|command:", line):
+        pass
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

@@ -11,6 +11,7 @@ pub mod filesystem;
 pub mod manifest;
 pub mod path;
 pub mod process;
+pub mod process_controller;
 pub mod pty;
 pub mod receipt;
 pub mod registry;
