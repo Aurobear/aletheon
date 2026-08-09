@@ -1338,6 +1338,37 @@ if "AlreadyTerminal" not in red:
 PY
 fi
 
+# RA-05 AgentSupervisor gate: the supervisor seam is generic only — it must
+# not migrate Pi concrete files, must have a single DelegateBackendRegistry,
+# and must reject duplicate backend registrations.
+if [[ ${ARCH_SKIP_RA05_GATES:-0} != 1 && -f crates/runtime/src/agent_supervisor.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sup = (root / "crates/runtime/src/agent_supervisor.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in sup.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# No Pi concrete file migration in the generic seam (E6-K6d owns Pi).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bPiRuntime\b|\bPiRpcRuntime\b|register_pi_runtime", line):
+        raise SystemExit(f"architecture-check: RA-05 generic seam migrates Pi at {lineno}")
+
+# Single registry + duplicate rejection required.
+if "DelegateBackendRegistry" not in sup:
+    raise SystemExit("architecture-check: RA-05 seam lacks the generic DelegateBackendRegistry")
+if "duplicate backend" not in sup:
+    raise SystemExit("architecture-check: RA-05 registry must reject duplicate backends")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

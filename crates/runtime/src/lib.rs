@@ -1,6 +1,7 @@
 //! External runtime capability manifests, deterministic selection, and the
 //! Runtime owner contract (RA-01).
 
+pub mod agent_supervisor;
 pub mod command;
 pub mod error;
 pub mod event;
@@ -13,6 +14,10 @@ pub mod selector;
 pub mod session_authority;
 pub mod turn_reducer;
 
+pub use agent_supervisor::{
+    AgentSupervisorSeam, DelegateBackend, DelegateBackendId, DelegateBackendRegistry,
+    DelegateReceipt, DelegateSpawnRequest,
+};
 pub use command::{
     CancelTurnCommand, CommandReceipt, CreateSessionCommand, ResumeSessionCommand, RuntimeCommand,
     SpawnAgentRunCommand, StartTurnCommand,
