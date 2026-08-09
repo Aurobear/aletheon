@@ -1141,6 +1141,35 @@ if "pub mod registry;" not in cap_mod:
 PY
 fi
 
+# APX-01 Application facade gate: the Application crate may depend only on
+# contracts/fabric + runtime.  It must not hold a repository, mint a core ID,
+# or import Executive/concrete adapters.
+if [[ ${ARCH_SKIP_APX01_GATES:-0} != 1 && -f crates/application/Cargo.toml ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+manifest = (root / "crates/application/Cargo.toml").read_text()
+for forbidden in ("executive", "interact", "gateway", "corpus", "kernel", "mnemosyne", "agora", "dasein", "metacog"):
+    if re.search(rf'^\s*{forbidden}\s*=\s*', manifest, re.M):
+        raise SystemExit(f"architecture-check: APX-01 application depends on forbidden crate {forbidden}")
+
+src = "\n".join(
+    p.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    for p in (root / "crates/application/src").rglob("*.rs")
+)
+for lineno, line in enumerate(src.splitlines(), 1):
+    if re.search(r"\b(?:Repository|AgentRunRepository|SessionAppendStore|SessionStore)\b", line):
+        raise SystemExit(f"architecture-check: APX-01 application holds a repository at {lineno}")
+    if re.search(r"\bSessionId\(|TurnId\(|AgentRunId\(|AgentId\(", line):
+        raise SystemExit(f"architecture-check: APX-01 application mints a core ID at {lineno}")
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by

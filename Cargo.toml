@@ -18,6 +18,7 @@ members = [
     "crates/execd",
     "crates/platform",
     "crates/runtime",
+    "crates/application",
     "crates/hardware",
     "examples/basic_agent",
     "examples/evolution_loop",
