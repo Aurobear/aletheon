@@ -725,6 +725,88 @@ for row in rows:
 PY
 fi
 
+# CGP-00 composition/Gateway/Interact census is monotonic.  The Interact
+# source-file set must stay mechanically equal to the 56-file baseline in
+# interact-authority-census.md; new daemon RPC route methods must be
+# registered in gateway-route-census.tsv.
+if [[ ${ARCH_SKIP_CGP00_GATES:-0} != 1 && -f config/architecture/gateway-route-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+route = root / "config/architecture/gateway-route-census.tsv"
+
+# 1. Gateway route census structural integrity.
+for lineno, line in enumerate(route.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#") or line.startswith("fact_id\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 18:
+        raise SystemExit(f"architecture-check: CGP-00 route census row {lineno} has {len(cols)} cols (want 18)")
+    if not cols[0].startswith("CGP-R-"):
+        raise SystemExit(f"architecture-check: CGP-00 route census row {lineno} invalid fact_id {cols[0]!r}")
+    if cols[16] != "CLOSED" and not cols[16].startswith("INVESTIGATE:"):
+        raise SystemExit(f"architecture-check: CGP-00 route {cols[0]} invalid status {cols[16]!r}")
+    m = re.match(r"^rg -n '(.+)' (.+)$", cols[17])
+    if not m:
+        continue
+    pattern = m.group(1)
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        continue
+    for target in m.group(2).strip().split():
+        full = root / target
+        if full.is_dir():
+            continue
+        if not full.is_file():
+            raise SystemExit(f"architecture-check: CGP-00 route {cols[0]} evidence target missing: {target}")
+        if not rx.search(full.read_text(errors="replace")):
+            raise SystemExit(f"architecture-check: CGP-00 route {cols[0]} evidence no longer matches {target}")
+
+# 2. Interact source set must equal the 56-file baseline.
+interact = sorted(p.relative_to(root).as_posix()
+                  for p in (root / "crates/interact/src").rglob("*.rs"))
+actual = len(interact)
+if actual != 56:
+    raise SystemExit(f"architecture-check: CGP-00 interact source set {actual} != 56 baseline; "
+                     "update interact-authority-census.md and the ledger together")
+
+# 3. Every daemon RPC dispatch method must be registered in a route row.
+#    Reads the quoted method strings from rpc.rs dispatch match arms.
+rpc_path = root / "crates/executive/src/host/daemon/handler/rpc.rs"
+if rpc_path.is_file():
+    dispatch = rpc_path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    # Match quoted method literals (single or grouped in match arms).
+    methods = set(re.findall(r'"([a-z][a-z0-9_.\-/]*)"', dispatch))
+    # Drop JSON-RPC envelope keys and prose that are not route methods.
+    envelope = {"id", "jsonrpc", "result", "error", "code", "message", "method"}
+    methods = methods - envelope
+    # Drop path-like/misc literals that are format strings or keys.
+    methods = {m for m in methods
+               if not any(m == k for k in ("default", "prompt", "workspace", "config"))}
+    registered = set()
+    for line in route.read_text().splitlines():
+        if not line.startswith("CGP-R-"):
+            continue
+        cols = line.split("\t")
+        for method in cols[2].split(","):
+            method = method.strip()
+            if method:
+                registered.add(method)
+    unregistered = sorted(methods - registered)
+    if unregistered:
+        raise SystemExit(
+            "architecture-check: CGP-00 unregistered RPC methods (add to gateway-route-census.tsv): "
+            + ", ".join(unregistered[:20])
+            + (f" (+{len(unregistered)-20} more)" if len(unregistered) > 20 else ""))
+PY
+fi
+
 # X1 contract governance. Legacy architecture fixtures that intentionally model
 # only Fabric do not carry these files; a production checkout (identified by the
 # aletheon crate) must carry the complete set. Dedicated X1 fixtures opt in by
