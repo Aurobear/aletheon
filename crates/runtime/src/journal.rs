@@ -12,7 +12,7 @@ use fabric::events::spine::EventSpine;
 use std::sync::Arc;
 
 /// The distinct aggregate streams the Runtime journal separates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StreamKind {
     Session,
     Turn,
