@@ -1,5 +1,5 @@
 // crates/runtime/src/core/react_loop/tool_budget.rs
-use fabric::MonoTime;
+use ::contracts::MonoTime;
 use tracing::warn;
 
 /// Record of a single tool call for budget tracking.

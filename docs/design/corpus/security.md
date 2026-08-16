@@ -151,9 +151,9 @@
 
 **Code Locations:**
 - `crates/corpus/src/security/mod.rs` — PolicyEngine with hardcoded rules
-- `crates/fabric/src/security/audit.rs` — AuditLogger
+- `crates/corpus/src/security/audit.rs` — AuditLogger
 - `crates/corpus/src/tools/tools/change_transaction/restore.rs` — RollbackEngine (3-tier: AuditOnly, FileBackup, BtrfsRollback)
-- `crates/fabric/src/security/risk_classifier.rs` — RiskClassifier
+- `crates/corpus/src/security/risk_classifier.rs` — RiskClassifier
 
 **Key Types/Traits Implemented:**
 - `PolicyEngine` — rule-based permission checks (L0-L3), hardcoded rules

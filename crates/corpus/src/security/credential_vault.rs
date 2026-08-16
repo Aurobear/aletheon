@@ -269,7 +269,7 @@ fn sync_parent(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use crate::tools::mcp::token_store::{JsonTokenPersistence, TokenStore};
-    use fabric::{ExternalIdentityId, ExternalProviderId};
+    use application::{ExternalIdentityId, ExternalProviderId};
 
     #[cfg(unix)]
     fn fixture() -> (tempfile::TempDir, CredentialVault, TokenKey, TokenEntry) {

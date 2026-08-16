@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-use fabric::include::agora::{AgoraView, AgoraViewRequest, CommitReceipt, WorkspaceCommitPermit};
-use fabric::{AgoraOps, ProcessId};
+use crate::contract::{AgoraView, AgoraViewRequest, CommitReceipt, WorkspaceCommitPermit};
+use crate::AgoraOps;
+use ::contracts::ProcessId;
 
 use crate::persistence::AgoraPersistence;
 use crate::workspace::{AgoraCommit, AgoraOperation, AgoraProposal, Workspace};
@@ -21,7 +22,7 @@ pub struct AgoraRegistry {
     proposal_index: Mutex<HashMap<uuid::Uuid, String>>,
     persistence: Option<Arc<dyn AgoraPersistence>>,
     recovered_sessions: Mutex<HashSet<String>>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 struct SpaceSlot {
@@ -30,7 +31,7 @@ struct SpaceSlot {
 }
 
 impl SpaceSlot {
-    fn new(session: &str, clock: Arc<dyn fabric::Clock>) -> Self {
+    fn new(session: &str, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             workspace: Mutex::new(Workspace::new(session, clock)),
             commit_gate: Mutex::new(()),
@@ -39,7 +40,7 @@ impl SpaceSlot {
 }
 
 impl AgoraRegistry {
-    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             proposal_index: Mutex::new(HashMap::new()),
@@ -56,7 +57,7 @@ impl AgoraRegistry {
     /// into a workspace after a restart.
     pub fn new_with_persistence(
         persistence: Arc<dyn AgoraPersistence>,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
     ) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
@@ -278,7 +279,7 @@ impl AgoraOps for AgoraRegistry {
         &self,
         session: &str,
         proposal_id: uuid::Uuid,
-        reason: fabric::RejectReason,
+        reason: crate::RejectReason,
     ) -> Result<(), String> {
         let slot = self
             .space(session)
@@ -304,7 +305,7 @@ impl AgoraOps for AgoraRegistry {
 }
 
 #[async_trait]
-impl fabric::include::agora::AgoraService for AgoraRegistry {
+impl crate::contract::AgoraService for AgoraRegistry {
     async fn view(&self, req: AgoraViewRequest) -> Result<AgoraView> {
         let session = req.space.0.clone();
         let snapshot = self.snapshot(&session).await?;
@@ -341,7 +342,7 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
         Ok(CommitReceipt { commit })
     }
 
-    async fn reject(&self, id: uuid::Uuid, reason: fabric::RejectReason) -> Result<()> {
+    async fn reject(&self, id: uuid::Uuid, reason: crate::RejectReason) -> Result<()> {
         let session = self
             .proposal_index
             .lock()
@@ -356,7 +357,7 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
 
     async fn changes_since(
         &self,
-        space: fabric::AgoraSpaceId,
+        space: ::contracts::AgoraSpaceId,
         version: u64,
     ) -> Result<Vec<AgoraCommit>> {
         Ok(<Self as AgoraOps>::changes_since(self, &space.0, version).await)
@@ -364,8 +365,8 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
 
     async fn project_task(
         &self,
-        request: fabric::cognitive_workflow::AgoraProjectionRequest,
-    ) -> Result<fabric::cognitive_workflow::AgoraTaskProjection> {
+        request: ::contracts::cognitive_workflow::AgoraProjectionRequest,
+    ) -> Result<::contracts::cognitive_workflow::AgoraTaskProjection> {
         let slot = self.space(&request.space.0).await?;
         let projection = slot.workspace.lock().await.project_task(request)?;
         Ok(projection)
@@ -373,11 +374,11 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
 
     async fn list_tasks(
         &self,
-        space: fabric::AgoraSpaceId,
-    ) -> Result<fabric::cognitive_workflow::AgoraTaskList> {
+        space: ::contracts::AgoraSpaceId,
+    ) -> Result<::contracts::cognitive_workflow::AgoraTaskList> {
         let slot = self.space(&space.0).await?;
         let workspace = slot.workspace.lock().await;
-        Ok(fabric::cognitive_workflow::AgoraTaskList {
+        Ok(::contracts::cognitive_workflow::AgoraTaskList {
             space,
             workspace_version: workspace.version,
             tasks: workspace.task_graph.cognitive_nodes(),
@@ -390,8 +391,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn test_author() -> fabric::ProcessId {
-        fabric::ProcessId(uuid::Uuid::from_u128(2))
+    fn test_author() -> ::contracts::ProcessId {
+        ::contracts::ProcessId(uuid::Uuid::from_u128(2))
     }
 
     async fn commit_fact(
@@ -403,7 +404,7 @@ mod tests {
     ) {
         let proposal = AgoraProposal {
             id: uuid::Uuid::new_v4(),
-            space: fabric::AgoraSpaceId(session.into()),
+            space: ::contracts::AgoraSpaceId(session.into()),
             author: test_author(),
             base_version,
             operation: AgoraOperation::PublishFact {
@@ -415,8 +416,8 @@ mod tests {
             expires_at_ms: None,
         };
         let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
-        let id = fabric::AgoraService::propose(reg, proposal).await.unwrap();
-        fabric::AgoraService::commit(reg, id, permit).await.unwrap();
+        let id = crate::AgoraService::propose(reg, proposal).await.unwrap();
+        crate::AgoraService::commit(reg, id, permit).await.unwrap();
     }
 
     async fn commit_operation(
@@ -424,11 +425,11 @@ mod tests {
         session: &str,
         base_version: u64,
         operation: AgoraOperation,
-        author: fabric::ProcessId,
-    ) -> fabric::AgoraCommit {
+        author: ::contracts::ProcessId,
+    ) -> crate::AgoraCommit {
         let proposal = AgoraProposal {
             id: uuid::Uuid::new_v4(),
-            space: fabric::AgoraSpaceId(session.into()),
+            space: ::contracts::AgoraSpaceId(session.into()),
             author,
             base_version,
             operation,
@@ -437,8 +438,8 @@ mod tests {
             expires_at_ms: None,
         };
         let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
-        let id = fabric::AgoraService::propose(reg, proposal).await.unwrap();
-        fabric::AgoraService::commit(reg, id, permit)
+        let id = crate::AgoraService::propose(reg, proposal).await.unwrap();
+        crate::AgoraService::commit(reg, id, permit)
             .await
             .unwrap()
             .commit
@@ -446,9 +447,9 @@ mod tests {
 
     fn cognitive_task(
         id: &str,
-        owner: fabric::ProcessId,
-    ) -> fabric::cognitive_workflow::CognitiveTaskNode {
-        use fabric::cognitive_workflow::*;
+        owner: ::contracts::ProcessId,
+    ) -> ::contracts::cognitive_workflow::CognitiveTaskNode {
+        use ::contracts::cognitive_workflow::*;
         CognitiveTaskNode {
             id: CognitiveTaskNodeId(id.into()),
             parent_id: None,
@@ -473,10 +474,10 @@ mod tests {
 
     #[tokio::test]
     async fn cognitive_artifact_is_shared_only_after_versioned_commit() {
-        use fabric::cognitive_workflow::*;
+        use ::contracts::cognitive_workflow::*;
         let reg = AgoraRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
         let author = test_author();
-        let child_author = fabric::ProcessId(uuid::Uuid::from_u128(44));
+        let child_author = ::contracts::ProcessId(uuid::Uuid::from_u128(44));
         commit_operation(
             &reg,
             "work-a",
@@ -488,7 +489,7 @@ mod tests {
         )
         .await;
         let artifact = CognitiveArtifactEnvelope::proposed(
-            fabric::AgoraSpaceId("work-a".into()),
+            ::contracts::AgoraSpaceId("work-a".into()),
             CognitiveTaskNodeId("execute".into()),
             child_author,
             vec!["workspace:v1".into()],
@@ -504,7 +505,7 @@ mod tests {
         .unwrap();
         let proposal = AgoraProposal {
             id: uuid::Uuid::new_v4(),
-            space: fabric::AgoraSpaceId("work-a".into()),
+            space: ::contracts::AgoraSpaceId("work-a".into()),
             author,
             base_version: 1,
             operation: AgoraOperation::CommitCognitiveArtifact {
@@ -515,12 +516,12 @@ mod tests {
             expires_at_ms: None,
         };
         let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
-        let id = fabric::AgoraService::propose(&reg, proposal).await.unwrap();
+        let id = crate::AgoraService::propose(&reg, proposal).await.unwrap();
 
-        let before = fabric::AgoraService::project_task(
+        let before = crate::AgoraService::project_task(
             &reg,
             AgoraProjectionRequest {
-                space: fabric::AgoraSpaceId("work-a".into()),
+                space: ::contracts::AgoraSpaceId("work-a".into()),
                 task_node_id: CognitiveTaskNodeId("execute".into()),
                 role: CognitiveRole::Reviewer,
                 max_artifacts: 8,
@@ -534,13 +535,11 @@ mod tests {
             "proposal leaked as shared fact"
         );
 
-        fabric::AgoraService::commit(&reg, id, permit)
-            .await
-            .unwrap();
-        let after = fabric::AgoraService::project_task(
+        crate::AgoraService::commit(&reg, id, permit).await.unwrap();
+        let after = crate::AgoraService::project_task(
             &reg,
             AgoraProjectionRequest {
-                space: fabric::AgoraSpaceId("work-a".into()),
+                space: ::contracts::AgoraSpaceId("work-a".into()),
                 task_node_id: CognitiveTaskNodeId("execute".into()),
                 role: CognitiveRole::Reviewer,
                 max_artifacts: 8,
@@ -572,7 +571,7 @@ mod tests {
         .await;
         let stale = AgoraProposal {
             id: uuid::Uuid::new_v4(),
-            space: fabric::AgoraSpaceId("work-b".into()),
+            space: ::contracts::AgoraSpaceId("work-b".into()),
             author,
             base_version: 0,
             operation: AgoraOperation::PublishFact {
@@ -583,16 +582,16 @@ mod tests {
             confidence: 1.0,
             expires_at_ms: None,
         };
-        let error = fabric::AgoraService::propose(&reg, stale)
+        let error = crate::AgoraService::propose(&reg, stale)
             .await
             .unwrap_err()
             .to_string();
         assert!(error.contains("version conflict"));
 
-        let refreshed = fabric::AgoraService::view(
+        let refreshed = crate::AgoraService::view(
             &reg,
             AgoraViewRequest {
-                space: fabric::AgoraSpaceId("work-b".into()),
+                space: ::contracts::AgoraSpaceId("work-b".into()),
             },
         )
         .await
@@ -661,7 +660,7 @@ mod tests {
 
     #[tokio::test]
     async fn record_evidence_survives_snapshot_as_typed() {
-        use fabric::Evidence;
+        use ::contracts::Evidence;
         let reg = AgoraRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
         let ev = Evidence::from_tool_result("c1", "bash", "exit 0", false);
         reg.record_evidence("s1", &ev).await.unwrap();
@@ -902,7 +901,7 @@ mod tests {
             )
             .await
             .unwrap();
-        reg.reject("s1", prop.id, fabric::RejectReason::Cancelled)
+        reg.reject("s1", prop.id, crate::RejectReason::Cancelled)
             .await
             .unwrap();
 
@@ -915,7 +914,7 @@ mod tests {
     async fn reject_unknown_proposal_returns_error() {
         let reg = AgoraRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
         let err = reg
-            .reject("s1", uuid::Uuid::new_v4(), fabric::RejectReason::Timeout)
+            .reject("s1", uuid::Uuid::new_v4(), crate::RejectReason::Timeout)
             .await
             .unwrap_err();
         assert!(err.contains("not found"));
@@ -937,7 +936,7 @@ mod tests {
             )
             .await
             .unwrap();
-        reg.reject("s1", prop1.id, fabric::RejectReason::Superseded)
+        reg.reject("s1", prop1.id, crate::RejectReason::Superseded)
             .await
             .unwrap();
 
@@ -979,7 +978,7 @@ mod tests {
         reg.reject(
             "s1",
             prop.id,
-            fabric::RejectReason::Invalid("malformed key".into()),
+            crate::RejectReason::Invalid("malformed key".into()),
         )
         .await
         .unwrap();
@@ -997,8 +996,8 @@ mod tests {
 #[cfg(test)]
 mod phase3_service_tests {
     use super::*;
-    use fabric::include::agora::{AgoraService, AgoraViewRequest, WorkspaceCommitPermit};
-    use fabric::{AgoraSpaceId, Evidence};
+    use crate::contract::{AgoraService, AgoraViewRequest, WorkspaceCommitPermit};
+    use ::contracts::{AgoraSpaceId, Evidence};
     use serde_json::json;
 
     fn test_author() -> ProcessId {

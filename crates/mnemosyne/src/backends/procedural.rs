@@ -1,16 +1,18 @@
 //! ProceduralMemory — skills, workflows, reusable patterns.
 
+use crate::memory::{
+    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
+    MemoryQuery, MemoryStats, MemoryType,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use ::contracts::{
+    wall_to_datetime, Subsystem, SubsystemContext, SubsystemHealth, Version, WallTime,
+};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use fabric::{
-    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
-    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext,
-    SubsystemHealth, Version, WallTime,
-};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
@@ -20,11 +22,11 @@ use crate::ops::schema;
 pub struct ProceduralMemory {
     db_path: PathBuf,
     conn: Mutex<Option<Connection>>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl ProceduralMemory {
-    pub fn new(db_path: PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(db_path: PathBuf, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),
@@ -91,7 +93,7 @@ impl Subsystem for ProceduralMemory {
 
 fn row_to_entry(
     row: &rusqlite::Row,
-    clock: &Arc<dyn fabric::Clock>,
+    clock: &Arc<dyn ::contracts::Clock>,
 ) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;
@@ -416,7 +418,7 @@ impl MemoryBackend for ProceduralMemory {
 mod tests {
     use super::*;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(kernel::chronos::TestClock::default())
     }
 
@@ -431,7 +433,6 @@ mod tests {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
             config: serde_json::Value::Null,
-            bus: None,
         };
         mem.init(&ctx).await.unwrap();
     }

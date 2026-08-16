@@ -1,4 +1,4 @@
-use fabric::{Clock, MonoTime, WallTime};
+use ::contracts::{Clock, MonoTime, WallTime};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 

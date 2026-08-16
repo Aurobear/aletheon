@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use fabric::types::embodiment::{
+use ::contracts::types::embodiment::{
     DeviceId, EmbodiedObservation, SkillDescriptor, SkillProgress, SkillRequest, SkillResult,
 };
+use async_trait::async_trait;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderError {
@@ -79,7 +79,7 @@ pub trait EmbodimentProvider: Send + Sync {
 #[cfg(test)]
 pub(crate) fn authorized_fixture(request: SkillRequest) -> AuthorizedSkillRequest {
     let device = request.device.clone();
-    let operation = crate::DeviceOperationId(fabric::OperationId::new().0.to_string());
+    let operation = crate::DeviceOperationId(::contracts::OperationId::new().0.to_string());
     let principal = crate::PrincipalId("test-principal".into());
     let scope = std::collections::BTreeSet::from([request.skill.0.clone()]);
     AuthorizedSkillRequest {

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use fabric::{
+use ::contracts::{
     AgentBudget, AgentContextFork, AgentControlPort, AgentProfile, AgentSpawnRequest,
     AgentWaitRequest, RuntimeId,
 };
@@ -151,11 +151,13 @@ impl Tool for AgentTool {
             Err(error) => return tool_error(&format!("Agent wait failed: {:?}", error.kind)),
         };
         match snapshot.result {
-            Some(result) if snapshot.status == fabric::AgentRunStatus::Succeeded => ToolResult {
-                content: result.output,
-                is_error: false,
-                metadata: ToolResultMeta::default(),
-            },
+            Some(result) if snapshot.status == ::contracts::AgentRunStatus::Succeeded => {
+                ToolResult {
+                    content: result.output,
+                    is_error: false,
+                    metadata: ToolResultMeta::default(),
+                }
+            }
             _ => tool_error(&format!(
                 "Agent terminated with status {:?}",
                 snapshot.status
@@ -195,39 +197,39 @@ mod tests {
         async fn spawn(
             &self,
             _request: AgentSpawnRequest,
-        ) -> Result<fabric::AgentHandle, fabric::AgentControlError> {
+        ) -> Result<::contracts::AgentHandle, ::contracts::AgentControlError> {
             unreachable!()
         }
         async fn wait(
             &self,
             _request: AgentWaitRequest,
-        ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+        ) -> Result<::contracts::AgentSnapshot, ::contracts::AgentControlError> {
             unreachable!()
         }
         async fn send(
             &self,
-            _request: fabric::AgentSendRequest,
-        ) -> Result<fabric::AgentControlMessage, fabric::AgentControlError> {
+            _request: ::contracts::AgentSendRequest,
+        ) -> Result<::contracts::AgentControlMessage, ::contracts::AgentControlError> {
             unreachable!()
         }
         async fn cancel(
             &self,
-            _caller_root_agent_id: fabric::AgentId,
-            _agent_id: fabric::AgentId,
-        ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+            _caller_root_agent_id: ::contracts::AgentId,
+            _agent_id: ::contracts::AgentId,
+        ) -> Result<::contracts::AgentSnapshot, ::contracts::AgentControlError> {
             unreachable!()
         }
         async fn inspect(
             &self,
-            _caller_root_agent_id: fabric::AgentId,
-            _agent_id: fabric::AgentId,
-        ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+            _caller_root_agent_id: ::contracts::AgentId,
+            _agent_id: ::contracts::AgentId,
+        ) -> Result<::contracts::AgentSnapshot, ::contracts::AgentControlError> {
             unreachable!()
         }
         async fn list(
             &self,
-            _request: fabric::AgentListRequest,
-        ) -> Result<Vec<fabric::AgentSnapshot>, fabric::AgentControlError> {
+            _request: ::contracts::AgentListRequest,
+        ) -> Result<Vec<::contracts::AgentSnapshot>, ::contracts::AgentControlError> {
             unreachable!()
         }
     }

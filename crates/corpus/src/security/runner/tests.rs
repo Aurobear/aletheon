@@ -1,10 +1,10 @@
 use super::super::approval::{AutoApproveGate, AutoDenyGate};
+use super::super::execpolicy::{Decision as ExecDecision, PrefixRule as ExecPrefixRule};
 use super::*;
-use async_trait::async_trait;
-use fabric::execpolicy::{Decision as ExecDecision, PrefixRule as ExecPrefixRule};
-use fabric::tool::{
+use ::contracts::tool::{
     ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult, ToolResultMeta,
 };
+use async_trait::async_trait;
 
 #[test]
 fn sandbox_environment_exposes_toolchain_identity_without_secrets() {
@@ -35,7 +35,7 @@ fn sandbox_environment_exposes_toolchain_identity_without_secrets() {
     assert!(!environment.contains_key("DEEPSEEK_API_KEY"));
     assert!(!environment.contains_key("RUSTC_WRAPPER"));
 }
-use fabric::{PermissionContext, PermissionMode};
+use ::contracts::{PermissionContext, PermissionMode};
 use kernel::chronos::TestClock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -81,10 +81,10 @@ impl Tool for StreamingReadTool {
         &self,
         _input: serde_json::Value,
         _ctx: &ToolContext,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) {
-        assert!(sink.progress(fabric::ToolProgress::Text("phase-1".into())));
-        assert!(sink.progress(fabric::ToolProgress::Structured(
+        assert!(sink.progress(::contracts::ToolProgress::Text("phase-1".into())));
+        assert!(sink.progress(::contracts::ToolProgress::Structured(
             serde_json::json!({"pct": 100})
         )));
         sink.terminal(Ok(ToolResult {
@@ -148,8 +148,8 @@ impl Tool for DescriptorTool {
         PermissionLevel::L2
     }
 
-    fn execution_descriptor(&self) -> Option<fabric::tool::ToolExecutionDescriptor> {
-        Some(fabric::tool::ToolExecutionDescriptor::ModuleBuild)
+    fn execution_descriptor(&self) -> Option<::contracts::tool::ToolExecutionDescriptor> {
+        Some(::contracts::tool::ToolExecutionDescriptor::ModuleBuild)
     }
 
     async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
@@ -171,7 +171,7 @@ impl Tool for DescriptorTool {
 struct MockStructuredSandbox {
     calls: Arc<AtomicUsize>,
     expected_tool: &'static str,
-    expected_descriptor: Option<fabric::tool::ToolExecutionDescriptor>,
+    expected_descriptor: Option<::contracts::tool::ToolExecutionDescriptor>,
 }
 
 #[async_trait]
@@ -183,7 +183,7 @@ impl StructuredToolSandbox for MockStructuredSandbox {
     async fn execute(
         &self,
         tool_name: &str,
-        descriptor: Option<&fabric::tool::ToolExecutionDescriptor>,
+        descriptor: Option<&::contracts::tool::ToolExecutionDescriptor>,
         input: serde_json::Value,
         _context: &ToolContext,
         sandbox: &SandboxConfig,
@@ -268,15 +268,16 @@ impl ApprovalGate for CountingApproveGate {
 
 fn make_ctx() -> ToolContext {
     ToolContext {
-        approval_authority: Some(fabric::ToolApprovalAuthority {
-            principal_id: fabric::PrincipalId("test".into()),
-            connection_id: fabric::ConnectionId::new(),
-            thread_id: fabric::ThreadId("test-session".into()),
-            turn_id: fabric::TurnId::new(),
+        approval_authority: Some(::contracts::ToolApprovalAuthority {
+            principal_id: ::contracts::PrincipalId("test".into()),
+            connection_id: ::contracts::ConnectionId::new(),
+            thread_id: ::contracts::ThreadId("test-session".into()),
+            turn_id: ::contracts::TurnId::new(),
             call_id: "test-call".into(),
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
-            granted_scope: fabric::CapabilityScope::default(),
-            permission_mode: fabric::permission::HostPermissionMode::Safe,
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                .unwrap(),
+            granted_scope: ::contracts::CapabilityScope::default(),
+            permission_mode: ::contracts::permission::HostPermissionMode::Safe,
         }),
         agent: None,
         working_dir: std::path::PathBuf::from("/tmp"),
@@ -320,7 +321,7 @@ async fn structured_mutations_fail_closed_without_transport_when_profiles_are_en
             calls: Arc::clone(&calls),
         };
         let mut runner = make_runner(Arc::new(AutoApproveGate))
-            .with_sandbox_profiles(fabric::SandboxProfiles::default());
+            .with_sandbox_profiles(::contracts::SandboxProfiles::default());
 
         let error = runner
             .execute_tool(
@@ -349,7 +350,7 @@ async fn unsupported_structured_sandbox_strategy_fails_closed_without_empty_comm
         calls: Arc::clone(&in_process_calls),
     };
     let mut runner = make_runner(Arc::new(AutoApproveGate))
-        .with_sandbox_profiles(fabric::SandboxProfiles::default())
+        .with_sandbox_profiles(::contracts::SandboxProfiles::default())
         .with_structured_sandbox(Arc::new(MockStructuredSandbox {
             calls: Arc::clone(&transport_calls),
             expected_tool: "file_write",
@@ -381,9 +382,9 @@ async fn unknown_configured_default_profile_fails_closed() {
         name: "file_write",
         calls: Arc::clone(&in_process_calls),
     };
-    let profiles = fabric::SandboxProfiles {
+    let profiles = ::contracts::SandboxProfiles {
         default_profile: "missing-trusted-profile".into(),
-        ..fabric::SandboxProfiles::default()
+        ..::contracts::SandboxProfiles::default()
     };
     let mut runner = make_runner(Arc::new(AutoApproveGate)).with_sandbox_profiles(profiles);
 
@@ -412,7 +413,7 @@ async fn structured_mutations_use_sandbox_transport_when_profiles_are_enabled() 
             calls: Arc::clone(&in_process_calls),
         };
         let mut runner = make_runner(Arc::new(AutoApproveGate))
-            .with_sandbox_profiles(fabric::SandboxProfiles::default())
+            .with_sandbox_profiles(::contracts::SandboxProfiles::default())
             .with_structured_sandbox(Arc::new(MockStructuredSandbox {
                 calls: Arc::clone(&transport_calls),
                 expected_tool: name,
@@ -443,11 +444,11 @@ async fn structured_transport_receives_host_descriptor_separately_from_model_inp
         calls: Arc::clone(&in_process_calls),
     };
     let mut runner = make_runner(Arc::new(AutoApproveGate))
-        .with_sandbox_profiles(fabric::SandboxProfiles::default())
+        .with_sandbox_profiles(::contracts::SandboxProfiles::default())
         .with_structured_sandbox(Arc::new(MockStructuredSandbox {
             calls: Arc::clone(&transport_calls),
             expected_tool: "module_build",
-            expected_descriptor: Some(fabric::tool::ToolExecutionDescriptor::ModuleBuild),
+            expected_descriptor: Some(::contracts::tool::ToolExecutionDescriptor::ModuleBuild),
         }));
 
     let result = runner
@@ -473,7 +474,7 @@ async fn structured_transport_receives_host_descriptor_separately_from_model_inp
 #[tokio::test]
 async fn guarded_streaming_executes_override_once_and_preserves_terminal() {
     let mut runner = make_runner(Arc::new(AutoApproveGate));
-    let (mut sink, mut rx) = fabric::tool_event_channel();
+    let (mut sink, mut rx) = ::contracts::tool_event_channel();
 
     let report = runner
         .execute_tool_streaming_report(
@@ -489,26 +490,26 @@ async fn guarded_streaming_executes_override_once_and_preserves_terminal() {
     assert_eq!(result.content, "streamed-result");
     assert!(matches!(
         rx.recv().await,
-        Some(fabric::ToolExecutionEvent::Progress(
-            fabric::ToolProgress::Text(_)
+        Some(::contracts::ToolExecutionEvent::Progress(
+            ::contracts::ToolProgress::Text(_)
         ))
     ));
     assert!(matches!(
         rx.recv().await,
-        Some(fabric::ToolExecutionEvent::Progress(
-            fabric::ToolProgress::Structured(_)
+        Some(::contracts::ToolExecutionEvent::Progress(
+            ::contracts::ToolProgress::Structured(_)
         ))
     ));
     assert!(matches!(
         rx.recv().await,
-        Some(fabric::ToolExecutionEvent::Terminal(Ok(_)))
+        Some(::contracts::ToolExecutionEvent::Terminal(Ok(_)))
     ));
 }
 
 #[tokio::test]
 async fn bash_sandbox_streams_multiple_lines_and_one_terminal() {
     let mut runner = make_runner(Arc::new(AutoApproveGate));
-    let (mut sink, mut rx) = fabric::tool_event_channel();
+    let (mut sink, mut rx) = ::contracts::tool_event_channel();
     let report = runner
         .execute_tool_streaming_report(
             &DummyL2Tool,
@@ -527,10 +528,10 @@ async fn bash_sandbox_streams_multiple_lines_and_one_terminal() {
     let mut terminals = 0;
     while let Ok(event) = rx.try_recv() {
         match event {
-            fabric::ToolExecutionEvent::Progress(fabric::ToolProgress::Text(line)) => {
+            ::contracts::ToolExecutionEvent::Progress(::contracts::ToolProgress::Text(line)) => {
                 progress.push(line);
             }
-            fabric::ToolExecutionEvent::Terminal(_) => terminals += 1,
+            ::contracts::ToolExecutionEvent::Terminal(_) => terminals += 1,
             _ => {}
         }
     }
@@ -540,12 +541,12 @@ async fn bash_sandbox_streams_multiple_lines_and_one_terminal() {
 
 #[tokio::test]
 async fn sandbox_profile_applied_event_carries_policy_and_principal() {
-    let bus = Arc::new(fabric::CanonicalEventBus::new(8));
-    let mut events = bus.subscribe_channel(fabric::SchemaId(
-        fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
+    let bus = Arc::new(runtime::event_projection::CanonicalEventBus::new(8));
+    let mut events = bus.subscribe_channel(::contracts::SchemaId(
+        ::contracts::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
     ));
     let mut runner = make_runner(Arc::new(AutoApproveGate))
-        .with_sandbox_profiles(fabric::SandboxProfiles::default())
+        .with_sandbox_profiles(::contracts::SandboxProfiles::default())
         .with_event_bus(bus);
 
     runner
@@ -569,11 +570,11 @@ async fn sandbox_profile_applied_event_carries_policy_and_principal() {
 
 #[tokio::test]
 async fn sandbox_profile_resolution_violation_is_attributed_and_fails_closed() {
-    let bus = Arc::new(fabric::CanonicalEventBus::new(8));
-    let mut events = bus.subscribe_channel(fabric::SchemaId(
-        fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1.into(),
+    let bus = Arc::new(runtime::event_projection::CanonicalEventBus::new(8));
+    let mut events = bus.subscribe_channel(::contracts::SchemaId(
+        ::contracts::SchemaId::EVENT_SANDBOX_VIOLATION_V1.into(),
     ));
-    let profiles = fabric::SandboxProfiles {
+    let profiles = ::contracts::SandboxProfiles {
         default_profile: "missing-custom".into(),
         ..Default::default()
     };
@@ -608,13 +609,16 @@ async fn configured_deny_globs_are_expanded_before_backend_execution() {
     let mut ctx = make_ctx();
     ctx.working_dir = workspace.path().to_path_buf();
     ctx.approval_authority.as_mut().unwrap().workspace =
-        fabric::WorkspacePolicy::from_resolved_roots(workspace.path().to_path_buf(), Vec::new())
-            .unwrap();
-    let profiles = fabric::SandboxProfiles {
+        ::contracts::WorkspacePolicy::from_resolved_roots(
+            workspace.path().to_path_buf(),
+            Vec::new(),
+        )
+        .unwrap();
+    let profiles = ::contracts::SandboxProfiles {
         default_profile: "guarded".into(),
         profiles: std::collections::BTreeMap::from([(
             "guarded".into(),
-            fabric::SandboxProfileConfig {
+            ::contracts::SandboxProfileConfig {
                 extends: Some("workspace".into()),
                 restrict_network: None,
                 read_only: Vec::new(),
@@ -623,9 +627,9 @@ async fn configured_deny_globs_are_expanded_before_backend_execution() {
             },
         )]),
     };
-    let bus = Arc::new(fabric::CanonicalEventBus::new(8));
-    let mut events = bus.subscribe_channel(fabric::SchemaId(
-        fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
+    let bus = Arc::new(runtime::event_projection::CanonicalEventBus::new(8));
+    let mut events = bus.subscribe_channel(::contracts::SchemaId(
+        ::contracts::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
     ));
     let mut runner = make_runner(Arc::new(AutoApproveGate))
         .with_sandbox_profiles(profiles)
@@ -651,16 +655,16 @@ async fn configured_deny_globs_are_expanded_before_backend_execution() {
 
 #[tokio::test]
 async fn deny_glob_overflow_is_counted_and_fails_closed() {
-    let profiles = fabric::SandboxProfiles {
+    let profiles = ::contracts::SandboxProfiles {
         default_profile: "overflow".into(),
         profiles: std::collections::BTreeMap::from([(
             "overflow".into(),
-            fabric::SandboxProfileConfig {
+            ::contracts::SandboxProfileConfig {
                 extends: Some("workspace".into()),
                 restrict_network: None,
                 read_only: Vec::new(),
                 read_write: Vec::new(),
-                deny: (0..=fabric::DENY_GLOB_MAX_ENTRIES)
+                deny: (0..=::contracts::DENY_GLOB_MAX_ENTRIES)
                     .map(|index| format!("**/secret-{index}*"))
                     .collect(),
             },
@@ -684,19 +688,19 @@ async fn deny_glob_overflow_is_counted_and_fails_closed() {
 
 #[tokio::test]
 async fn child_agent_context_cannot_widen_the_daemon_bound_profile() {
-    let bus = Arc::new(fabric::CanonicalEventBus::new(8));
-    let mut events = bus.subscribe_channel(fabric::SchemaId(
-        fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
+    let bus = Arc::new(runtime::event_projection::CanonicalEventBus::new(8));
+    let mut events = bus.subscribe_channel(::contracts::SchemaId(
+        ::contracts::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
     ));
     let mut runner = make_runner(Arc::new(AutoApproveGate))
-        .with_sandbox_profiles(fabric::SandboxProfiles::default())
+        .with_sandbox_profiles(::contracts::SandboxProfiles::default())
         .with_event_bus(bus);
     let parent_ctx = make_ctx();
     let mut child_ctx = make_ctx();
-    child_ctx.agent = Some(fabric::AgentToolContext {
-        caller_root_agent_id: fabric::AgentId::new(),
-        parent_agent_id: fabric::AgentId::new(),
-        parent_process_id: fabric::ProcessId::new(),
+    child_ctx.agent = Some(::contracts::AgentToolContext {
+        caller_root_agent_id: ::contracts::AgentId::new(),
+        parent_agent_id: ::contracts::AgentId::new(),
+        parent_process_id: ::contracts::ProcessId::new(),
         delegator_authority: None,
     });
 

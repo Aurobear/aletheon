@@ -25,3 +25,19 @@ fn delegated_host_success_propagates_to_process_status() {
     assert_eq!(ExitStatus::from_success(true), ExitStatus(0));
     assert_eq!(ExitStatus::from_success(false), ExitStatus(1));
 }
+
+#[test]
+fn conscious_arbitration_mode_is_strict_and_observe_first() {
+    use aletheon::wiring::daemon::parse_conscious_arbitration_mode;
+    use contracts::ConsciousArbitrationMode;
+    assert_eq!(
+        parse_conscious_arbitration_mode(None).unwrap(),
+        ConsciousArbitrationMode::Observe
+    );
+    assert_eq!(
+        parse_conscious_arbitration_mode(Some("enforce")).unwrap(),
+        ConsciousArbitrationMode::Enforce
+    );
+    assert!(parse_conscious_arbitration_mode(Some("warn")).is_err());
+    assert!(parse_conscious_arbitration_mode(Some("ENFORCE")).is_err());
+}

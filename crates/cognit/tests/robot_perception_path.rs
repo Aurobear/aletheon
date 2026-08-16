@@ -1,24 +1,24 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use ::contracts::types::embodiment::{
+    DeviceId, RiskClass, SkillDescriptor, SkillId, SkillRequest, SkillResult,
+};
+use ::contracts::types::episode_report::EpisodeSettlement;
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::types::frame::FrameRef;
+use ::contracts::types::outcome_verification::VerificationReport;
+use ::contracts::types::skill_proposal::{PolicyProvenance, SkillProposal};
+use ::contracts::types::world_state::{WorldSnapshot, WorldStatePort};
+use ::contracts::{MonoDeadline, MonoTime, OperationId};
 use async_trait::async_trait;
 use cognit::harness::robot::state::{RobotHarnessConfig, RobotState};
+use cognit::harness::robot::PerceptionObservation;
 use cognit::harness::robot::{
     EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, RobotExecutionError, RobotHarness,
     RobotPerceptionPort,
 };
 use cognit::ports::policy_provider::{PolicyProviderError, PolicyProviderPort};
-use fabric::types::embodiment::{
-    DeviceId, RiskClass, SkillDescriptor, SkillId, SkillRequest, SkillResult,
-};
-use fabric::types::episode_report::EpisodeSettlement;
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::frame::FrameRef;
-use fabric::types::outcome_verification::VerificationReport;
-use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
-use fabric::{MonoDeadline, MonoTime, OperationId};
 
 struct FreshWorld;
 
@@ -130,7 +130,7 @@ impl EpisodeSink for UnusedEpisodes {
     async fn load_attempts(
         &self,
         _episode_id: &str,
-    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String> {
+    ) -> Result<Vec<::contracts::types::episode_report::AttemptRecord>, String> {
         Ok(Vec::new())
     }
 }
@@ -184,7 +184,7 @@ impl PolicyProviderPort for RecordingPolicy {
             skill: SkillId("inspect".into()),
             device: device.clone(),
             parameters: serde_json::json!({}),
-            goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
+            goal_alignment: ::contracts::types::skill_proposal::GoalAlignment::Direct,
             expected_outcome: ExpectedOutcome {
                 predicate: OutcomePredicate::Equals {
                     path: "mode".into(),
@@ -262,7 +262,7 @@ fn valid_proposal(device: DeviceId) -> SkillProposal {
         skill: SkillId("inspect".into()),
         device,
         parameters: serde_json::json!({}),
-        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
+        goal_alignment: ::contracts::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "mode".into(),

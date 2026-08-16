@@ -1,8 +1,9 @@
-use fabric::dasein::SelfVersion;
-use fabric::{
+use crate::ConsciousTraceEvent;
+use ::contracts::dasein::SelfVersion;
+use ::contracts::{
     AgoraSpaceId, BroadcastAck, BroadcastEpoch, BroadcastIntegrationReceipt,
-    ConsciousContextProjection, ConsciousTraceEvent, ProcessorContext, ProcessorResponse,
-    SelectionResult, WallTime, WorkspaceBroadcast,
+    ConsciousContextProjection, ProcessorContext, ProcessorResponse, SelectionResult, WallTime,
+    WorkspaceBroadcast,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};

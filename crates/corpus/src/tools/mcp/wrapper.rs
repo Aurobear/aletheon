@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use super::client::{McpClient, McpResource, McpTool};
 use super::config::McpTrustLevel;
 use crate::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use fabric::tool::ConcurrencyClass;
+use ::contracts::tool::ConcurrencyClass;
 
 fn permission_override(
     overrides: &HashMap<String, PermissionLevel>,
@@ -92,9 +92,9 @@ impl Tool for McpToolWrapper {
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
         let start = ctx.clock.mono_now();
         if !matches!(self.trust_level, McpTrustLevel::LocalTrusted) {
-            let scrubbed = fabric::types::data_governance::scrub_json_for_projection(
+            let scrubbed = application::data_governance::scrub_json_for_projection(
                 &input,
-                fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+                application::data_governance::ContentTrust::ExternalUntrusted,
             );
             if scrubbed != input {
                 return ToolResult {
@@ -117,9 +117,9 @@ impl Tool for McpToolWrapper {
                 let content = format!(
                     "<external_content trust=\"untrusted\" source=\"mcp:{}\">\n{}\n</external_content>",
                     self.server_name,
-                    fabric::types::data_governance::scrub_for_projection(
+                    application::data_governance::scrub_for_projection(
                         &raw,
-                        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+                        application::data_governance::ContentTrust::ExternalUntrusted,
                     ).content
                 );
                 ToolResult {

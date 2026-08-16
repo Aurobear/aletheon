@@ -12,26 +12,59 @@ path = "src/main.rs"
 
 [features]
 integration-tests = []
-acp = ["dep:async-trait", "dep:libc"]
+acp = []
 
 [dependencies]
-executive = { path = "../executive" }
+adapters-sqlite = { path = "../adapters/sqlite" }
+adapters-agent-profile = { path = "../adapters/agent-profile" }
+application = { path = "../application" }
+kernel = { path = "../kernel" }
+platform = { path = "../platform" }
+cognit = { path = "../cognit" }
+corpus = { path = "../corpus" }
+gateway = { path = "../gateway", default-features = false, features = ["protocol", "client", "server", "telegram"] }
+agora = { path = "../agora" }
+mnemosyne = { path = "../mnemosyne" }
+runtime = { path = "../runtime" }
+dasein = { path = "../dasein" }
+metacog = { path = "../metacog" }
+hardware = { path = "../hardware" }
 interact = { path = "../interact" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
-fabric = { path = "../fabric" }
-async-trait = { version = "0.1", optional = true }
-libc = { workspace = true, optional = true }
+contracts = { path = "../contracts" }
+libc = { workspace = true }
+nix = { workspace = true }
+async-trait = "0.1"
+futures = "0.3"
+sha2 = { workspace = true }
+thiserror = "2"
+urlencoding = { workspace = true }
+which = "6"
+hmac = { workspace = true }
+parking_lot = "0.12"
+schemars = "1"
+base64 = "0.22"
+serde_yaml = "0.9"
+chrono = { workspace = true }
+toml = "0.8"
+dirs = "5"
+reqwest = { workspace = true }
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-async-trait = "0.1"
-futures = "0.3"
 libc = { workspace = true }
 tempfile = "3"
-tokio-util = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+http-body-util = "0.1"

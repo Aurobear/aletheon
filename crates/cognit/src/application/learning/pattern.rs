@@ -1,6 +1,6 @@
 use super::outcome::OutcomeRecord;
 use super::rule::LearnRule;
-use fabric::Clock;
+use ::contracts::Clock;
 use std::sync::Arc;
 use tracing::info;
 
@@ -59,7 +59,7 @@ impl PatternExtractor {
                     action: "warn_before_execute".to_string(),
                     examples: common_errors.into_iter().take(5).collect(),
                     confidence: 1.0 - success_rate,
-                    created_at: fabric::wall_to_datetime(self.clock.wall_now()),
+                    created_at: ::contracts::wall_to_datetime(self.clock.wall_now()),
                 };
 
                 info!(tool = tool_name, rule = %rule.id, "Extracted warning rule");
@@ -77,7 +77,7 @@ impl PatternExtractor {
                     action: "suggest_alternative".to_string(),
                     examples: pattern.examples,
                     confidence: pattern.confidence,
-                    created_at: fabric::wall_to_datetime(self.clock.wall_now()),
+                    created_at: ::contracts::wall_to_datetime(self.clock.wall_now()),
                 };
                 rules.push(rule);
             }

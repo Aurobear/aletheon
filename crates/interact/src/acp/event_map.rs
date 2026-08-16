@@ -1,12 +1,37 @@
 //! Pure Aletheon client-event to ACP session-update translation.
 
-use fabric::protocol::client::{ApprovalEvent, ClientEvent, EventCursor, ItemEvent, ItemPhase};
+use ::contracts::protocol::client::{
+    ApprovalEvent, ClientEvent, EventCursor, ItemEvent, ItemPhase,
+};
 use serde_json::{json, Value};
 
 pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
     match event {
         ClientEvent::Item(item) => Some(map_item_event(item)),
         ClientEvent::Approval(approval) => Some(map_approval_to_permission(approval)),
+        ClientEvent::ApprovalRequested {
+            cursor,
+            session_id,
+            turn_id,
+            approval_id,
+            tool,
+            action_summary,
+            risk_level,
+            detail,
+            scope_subject,
+        } => Some(json!({
+            "sessionUpdate": "request_permission",
+            "requestId": approval_id,
+            "callId": approval_id,
+            "sessionId": session_id.0,
+            "turnId": turn_id.0,
+            "tool": tool,
+            "actionSummary": action_summary,
+            "riskLevel": risk_level,
+            "detail": detail,
+            "scopeSubject": scope_subject,
+            "cursor": cursor_json(cursor),
+        })),
         ClientEvent::Reconnected(cursor) => Some(map_reconnect(cursor)),
         ClientEvent::Snapshot(snapshot) => Some(json!({
             "sessionUpdate": "snapshot",
@@ -29,7 +54,8 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
             usage,
             ..
         } => {
-            let status = status.unwrap_or_else(|| fabric::TurnTerminalStatus::from(stop.clone()));
+            let status =
+                status.unwrap_or_else(|| ::contracts::TurnTerminalStatus::from(stop.clone()));
             Some(json!({
                 "sessionUpdate": "turn_end",
                 "stopReason": format!("{status:?}").to_ascii_lowercase(),
@@ -39,7 +65,7 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
             }))
         }
         ClientEvent::TurnStopped { reason, .. } => {
-            let status = fabric::TurnTerminalStatus::from(reason.clone());
+            let status = ::contracts::TurnTerminalStatus::from(reason.clone());
             Some(json!({
                 "sessionUpdate": "turn_end",
                 "stopReason": format!("{status:?}").to_ascii_lowercase(),
@@ -136,8 +162,8 @@ mod tests {
     #[test]
     fn snapshot_maps_before_incremental_replay() {
         let update = map_client_event_to_acp(&ClientEvent::Snapshot(
-            fabric::protocol::client::UiSnapshot {
-                session_id: fabric::SessionId("s".into()),
+            ::contracts::protocol::client::UiSnapshot {
+                session_id: ::contracts::SessionId("s".into()),
                 cursor: cursor(4),
                 provider: None,
                 model: None,
@@ -181,33 +207,33 @@ mod tests {
 
     #[test]
     fn approval_maps_to_permission_with_authoritative_call_correlation() {
-        let subject = fabric::ApprovalSubject {
-            category: fabric::ApprovalCategory::ApplyCode,
-            goal_id: fabric::GoalId(42),
+        let subject = ::contracts::ApprovalSubject {
+            category: ::contracts::ApprovalCategory::ApplyCode,
+            goal_id: ::contracts::GoalId(42),
             attempt_id: None,
             job_id: None,
             attributes: BTreeMap::new(),
             allowed_scope: Vec::new(),
             apply_target: None,
         };
-        let approval_id = fabric::ApprovalId(uuid::Uuid::from_u128(77));
+        let approval_id = ::contracts::ApprovalId(uuid::Uuid::from_u128(77));
         let event = ClientEvent::Approval(ApprovalEvent {
             cursor: cursor(8),
-            approval: fabric::ApprovalSnapshot {
+            approval: ::contracts::ApprovalSnapshot {
                 id: approval_id,
                 goal_id: subject.goal_id,
                 attempt_id: None,
                 job_id: None,
-                owner_id: fabric::PrincipalId("owner".into()),
+                owner_id: ::contracts::PrincipalId("owner".into()),
                 category: subject.category,
-                risk: fabric::ApprovalRisk::High,
+                risk: ::contracts::ApprovalRisk::High,
                 subject_hash: subject.subject_hash().unwrap(),
                 subject,
                 summary: "apply verified patch".into(),
                 artifacts: Vec::new(),
                 created_at_ms: 1,
                 expires_at_ms: 100,
-                status: fabric::ApprovalStatus::Pending,
+                status: ::contracts::ApprovalStatus::Pending,
                 version: 1,
                 resolution: None,
             },
@@ -232,18 +258,18 @@ mod tests {
     #[test]
     fn acp_terminal_status_matches_canonical_tui_projection() {
         for stop in [
-            fabric::TurnStop::Completed,
-            fabric::TurnStop::Blocked,
-            fabric::TurnStop::Cancelled,
-            fabric::TurnStop::Failed,
+            ::contracts::TurnStop::Completed,
+            ::contracts::TurnStop::Blocked,
+            ::contracts::TurnStop::Cancelled,
+            ::contracts::TurnStop::Failed,
         ] {
-            let expected = format!("{:?}", fabric::TurnTerminalStatus::from(stop.clone()))
+            let expected = format!("{:?}", ::contracts::TurnTerminalStatus::from(stop.clone()))
                 .to_ascii_lowercase();
             let event = ClientEvent::TurnCompleted {
-                thread_id: fabric::ThreadId("thread".into()),
-                turn_id: fabric::TurnId::new(),
-                operation_id: fabric::OperationId::new(),
-                status: Some(fabric::TurnTerminalStatus::from(stop.clone())),
+                thread_id: ::contracts::ThreadId("thread".into()),
+                turn_id: ::contracts::TurnId::new(),
+                operation_id: ::contracts::OperationId::new(),
+                status: Some(::contracts::TurnTerminalStatus::from(stop.clone())),
                 stop,
                 error: None,
                 retryable: false,
@@ -265,18 +291,18 @@ mod tests {
     #[test]
     fn acp_terminal_projection_preserves_rich_failure_fields() {
         let event = ClientEvent::TurnCompleted {
-            thread_id: fabric::ThreadId("thread".into()),
-            turn_id: fabric::TurnId::new(),
-            operation_id: fabric::OperationId::new(),
-            stop: fabric::TurnStop::Failed,
-            status: Some(fabric::TurnTerminalStatus::Failed),
-            error: Some(fabric::protocol::client::TurnCompletionError {
-                kind: Some(fabric::TurnFailureKind::ProviderTransient),
+            thread_id: ::contracts::ThreadId("thread".into()),
+            turn_id: ::contracts::TurnId::new(),
+            operation_id: ::contracts::OperationId::new(),
+            stop: ::contracts::TurnStop::Failed,
+            status: Some(::contracts::TurnTerminalStatus::Failed),
+            error: Some(::contracts::protocol::client::TurnCompletionError {
+                kind: Some(::contracts::TurnFailureKind::ProviderTransient),
                 code: Some("overloaded".into()),
                 message: "provider overloaded".into(),
             }),
             retryable: true,
-            usage: fabric::protocol::client::TurnCompletionUsage {
+            usage: ::contracts::protocol::client::TurnCompletionUsage {
                 input_tokens: Some(7),
                 output_tokens: Some(2),
                 cache_read_tokens: Some(2),

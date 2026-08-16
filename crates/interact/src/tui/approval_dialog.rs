@@ -23,7 +23,7 @@ pub struct ApprovalDialog {
     pub risk_level: String,
     /// Full command / diff context for the user to inspect.
     pub detail: Option<String>,
-    pub scope_subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
+    pub scope_subject: Option<::contracts::protocol::client::TransientApprovalScopeSubject>,
     pub scroll: u16,
 }
 
@@ -47,7 +47,7 @@ impl ApprovalDialog {
 
     pub fn with_scope_subject(
         mut self,
-        subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
+        subject: Option<::contracts::protocol::client::TransientApprovalScopeSubject>,
     ) -> Self {
         self.scope_subject = subject;
         self

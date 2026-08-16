@@ -9,6 +9,8 @@ pub mod bridge;
 pub mod event;
 pub mod fuse;
 pub mod manager;
+pub mod observation;
+pub use observation::PerceptionObservation;
 pub mod sources;
 pub mod visual_aggregator;
 

@@ -1,6 +1,6 @@
 //! Typed, model-history-independent state for practical cognitive work.
 
-use fabric::OperationId;
+use ::contracts::OperationId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

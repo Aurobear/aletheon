@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use fabric::{Clock, MonoTime};
+use ::contracts::{Clock, MonoTime};
 
 use super::event::*;
 

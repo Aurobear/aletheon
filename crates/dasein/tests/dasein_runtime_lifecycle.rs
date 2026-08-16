@@ -1,6 +1,6 @@
+use ::contracts::dasein::DaseinEvent;
 use dasein::dasein::sorge::SorgeTimer;
 use dasein::dasein::{DaseinModule, DaseinRuntimeConfig};
-use fabric::dasein::DaseinEvent;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +30,7 @@ impl SorgeTimer for ManualTimer {
     }
 }
 
-fn test_clock() -> Arc<dyn fabric::Clock> {
+fn test_clock() -> Arc<dyn ::contracts::Clock> {
     Arc::new(kernel::chronos::TestClock::default())
 }
 

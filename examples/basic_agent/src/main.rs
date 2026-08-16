@@ -7,15 +7,14 @@
 //!
 //! Run with:  cargo run -p basic_agent
 
+use aletheon::config::CognitiveRuntimeConfig;
 use anyhow::Result;
-use executive::{AletheonExecutive, ExecutiveConfig};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let config = ExecutiveConfig::default();
-    let _runtime = AletheonExecutive::new(config);
+    let _config = CognitiveRuntimeConfig::default();
 
     println!("Aletheon MacroKernel initialized. Daemon mode is the primary interface.");
     println!("Run `aletheon daemon` to start the JSON-RPC server.");

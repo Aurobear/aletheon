@@ -568,7 +568,7 @@
           "type": "string"
         },
         "prefix_shape_digest": {
-          "description": "Diagnostic identity of the cache-relevant request prefix (see\n`executive::host::daemon::cache_shape::InferencePrefixShape::digest`).\nHost-side diagnostic only; never a correctness dependency and never a\nclaim that the provider hit or missed cache. `None` when the host did\nnot compute a shape for this turn.",
+          "description": "Diagnostic identity of the cache-relevant request prefix (see\n`runtime::cache_shape::InferencePrefixShape::digest`).\nHost-side diagnostic only; never a correctness dependency and never a\nclaim that the provider hit or missed cache. `None` when the host did\nnot compute a shape for this turn.",
           "type": [
             "string",
             "null"

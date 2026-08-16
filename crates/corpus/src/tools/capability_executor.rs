@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use async_trait::async_trait;
-use fabric::tool::ToolCachePolicy;
-use fabric::{
+use ::contracts::tool::ToolCachePolicy;
+use ::contracts::{
     AuditEventId, CapabilityId, CapabilityRequest, CapabilityResult, Clock, ExecutionPermit,
     ToolContext, ToolResult, ToolResultMeta, UsageReport,
 };
+use async_trait::async_trait;
 use kernel::capability::ToolExecutor;
 
 use crate::tools::read_only_cache::{
@@ -22,7 +22,7 @@ pub fn default_tool_registry() -> Arc<tokio::sync::Mutex<ToolRegistry>> {
 /// Snapshot trusted tool risk metadata without exposing registry access.
 pub async fn tool_risk_levels(
     registry: &Arc<tokio::sync::Mutex<ToolRegistry>>,
-) -> HashMap<String, fabric::types::admission::RiskLevel> {
+) -> HashMap<String, ::contracts::types::admission::RiskLevel> {
     let registry = registry.lock().await;
     registry
         .definitions()
@@ -30,13 +30,17 @@ pub async fn tool_risk_levels(
         .filter_map(|definition| {
             let tool = registry.get(&definition.name)?;
             let risk = match tool.permission_level() {
-                fabric::tool::PermissionLevel::L0 => fabric::types::admission::RiskLevel::ReadOnly,
-                fabric::tool::PermissionLevel::L1 => fabric::types::admission::RiskLevel::Sandboxed,
-                fabric::tool::PermissionLevel::L2 => {
-                    fabric::types::admission::RiskLevel::SystemModify
+                ::contracts::tool::PermissionLevel::L0 => {
+                    ::contracts::types::admission::RiskLevel::ReadOnly
                 }
-                fabric::tool::PermissionLevel::L3 => {
-                    fabric::types::admission::RiskLevel::Destructive
+                ::contracts::tool::PermissionLevel::L1 => {
+                    ::contracts::types::admission::RiskLevel::Sandboxed
+                }
+                ::contracts::tool::PermissionLevel::L2 => {
+                    ::contracts::types::admission::RiskLevel::SystemModify
+                }
+                ::contracts::tool::PermissionLevel::L3 => {
+                    ::contracts::types::admission::RiskLevel::Destructive
                 }
             };
             Some((definition.name, risk))
@@ -75,12 +79,22 @@ pub async fn discover_tool_extensions(
         .collect()
 }
 
-fn permission_risk(level: fabric::tool::PermissionLevel) -> fabric::types::admission::RiskLevel {
+fn permission_risk(
+    level: ::contracts::tool::PermissionLevel,
+) -> ::contracts::types::admission::RiskLevel {
     match level {
-        fabric::tool::PermissionLevel::L0 => fabric::types::admission::RiskLevel::ReadOnly,
-        fabric::tool::PermissionLevel::L1 => fabric::types::admission::RiskLevel::Sandboxed,
-        fabric::tool::PermissionLevel::L2 => fabric::types::admission::RiskLevel::SystemModify,
-        fabric::tool::PermissionLevel::L3 => fabric::types::admission::RiskLevel::Destructive,
+        ::contracts::tool::PermissionLevel::L0 => {
+            ::contracts::types::admission::RiskLevel::ReadOnly
+        }
+        ::contracts::tool::PermissionLevel::L1 => {
+            ::contracts::types::admission::RiskLevel::Sandboxed
+        }
+        ::contracts::tool::PermissionLevel::L2 => {
+            ::contracts::types::admission::RiskLevel::SystemModify
+        }
+        ::contracts::tool::PermissionLevel::L3 => {
+            ::contracts::types::admission::RiskLevel::Destructive
+        }
     }
 }
 
@@ -178,7 +192,7 @@ impl CorpusToolExecutor {
     fn validate(
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        now: fabric::MonoTime,
+        now: ::contracts::MonoTime,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             !request.control.cancel.is_cancelled(),
@@ -201,7 +215,7 @@ impl CorpusToolExecutor {
         &self,
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        tool: &dyn fabric::Tool,
+        tool: &dyn ::contracts::Tool,
         cache_policy: ToolCachePolicy,
     ) -> Result<Option<String>, String> {
         if !self.read_only_cache_config.enabled
@@ -220,7 +234,7 @@ impl CorpusToolExecutor {
             &request.call.input,
             &request.authority.workspace,
         )?;
-        let schema_digest = fabric::tool_schema_digest(&[fabric::ToolDefinition {
+        let schema_digest = ::contracts::tool_schema_digest(&[::contracts::ToolDefinition {
             name: tool.name().to_owned(),
             description: tool.description().to_owned(),
             input_schema: tool.input_schema(),
@@ -265,7 +279,7 @@ impl CorpusToolExecutor {
         &self,
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        tool: &dyn fabric::Tool,
+        tool: &dyn ::contracts::Tool,
         cache_policy: ToolCachePolicy,
     ) -> Option<String> {
         match self.cache_key(request, permit, tool, cache_policy) {
@@ -287,19 +301,19 @@ impl CorpusToolExecutor {
     }
 
     async fn emit_stream_terminal_error(
-        sink: &mut fabric::ToolEventSink,
-        error: fabric::ToolExecutionError,
+        sink: &mut ::contracts::ToolEventSink,
+        error: ::contracts::ToolExecutionError,
     ) {
         if !sink.terminal_sent() {
             sink.terminal(Err(error)).await;
         }
     }
 
-    fn terminal_error_for(message: &str) -> fabric::ToolExecutionError {
+    fn terminal_error_for(message: &str) -> ::contracts::ToolExecutionError {
         if message == "capability invocation cancelled before execution" {
-            fabric::ToolExecutionError::Cancelled(message.to_owned())
+            ::contracts::ToolExecutionError::Cancelled(message.to_owned())
         } else {
-            fabric::ToolExecutionError::Failed(message.to_owned())
+            ::contracts::ToolExecutionError::Failed(message.to_owned())
         }
     }
 
@@ -307,7 +321,7 @@ impl CorpusToolExecutor {
         &self,
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        tool: &dyn fabric::Tool,
+        tool: &dyn ::contracts::Tool,
         context: &ToolContext,
         hit: &mut CapabilityResult,
     ) -> bool {
@@ -381,7 +395,7 @@ impl ToolExecutor for CorpusToolExecutor {
 
         let context = ToolContext {
             agent: request.authority.agent.clone(),
-            approval_authority: Some(fabric::ToolApprovalAuthority {
+            approval_authority: Some(::contracts::ToolApprovalAuthority {
                 principal_id: request.authority.principal.clone(),
                 connection_id: request.authority.connection_id.clone(),
                 thread_id: request.authority.thread_id.clone(),
@@ -481,7 +495,7 @@ impl ToolExecutor for CorpusToolExecutor {
         &self,
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) -> CapabilityResult {
         if let Err(error) = Self::validate(request, permit, self.clock.mono_now()) {
             let message = error.to_string();
@@ -497,7 +511,7 @@ impl ToolExecutor for CorpusToolExecutor {
             let message = format!("tool not found: {}", request.call.name);
             Self::emit_stream_terminal_error(
                 sink,
-                fabric::ToolExecutionError::Failed(message.clone()),
+                ::contracts::ToolExecutionError::Failed(message.clone()),
             )
             .await;
             return Self::error_result(request, permit, message, AuditEventId::new());
@@ -505,7 +519,7 @@ impl ToolExecutor for CorpusToolExecutor {
 
         let context = ToolContext {
             agent: request.authority.agent.clone(),
-            approval_authority: Some(fabric::ToolApprovalAuthority {
+            approval_authority: Some(::contracts::ToolApprovalAuthority {
                 principal_id: request.authority.principal.clone(),
                 connection_id: request.authority.connection_id.clone(),
                 thread_id: request.authority.thread_id.clone(),
@@ -600,7 +614,7 @@ impl ToolExecutor for CorpusToolExecutor {
                 let message = error.to_string();
                 Self::emit_stream_terminal_error(
                     sink,
-                    fabric::ToolExecutionError::Failed(message.clone()),
+                    ::contracts::ToolExecutionError::Failed(message.clone()),
                 )
                 .await;
                 Self::error_result(request, permit, message, report.audit_id)

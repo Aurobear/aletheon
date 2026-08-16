@@ -4,7 +4,7 @@
 //! are the only bridge between the wire contract and the domain model.
 
 use crate::grpc::wire;
-use fabric::types::embodiment as domain;
+use ::contracts::types::embodiment as domain;
 
 // ── RiskClass ────────────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ pub fn to_skill_progress(sp: &wire::SkillProgress) -> Result<domain::SkillProgre
         skill: domain::SkillId(sp.skill_id.clone()),
         fraction: sp.fraction,
         note: sp.note.clone(),
-        at: fabric::MonoTime(sp.at_unix_ms.max(0) as u64),
+        at: ::contracts::MonoTime(sp.at_unix_ms.max(0) as u64),
     })
 }
 
@@ -98,7 +98,7 @@ pub fn to_skill_descriptor(sd: &wire::SkillDescriptor) -> Result<domain::SkillDe
 
 pub fn to_observation(
     obs: &wire::Observation,
-    local_mono_now: fabric::MonoTime,
+    local_mono_now: ::contracts::MonoTime,
     local_unix_now_ms: i64,
 ) -> Result<domain::EmbodiedObservation, String> {
     let payload = struct_to_json(&obs.payload);
@@ -118,9 +118,9 @@ pub fn to_observation(
         // the confidence value and prevents downstream world-state consumers
         // from accidentally treating a stale sample as fresh.
         valid_until: if obs.stale {
-            Some(fabric::MonoDeadline(local_mono_now))
+            Some(::contracts::MonoDeadline(local_mono_now))
         } else if obs.valid_until_unix_ms > 0 {
-            Some(fabric::MonoDeadline(unix_deadline_to_mono(
+            Some(::contracts::MonoDeadline(unix_deadline_to_mono(
                 obs.valid_until_unix_ms,
                 local_unix_now_ms,
                 local_mono_now,
@@ -143,10 +143,10 @@ pub fn to_observation(
 fn unix_deadline_to_mono(
     unix_ms: i64,
     anchor_unix_ms: i64,
-    anchor_mono: fabric::MonoTime,
-) -> fabric::MonoTime {
+    anchor_mono: ::contracts::MonoTime,
+) -> ::contracts::MonoTime {
     if unix_ms >= anchor_unix_ms {
-        return fabric::MonoTime(
+        return ::contracts::MonoTime(
             anchor_mono
                 .0
                 .saturating_add(unix_ms.saturating_sub(anchor_unix_ms) as u64),
@@ -158,12 +158,12 @@ fn unix_deadline_to_mono(
 fn unix_to_mono(
     unix_ms: i64,
     anchor_unix_ms: i64,
-    anchor_mono: fabric::MonoTime,
-) -> fabric::MonoTime {
+    anchor_mono: ::contracts::MonoTime,
+) -> ::contracts::MonoTime {
     if unix_ms <= 0 || unix_ms >= anchor_unix_ms {
         return anchor_mono;
     }
-    fabric::MonoTime(
+    ::contracts::MonoTime(
         anchor_mono
             .0
             .saturating_sub(anchor_unix_ms.saturating_sub(unix_ms) as u64),
@@ -176,7 +176,7 @@ fn unix_to_mono(
 fn frame_from_wire(
     obs: &wire::Observation,
     payload: &serde_json::Value,
-) -> Result<Option<fabric::types::frame::FrameRef>, String> {
+) -> Result<Option<::contracts::types::frame::FrameRef>, String> {
     let Some(sha256) = payload.get("frame_sha256") else {
         return Ok(None);
     };
@@ -206,7 +206,7 @@ fn frame_from_wire(
             })
             .ok_or_else(|| format!("visual observation is missing integer {key}"))
     };
-    let frame = fabric::types::frame::FrameRef {
+    let frame = ::contracts::types::frame::FrameRef {
         uri: obs.frame_ref.clone(),
         sha256: sha256
             .as_str()

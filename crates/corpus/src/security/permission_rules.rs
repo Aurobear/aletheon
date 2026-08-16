@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use fabric::{PermissionBehavior, PermissionContext, PermissionMode, PermissionRule};
+use ::contracts::{PermissionBehavior, PermissionContext, PermissionMode, PermissionRule};
 
 // -- TOML schema structs (internal) ------------------------------------------
 

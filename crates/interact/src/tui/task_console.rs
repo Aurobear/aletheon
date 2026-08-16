@@ -12,17 +12,16 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
-
-use fabric::protocol::client::{ActivitySnapshot, ActivityState, TaskPhase, TaskSnapshot};
-use fabric::WorkspacePolicy;
+use serde::Deserialize;
 
 use super::{markdown, state::AppState, term_compat::TermCaps};
+use ::contracts::protocol::client::{ActivitySnapshot, ActivityState, TaskPhase, TaskSnapshot};
 
 /// The primary work surface for an active Session.
 pub struct TaskConsole<'a> {
     pub state: &'a AppState,
     pub caps: &'a TermCaps,
-    pub workspace: &'a WorkspacePolicy,
+    pub workspace_name: &'a str,
     pub selected_activity: Option<usize>,
     /// Explicit typed Agent runtime requirement waiting for the next turn.
     pub next_agent_runtime: Option<&'a str>,
@@ -43,7 +42,7 @@ impl Widget for TaskConsole<'_> {
             buf,
             self.state,
             self.caps,
-            self.workspace,
+            self.workspace_name,
             self.next_agent_runtime,
         );
 
@@ -81,7 +80,7 @@ impl Widget for TaskConsole<'_> {
 fn activity_console_visible(state: &AppState, selected_activity: Option<usize>) -> bool {
     selected_activity.is_some()
         || state.activities.iter().any(|activity| {
-            activity.kind == fabric::ActivityKind::Robot
+            activity.kind == ::contracts::ActivityKind::Robot
                 && !matches!(
                     activity.state,
                     ActivityState::Completed | ActivityState::Cancelled
@@ -94,7 +93,7 @@ fn render_task_header(
     buf: &mut Buffer,
     state: &AppState,
     caps: &TermCaps,
-    workspace: &WorkspacePolicy,
+    workspace_name: &str,
     next_agent_runtime: Option<&str>,
 ) {
     let task = active_task(state);
@@ -118,15 +117,11 @@ fn render_task_header(
         .as_ref()
         .map(|session| short_id(&session.id.0))
         .unwrap_or("—");
-    let project = workspace
-        .cwd()
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("workspace");
+    let project = workspace_name;
     let activity = activity_summary(&state.activities);
     let target = match &state.execution_target.target {
-        fabric::ExecutionTarget::General => "general".to_string(),
-        fabric::ExecutionTarget::Robot {
+        ::contracts::ExecutionTarget::General => "general".to_string(),
+        ::contracts::ExecutionTarget::Robot {
             device_id,
             environment,
         } => format!("robot:{}/{}", device_id.0, environment.as_str()),
@@ -236,6 +231,12 @@ fn append_work_trace(lines: &mut Vec<Line<'static>>, state: &AppState, caps: &Te
         return;
     }
     let theme = caps.theme();
+    let has_agent_activity = state.activities.iter().any(|activity| {
+        matches!(
+            activity.label.as_str(),
+            "agent" | "agent_spawn" | "agent_wait"
+        )
+    });
     lines.push(Line::from(vec![
         Span::styled(
             "Work trace",
@@ -244,12 +245,20 @@ fn append_work_trace(lines: &mut Vec<Line<'static>>, state: &AppState, caps: &Te
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "  (public progress · Ctrl+B full details)",
+            if has_agent_activity {
+                "  (public progress · Ctrl+B details · Ctrl+G child Agents)"
+            } else {
+                "  (public progress · Ctrl+B full details)"
+            },
             Style::default().fg(theme.text_muted),
         ),
     ]));
     let mut activities = state.activities.iter().collect::<Vec<_>>();
-    activities.sort_by_key(|activity| activity.updated_at);
+    activities.sort_by(|left, right| {
+        left.started_at
+            .cmp(&right.started_at)
+            .then_with(|| left.activity_id.cmp(&right.activity_id))
+    });
     for activity in activities.into_iter().rev().take(12).rev() {
         lines.push(activity_line(activity, caps, false));
     }
@@ -279,7 +288,11 @@ fn render_activity_panel(
     let timeline_inner = timeline.inner(sections[0]);
     timeline.render(sections[0], buf);
     let mut activities = state.activities.iter().enumerate().collect::<Vec<_>>();
-    activities.sort_by_key(|(_, activity)| activity.updated_at);
+    activities.sort_by(|(_, left), (_, right)| {
+        left.started_at
+            .cmp(&right.started_at)
+            .then_with(|| left.activity_id.cmp(&right.activity_id))
+    });
     let max = timeline_inner.height as usize;
     let mut lines = activities.into_iter().rev().take(max).collect::<Vec<_>>();
     lines.reverse();
@@ -321,16 +334,18 @@ fn render_activity_panel(
     }
     if let Some(review) = active_task(state).and_then(|task| task.checkpoint_review.as_ref()) {
         let coverage = match review.mutation_coverage {
-            fabric::CheckpointMutationCoverage::Full => "full",
-            fabric::CheckpointMutationCoverage::BestEffort => "best-effort",
-            fabric::CheckpointMutationCoverage::NonRollbackable => "non-rollbackable",
+            ::contracts::CheckpointMutationCoverage::Full => "full",
+            ::contracts::CheckpointMutationCoverage::BestEffort => "best-effort",
+            ::contracts::CheckpointMutationCoverage::NonRollbackable => "non-rollbackable",
         };
         let rollback = match review.rollback_action {
-            fabric::CheckpointRollbackAction::AutomaticAllowed => "automatic rollback available",
-            fabric::CheckpointRollbackAction::ExplicitApprovalRequired => {
+            ::contracts::CheckpointRollbackAction::AutomaticAllowed => {
+                "automatic rollback available"
+            }
+            ::contracts::CheckpointRollbackAction::ExplicitApprovalRequired => {
                 "rollback requires explicit approval"
             }
-            fabric::CheckpointRollbackAction::Unavailable => "rollback unavailable",
+            ::contracts::CheckpointRollbackAction::Unavailable => "rollback unavailable",
         };
         change_lines.push(Line::from(Span::styled(
             format!("CHECKPOINT {coverage} · {rollback}"),
@@ -345,8 +360,8 @@ fn render_activity_panel(
         );
         if matches!(
             review.settlement,
-            fabric::CheckpointReviewSettlement::Partial
-                | fabric::CheckpointReviewSettlement::Conflicted
+            ::contracts::CheckpointReviewSettlement::Partial
+                | ::contracts::CheckpointReviewSettlement::Conflicted
         ) {
             change_lines.extend(review.recovery_evidence.iter().map(|evidence| {
                 Line::from(Span::styled(
@@ -384,6 +399,12 @@ fn render_activity_panel(
         )));
         if let Some(receipt) = activity.receipt_ref.as_deref() {
             change_lines.push(Line::from(format!(" receipt {receipt}")));
+        }
+        if let Some(progress) = activity.progress.as_ref() {
+            change_lines.push(Line::from(format!(
+                " progress {}",
+                bounded_value(progress, 512)
+            )));
         }
     }
     change_lines.extend(
@@ -474,7 +495,7 @@ fn runtime_metrics(task: Option<&TaskSnapshot>) -> String {
         },
     );
     let cache = match facts.cumulative_usage.cache_telemetry {
-        fabric::CacheTelemetry::Reported => format!(
+        ::contracts::CacheTelemetry::Reported => format!(
             "read {} / write {}",
             facts
                 .cumulative_usage
@@ -485,8 +506,8 @@ fn runtime_metrics(task: Option<&TaskSnapshot>) -> String {
                 .cache_write_tokens
                 .map_or_else(|| "unknown".into(), |value| value.to_string())
         ),
-        fabric::CacheTelemetry::Unsupported => "unsupported".into(),
-        fabric::CacheTelemetry::Unknown => {
+        ::contracts::CacheTelemetry::Unsupported => "unsupported".into(),
+        ::contracts::CacheTelemetry::Unknown => {
             "unknown (provider receipt did not report cache usage)".into()
         }
     };
@@ -512,10 +533,10 @@ fn runtime_metrics(task: Option<&TaskSnapshot>) -> String {
     )
 }
 
-fn rollout_value(value: &fabric::RolloutBudgetValue) -> String {
+fn rollout_value(value: &::contracts::RolloutBudgetValue) -> String {
     match value {
-        fabric::RolloutBudgetValue::Known { value, .. } => compact_tokens(value.get()),
-        fabric::RolloutBudgetValue::Unknown { reason, .. } => {
+        ::contracts::RolloutBudgetValue::Known { value, .. } => compact_tokens(value.get()),
+        ::contracts::RolloutBudgetValue::Unknown { reason, .. } => {
             format!("unknown ({})", reason.as_str())
         }
     }
@@ -590,20 +611,35 @@ fn activity_progress(activity: &ActivitySnapshot) -> String {
     let Some(progress) = activity.progress.as_ref() else {
         return String::new();
     };
-    if let Some(object) = progress.as_object() {
-        let args = object
-            .get("args")
-            .filter(|value| !value.is_null())
-            .map(|value| format!(" {}", bounded_value(value, 72)))
-            .unwrap_or_default();
-        let elapsed = object
-            .get("elapsed_ms")
-            .and_then(serde_json::Value::as_u64)
-            .map(|value| format!(" · {value}ms"))
-            .unwrap_or_default();
-        return format!("{args}{elapsed}");
+    let Ok(display) = serde_json::from_value::<ActivityProgressDisplay>(progress.clone()) else {
+        return " · unknown progress".into();
+    };
+    if display.schema_version != ACTIVITY_PROGRESS_SCHEMA_VERSION {
+        return " · unknown progress schema".into();
     }
-    format!(" · {}", bounded_value(progress, 64))
+    let args = display
+        .args
+        .as_ref()
+        .filter(|value| !value.is_null())
+        .map(|value| format!(" {}", bounded_value(value, 72)))
+        .unwrap_or_default();
+    let elapsed = display
+        .elapsed_ms
+        .map(|value| format!(" · {value}ms"))
+        .unwrap_or_default();
+    let error = display
+        .error
+        .as_deref()
+        .map(|value| format!(" · {}", bounded_text(value, 96)))
+        .unwrap_or_default();
+    if args.is_empty() && elapsed.is_empty() && error.is_empty() {
+        display
+            .stage
+            .map(|stage| format!(" · {stage}"))
+            .unwrap_or_default()
+    } else {
+        format!("{args}{elapsed}{error}")
+    }
 }
 
 fn bounded_value(value: &serde_json::Value, limit: usize) -> String {
@@ -611,10 +647,14 @@ fn bounded_value(value: &serde_json::Value, limit: usize) -> String {
         serde_json::Value::String(value) => value.clone(),
         value => value.to_string(),
     };
-    if rendered.chars().count() <= limit {
-        rendered
+    bounded_text(&rendered, limit)
+}
+
+fn bounded_text(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        value.to_owned()
     } else {
-        format!("{}…", rendered.chars().take(limit).collect::<String>())
+        format!("{}…", value.chars().take(limit).collect::<String>())
     }
 }
 
@@ -628,54 +668,90 @@ fn task_phase(phase: TaskPhase) -> &'static str {
     }
 }
 
-fn task_settlement(settlement: fabric::TaskSettlement) -> &'static str {
+fn task_settlement(settlement: ::contracts::TaskSettlement) -> &'static str {
     match settlement {
-        fabric::TaskSettlement::Accepted => "accepted",
-        fabric::TaskSettlement::RepairRequired => "repair-required",
-        fabric::TaskSettlement::Blocked => "blocked",
-        fabric::TaskSettlement::Cancelled => "cancelled",
-        fabric::TaskSettlement::RolledBack => "rolled-back",
-        fabric::TaskSettlement::Failed => "failed",
+        ::contracts::TaskSettlement::Accepted => "accepted",
+        ::contracts::TaskSettlement::RepairRequired => "repair-required",
+        ::contracts::TaskSettlement::Blocked => "blocked",
+        ::contracts::TaskSettlement::Cancelled => "cancelled",
+        ::contracts::TaskSettlement::RolledBack => "rolled-back",
+        ::contracts::TaskSettlement::Failed => "failed",
     }
 }
 
-struct RobotSummary<'a> {
-    device: &'a str,
-    scene: &'a str,
-    settlement: &'a str,
-    bridge_digest: &'a str,
-    report_sha256: &'a str,
+const ACTIVITY_PROGRESS_SCHEMA_VERSION: u16 = 1;
+
+/// Versioned display DTO for the bounded activity-progress surface. The
+/// renderer never walks arbitrary JSON keys: missing/unknown fields render as
+/// `unknown` and cannot be mistaken for authoritative runtime facts.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+struct ActivityProgressDisplay {
+    schema_version: u16,
+    args: Option<serde_json::Value>,
+    elapsed_ms: Option<u64>,
+    error: Option<String>,
+    stage: Option<String>,
+    device: Option<String>,
+    scene: Option<String>,
+    settlement: Option<String>,
+    bridge_digest: Option<String>,
+    report_sha256: Option<String>,
+    attempt_count: Option<u64>,
+    evidence_refs: Option<Vec<String>>,
+}
+
+impl Default for ActivityProgressDisplay {
+    fn default() -> Self {
+        Self {
+            schema_version: ACTIVITY_PROGRESS_SCHEMA_VERSION,
+            args: None,
+            elapsed_ms: None,
+            error: None,
+            stage: None,
+            device: None,
+            scene: None,
+            settlement: None,
+            bridge_digest: None,
+            report_sha256: None,
+            attempt_count: None,
+            evidence_refs: None,
+        }
+    }
+}
+
+struct RobotSummary {
+    device: String,
+    scene: String,
+    settlement: String,
+    bridge_digest: String,
+    report_sha256: String,
     attempt_count: u64,
     evidence_count: usize,
 }
 
-fn robot_summary(activities: &[ActivitySnapshot]) -> Option<RobotSummary<'_>> {
-    let progress = activities
+fn robot_summary(activities: &[ActivitySnapshot]) -> Option<RobotSummary> {
+    let display = activities
         .iter()
         .rev()
-        .find(|activity| {
-            activity.kind == fabric::ActivityKind::Robot
-                && activity
-                    .progress
-                    .as_ref()
-                    .and_then(|progress| progress.get("stage"))
-                    .and_then(serde_json::Value::as_str)
-                    == Some("settle")
-        })?
-        .progress
-        .as_ref()?;
+        .filter(|activity| activity.kind == ::contracts::ActivityKind::Robot)
+        .filter_map(|activity| {
+            let progress = activity.progress.as_ref()?;
+            let display =
+                serde_json::from_value::<ActivityProgressDisplay>(progress.clone()).ok()?;
+            (display.schema_version == ACTIVITY_PROGRESS_SCHEMA_VERSION
+                && display.stage.as_deref() == Some("settle"))
+            .then_some(display)
+        })
+        .next()?;
     Some(RobotSummary {
-        device: progress.get("device")?.as_str()?,
-        scene: progress.get("scene")?.as_str()?,
-        settlement: progress.get("settlement")?.as_str()?,
-        bridge_digest: progress.get("bridge_digest")?.as_str()?,
-        report_sha256: progress.get("report_sha256")?.as_str()?,
-        attempt_count: progress.get("attempt_count")?.as_u64()?,
-        evidence_count: progress
-            .get("evidence_refs")?
-            .as_array()
-            .map(Vec::len)
-            .unwrap_or_default(),
+        device: display.device.unwrap_or_else(|| "unknown".into()),
+        scene: display.scene.unwrap_or_else(|| "unknown".into()),
+        settlement: display.settlement.unwrap_or_else(|| "unknown".into()),
+        bridge_digest: display.bridge_digest.unwrap_or_else(|| "unknown".into()),
+        report_sha256: display.report_sha256.unwrap_or_else(|| "unknown".into()),
+        attempt_count: display.attempt_count.unwrap_or_default(),
+        evidence_count: display.evidence_refs.map_or(0, |refs| refs.len()),
     })
 }
 
@@ -687,6 +763,7 @@ fn short_id(value: &str) -> &str {
 mod tests {
     use super::*;
     use crate::tui::state::{UiItem, UiItemStatus};
+    use ::contracts::WorkspacePolicy;
 
     fn test_caps() -> TermCaps {
         TermCaps {
@@ -719,7 +796,11 @@ mod tests {
         TaskConsole {
             state,
             caps: &caps,
-            workspace: &workspace,
+            workspace_name: workspace
+                .cwd()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("workspace"),
             selected_activity,
             next_agent_runtime: None,
         }
@@ -837,7 +918,7 @@ mod tests {
         );
         state.tasks.push(TaskSnapshot {
             task_id: "task-1234567890".into(),
-            session_id: fabric::SessionId("session-1234567890".into()),
+            session_id: ::contracts::SessionId("session-1234567890".into()),
             goal: Some("inspect repository".into()),
             phase: TaskPhase::Active,
             plan_revision: Some(1),
@@ -851,13 +932,13 @@ mod tests {
             checkpoint_review: None,
             settlement: None,
             review_findings: vec![],
-            runtime_facts: Some(fabric::TaskRuntimeFacts {
+            runtime_facts: Some(::contracts::TaskRuntimeFacts {
                 effective_provider: Some("deepseek".into()),
                 effective_model: Some("deepseek-v4-flash".into()),
                 context_capacity_tokens: Some(1_000_000),
                 active_context_occupancy_tokens: Some(8_000),
                 context_budget: Some(Box::new(projected_context_budget())),
-                cumulative_usage: fabric::InferenceUsage::reported(
+                cumulative_usage: ::contracts::InferenceUsage::reported(
                     10_000,
                     500,
                     Some(2_000),
@@ -873,14 +954,17 @@ mod tests {
         state.activities.push(ActivitySnapshot {
             activity_id: "activity-1".into(),
             task_id: "task-1234567890".into(),
-            turn_id: fabric::TurnId::new(),
+            turn_id: ::contracts::TurnId::new(),
             parent_activity_id: None,
-            kind: fabric::ActivityKind::Command,
+            kind: ::contracts::ActivityKind::Command,
             label: "cargo check".into(),
             state: ActivityState::Running,
             started_at: 1,
             updated_at: 2,
-            progress: Some(serde_json::json!("42/100 lines")),
+            progress: Some(serde_json::json!({
+                "schema_version": ACTIVITY_PROGRESS_SCHEMA_VERSION,
+                "stage": "42/100 lines"
+            })),
             artifact_refs: vec!["src/lib.rs".into()],
             receipt_ref: None,
         });
@@ -918,7 +1002,7 @@ mod tests {
     #[test]
     fn u_tui_003_failed_runtime_is_visible_as_public_progress() {
         let mut state = projected_state();
-        state.activities[0].kind = fabric::ActivityKind::Runtime;
+        state.activities[0].kind = ::contracts::ActivityKind::Runtime;
         state.activities[0].state = ActivityState::Failed;
         state.activities[0].label = "sub-agent reviewer".into();
         let rendered = rendered_text(120, 40, &state);
@@ -935,6 +1019,38 @@ mod tests {
         let rendered = rendered_text(120, 40, &state);
         assert!(rendered.contains("cancelled Model inference round 2"));
         assert!(!rendered.contains("cancelledModel inference round 2"));
+    }
+
+    #[test]
+    fn work_trace_uses_call_start_order_and_exposes_bounded_failure_reason() {
+        let mut state = projected_state();
+        state.activities[0].activity_id = "later".into();
+        state.activities[0].label = "agent_spawn".into();
+        state.activities[0].state = ActivityState::Failed;
+        state.activities[0].started_at = 20;
+        state.activities[0].updated_at = 30;
+        state.activities[0].progress = Some(serde_json::json!({
+            "error": "capacity exceeded",
+        }));
+        let mut earlier = state.activities[0].clone();
+        earlier.activity_id = "earlier".into();
+        earlier.label = "Model inference round 2".into();
+        earlier.kind = ::contracts::ActivityKind::Runtime;
+        earlier.state = ActivityState::Completed;
+        earlier.started_at = 10;
+        earlier.updated_at = 100;
+        earlier.progress = Some(serde_json::json!("provider response received"));
+        state.activities.push(earlier);
+
+        let rendered = rendered_text(140, 40, &state);
+        let inference = rendered.find("Model inference round 2").unwrap();
+        let spawn = rendered.find("agent_spawn").unwrap();
+        assert!(
+            inference < spawn,
+            "work trace was not ordered by call start"
+        );
+        assert!(rendered.contains("capacity exceeded"));
+        assert!(rendered.contains("Ctrl+G child Agents"));
     }
 
     #[test]
@@ -967,7 +1083,11 @@ mod tests {
         TaskConsole {
             state: &projected_state(),
             caps: &caps,
-            workspace: &workspace,
+            workspace_name: workspace
+                .cwd()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("workspace"),
             selected_activity: None,
             next_agent_runtime: None,
         }
@@ -1001,7 +1121,7 @@ mod tests {
         let mut state = AppState::default();
         state.tasks.push(TaskSnapshot {
             task_id: "robot-task".into(),
-            session_id: fabric::SessionId("robot-session".into()),
+            session_id: ::contracts::SessionId("robot-session".into()),
             goal: Some("让 kuavo-mujoco-01 站稳三秒".into()),
             phase: TaskPhase::Blocked,
             plan_revision: None,
@@ -1013,11 +1133,11 @@ mod tests {
             budget: None,
             checkpoint_head: None,
             checkpoint_review: None,
-            settlement: Some(fabric::TaskSettlement::Blocked),
+            settlement: Some(::contracts::TaskSettlement::Blocked),
             review_findings: vec![],
             runtime_facts: None,
         });
-        let turn_id = fabric::TurnId::new();
+        let turn_id = ::contracts::TurnId::new();
         let stages = [
             ("Observe kuavo-mujoco-01 · biped-s53", "observe"),
             ("Plan governed VLA proposal", "plan"),
@@ -1034,7 +1154,7 @@ mod tests {
                 turn_id,
                 parent_activity_id: (index > 0)
                     .then(|| format!("robot:{:02}-{}", index - 1, stages[index - 1].1)),
-                kind: fabric::ActivityKind::Robot,
+                kind: ::contracts::ActivityKind::Robot,
                 label: label.into(),
                 state: if index < 2 {
                     ActivityState::Completed
@@ -1106,7 +1226,7 @@ mod tests {
     fn runtime_identity_never_uses_cumulative_usage_as_context_occupancy() {
         let task = TaskSnapshot {
             task_id: "task".into(),
-            session_id: fabric::SessionId("session".into()),
+            session_id: ::contracts::SessionId("session".into()),
             goal: None,
             phase: TaskPhase::Active,
             plan_revision: None,
@@ -1120,13 +1240,13 @@ mod tests {
             checkpoint_review: None,
             settlement: None,
             review_findings: vec![],
-            runtime_facts: Some(fabric::TaskRuntimeFacts {
+            runtime_facts: Some(::contracts::TaskRuntimeFacts {
                 effective_provider: Some("provider".into()),
                 effective_model: Some("model".into()),
                 context_capacity_tokens: Some(1_000_000),
                 active_context_occupancy_tokens: None,
                 context_budget: None,
-                cumulative_usage: fabric::InferenceUsage::default(),
+                cumulative_usage: ::contracts::InferenceUsage::default(),
                 inference_rounds: 1,
                 provider_retries: None,
                 tool_calls: 0,
@@ -1160,28 +1280,28 @@ mod tests {
         assert!(diagnostic.contains("child limit 200k (source: effective admission config"));
     }
 
-    fn projected_context_budget() -> fabric::ContextBudgetProjection {
-        let runtime_source = fabric::ContextBudgetSource::new(
-            fabric::ContextBudgetSourceKind::RuntimeModelCapability,
+    fn projected_context_budget() -> ::contracts::ContextBudgetProjection {
+        let runtime_source = ::contracts::ContextBudgetSource::new(
+            ::contracts::ContextBudgetSourceKind::RuntimeModelCapability,
             "deepseek/deepseek-v4-flash[1m]",
         );
-        let profile_source = fabric::ContextBudgetSource::new(
-            fabric::ContextBudgetSourceKind::ActiveAgentProfile,
+        let profile_source = ::contracts::ContextBudgetSource::new(
+            ::contracts::ContextBudgetSourceKind::ActiveAgentProfile,
             "general",
         );
-        let planner_source = fabric::ContextBudgetSource::new(
-            fabric::ContextBudgetSourceKind::ContextBudgetPlanner,
+        let planner_source = ::contracts::ContextBudgetSource::new(
+            ::contracts::ContextBudgetSourceKind::ContextBudgetPlanner,
             "ContextBudgetPlanner",
         );
-        let admission_source = fabric::ContextBudgetSource::new(
-            fabric::ContextBudgetSourceKind::EffectiveAdmissionConfig,
+        let admission_source = ::contracts::ContextBudgetSource::new(
+            ::contracts::ContextBudgetSourceKind::EffectiveAdmissionConfig,
             "agent.admission.max_child_tokens",
         );
-        let agent_source = fabric::ContextBudgetSource::new(
-            fabric::ContextBudgetSourceKind::AgentRuntime,
+        let agent_source = ::contracts::ContextBudgetSource::new(
+            ::contracts::ContextBudgetSourceKind::AgentRuntime,
             "current Agent rollout scope",
         );
-        fabric::ContextBudgetProjection {
+        ::contracts::ContextBudgetProjection {
             model_spec: "deepseek-v4-flash[1m]".into(),
             model_context_tokens: 1_000_000.into(),
             profile_input_limit_tokens: 1_000_000.into(),
@@ -1196,18 +1316,18 @@ mod tests {
             model_source: runtime_source,
             profile_source,
             history_source: planner_source,
-            rollout: fabric::RolloutBudgetProjection {
-                root_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+            rollout: ::contracts::RolloutBudgetProjection {
+                root_remaining_tokens: ::contracts::RolloutBudgetValue::Unknown {
                     source: agent_source.clone(),
-                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                    reason: ::contracts::BudgetMissingReason::NoActiveAgentRollout,
                 },
-                child_limit_tokens: fabric::RolloutBudgetValue::Known {
+                child_limit_tokens: ::contracts::RolloutBudgetValue::Known {
                     value: 200_000.into(),
                     source: admission_source,
                 },
-                current_agent_remaining_tokens: fabric::RolloutBudgetValue::Unknown {
+                current_agent_remaining_tokens: ::contracts::RolloutBudgetValue::Unknown {
                     source: agent_source,
-                    reason: fabric::BudgetMissingReason::NoActiveAgentRollout,
+                    reason: ::contracts::BudgetMissingReason::NoActiveAgentRollout,
                 },
             },
         }

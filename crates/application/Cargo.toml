@@ -1,0 +1,31 @@
+[package]
+name = "application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Aletheon minimal Application use-case facade (APX-01)"
+
+# APX-01 owner-seam crate: pure use-case facade depending only on `contracts`
+# (fabric ownerless primitives) and `runtime` (canonical commands/ports).  No
+# repository, no concrete adapter, no core-ID mint, no Executive dependency.
+[dependencies]
+contracts = { path = "../contracts" }
+runtime = { path = "../runtime" }
+async-trait = "0.1"
+anyhow = "1"
+regex = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = "2"
+tracing = { workspace = true }
+tokio = { version = "1", features = ["time"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+
+[lints]
+workspace = true

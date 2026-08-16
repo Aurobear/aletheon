@@ -146,7 +146,7 @@ impl ReflectionEngine for DeterministicReflectionEngine {
             for dim in &eval.dimensions {
                 if matches!(
                     dim.value,
-                    fabric::types::metacognition_evaluation::DimensionValue::Unknown
+                    ::contracts::types::metacognition_evaluation::DimensionValue::Unknown
                 ) {
                     knowledge_gaps.push(format!(
                         "dimension '{}' is unknown in evaluation {} (rubric {})",

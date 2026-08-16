@@ -7,8 +7,9 @@
 use crate::evolution::lineage::LineageTracker;
 use crate::genome::loader::GenomeLoader;
 use crate::genome::model::{ChangeType, Genome, GenomeChange};
+use crate::governance::contracts::{MigrationResult, RuntimeCandidate};
+use ::contracts::Clock;
 use anyhow::Result;
-use fabric::{Clock, MigrationResult, RuntimeCandidate};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 

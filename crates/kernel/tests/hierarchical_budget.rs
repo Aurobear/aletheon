@@ -1,5 +1,5 @@
-use fabric::types::admission::RiskLevel;
-use fabric::{
+use ::contracts::types::admission::RiskLevel;
+use ::contracts::{
     AdmissionRequest, BudgetRequest, BudgetScopeKind, CapabilityId, CapabilityScope, OperationKind,
     OperationRequest, PermitId, PrincipalId, SandboxRequirement, SpawnSpec, UsageReport,
 };

@@ -2,18 +2,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::super::agent_inspector::AgentInspectorAction;
 use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
-use super::super::chat::{ChatWidget, Role as ChatRole};
+use super::super::chat::Role as ChatRole;
 use super::super::checkpoint_picker::CheckpointPickerAction;
 use super::super::session_picker::SessionPickerAction;
-use super::super::App;
-use super::submit::{submit_message, write_protocol_request, write_request};
-
-use fabric::protocol::client::{
-    ClientRequest, ClientRpcRequest, SnapshotRequest, TransientApprovalDecision,
+use super::super::SystemNoticeQueue;
+use super::super::TuiModel;
+use super::submit::{
+    request_agent_inspector, submit_message, typed_resume_session, typed_set_collaboration_mode,
+    typed_transaction_review, typed_transaction_settlement, typed_workspace_rewind,
 };
-use fabric::ui_event::CollaborationMode;
 
-pub(crate) fn refresh_command_completion(app: &mut App) {
+use application::turn_control::CollaborationMode;
+use gateway::client::CommandOutcome as GatewayCommandOutcome;
+use gateway::protocol::{CancelActiveTurn, Command, SessionRef, SubmitApprovalChoice};
+
+pub(crate) fn refresh_command_completion(app: &mut TuiModel) {
     if app.input_literal {
         app.completion.hide();
     } else if app.input_buf.starts_with('/') {
@@ -28,49 +31,40 @@ pub(crate) fn refresh_command_completion(app: &mut App) {
 }
 
 async fn request_transaction_review(
-    app: &mut App,
-    action: fabric::TransactionReviewAction,
+    app: &mut TuiModel,
+    action: ::contracts::TransactionReviewAction,
     risk_acknowledged: bool,
 ) {
-    let Some(session_id) = app.app_state.session_id.clone() else {
-        app.compat_transcript
-            .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+    let Some(_session_id) = app.app_state.session_id.clone() else {
+        app.system_notices
+            .push(ChatRole::System, "当前会话尚未初始化".to_string());
         return;
     };
-    let Some(transaction_id) = app
+    let Some(_transaction_id) = app
         .latest_patch
         .as_ref()
         .and_then(|patch| patch.transaction_id)
         .map(|id| id.0.to_string())
     else {
-        app.compat_transcript.add_text(
+        app.system_notices.push(
             ChatRole::System,
             "当前差异没有 Host change transaction，无法执行 review action".to_string(),
         );
         return;
     };
-    let request_id = write_request(
-        app,
-        ClientRpcRequest::TransactionReview(fabric::TransactionReviewParams {
-            session_id,
-            transaction_id,
-            action,
-            risk_acknowledged,
-        }),
-    )
-    .await;
-    app.pending_commands
-        .insert(request_id, super::super::PendingCommand::TransactionReview);
-    app.pending_non_turn.insert(request_id);
-    app.streaming = true;
-    app.status.waiting = true;
+    if typed_transaction_review(app, action, risk_acknowledged).await {
+        return;
+    }
+    app.app_state.last_error = Some(
+        "typed Gateway is unavailable for transaction review; refusing legacy fallback".into(),
+    );
 }
 
-async fn request_latest_transaction_settlement(app: &mut App) {
-    let Some(session_id) = app.app_state.session_id.clone() else {
+async fn request_latest_transaction_settlement(app: &mut TuiModel) {
+    let Some(_session_id) = app.app_state.session_id.clone() else {
         return;
     };
-    let Some(transaction_id) = app
+    let Some(_transaction_id) = app
         .latest_patch
         .as_ref()
         .and_then(|patch| patch.transaction_id)
@@ -78,24 +72,17 @@ async fn request_latest_transaction_settlement(app: &mut App) {
     else {
         return;
     };
-    let request_id = write_request(
-        app,
-        ClientRpcRequest::TransactionSettlementGet(fabric::TransactionSettlementGetParams {
-            session_id,
-            transaction_id,
-        }),
-    )
-    .await;
-    app.pending_commands.insert(
-        request_id,
-        super::super::PendingCommand::TransactionSettlementLatest,
+    if typed_transaction_settlement(app).await {
+        return;
+    }
+    app.app_state.last_error = Some(
+        "typed Gateway is unavailable for transaction settlement; refusing legacy fallback".into(),
     );
-    app.pending_non_turn.insert(request_id);
 }
 
 /// Insert a bracketed-paste payload as inert editor text. Newlines and CJK
 /// codepoints are preserved, and paste never invokes submit by itself.
-pub(crate) fn insert_paste(app: &mut App, text: &str) {
+pub(crate) fn insert_paste(app: &mut TuiModel, text: &str) {
     let text = super::super::input_safety::sanitize_paste(text);
     app.input_buf.insert_str(app.cursor, &text);
     app.cursor += text.len();
@@ -106,7 +93,7 @@ pub(crate) fn insert_paste(app: &mut App, text: &str) {
     app.completion.hide();
 }
 
-fn accept_selected_completion(app: &mut App) -> bool {
+fn accept_selected_completion(app: &mut TuiModel) -> bool {
     let Some(selected) = app.completion.selected().map(ToOwned::to_owned) else {
         return false;
     };
@@ -118,7 +105,7 @@ fn accept_selected_completion(app: &mut App) -> bool {
     true
 }
 
-pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
+pub async fn handle_mouse(app: &mut TuiModel, mouse: crossterm::event::MouseEvent) {
     use crossterm::event::MouseEventKind;
     match mouse.kind {
         // Mouse wheel up: scroll the pager or the visible Task Console.
@@ -143,7 +130,7 @@ pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
     }
 }
 
-pub async fn handle_key(app: &mut App, key: KeyEvent) {
+pub async fn handle_key(app: &mut TuiModel, key: KeyEvent) {
     if let Some(mut inspector) = app.agent_inspector.take() {
         match inspector.handle_key(key) {
             AgentInspectorAction::Continue => app.agent_inspector = Some(inspector),
@@ -151,12 +138,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             AgentInspectorAction::Refresh => {
                 let focus = inspector.focus_id();
                 app.agent_inspector = Some(inspector);
-                let request_id = write_request(app, ClientRpcRequest::SubAgents).await;
-                app.pending_commands.insert(
-                    request_id,
-                    super::super::PendingCommand::OpenAgentInspector { focus },
-                );
-                app.pending_non_turn.insert(request_id);
+                request_agent_inspector(app, focus).await;
             }
         }
         return;
@@ -180,23 +162,13 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             SessionPickerAction::Continue => app.session_picker = Some(picker),
             SessionPickerAction::Close => {}
             SessionPickerAction::Resume(session_id) => {
-                let request_id = write_protocol_request(
-                    app,
-                    ClientRequest::ReadSnapshot(SnapshotRequest {
-                        session_id: fabric::SessionId(session_id.clone()),
-                    }),
-                )
-                .await;
-                app.pending_commands.insert(
-                    request_id,
-                    super::super::PendingCommand::ProjectionSnapshot {
-                        session_id: session_id.clone(),
-                    },
+                if typed_resume_session(app, session_id.clone()).await {
+                    return;
+                }
+                app.app_state.last_error = Some(
+                    "typed Gateway is unavailable for session resume; refusing legacy fallback"
+                        .into(),
                 );
-                app.projection_target_session_id = Some(session_id.clone());
-                app.projection_request_in_flight = true;
-                app.compat_transcript
-                    .add_text(ChatRole::System, format!("恢复会话 {session_id}..."));
             }
         }
         return;
@@ -208,39 +180,23 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             CheckpointPickerAction::Close => {}
             CheckpointPickerAction::RewindCode { prompt_index } => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.compat_transcript
-                        .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+                    app.system_notices
+                        .push(ChatRole::System, "当前会话尚未初始化".to_string());
                     return;
                 };
-                let request_id = write_request(
-                    app,
-                    ClientRpcRequest::WorkspaceRewind(
-                        fabric::protocol::client::WorkspaceRewindParams {
-                            session_id: fabric::SessionId(session_id),
-                            prompt_index,
-                        },
-                    ),
-                )
-                .await;
-                app.pending_commands.insert(
-                    request_id,
-                    super::super::PendingCommand::CheckpointRewind {
-                        child_session_id: None,
-                    },
-                );
-                app.pending_non_turn.insert(request_id);
-                app.streaming = true;
-                app.status.waiting = true;
-                app.compat_transcript.add_text(
-                    ChatRole::System,
-                    format!("请求恢复工作区检查点 {prompt_index}…"),
+                if typed_workspace_rewind(app, session_id.clone(), prompt_index, None).await {
+                    return;
+                }
+                app.app_state.last_error = Some(
+                    "typed Gateway is unavailable for workspace rewind; refusing legacy fallback"
+                        .into(),
                 );
             }
             action @ (CheckpointPickerAction::ForkSession { .. }
             | CheckpointPickerAction::ForkAndRewind { .. }) => {
                 let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.compat_transcript
-                        .add_text(ChatRole::System, "当前会话尚未初始化".to_string());
+                    app.system_notices
+                        .push(ChatRole::System, "当前会话尚未初始化".to_string());
                     return;
                 };
                 let (through_sequence, prompt_index) = match action {
@@ -253,25 +209,50 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     } => (through_sequence, Some(prompt_index)),
                     _ => unreachable!(),
                 };
-                let request_id = write_request(
-                    app,
-                    ClientRpcRequest::SessionFork(fabric::protocol::client::SessionForkParams {
-                        session_id: fabric::SessionId(session_id.clone()),
-                        through_sequence,
-                    }),
-                )
-                .await;
-                app.pending_commands.insert(
-                    request_id,
-                    super::super::PendingCommand::CheckpointFork {
-                        parent_session_id: session_id,
-                        prompt_index,
-                    },
+                if let Some(client) = app.controller.typed_gateway.as_mut() {
+                    let outcome = client
+                        .send(Command::ForkSession(
+                            gateway::protocol::ForkSessionRequest {
+                                session: SessionRef(session_id.clone()),
+                                through_sequence,
+                            },
+                        ))
+                        .await;
+                    match outcome {
+                        Ok(GatewayCommandOutcome::Forked { session }) => {
+                            if let Some(prompt_index) = prompt_index {
+                                app.deferred_checkpoint_rewind =
+                                    Some(super::super::DeferredCheckpointRewind {
+                                        parent_session_id: session_id,
+                                        child_session_id: session.0,
+                                        prompt_index,
+                                    });
+                            } else {
+                                app.app_state.session_id = Some(session.0.clone());
+                                app.projection_target_session_id = Some(session.0);
+                                app.projection_session_id = None;
+                                app.projection_request_in_flight = false;
+                                app.projection_polling = false;
+                            }
+                            return;
+                        }
+                        Ok(other) => {
+                            app.app_state.last_error =
+                                Some(format!("Gateway fork receipt invalid: {other:?}"));
+                            return;
+                        }
+                        Err(error) => {
+                            app.app_state.last_error =
+                                Some(format!("Gateway fork failed: {error}"));
+                            return;
+                        }
+                    }
+                }
+                app.app_state.last_error = Some(
+                    "typed Gateway is unavailable for session fork; refusing legacy fallback"
+                        .into(),
                 );
-                app.pending_non_turn.insert(request_id);
-                app.streaming = true;
-                app.status.waiting = true;
-                app.compat_transcript.add_text(
+                app.system_notices.push(
                     ChatRole::System,
                     if prompt_index.is_some() {
                         "创建历史会话分支，成功后再恢复代码…".to_string()
@@ -340,14 +321,22 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Char('a') => {
                 app.review_risk_confirmation = None;
-                request_transaction_review(app, fabric::TransactionReviewAction::Accept, false)
-                    .await;
+                request_transaction_review(
+                    app,
+                    ::contracts::TransactionReviewAction::Accept,
+                    false,
+                )
+                .await;
                 return;
             }
             KeyCode::Char('p') => {
                 app.review_risk_confirmation = None;
-                request_transaction_review(app, fabric::TransactionReviewAction::Repair, false)
-                    .await;
+                request_transaction_review(
+                    app,
+                    ::contracts::TransactionReviewAction::Repair,
+                    false,
+                )
+                .await;
                 return;
             }
             KeyCode::Char('x') => {
@@ -361,16 +350,16 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     .and_then(|patch| patch.transaction_id)
                     .map(|id| id.0.to_string());
                 match (coverage, transaction_id) {
-                    (Some(fabric::change_transaction::MutationCoverage::Full), Some(_)) => {
+                    (Some(::contracts::change_transaction::MutationCoverage::Full), Some(_)) => {
                         request_transaction_review(
                             app,
-                            fabric::TransactionReviewAction::Rollback,
+                            ::contracts::TransactionReviewAction::Rollback,
                             false,
                         )
                         .await;
                     }
                     (
-                        Some(fabric::change_transaction::MutationCoverage::BestEffort),
+                        Some(::contracts::change_transaction::MutationCoverage::BestEffort),
                         Some(transaction_id),
                     ) if app.review_risk_confirmation.as_deref()
                         == Some(transaction_id.as_str()) =>
@@ -378,29 +367,32 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                         app.review_risk_confirmation = None;
                         request_transaction_review(
                             app,
-                            fabric::TransactionReviewAction::Rollback,
+                            ::contracts::TransactionReviewAction::Rollback,
                             true,
                         )
                         .await;
                     }
                     (
-                        Some(fabric::change_transaction::MutationCoverage::BestEffort),
+                        Some(::contracts::change_transaction::MutationCoverage::BestEffort),
                         Some(transaction_id),
                     ) => {
                         app.review_risk_confirmation = Some(transaction_id);
-                        app.compat_transcript.add_text(
+                        app.system_notices.push(
                             ChatRole::System,
                             "这是 best-effort rollback，可能残留外部副作用；再次按 x 显式确认风险"
                                 .to_string(),
                         );
                     }
-                    (Some(fabric::change_transaction::MutationCoverage::NonRollbackable), _) => {
-                        app.compat_transcript.add_text(
+                    (
+                        Some(::contracts::change_transaction::MutationCoverage::NonRollbackable),
+                        _,
+                    ) => {
+                        app.system_notices.push(
                             ChatRole::System,
                             "Host 声明该事务不可回滚；未发送 rollback 请求".to_string(),
                         );
                     }
-                    _ => app.compat_transcript.add_text(
+                    _ => app.system_notices.push(
                         ChatRole::System,
                         "缺少 Host transaction/coverage，未发送 rollback 请求".to_string(),
                     ),
@@ -457,7 +449,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     DialogDecision::ApprovePathForSession => {
                         dialog.scope_subject.as_ref().and_then(|subject| {
                             subject.path_candidates.first().cloned().map(|path_root| {
-                                fabric::protocol::client::TransientApprovalScopeHint {
+                                ::contracts::protocol::client::TransientApprovalScopeHint {
                                     path_root,
                                     subject_version: subject.subject_version,
                                     subject_sha256: subject.subject_sha256.clone(),
@@ -471,35 +463,53 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     app.pending_approval = Some(dialog);
                     return;
                 }
-                let decision = match decision {
-                    DialogDecision::Approve => TransientApprovalDecision::Approve,
-                    DialogDecision::ApproveForSession => {
-                        TransientApprovalDecision::ApproveForSession
+                let approved = !matches!(decision, DialogDecision::Deny);
+                if scope_hint.is_some() {
+                    // The typed contract intentionally does not guess a path
+                    // scope. Until the server exposes a typed scope field,
+                    // fail closed rather than sending the legacy RPC.
+                    app.app_state.last_error =
+                        Some("path-scoped approval is not available on the typed Gateway".into());
+                } else if app.controller.has_typed_gateway() && app.app_state.session_id.is_some() {
+                    let outcome = app
+                        .controller
+                        .typed_gateway
+                        .as_mut()
+                        .expect("typed Gateway checked")
+                        .send(Command::SubmitApproval(SubmitApprovalChoice {
+                            session: SessionRef(
+                                app.app_state
+                                    .session_id
+                                    .clone()
+                                    .expect("typed session checked"),
+                            ),
+                            choice_id: dialog.approval_id.clone(),
+                            approved,
+                            version: 0,
+                            reason: None,
+                        }))
+                        .await;
+                    if let Err(error) = outcome {
+                        app.system_notices.push(
+                            ChatRole::System,
+                            format!("Gateway approval failed: {error}"),
+                        );
                     }
-                    DialogDecision::Deny => TransientApprovalDecision::Deny,
-                    DialogDecision::ApprovePathForSession => {
-                        TransientApprovalDecision::ApprovePathForSession
-                    }
-                };
-                let request = match scope_hint {
-                    Some(hint) => {
-                        ClientRpcRequest::scoped_approval_response(dialog.approval_id, hint)
-                    }
-                    None => ClientRpcRequest::approval_response(dialog.approval_id, decision),
-                };
-                let resp = request
-                    .to_json_rpc(None)
-                    .expect("typed approval response serializes");
-                use tokio::io::AsyncWriteExt;
-                let payload = serde_json::to_string(&resp).unwrap_or_default();
-                let framed = format!("{payload}\n");
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.compat_transcript.add_text(
+                } else {
+                    app.app_state.last_error = Some(
+                        "typed Gateway approval route is unavailable for this connection".into(),
+                    );
+                }
+                app.system_notices.push(
                     ChatRole::System,
                     format!(
                         "Approval: {} ({})",
-                        decision.as_str(),
+                        match decision {
+                            DialogDecision::Approve => "approve",
+                            DialogDecision::ApproveForSession => "approve-for-session",
+                            DialogDecision::ApprovePathForSession => "approve-path-for-session",
+                            DialogDecision::Deny => "deny",
+                        },
                         dialog.action_summary
                     ),
                 );
@@ -509,8 +519,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         // Any other key while dialog is open: ignore (except Ctrl+C to dismiss)
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             app.pending_approval = None;
-            app.compat_transcript
-                .add_text(ChatRole::System, "Approval cancelled (deny)".to_string());
+            app.system_notices
+                .push(ChatRole::System, "Approval cancelled (deny)".to_string());
         }
         return;
     }
@@ -532,7 +542,27 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             }
             app.last_ctrl_c = Some(now);
             app.turn_cancel_requested = true;
-            write_request(app, ClientRpcRequest::Cancel).await;
+            if let (Some(client), Some(session_id)) = (
+                app.controller.typed_gateway.as_mut(),
+                app.app_state.session_id.clone(),
+            ) {
+                let outcome = client
+                    .send(Command::CancelActiveTurn(CancelActiveTurn {
+                        session: SessionRef(session_id),
+                    }))
+                    .await;
+                if !matches!(outcome, Ok(GatewayCommandOutcome::Cancelled)) {
+                    app.system_notices.push(
+                        ChatRole::System,
+                        format!("Gateway cancellation failed: {outcome:?}"),
+                    );
+                }
+            } else {
+                app.app_state.last_error = Some(
+                    "typed Gateway is unavailable for cancellation; refusing legacy fallback"
+                        .into(),
+                );
+            }
             return;
         }
         if app.input_buf.is_empty() {
@@ -568,8 +598,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Ctrl+L: clear screen
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
-        app.compat_transcript = ChatWidget::new(app.caps.clone());
-        app.compat_projected_entries = 0;
+        app.system_notices = SystemNoticeQueue::new(app.caps.clone());
+        app.system_notice_cursor = 0;
         return;
     }
 
@@ -612,6 +642,13 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Ctrl+G: open the live, read-only child Agent inspector. This remains
+    // available while the parent turn is active.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') {
+        request_agent_inspector(app, None).await;
+        return;
+    }
+
     // Ctrl+M: cycle collaboration mode
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('m') {
         let modes = [
@@ -625,8 +662,17 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             .position(|m| *m == app.app_state.mode)
             .unwrap_or(0);
         let next = modes[(current + 1) % modes.len()];
-        write_request(app, ClientRpcRequest::mode_switch(next)).await;
-        app.compat_transcript.add_text(
+        if typed_set_collaboration_mode(app, next).await {
+            app.system_notices.push(
+                ChatRole::System,
+                format!("Switching to {} mode", next.display_name()),
+            );
+            return;
+        }
+        app.app_state.last_error = Some(
+            "typed Gateway is unavailable for collaboration mode; refusing legacy fallback".into(),
+        );
+        app.system_notices.push(
             ChatRole::System,
             format!("Switching to {} mode", next.display_name()),
         );
@@ -640,8 +686,17 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         } else {
             CollaborationMode::Plan
         };
-        write_request(app, ClientRpcRequest::mode_switch(target)).await;
-        app.compat_transcript.add_text(
+        if typed_set_collaboration_mode(app, target).await {
+            app.system_notices.push(
+                ChatRole::System,
+                format!("Switching to {} mode", target.display_name()),
+            );
+            return;
+        }
+        app.app_state.last_error = Some(
+            "typed Gateway is unavailable for collaboration mode; refusing legacy fallback".into(),
+        );
+        app.system_notices.push(
             ChatRole::System,
             format!("Switching to {} mode", target.display_name()),
         );
@@ -902,16 +957,13 @@ mod tests {
     use super::*;
     use crate::tui::host_time::ClientClock;
     use crate::tui::term_compat::TermCaps;
-    use crate::tui::App;
+    use crate::tui::TuiModel;
     use std::sync::Arc;
-    use tokio::io::{AsyncBufReadExt, BufReader};
 
-    async fn streaming_app_with_peer() -> (App, tokio::net::UnixStream) {
-        let (stream, peer) = tokio::net::UnixStream::pair().unwrap();
+    async fn streaming_app() -> TuiModel {
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             TermCaps {
                 color: true,
                 true_color: false,
@@ -925,14 +977,10 @@ mod tests {
             Vec::new(),
         );
         app.streaming = true;
-        (app, peer)
+        app
     }
 
-    async fn streaming_app() -> App {
-        streaming_app_with_peer().await.0
-    }
-
-    async fn idle_app() -> App {
+    async fn idle_app() -> TuiModel {
         let mut app = streaming_app().await;
         app.streaming = false;
         app
@@ -942,9 +990,11 @@ mod tests {
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
     }
 
-    fn review_patch(coverage: fabric::change_transaction::MutationCoverage) -> fabric::PatchDelta {
-        fabric::PatchDelta {
-            transaction_id: Some(fabric::change_transaction::ChangeTransactionId(
+    fn review_patch(
+        coverage: ::contracts::change_transaction::MutationCoverage,
+    ) -> ::contracts::PatchDelta {
+        ::contracts::PatchDelta {
+            transaction_id: Some(::contracts::change_transaction::ChangeTransactionId(
                 uuid::Uuid::nil(),
             )),
             mutation_coverage: Some(coverage),
@@ -962,7 +1012,7 @@ mod tests {
         let mut app = idle_app().await;
         app.app_state.session_id = Some("session-a".into());
         app.latest_patch = Some(review_patch(
-            fabric::change_transaction::MutationCoverage::BestEffort,
+            ::contracts::change_transaction::MutationCoverage::BestEffort,
         ));
         app.detail = app
             .latest_patch
@@ -976,9 +1026,10 @@ mod tests {
         handle_key(&mut app, KeyEvent::from(KeyCode::Char('x'))).await;
         assert!(app.review_risk_confirmation.is_none());
         assert!(app
-            .pending_commands
-            .values()
-            .any(|pending| *pending == crate::tui::PendingCommand::TransactionReview));
+            .app_state
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("typed Gateway")));
     }
 
     #[tokio::test]
@@ -986,7 +1037,7 @@ mod tests {
         let mut app = idle_app().await;
         app.app_state.session_id = Some("session-a".into());
         app.latest_patch = Some(review_patch(
-            fabric::change_transaction::MutationCoverage::NonRollbackable,
+            ::contracts::change_transaction::MutationCoverage::NonRollbackable,
         ));
         app.detail = app
             .latest_patch
@@ -998,18 +1049,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn u_tui_002_long_command_streams_incrementally_and_first_ctrl_c_requests_cancel() {
-        let (mut app, peer) = streaming_app_with_peer().await;
+    async fn u_tui_002_long_command_streams_incrementally_and_first_ctrl_c_fails_closed_without_typed_gateway(
+    ) {
+        let mut app = streaming_app().await;
         for (sequence, delta) in [(1, "first line\n"), (2, "second line\n")] {
             crate::tui::reducer::reduce(
                 &mut app.app_state,
-                crate::tui::reducer::UiAction::Item(fabric::protocol::client::ItemEvent {
-                    cursor: fabric::protocol::client::EventCursor {
+                crate::tui::reducer::UiAction::Item(::contracts::protocol::client::ItemEvent {
+                    cursor: ::contracts::protocol::client::EventCursor {
                         sequence,
                         event_id: Some(format!("progress-{sequence}")),
                     },
                     item_id: "five-minute-command".into(),
-                    phase: fabric::protocol::client::ItemPhase::Streaming,
+                    phase: ::contracts::protocol::client::ItemPhase::Streaming,
                     delta: Some(delta.into()),
                     item: None,
                     error: None,
@@ -1025,16 +1077,11 @@ mod tests {
 
         assert!(app.running);
         assert!(app.last_ctrl_c.is_some());
-        let mut line = String::new();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            BufReader::new(peer).read_line(&mut line),
-        )
-        .await
-        .expect("cancel request timeout")
-        .expect("cancel request read");
-        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(request["method"], "cancel");
+        assert!(app
+            .app_state
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("typed Gateway")));
     }
 
     #[tokio::test]
@@ -1045,6 +1092,24 @@ mod tests {
         handle_key(&mut app, ctrl_c()).await;
 
         assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn ctrl_g_requires_typed_gateway_for_agent_inspector() {
+        let mut app = streaming_app().await;
+        app.turn_active = true;
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+        )
+        .await;
+
+        assert!(app
+            .app_state
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("typed Gateway")));
     }
 
     #[tokio::test]

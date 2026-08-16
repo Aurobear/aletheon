@@ -1,6 +1,6 @@
+use ::contracts::Clock;
 use anyhow::Result;
 use async_trait::async_trait;
-use fabric::Clock;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
@@ -86,7 +86,7 @@ impl SandboxBackend for NoopBackend {
         cmd: &str,
         config: &SandboxConfig,
         timeout: Duration,
-        sink: &fabric::ToolEventSink,
+        sink: &::contracts::ToolEventSink,
     ) -> Result<SandboxResult> {
         let mut command = tokio::process::Command::new("bash");
         command

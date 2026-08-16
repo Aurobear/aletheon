@@ -3,10 +3,10 @@
 //! This module provides backward-compatible re-exports and a convenience factory
 //! that constructs a [`SandboxExecutor`] with corpus default backends.
 
-use fabric::Clock;
+use ::contracts::Clock;
 use std::sync::Arc;
 
-pub use fabric::sandbox::{SandboxExecutor, SandboxPreference};
+pub use ::contracts::sandbox::{SandboxExecutor, SandboxPreference};
 
 /// Construct a [`SandboxExecutor`] pre-loaded with corpus default backends
 /// in priority order: Bubblewrap (namespace) > Process (resource limits)
@@ -21,13 +21,13 @@ pub fn create_default_executor(
 pub fn create_executor_with_front_backend(
     preference: SandboxPreference,
     clock: Arc<dyn Clock>,
-    front: Option<Box<dyn fabric::sandbox::SandboxBackend>>,
+    front: Option<Box<dyn ::contracts::sandbox::SandboxBackend>>,
 ) -> SandboxExecutor {
     use crate::sandbox::bubblewrap::BubblewrapBackend;
     use crate::sandbox::noop::NoopBackend;
     use crate::sandbox::process::ProcessBackend;
 
-    let mut backends: Vec<Box<dyn fabric::sandbox::SandboxBackend>> = Vec::new();
+    let mut backends: Vec<Box<dyn ::contracts::sandbox::SandboxBackend>> = Vec::new();
     // An explicitly supplied external owner is the requested execution route,
     // not merely another best-effort candidate. Put it first so enabling the
     // execd gate cannot silently continue through bubblewrap and bypass
@@ -57,11 +57,11 @@ pub fn create_executor_with_front_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use fabric::{
+    use ::contracts::{
         IsolationLevel, MonoTime, SandboxBackend, SandboxCapabilities, SandboxConfig,
         SandboxResult, WallTime,
     };
+    use async_trait::async_trait;
     use std::time::Duration;
 
     struct FixedClock;

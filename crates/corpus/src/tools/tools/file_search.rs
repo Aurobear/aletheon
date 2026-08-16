@@ -163,7 +163,7 @@ async fn try_ripgrep(
     path: &str,
     include: Option<&str>,
     max_results: usize,
-    clock: &dyn fabric::Clock,
+    clock: &dyn ::contracts::Clock,
     working_dir: &std::path::Path,
 ) -> Option<ToolResult> {
     let start = clock.mono_now();
@@ -229,7 +229,7 @@ async fn try_grep(
     path: &str,
     include: Option<&str>,
     max_results: usize,
-    clock: &dyn fabric::Clock,
+    clock: &dyn ::contracts::Clock,
     working_dir: &std::path::Path,
 ) -> Option<ToolResult> {
     let start = clock.mono_now();
@@ -269,7 +269,7 @@ async fn try_find_grep(
     path: &str,
     include: Option<&str>,
     max_results: usize,
-    clock: &dyn fabric::Clock,
+    clock: &dyn ::contracts::Clock,
     working_dir: &std::path::Path,
 ) -> Option<ToolResult> {
     let start = clock.mono_now();
@@ -330,8 +330,8 @@ fn structured_search_result(
     engine: &str,
     stdout: &str,
     result_truncated: bool,
-    start: fabric::MonoTime,
-    clock: &dyn fabric::Clock,
+    start: ::contracts::MonoTime,
+    clock: &dyn ::contracts::Clock,
 ) -> ToolResult {
     let all_lines = stdout.lines().collect::<Vec<_>>();
     let visible = all_lines

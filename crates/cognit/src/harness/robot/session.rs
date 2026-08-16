@@ -5,21 +5,25 @@
 //! The turn input is the natural-language goal; the episode id is the turn's
 //! operation id; the session drives `step()` until a terminal state.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-use fabric::types::embodiment::DeviceId;
-use fabric::types::episode_report::{
+use ::contracts::types::embodiment::DeviceId;
+use ::contracts::types::episode_report::{
     build_report, AttemptRecord, EpisodeArtifactManifest, EpisodeReport, EpisodeReportInput,
     SettledEpisodeReport,
 };
-use fabric::{Clock, TurnEvent, TurnEventSink, TurnMetrics, TurnRequest, TurnResult};
+use ::contracts::{Clock, TurnEvent, TurnEventSink, TurnMetrics, TurnRequest, TurnResult};
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::harness::robot::{
     EpisodeAuditPort, EpisodePromotionPort, RobotHarness, RobotHarnessState,
 };
 use crate::harness::session::{CognitError, CognitiveSession};
+use crate::harness::session_log::{
+    HarnessSessionEventKind, HarnessSessionId, HarnessSessionLog, HarnessSessionPersistence,
+    TurnEndReason,
+};
 
 /// Cognitive-session adapter for a single robot task.
 ///
@@ -38,6 +42,10 @@ pub struct RobotCognitiveSession {
     /// in tests/unconfigured compositions (promotion stays absent).
     promoter: Option<Arc<dyn EpisodePromotionPort>>,
     auditor: Option<Arc<dyn EpisodeAuditPort>>,
+    /// Optional diagnostic Harness turn envelope. Robot episode, settlement,
+    /// audit and safety state remain authoritative even when this is attached.
+    /// Production composition leaves it absent.
+    session: Option<Arc<Mutex<HarnessSessionLog>>>,
 }
 
 impl RobotCognitiveSession {
@@ -64,6 +72,7 @@ impl RobotCognitiveSession {
             skill_descriptor_digest: skill_descriptor_digest.into(),
             promoter,
             auditor: None,
+            session: None,
         }
     }
 
@@ -72,6 +81,28 @@ impl RobotCognitiveSession {
     pub fn with_auditor(mut self, auditor: Arc<dyn EpisodeAuditPort>) -> Self {
         self.auditor = Some(auditor);
         self
+    }
+
+    /// Attach a volatile diagnostic turn envelope for isolated tests.
+    pub fn with_harness_session(mut self, id: HarnessSessionId) -> Result<Self, CognitError> {
+        self.session = Some(Arc::new(Mutex::new(
+            HarnessSessionLog::new(id).map_err(|error| CognitError::terminal(error.to_string()))?,
+        )));
+        Ok(self)
+    }
+
+    /// Attach an explicit diagnostic Harness log store. This does not replace
+    /// Robot's episode, settlement, audit, or safe-stop authority.
+    pub fn with_persistent_harness_session(
+        mut self,
+        id: HarnessSessionId,
+        persistence: Arc<dyn HarnessSessionPersistence>,
+    ) -> Result<Self, CognitError> {
+        self.session = Some(Arc::new(Mutex::new(
+            HarnessSessionLog::new_persistent(id, persistence)
+                .map_err(|error| CognitError::terminal(error.to_string()))?,
+        )));
+        Ok(self)
     }
 
     /// Build the authoritative episode report from the terminal harness state.
@@ -183,19 +214,12 @@ impl RobotCognitiveSession {
     }
 }
 
-#[async_trait]
-impl CognitiveSession for RobotCognitiveSession {
-    async fn run_turn(
+impl RobotCognitiveSession {
+    async fn execute_capability_turn(
         &mut self,
-        request: TurnRequest,
-        _services: &dyn fabric::TurnServices,
+        request: &TurnRequest,
         events: &dyn TurnEventSink,
     ) -> Result<TurnResult, CognitError> {
-        events
-            .emit(TurnEvent::Started {
-                operation_id: request.operation_id,
-            })
-            .await;
         let started = self.clock.mono_now();
         let mut state = self.harness.init(
             self.device.clone(),
@@ -267,7 +291,7 @@ impl CognitiveSession for RobotCognitiveSession {
             .map_err(|e| CognitError::terminal(format!("report serialization: {e}")))?;
         let stop = report.settlement.turn_stop();
         let completed =
-            report.settlement == fabric::types::episode_report::EpisodeSettlement::Completed;
+            report.settlement == ::contracts::types::episode_report::EpisodeSettlement::Completed;
         let elapsed_ms = self.clock.mono_now().0.saturating_sub(started.0);
         let result = TurnResult {
             output,
@@ -283,12 +307,81 @@ impl CognitiveSession for RobotCognitiveSession {
                 completed_normally: completed,
             },
         };
+        Ok(result)
+    }
+}
+
+#[async_trait]
+impl CognitiveSession for RobotCognitiveSession {
+    async fn run_turn(
+        &mut self,
+        request: TurnRequest,
+        _services: &dyn ::contracts::TurnServices,
+        events: &dyn TurnEventSink,
+    ) -> Result<TurnResult, CognitError> {
+        events
+            .emit(TurnEvent::Started {
+                operation_id: request.operation_id,
+            })
+            .await;
+        let harness_turn = if let Some(session) = &self.session {
+            let mut session = session
+                .lock()
+                .map_err(|_| CognitError::terminal("robot Harness session lock poisoned"))?;
+            let turn = session.next_turn_number();
+            session
+                .append(
+                    self.clock.wall_now().0,
+                    HarnessSessionEventKind::TurnStart { turn },
+                    None,
+                    vec![],
+                )
+                .map_err(|error| CognitError::terminal(error.to_string()))?;
+            Some(turn)
+        } else {
+            None
+        };
+
+        let result = self.execute_capability_turn(&request, events).await;
+        if let (Some(session), Some(turn)) = (&self.session, harness_turn) {
+            let reason = match &result {
+                Ok(result) => match result.stop {
+                    ::contracts::TurnStop::Completed => TurnEndReason::Completed,
+                    ::contracts::TurnStop::Blocked => TurnEndReason::Blocked,
+                    ::contracts::TurnStop::Cancelled => TurnEndReason::Aborted {
+                        cause: "robot capability cancelled".into(),
+                    },
+                    ::contracts::TurnStop::Failed => TurnEndReason::Error {
+                        code: "robot_capability_failed".into(),
+                        message: "robot capability returned failed settlement".into(),
+                    },
+                },
+                Err(error) => TurnEndReason::Error {
+                    code: "robot_capability_error".into(),
+                    message: error.to_string(),
+                },
+            };
+            session
+                .lock()
+                .map_err(|_| CognitError::terminal("robot Harness session lock poisoned"))?
+                .append(
+                    self.clock.wall_now().0,
+                    HarnessSessionEventKind::TurnEnd { turn, reason },
+                    None,
+                    vec![],
+                )
+                .map_err(|error| CognitError::terminal(error.to_string()))?;
+        }
+        let stop = result
+            .as_ref()
+            .map(|result| result.stop.clone())
+            .unwrap_or(::contracts::TurnStop::Failed);
         events
             .emit(TurnEvent::Finished {
                 operation_id: request.operation_id,
                 stop,
             })
             .await;
-        Ok(result)
+        result
     }
 }

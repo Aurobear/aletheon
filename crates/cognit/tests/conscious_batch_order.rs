@@ -9,15 +9,15 @@
 
 use std::sync::{Arc, Mutex};
 
+use ::contracts::{
+    CapabilityBatchPlan, CapabilityCall, CapabilityResult, ConsciousArbitrationMode, ContentBlock,
+    InferenceUsage, LlmProvider, LlmResponse, LlmStream, NoopTurnEventSink, OperationId, ProcessId,
+    StopReason, ToolDefinition, TurnRequest, TurnServices,
+};
 use async_trait::async_trait;
 use cognit::harness::{
     BatchPlanner, CognitiveSession, CognitiveSessionDependencies, HarnessConfig,
     LinearCognitiveSession,
-};
-use fabric::{
-    CapabilityBatchPlan, CapabilityCall, CapabilityResult, ConsciousArbitrationMode, ContentBlock,
-    InferenceUsage, LlmProvider, LlmResponse, LlmStream, NoopTurnEventSink, OperationId, ProcessId,
-    StopReason, ToolDefinition, TurnRequest, TurnServices,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -30,17 +30,17 @@ fn request() -> TurnRequest {
     TurnRequest {
         operation_id: OperationId::new(),
         process_id: ProcessId::new(),
-        context: fabric::PrincipalContext::new(
-            fabric::PrincipalId("test:batch-order".into()),
-            fabric::LocalOsPrincipal { uid: 0, gid: 0 },
-            fabric::ConnectionId::new(),
-            fabric::ThreadId("batch-test".into()),
-            fabric::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
-            fabric::PermissionProfileId::workspace_write(),
-            fabric::ApprovalPolicy::OnRequest,
+        context: ::contracts::PrincipalContext::new(
+            ::contracts::PrincipalId("test:batch-order".into()),
+            ::contracts::LocalOsPrincipal { uid: 0, gid: 0 },
+            ::contracts::ConnectionId::new(),
+            ::contracts::ThreadId("batch-test".into()),
+            ::contracts::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
+            ::contracts::PermissionProfileId::workspace_write(),
+            ::contracts::ApprovalPolicy::OnRequest,
         ),
         input: "run tools".into(),
-        execution_target: fabric::ExecutionTargetSelection::default(),
+        execution_target: ::contracts::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
@@ -76,7 +76,7 @@ struct ThreeToolLlm {
 impl LlmProvider for ThreeToolLlm {
     async fn complete(
         &self,
-        _messages: &[fabric::Message],
+        _messages: &[::contracts::Message],
         _tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmResponse> {
         let mut n = self.calls.lock().unwrap();
@@ -116,7 +116,7 @@ impl LlmProvider for ThreeToolLlm {
 
     async fn complete_stream(
         &self,
-        _messages: &[fabric::Message],
+        _messages: &[::contracts::Message],
         _tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmStream> {
         unimplemented!("not used by this test — uses run_turn path")
@@ -161,10 +161,10 @@ async fn run_with_plan(
                     ordered_call_ids: self.planned_order.clone().to_vec(),
                     decisions: calls
                         .iter()
-                        .map(|c| fabric::CapabilityBatchDecision {
+                        .map(|c| ::contracts::CapabilityBatchDecision {
                             call_id: c.call_id.clone(),
-                            decision: fabric::FieldDecisionKind::Reorder,
-                            reason: fabric::FieldDecisionReason::Selected,
+                            decision: ::contracts::FieldDecisionKind::Reorder,
+                            reason: ::contracts::FieldDecisionReason::Selected,
                             priority: 0.5,
                             broadcast_epoch: None,
                         })
@@ -194,13 +194,19 @@ async fn run_with_plan(
 
     #[async_trait]
     impl TurnServices for SharedServices {
-        async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+        async fn recall(
+            &self,
+            _req: ::contracts::RecallRequest,
+        ) -> anyhow::Result<::contracts::RecallSet> {
             Ok(Default::default())
         }
-        async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        async fn dasein_view(
+            &self,
+            _process: ProcessId,
+        ) -> anyhow::Result<::contracts::DaseinView> {
             Ok(Default::default())
         }
-        async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
             Ok(Default::default())
         }
         async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {

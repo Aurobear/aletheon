@@ -1,0 +1,1735 @@
+//! Typed client bindings derived from the versioned Fabric protocol model.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    contract::command::ClientIntent, AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord,
+    LocalOsPrincipal, OperationId, PrincipalId, SessionId, ThreadId, TurnId, TurnStop,
+    TurnTerminalStatus, WorkspacePolicy,
+};
+
+pub const CLIENT_PROTOCOL_VERSION: u16 = 1;
+pub const JSON_RPC_VERSION: &str = "2.0";
+const SUPPORTED_CLIENT_PROTOCOL_VERSIONS: &[u16] = &[CLIENT_PROTOCOL_VERSION];
+
+/// Typed compatibility requests for the daemon's line-delimited JSON-RPC
+/// transport. Method names and parameter field names live in Fabric rather
+/// than being re-created by each Interact entry point.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub enum ClientRpcRequest {
+    /// Canonical user intent. The daemon validates the authenticated transport
+    /// principal before dispatching it through the Executive application
+    /// command boundary.
+    Intent(#[schemars(with = "serde_json::Value")] ClientIntent),
+    Chat(ChatParams),
+    Clear,
+    Status,
+    StatusFor(SessionParams),
+    EvaluationGet(EvaluationGetParams),
+    EvaluationLatest(EvaluationLatestParams),
+    EvaluationList(EvaluationListParams),
+    Sessions,
+    Resume(ResumeParams),
+    Compact,
+    CompactFor(SessionParams),
+    ModelList,
+    SubAgents,
+    AgentProfileList,
+    AgentProfileSet(AgentProfileSetParams),
+    SkillsList,
+    SkillInvoke(SkillInvokeParams),
+    ModeSwitch(ModeSwitchParams),
+    Cancel,
+    Interrupt(InterruptParams),
+    DaemonShutdown,
+    SessionNew,
+    SessionNewFor(SessionParams),
+    SessionLoadRecent,
+    SessionLoadPrevious(SessionParams),
+    ApprovalResponse(ApprovalResponseParams),
+    DiffArtifactGet(DiffArtifactGetParams),
+    CheckpointList(CheckpointListParams),
+    TransactionReview(TransactionReviewParams),
+    TransactionSettlementGet(TransactionSettlementGetParams),
+    MemoryAdd(MemoryAddParams),
+    MemoryList(MemoryListParams),
+    MemorySearch(MemorySearchParams),
+    MemoryStatus,
+    SessionMemory,
+    MemoryShow(NumericIdParams),
+    MemoryForget(MemoryForgetParams),
+    MemoryPin(NumericIdParams),
+    MemoryUnpin(NumericIdParams),
+    GoalSet(GoalSetParams),
+    GoalShow(NumericIdParams),
+    GoalStatus(GoalStatusParams),
+    GoalResume,
+    WorkflowSave(WorkflowSaveParams),
+    WorkflowLoad(NameParams),
+    WorkflowList,
+    WorkflowDelete(NameParams),
+    WorkflowRun(NameParams),
+    DebugTopics,
+    DebugSubscribe(DebugSubscribeParams),
+    DebugNodeInfo,
+    DebugBagStart(DebugBagStartParams),
+    DebugBagStop(DebugBagStopParams),
+    DebugBagReplay(DebugBagReplayParams),
+    DebugPerf,
+    DebugTraceStart(DebugTraceStartParams),
+    DebugTraceStop,
+    DebugTraceStatus,
+    Health,
+    DebugHealth,
+    DebugNodes,
+    DebugParamGet(DebugParamGetParams),
+    DebugParamList,
+    DebugTopology,
+    DebugGraph,
+    DebugLogSubscribe(DebugLogSubscribeParams),
+    SessionResume(ResumeParams),
+    SessionFork(SessionForkParams),
+    /// Restore a host-owned workspace checkpoint identified by logical prompt
+    /// index. Paths and checkpoint blobs are intentionally not client inputs.
+    WorkspaceRewind(WorkspaceRewindParams),
+    SessionInterrupt(SessionInterruptParams),
+    SessionReplay(SessionReplayParams),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ChatParams {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub session_id: Option<SessionId>,
+    pub working_dir: PathBuf,
+    pub workspace_roots: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requirements: Vec<crate::TurnRequirement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_kind: Option<crate::TaskKind>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::permission::HostPermissionMode::is_safe"
+    )]
+    pub permission_mode: crate::permission::HostPermissionMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SkillInvokeParams {
+    pub skill_id: String,
+    pub user_args: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub session_id: Option<SessionId>,
+    pub working_dir: PathBuf,
+    pub workspace_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ResumeParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationGetParams {
+    pub session_id: String,
+    pub receipt_id: String,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationLatestParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationListParams {
+    pub session_id: String,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionForkParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub through_sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct WorkspaceRewindParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub prompt_index: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionInterruptParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionReplayParams {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub after_sequence: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ModeSwitchParams {
+    pub mode: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct AgentProfileSetParams {
+    pub profile: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct InterruptParams {
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransientApprovalDecision {
+    Approve,
+    ApproveForSession,
+    Deny,
+    ApprovePathForSession,
+}
+
+impl TransientApprovalDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::ApproveForSession => "approve_for_session",
+            Self::Deny => "deny",
+            Self::ApprovePathForSession => "approve_path_for_session",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ApprovalResponseParams {
+    pub approval_id: String,
+    pub decision: TransientApprovalDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_hint: Option<TransientApprovalScopeHint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransientApprovalScopeSubject {
+    pub tool: String,
+    pub path_candidates: Vec<PathBuf>,
+    pub subject_version: u32,
+    pub subject_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransientApprovalScopeHint {
+    pub path_root: PathBuf,
+    pub subject_version: u32,
+    pub subject_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DiffArtifactGetParams {
+    pub sha256: String,
+    pub offset: u64,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointListParams {
+    pub session_id: String,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionReviewAction {
+    Accept,
+    Repair,
+    Rollback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransactionReviewParams {
+    pub session_id: String,
+    pub transaction_id: String,
+    pub action: TransactionReviewAction,
+    #[serde(default)]
+    pub risk_acknowledged: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransactionSettlementGetParams {
+    pub session_id: String,
+    pub transaction_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionSettlementDecision {
+    Accepted,
+    RepairRequired,
+    RolledBack,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionSettlementReceipt {
+    pub settlement_id: String,
+    pub transaction_id: String,
+    pub session_id: String,
+    pub workspace_version: String,
+    pub decision: TransactionSettlementDecision,
+    pub finding_ids: Vec<String>,
+    pub validation_receipt_refs: Vec<String>,
+    pub validation_omissions: Vec<crate::change_transaction::ValidationPlanOmission>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionReviewSnapshot {
+    pub transaction: crate::change_transaction::ChangeTransactionSnapshot,
+    pub settlement: TransactionSettlementReceipt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MemoryAddParams {
+    pub content: String,
+    pub scope: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MemoryListParams {
+    pub scope: Option<String>,
+    pub all: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MemorySearchParams {
+    pub query: String,
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NumericIdParams {
+    pub id: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct MemoryForgetParams {
+    pub id: i64,
+    pub hard: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct GoalSetParams {
+    pub description: String,
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct GoalStatusParams {
+    pub id: Option<i64>,
+    pub status: Option<String>,
+    pub filter: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct WorkflowSaveParams {
+    pub name: String,
+    #[schemars(with = "serde_json::Value")]
+    pub def: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NameParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugSubscribeParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracepoint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugBagStartParams {
+    pub level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugBagStopParams {
+    pub recording_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct DebugBagReplayParams {
+    pub path: String,
+    pub speed: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugTraceStartParams {
+    pub level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugParamGetParams {
+    pub key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DebugLogSubscribeParams {
+    pub level: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct JsonRpcRequest {
+    jsonrpc: &'static str,
+    id: Option<u64>,
+    method: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+struct EmptyParams {}
+
+impl ClientRpcRequest {
+    pub fn chat(message: impl Into<String>, workspace: &WorkspacePolicy) -> Self {
+        Self::Chat(ChatParams {
+            message: message.into(),
+            session_id: None,
+            working_dir: workspace.cwd().to_path_buf(),
+            workspace_roots: workspace.writable_roots().to_vec(),
+            requirements: Vec::new(),
+            task_kind: None,
+            permission_mode: crate::permission::HostPermissionMode::Safe,
+        })
+    }
+
+    pub fn chat_for(
+        message: impl Into<String>,
+        session_id: SessionId,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        let mut request = match Self::chat(message, workspace) {
+            Self::Chat(params) => params,
+            _ => unreachable!("chat constructor always returns chat"),
+        };
+        request.session_id = Some(session_id);
+        Self::Chat(request)
+    }
+
+    pub fn chat_with_requirements(
+        message: impl Into<String>,
+        session_id: Option<SessionId>,
+        workspace: &WorkspacePolicy,
+        requirements: Vec<crate::TurnRequirement>,
+    ) -> Self {
+        let mut params = match Self::chat(message, workspace) {
+            Self::Chat(params) => params,
+            _ => unreachable!("chat constructor always returns chat"),
+        };
+        params.session_id = session_id;
+        params.requirements = requirements;
+        Self::Chat(params)
+    }
+
+    pub fn chat_with_task_kind(
+        message: impl Into<String>,
+        session_id: Option<SessionId>,
+        workspace: &WorkspacePolicy,
+        requirements: Vec<crate::TurnRequirement>,
+        task_kind: Option<crate::TaskKind>,
+    ) -> Self {
+        let mut params =
+            match Self::chat_with_requirements(message, session_id, workspace, requirements) {
+                Self::Chat(params) => params,
+                _ => unreachable!("chat constructor always returns chat"),
+            };
+        params.task_kind = task_kind;
+        Self::Chat(params)
+    }
+
+    pub fn chat_with_permission_mode(
+        mut self,
+        permission_mode: crate::permission::HostPermissionMode,
+    ) -> Self {
+        if let Self::Chat(params) = &mut self {
+            params.permission_mode = permission_mode;
+        }
+        self
+    }
+
+    pub fn skill_invoke(
+        skill_id: impl Into<String>,
+        user_args: impl Into<String>,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        Self::SkillInvoke(SkillInvokeParams {
+            skill_id: skill_id.into(),
+            user_args: user_args.into(),
+            session_id: None,
+            working_dir: workspace.cwd().to_path_buf(),
+            workspace_roots: workspace.writable_roots().to_vec(),
+        })
+    }
+
+    pub fn skill_invoke_for(
+        skill_id: impl Into<String>,
+        user_args: impl Into<String>,
+        session_id: SessionId,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        let mut request = match Self::skill_invoke(skill_id, user_args, workspace) {
+            Self::SkillInvoke(params) => params,
+            _ => unreachable!("skill constructor always returns skill invocation"),
+        };
+        request.session_id = Some(session_id);
+        Self::SkillInvoke(request)
+    }
+
+    pub fn resume(session_id: impl Into<SessionId>) -> Self {
+        Self::Resume(ResumeParams {
+            session_id: session_id.into(),
+        })
+    }
+
+    pub fn agent_profile_set(profile: impl Into<String>) -> Self {
+        Self::AgentProfileSet(AgentProfileSetParams {
+            profile: profile.into(),
+        })
+    }
+
+    pub fn evaluation_get(
+        session_id: impl Into<String>,
+        receipt_id: crate::EvaluationReceiptId,
+        include_evidence: bool,
+    ) -> Self {
+        Self::EvaluationGet(EvaluationGetParams {
+            session_id: session_id.into(),
+            receipt_id: receipt_id.0.to_string(),
+            include_evidence,
+        })
+    }
+
+    pub fn evaluation_latest(session_id: impl Into<String>, include_evidence: bool) -> Self {
+        Self::EvaluationLatest(EvaluationLatestParams {
+            session_id: session_id.into(),
+            include_evidence,
+        })
+    }
+
+    pub fn evaluation_list(session_id: impl Into<String>, limit: u16) -> Self {
+        Self::EvaluationList(EvaluationListParams {
+            session_id: session_id.into(),
+            limit,
+        })
+    }
+
+    pub fn mode_switch(mode: impl Into<String>) -> Self {
+        Self::ModeSwitch(ModeSwitchParams { mode: mode.into() })
+    }
+
+    pub fn interrupt(reason: impl Into<String>) -> Self {
+        Self::Interrupt(InterruptParams {
+            reason: reason.into(),
+        })
+    }
+
+    pub fn approval_response(
+        approval_id: impl Into<String>,
+        decision: TransientApprovalDecision,
+    ) -> Self {
+        Self::ApprovalResponse(ApprovalResponseParams {
+            approval_id: approval_id.into(),
+            decision,
+            scope_hint: None,
+        })
+    }
+
+    pub fn scoped_approval_response(
+        approval_id: impl Into<String>,
+        scope_hint: TransientApprovalScopeHint,
+    ) -> Self {
+        Self::ApprovalResponse(ApprovalResponseParams {
+            approval_id: approval_id.into(),
+            decision: TransientApprovalDecision::ApprovePathForSession,
+            scope_hint: Some(scope_hint),
+        })
+    }
+
+    pub fn diff_artifact_get(sha256: impl Into<String>, offset: u64, limit: u32) -> Self {
+        Self::DiffArtifactGet(DiffArtifactGetParams {
+            sha256: sha256.into(),
+            offset,
+            limit,
+        })
+    }
+
+    pub fn checkpoint_list(session_id: impl Into<String>, limit: usize) -> Self {
+        Self::CheckpointList(CheckpointListParams {
+            session_id: session_id.into(),
+            limit,
+        })
+    }
+
+    pub fn memory_add(
+        content: impl Into<String>,
+        scope: impl Into<String>,
+        subject: impl Into<String>,
+    ) -> Self {
+        Self::MemoryAdd(MemoryAddParams {
+            content: content.into(),
+            scope: scope.into(),
+            subject: subject.into(),
+        })
+    }
+
+    pub fn memory_list(scope: Option<String>, all: bool) -> Self {
+        Self::MemoryList(MemoryListParams { scope, all })
+    }
+
+    pub fn memory_search(query: impl Into<String>, scope: Option<String>) -> Self {
+        Self::MemorySearch(MemorySearchParams {
+            query: query.into(),
+            scope,
+        })
+    }
+
+    pub fn memory_show(id: i64) -> Self {
+        Self::MemoryShow(NumericIdParams { id })
+    }
+
+    pub fn memory_forget(id: i64, hard: bool) -> Self {
+        Self::MemoryForget(MemoryForgetParams { id, hard })
+    }
+
+    pub fn memory_pin(id: i64) -> Self {
+        Self::MemoryPin(NumericIdParams { id })
+    }
+
+    pub fn memory_unpin(id: i64) -> Self {
+        Self::MemoryUnpin(NumericIdParams { id })
+    }
+
+    pub fn goal_set(description: impl Into<String>, scope: impl Into<String>) -> Self {
+        Self::GoalSet(GoalSetParams {
+            description: description.into(),
+            scope: scope.into(),
+        })
+    }
+
+    pub fn goal_status(id: Option<i64>, status: Option<String>, filter: Option<String>) -> Self {
+        Self::GoalStatus(GoalStatusParams { id, status, filter })
+    }
+
+    pub fn goal_show(id: i64) -> Self {
+        Self::GoalShow(NumericIdParams { id })
+    }
+
+    pub fn workflow_save(name: impl Into<String>, def: serde_json::Value) -> Self {
+        Self::WorkflowSave(WorkflowSaveParams {
+            name: name.into(),
+            def,
+        })
+    }
+
+    pub fn workflow_load(name: impl Into<String>) -> Self {
+        Self::WorkflowLoad(NameParams { name: name.into() })
+    }
+
+    pub fn workflow_delete(name: impl Into<String>) -> Self {
+        Self::WorkflowDelete(NameParams { name: name.into() })
+    }
+
+    pub fn workflow_run(name: impl Into<String>) -> Self {
+        Self::WorkflowRun(NameParams { name: name.into() })
+    }
+
+    pub fn debug_subscribe(
+        level: Option<String>,
+        module: Option<String>,
+        tracepoint: Option<String>,
+    ) -> Self {
+        Self::DebugSubscribe(DebugSubscribeParams {
+            level,
+            module,
+            tracepoint,
+        })
+    }
+
+    pub fn debug_bag_start(
+        level: impl Into<String>,
+        path: Option<String>,
+        module: Option<String>,
+    ) -> Self {
+        Self::DebugBagStart(DebugBagStartParams {
+            level: level.into(),
+            path,
+            module,
+        })
+    }
+
+    pub fn debug_bag_stop(recording_id: impl Into<String>) -> Self {
+        Self::DebugBagStop(DebugBagStopParams {
+            recording_id: recording_id.into(),
+        })
+    }
+
+    pub fn debug_bag_replay(path: impl Into<String>, speed: f64) -> Self {
+        Self::DebugBagReplay(DebugBagReplayParams {
+            path: path.into(),
+            speed,
+        })
+    }
+
+    pub fn debug_trace_start(level: impl Into<String>, module: Option<String>) -> Self {
+        Self::DebugTraceStart(DebugTraceStartParams {
+            level: level.into(),
+            module,
+        })
+    }
+
+    pub fn debug_param_get(key: impl Into<String>) -> Self {
+        Self::DebugParamGet(DebugParamGetParams { key: key.into() })
+    }
+
+    pub fn debug_log_subscribe(level: impl Into<String>, module: Option<String>) -> Self {
+        Self::DebugLogSubscribe(DebugLogSubscribeParams {
+            level: level.into(),
+            module,
+        })
+    }
+
+    /// Serialize the typed request into the daemon's compatibility envelope.
+    /// An absent ID is reserved for client notifications such as approval
+    /// responses; it is encoded as JSON `null` to preserve the current wire
+    /// contract.
+    pub fn to_json_rpc(&self, id: Option<u64>) -> serde_json::Result<serde_json::Value> {
+        let (method, params) = match self {
+            Self::Intent(intent) => ("client.intent", Some(serde_json::to_value(intent)?)),
+            Self::Chat(params) => ("chat", Some(serde_json::to_value(params)?)),
+            Self::Clear => ("clear", None),
+            Self::Status => ("status", None),
+            Self::StatusFor(params) => ("status", Some(serde_json::to_value(params)?)),
+            Self::EvaluationGet(params) => ("evaluation.get", Some(serde_json::to_value(params)?)),
+            Self::EvaluationLatest(params) => {
+                ("evaluation.latest", Some(serde_json::to_value(params)?))
+            }
+            Self::EvaluationList(params) => {
+                ("evaluation.list", Some(serde_json::to_value(params)?))
+            }
+            Self::Sessions => ("sessions", None),
+            Self::Resume(params) => ("resume", Some(serde_json::to_value(params)?)),
+            Self::Compact => ("compact", None),
+            Self::CompactFor(params) => ("compact", Some(serde_json::to_value(params)?)),
+            Self::ModelList => ("model_list", None),
+            Self::SubAgents => ("sub_agents", None),
+            Self::AgentProfileList => ("agent.profile.list", None),
+            Self::AgentProfileSet(params) => {
+                ("agent.profile.set", Some(serde_json::to_value(params)?))
+            }
+            Self::SkillsList => ("skills.list", None),
+            Self::SkillInvoke(params) => ("skill.invoke", Some(serde_json::to_value(params)?)),
+            Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
+            Self::Cancel => ("cancel", None),
+            Self::Interrupt(params) => ("interrupt", Some(serde_json::to_value(params)?)),
+            Self::DaemonShutdown => (
+                "daemon.shutdown",
+                Some(serde_json::to_value(EmptyParams {})?),
+            ),
+            Self::SessionNew => ("session.new", None),
+            Self::SessionNewFor(params) => ("new_session", Some(serde_json::to_value(params)?)),
+            Self::SessionLoadRecent => ("load_recent", None),
+            Self::SessionLoadPrevious(params) => {
+                ("load_previous", Some(serde_json::to_value(params)?))
+            }
+            Self::ApprovalResponse(params) => {
+                ("approval_response", Some(serde_json::to_value(params)?))
+            }
+            Self::DiffArtifactGet(params) => {
+                ("diff_artifact.get", Some(serde_json::to_value(params)?))
+            }
+            Self::CheckpointList(params) => {
+                ("checkpoint.list/v1", Some(serde_json::to_value(params)?))
+            }
+            Self::TransactionReview(params) => {
+                ("task.review/settle/v1", Some(serde_json::to_value(params)?))
+            }
+            Self::TransactionSettlementGet(params) => {
+                ("task.review/latest/v1", Some(serde_json::to_value(params)?))
+            }
+            Self::MemoryAdd(params) => ("memory.add", Some(serde_json::to_value(params)?)),
+            Self::MemoryList(params) => ("memory.list", Some(serde_json::to_value(params)?)),
+            Self::MemorySearch(params) => ("memory.search", Some(serde_json::to_value(params)?)),
+            Self::MemoryStatus => ("memory.status", None),
+            Self::SessionMemory => ("session.memory", Some(serde_json::json!({"type": "all"}))),
+            Self::MemoryShow(params) => ("memory.show", Some(serde_json::to_value(params)?)),
+            Self::MemoryForget(params) => ("memory.forget", Some(serde_json::to_value(params)?)),
+            Self::MemoryPin(params) => ("memory.pin", Some(serde_json::to_value(params)?)),
+            Self::MemoryUnpin(params) => ("memory.unpin", Some(serde_json::to_value(params)?)),
+            Self::GoalSet(params) => ("goal.set", Some(serde_json::to_value(params)?)),
+            Self::GoalShow(params) => ("goal.show", Some(serde_json::to_value(params)?)),
+            Self::GoalStatus(params) => ("goal.status", Some(serde_json::to_value(params)?)),
+            Self::GoalResume => ("goal.resume", Some(serde_json::to_value(EmptyParams {})?)),
+            Self::WorkflowSave(params) => ("workflow.save", Some(serde_json::to_value(params)?)),
+            Self::WorkflowLoad(params) => ("workflow.load", Some(serde_json::to_value(params)?)),
+            Self::WorkflowList => ("workflow.list", Some(serde_json::to_value(EmptyParams {})?)),
+            Self::WorkflowDelete(params) => {
+                ("workflow.delete", Some(serde_json::to_value(params)?))
+            }
+            Self::WorkflowRun(params) => ("workflow.run", Some(serde_json::to_value(params)?)),
+            Self::DebugTopics => empty_params("debug.topics")?,
+            Self::DebugSubscribe(params) => {
+                ("debug.subscribe", Some(serde_json::to_value(params)?))
+            }
+            Self::DebugNodeInfo => empty_params("debug.node_info")?,
+            Self::DebugBagStart(params) => ("debug.bag_start", Some(serde_json::to_value(params)?)),
+            Self::DebugBagStop(params) => ("debug.bag_stop", Some(serde_json::to_value(params)?)),
+            Self::DebugBagReplay(params) => {
+                ("debug.bag_replay", Some(serde_json::to_value(params)?))
+            }
+            Self::DebugPerf => empty_params("debug.perf")?,
+            Self::DebugTraceStart(params) => {
+                ("debug.trace_start", Some(serde_json::to_value(params)?))
+            }
+            Self::DebugTraceStop => empty_params("debug.trace_stop")?,
+            Self::DebugTraceStatus => empty_params("debug.trace_status")?,
+            Self::Health => empty_params("health")?,
+            Self::DebugHealth => empty_params("debug.health")?,
+            Self::DebugNodes => empty_params("debug.nodes")?,
+            Self::DebugParamGet(params) => ("debug.param_get", Some(serde_json::to_value(params)?)),
+            Self::DebugParamList => empty_params("debug.param_list")?,
+            Self::DebugTopology => empty_params("debug.topology")?,
+            Self::DebugGraph => empty_params("debug.graph")?,
+            Self::DebugLogSubscribe(params) => {
+                ("debug.log_subscribe", Some(serde_json::to_value(params)?))
+            }
+            Self::SessionResume(params) => ("session.resume", Some(serde_json::to_value(params)?)),
+            Self::SessionFork(params) => ("session.fork", Some(serde_json::to_value(params)?)),
+            Self::WorkspaceRewind(params) => {
+                ("workspace.rewind", Some(serde_json::to_value(params)?))
+            }
+            Self::SessionInterrupt(params) => {
+                ("session.interrupt", Some(serde_json::to_value(params)?))
+            }
+            Self::SessionReplay(params) => ("session.replay", Some(serde_json::to_value(params)?)),
+        };
+        serde_json::to_value(JsonRpcRequest {
+            jsonrpc: JSON_RPC_VERSION,
+            id,
+            method,
+            params,
+        })
+    }
+}
+
+fn empty_params(
+    method: &'static str,
+) -> serde_json::Result<(&'static str, Option<serde_json::Value>)> {
+    Ok((method, Some(serde_json::to_value(EmptyParams {})?)))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ClientCapabilities {
+    pub item_events: bool,
+    pub cursors: bool,
+    #[serde(default)]
+    pub memory_gateway_v1: bool,
+    #[serde(default)]
+    pub memory_maintenance_v1: bool,
+    #[serde(default)]
+    pub memory_admin_v1: bool,
+}
+
+impl ClientCapabilities {
+    pub fn intersect(&self, supported: &Self) -> Self {
+        Self {
+            item_events: self.item_events && supported.item_events,
+            cursors: self.cursors && supported.cursors,
+            memory_gateway_v1: self.memory_gateway_v1 && supported.memory_gateway_v1,
+            memory_maintenance_v1: self.memory_maintenance_v1 && supported.memory_maintenance_v1,
+            memory_admin_v1: self.memory_admin_v1 && supported.memory_admin_v1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InitializeParams {
+    pub client_version: String,
+    pub protocol_versions: Vec<u16>,
+    pub capabilities: ClientCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InitializedResult {
+    pub protocol_version: u16,
+    pub server_capabilities: ClientCapabilities,
+    #[schemars(with = "String")]
+    pub connection_id: ConnectionId,
+    #[schemars(with = "String")]
+    pub principal_id: PrincipalId,
+    #[schemars(with = "serde_json::Value")]
+    pub os_principal: LocalOsPrincipal,
+    pub runtime_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EventCursor {
+    pub sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
+}
+
+impl EventCursor {
+    pub const fn origin() -> Self {
+        Self {
+            sequence: 0,
+            event_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotRequest {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EventSubscription {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub after: EventCursor,
+}
+
+/// One bounded, replayable page from the daemon-owned Session read protocol.
+/// `next` is the cursor after all returned events; an empty page preserves
+/// `after`. The event wrapper remains separately versioned for transport.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionEventPage {
+    pub schema_version: u16,
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub after: EventCursor,
+    pub next: EventCursor,
+    pub events: Vec<ClientEvent>,
+}
+
+/// Start a turn on an explicitly named thread. Workspace authority is supplied
+/// independently and must be bound/verified by the host; it is never used to
+/// infer the thread identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChatRequest {
+    pub thread_id: ThreadId,
+    pub message: String,
+    pub working_dir: std::path::PathBuf,
+    #[serde(default)]
+    pub additional_writable_roots: Vec<std::path::PathBuf>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::permission::HostPermissionMode::is_safe"
+    )]
+    pub permission_mode: crate::permission::HostPermissionMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecisionRequest {
+    Approve,
+    Reject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ApprovalRequest {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub operation_id: OperationId,
+    #[schemars(with = "String")]
+    pub approval_id: crate::ApprovalId,
+    pub version: u64,
+    pub decision: ApprovalDecisionRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CancelRequest {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub operation_id: OperationId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum ClientRequest {
+    Initialize(InitializeParams),
+    Initialized,
+    Snapshot(SnapshotRequest),
+    /// Schema-v1 daemon-owned Session/Task/Activity projection. Kept
+    /// separate from the compatibility UI snapshot during X5c migration.
+    ReadSnapshot(SnapshotRequest),
+    ReadSessions,
+    /// One bounded page after an authenticated cursor. Unlike `Subscribe`,
+    /// this request does not create a connection-owned tail task.
+    ReadEvents(EventSubscription),
+    Subscribe(EventSubscription),
+    Chat(ChatRequest),
+    Approval(ApprovalRequest),
+    Cancel(CancelRequest),
+    MemoryObserve(crate::protocol::memory::MemoryObservationRequestV1),
+    MemoryReceiptGet(crate::protocol::memory::MemoryReceiptGetRequestV1),
+    MemoryRecall(crate::protocol::memory::MemoryRecallRequestV1),
+    MemoryFeedback(crate::protocol::memory::MemoryFeedbackRequestV1),
+    MemoryWorkspacePreviewBind(crate::protocol::memory::MemoryWorkspacePreviewBindRequestV1),
+    MemoryWorkspaceBind(crate::protocol::memory::MemoryWorkspaceBindRequestV1),
+    MemoryWorkspaceUnbind(crate::protocol::memory::MemoryWorkspaceUnbindRequestV1),
+    MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1),
+    MemoryMaintenanceRun(crate::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1),
+}
+
+impl ClientRequest {
+    pub fn requires_memory_gateway(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryObserve(_)
+                | Self::MemoryReceiptGet(_)
+                | Self::MemoryRecall(_)
+                | Self::MemoryFeedback(_)
+        )
+    }
+
+    pub fn requires_memory_maintenance(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryMaintenanceStatus(_) | Self::MemoryMaintenanceRun(_)
+        )
+    }
+
+    pub fn requires_memory_admin(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryWorkspacePreviewBind(_)
+                | Self::MemoryWorkspaceBind(_)
+                | Self::MemoryWorkspaceUnbind(_)
+        )
+    }
+
+    pub fn to_json_rpc(&self, id: u64) -> serde_json::Result<serde_json::Value> {
+        let method = match self {
+            Self::Initialize(_) => "initialize",
+            Self::Initialized => "initialized",
+            Self::Snapshot(_) => "session.snapshot",
+            Self::ReadSnapshot(_) => "session.read_snapshot/v1",
+            Self::ReadSessions => "session.read_sessions/v1",
+            Self::ReadEvents(_) => "session.read_events/v1",
+            Self::Subscribe(_) => "session.subscribe",
+            Self::Chat(_) => "thread.chat",
+            Self::Approval(_) => "turn.approval",
+            Self::Cancel(_) => "turn.cancel",
+            Self::MemoryObserve(_) => "memory.observe/v1",
+            Self::MemoryReceiptGet(_) => "memory.receipt.get/v1",
+            Self::MemoryRecall(_) => "memory.recall/v1",
+            Self::MemoryFeedback(_) => "memory.feedback/v1",
+            Self::MemoryWorkspacePreviewBind(_) => "memory.workspace.preview_bind/v1",
+            Self::MemoryWorkspaceBind(_) => "memory.workspace.bind/v1",
+            Self::MemoryWorkspaceUnbind(_) => "memory.workspace.unbind/v1",
+            Self::MemoryMaintenanceStatus(_) => "memory.maintenance.status/v1",
+            Self::MemoryMaintenanceRun(_) => "memory.maintenance.run/v1",
+        };
+        serde_json::to_value(JsonRpcRequest {
+            jsonrpc: JSON_RPC_VERSION,
+            id: Some(id),
+            method,
+            params: Some(serde_json::to_value(ClientMessage::v1(self.clone()))?),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct UiSnapshot {
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    pub cursor: EventCursor,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub items: Vec<ItemRecord>,
+    #[schemars(with = "Vec<serde_json::Value>")]
+    pub approvals: Vec<ApprovalSnapshot>,
+    #[schemars(with = "Vec<serde_json::Value>")]
+    pub agents: Vec<AgentSnapshot>,
+}
+
+pub const SESSION_READ_MODEL_SCHEMA_VERSION: u16 = 1;
+
+/// Versioned daemon-owned Session/Task/Activity snapshot. X5c migrates the
+/// presentation adapter from the compatibility `UiSnapshot` to this contract;
+/// keeping the types distinct prevents a partially upgraded client from
+/// silently interpreting a legacy snapshot as schema v1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionReadSnapshot {
+    pub schema_version: u16,
+    pub session: crate::SessionRecord,
+    pub through: EventCursor,
+    pub items: Vec<ItemRecord>,
+    pub tasks: Vec<TaskSnapshot>,
+    pub activities: Vec<ActivitySnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionListSnapshot {
+    pub schema_version: u16,
+    pub sessions: Vec<crate::SessionRecord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPhase {
+    Active,
+    Interrupted,
+    Completed,
+    Blocked,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSettlement {
+    Accepted,
+    RepairRequired,
+    Blocked,
+    Cancelled,
+    RolledBack,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewFindingSeverity {
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewFindingStatus {
+    Open,
+    Repairing,
+    Resolved,
+    Waived,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReviewFindingLocation {
+    pub path: String,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+}
+
+/// Host-derived review finding. Model prose may be evidence, but cannot mint
+/// this projection or mark it resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReviewFinding {
+    pub finding_id: String,
+    pub severity: ReviewFindingSeverity,
+    pub summary: String,
+    pub location: Option<ReviewFindingLocation>,
+    pub evidence_refs: Vec<String>,
+    pub status: ReviewFindingStatus,
+    /// Typed Agora task identity to reopen for repair. This is not a prompt or
+    /// an executable client command.
+    pub repair_link: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointMutationCoverage {
+    Full,
+    BestEffort,
+    NonRollbackable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointRollbackAction {
+    AutomaticAllowed,
+    ExplicitApprovalRequired,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointReviewSettlement {
+    Open,
+    Finalized,
+    Aborted,
+    RepairRequired,
+    Accepted,
+    RolledBack,
+    Partial,
+    Conflicted,
+}
+
+/// Versioned daemon-owned checkpoint read projection. It carries only typed
+/// host facts and references; checkpoint/transaction stores remain authoritative.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointReviewSnapshot {
+    pub schema_version: u16,
+    #[serde(default)]
+    pub checkpoint_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub task_id: String,
+    pub turn_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_checkpoint_id: Option<String>,
+    #[serde(default)]
+    pub workspace_before: String,
+    #[serde(default)]
+    pub workspace_after: String,
+    pub changed_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_artifact_ref: Option<String>,
+    pub validation_receipt_count: usize,
+    pub validation_omission_count: usize,
+    #[serde(default)]
+    #[schemars(with = "Vec<serde_json::Value>")]
+    pub validation_receipts: Vec<crate::change_transaction::VersionedValidationReceipt>,
+    #[serde(default)]
+    #[schemars(with = "Vec<serde_json::Value>")]
+    pub validation_omissions: Vec<crate::change_transaction::ValidationPlanOmission>,
+    pub mutation_coverage: CheckpointMutationCoverage,
+    pub rollback_action: CheckpointRollbackAction,
+    pub settlement: CheckpointReviewSettlement,
+    #[serde(default)]
+    pub conversation_cursor: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_revision: Option<String>,
+    #[serde(default)]
+    pub created_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery_evidence: Vec<String>,
+}
+
+pub const CHECKPOINT_LIST_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointListEntry {
+    pub checkpoint_id: String,
+    pub turn_id: String,
+    pub prompt_index: u64,
+    /// Canonical Session event boundary for a historical fork. This is
+    /// resolved by the Host from the checkpoint turn identity; clients must
+    /// never infer it from `prompt_index`.
+    pub through_sequence: u64,
+    pub created_at_ms: i64,
+    pub finalized: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckpointListSnapshot {
+    pub schema_version: u16,
+    pub session_id: String,
+    pub checkpoints: Vec<CheckpointListEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskStepSnapshot {
+    pub step_id: String,
+    pub turn_id: TurnId,
+    pub phase: TaskPhase,
+    pub first_sequence: u64,
+    pub last_sequence: u64,
+}
+
+/// Daemon-owned projection assembled from authoritative Session items. Empty
+/// optional collections mean that the corresponding domain has not emitted a
+/// durable fact; they never mean that the model claimed there was no work.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskSnapshot {
+    pub task_id: String,
+    #[schemars(with = "String")]
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub phase: TaskPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_revision: Option<u64>,
+    pub steps: Vec<TaskStepSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_turn_id: Option<TurnId>,
+    pub active_runtime_children: Vec<String>,
+    pub active_commands: Vec<String>,
+    pub pending_approvals: Vec<String>,
+    #[schemars(with = "Option<serde_json::Value>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_review: Option<CheckpointReviewSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement: Option<TaskSettlement>,
+    #[serde(default)]
+    pub review_findings: Vec<ReviewFinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_facts: Option<TaskRuntimeFacts>,
+}
+
+/// Host-derived Task metrics. Active occupancy remains independently optional
+/// and is never inferred from cumulative billed tokens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskRuntimeFacts {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_capacity_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_context_occupancy_tokens: Option<u64>,
+    /// Host-authoritative per-turn budget breakdown. This remains distinct from
+    /// cumulative inference usage and from the legacy opaque Task budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_budget: Option<Box<crate::ContextBudgetProjection>>,
+    pub cumulative_usage: crate::InferenceUsage,
+    pub inference_rounds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_retries: Option<u64>,
+    pub tool_calls: u64,
+    pub terminal_tool_results: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    Tool,
+    Command,
+    Runtime,
+    Validation,
+    Approval,
+    Memory,
+    Robot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityState {
+    Queued,
+    Running,
+    Waiting,
+    Completed,
+    Blocked,
+    Failed,
+    Cancelled,
+    Lost,
+}
+
+/// Long-lived activity projection. It refers to domain receipts rather than
+/// replacing provider streams, tool results, or runtime progress schemas.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ActivitySnapshot {
+    pub activity_id: String,
+    pub task_id: String,
+    pub turn_id: TurnId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_activity_id: Option<String>,
+    pub kind: ActivityKind,
+    pub label: String,
+    pub state: ActivityState,
+    pub started_at: u64,
+    pub updated_at: u64,
+    #[schemars(with = "Option<serde_json::Value>")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<serde_json::Value>,
+    pub artifact_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemPhase {
+    Started,
+    Streaming,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ItemEvent {
+    pub cursor: EventCursor,
+    pub item_id: String,
+    pub phase: ItemPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<ItemRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ApprovalEvent {
+    pub cursor: EventCursor,
+    #[schemars(with = "serde_json::Value")]
+    pub approval: ApprovalSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentEvent {
+    pub cursor: EventCursor,
+    #[schemars(with = "serde_json::Value")]
+    pub agent: AgentSnapshot,
+}
+
+/// One bounded, public observation from an Aletheon-owned child Agent
+/// session. `detail` is already redacted/bounded by the Host; it is not raw
+/// chain-of-thought or an untrusted runtime log stream.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentTimelineEntry {
+    pub sequence: u64,
+    pub kind: String,
+    #[schemars(with = "serde_json::Value")]
+    pub detail: serde_json::Value,
+}
+
+/// Navigable child Agent session read model used by interactive clients.
+/// Lifecycle/result authority remains in `AgentSnapshot`; the timeline is a
+/// projection of canonical Agent events and cannot mutate the run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentSessionSnapshot {
+    pub id: String,
+    pub task: String,
+    pub status: String,
+    pub runtime_id: String,
+    pub profile_id: String,
+    #[schemars(with = "serde_json::Value")]
+    pub snapshot: AgentSnapshot,
+    pub timeline: Vec<AgentTimelineEntry>,
+}
+
+/// Structured terminal failure carried by the versioned protocol. `code` is
+/// stable for clients; `message` remains human-readable diagnostic context.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TurnCompletionError {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<crate::TurnFailureKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub message: String,
+}
+
+/// Bounded turn-level usage projection. Token fields are nullable so a current
+/// client can decode old events without misreporting absent telemetry as zero.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TurnCompletionUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<u64>,
+    #[serde(default)]
+    pub tool_calls: u64,
+    #[serde(default)]
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum ClientEvent {
+    InitializeResponse(InitializedResult),
+    Snapshot(UiSnapshot),
+    Item(ItemEvent),
+    Approval(ApprovalEvent),
+    /// Connection-owned approval request emitted by the guarded tool runner.
+    /// `approval_id` is opaque to the client and resolution returns through
+    /// the authenticated connection that owns the pending request.
+    ApprovalRequested {
+        cursor: EventCursor,
+        #[schemars(with = "String")]
+        session_id: SessionId,
+        #[schemars(with = "String")]
+        turn_id: TurnId,
+        approval_id: String,
+        tool: String,
+        action_summary: String,
+        risk_level: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope_subject: Option<TransientApprovalScopeSubject>,
+    },
+    Agent(AgentEvent),
+    Reconnected(EventCursor),
+    MemoryObservationReceipt(crate::protocol::memory::MemoryObservationReceiptV1),
+    MemoryLifecycleReceipt(crate::protocol::memory::MemoryLifecycleReceiptV1),
+    MemoryRecallResult(crate::protocol::memory::MemoryRecallResultV1),
+    MemoryFeedbackReceipt(crate::protocol::memory::MemoryFeedbackReceiptV1),
+    MemoryWorkspaceBindingPreview(crate::protocol::memory::MemoryWorkspaceBindingPreviewV1),
+    MemoryWorkspaceBinding(crate::protocol::memory::MemoryWorkspaceBindingViewV1),
+    MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusV1),
+    MemoryMaintenanceRunReceipt(crate::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1),
+    CommandCompleted {
+        command: String,
+        thread_id: ThreadId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operation_id: Option<OperationId>,
+        #[schemars(with = "serde_json::Value")]
+        detail: serde_json::Value,
+    },
+    Failed {
+        cursor: Option<EventCursor>,
+        message: String,
+    },
+    TurnStarted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        operation_id: OperationId,
+        iteration: u32,
+    },
+    TurnCompleted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        operation_id: OperationId,
+        /// Compatibility field retained for protocol-v1 decoders.
+        stop: TurnStop,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<TurnTerminalStatus>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<TurnCompletionError>,
+        #[serde(default)]
+        retryable: bool,
+        #[serde(default)]
+        usage: TurnCompletionUsage,
+    },
+    TurnStopped {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        operation_id: OperationId,
+        reason: TurnStop,
+    },
+}
+
+/// Wire wrapper. Unknown top-level fields are retained explicitly for forward compatibility.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ClientMessage<T> {
+    pub protocol_version: u16,
+    pub payload: T,
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("unsupported client protocol version {actual}; expected {expected}")]
+pub struct UnsupportedClientVersion {
+    pub actual: u16,
+    pub expected: u16,
+}
+
+pub fn negotiate_protocol_version(
+    offered_versions: &[u16],
+) -> Result<u16, UnsupportedClientVersion> {
+    SUPPORTED_CLIENT_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .filter(|version| offered_versions.contains(version))
+        .max()
+        .ok_or_else(|| UnsupportedClientVersion {
+            actual: offered_versions.iter().copied().max().unwrap_or_default(),
+            expected: CLIENT_PROTOCOL_VERSION,
+        })
+}
+
+impl<T> ClientMessage<T> {
+    pub fn v1(payload: T) -> Self {
+        Self {
+            protocol_version: CLIENT_PROTOCOL_VERSION,
+            payload,
+            extensions: BTreeMap::new(),
+        }
+    }
+
+    pub fn into_v1(self) -> Result<T, UnsupportedClientVersion> {
+        if self.protocol_version != CLIENT_PROTOCOL_VERSION {
+            return Err(UnsupportedClientVersion {
+                actual: self.protocol_version,
+                expected: CLIENT_PROTOCOL_VERSION,
+            });
+        }
+        Ok(self.payload)
+    }
+}
+
+pub fn client_schema() -> serde_json::Value {
+    serde_json::json!({
+        "request": schemars::schema_for!(ClientMessage<ClientRequest>),
+        "event": schemars::schema_for!(ClientMessage<ClientEvent>),
+    })
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_client_intent_serializes_on_one_versioned_method() {
+        let intent = crate::contract::command::ClientIntent::v1(
+            crate::contract::command::ClientSurface::Tui,
+            crate::PrincipalId("local-uid:1000".into()),
+            "tui-status:9",
+            crate::contract::command::ClientCommand::Status(
+                crate::contract::command::StatusIntent {
+                    session_id: Some(SessionId("session-a".into())),
+                },
+            ),
+        );
+        let request = ClientRpcRequest::Intent(intent)
+            .to_json_rpc(Some(9))
+            .unwrap();
+
+        assert_eq!(request["method"], "client.intent");
+        assert_eq!(request["params"]["schema_version"], 1);
+        assert_eq!(request["params"]["principal"], "local-uid:1000");
+        assert_eq!(
+            request["params"]["command"]["arguments"]["session_id"],
+            "session-a"
+        );
+    }
+
+    #[test]
+    fn chat_serializes_explicit_typed_agent_requirement() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat_with_requirements(
+            "inspect",
+            Some(SessionId("session-a".into())),
+            &workspace,
+            vec![crate::TurnRequirement::InvokeAgentRuntime {
+                runtime_id: "pi-rpc".into(),
+            }],
+        )
+        .to_json_rpc(Some(9))
+        .unwrap();
+
+        assert_eq!(request["method"], "chat");
+        assert_eq!(
+            request["params"]["requirements"][0]["InvokeAgentRuntime"]["runtime_id"],
+            "pi-rpc"
+        );
+    }
+
+    #[test]
+    fn chat_serializes_explicit_coding_task_kind() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat_with_task_kind(
+            "change code",
+            None,
+            &workspace,
+            vec![],
+            Some(crate::TaskKind::Coding),
+        )
+        .to_json_rpc(Some(7))
+        .unwrap();
+        assert_eq!(request["params"]["task_kind"], "coding");
+    }
+
+    #[test]
+    fn chat_without_task_kind_omits_the_field() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat("hello", &workspace)
+            .to_json_rpc(Some(8))
+            .unwrap();
+        assert!(request["params"].get("task_kind").is_none());
+    }
+
+    #[test]
+    fn evaluation_queries_serialize_session_scope_and_bounds() {
+        let latest = ClientRpcRequest::evaluation_latest("session-a", false)
+            .to_json_rpc(Some(10))
+            .unwrap();
+        assert_eq!(latest["method"], "evaluation.latest");
+        assert_eq!(latest["params"]["session_id"], "session-a");
+        assert_eq!(latest["params"]["include_evidence"], false);
+
+        let list = ClientRpcRequest::evaluation_list("session-a", 100)
+            .to_json_rpc(Some(11))
+            .unwrap();
+        assert_eq!(list["method"], "evaluation.list");
+        assert_eq!(list["params"]["limit"], 100);
+    }
+
+    #[test]
+    fn workspace_rewind_serializes_only_host_bound_identity() {
+        let request = ClientRpcRequest::WorkspaceRewind(WorkspaceRewindParams {
+            session_id: SessionId("session-a".into()),
+            prompt_index: 7,
+        })
+        .to_json_rpc(Some(12))
+        .unwrap();
+        assert_eq!(request["method"], "workspace.rewind");
+        assert_eq!(request["params"]["session_id"], "session-a");
+        assert_eq!(request["params"]["prompt_index"], 7);
+        assert!(request["params"].get("working_dir").is_none());
+        assert!(request["params"].get("checkpoint_blob").is_none());
+    }
+
+    #[test]
+    fn transaction_review_serializes_typed_host_action() {
+        let request = ClientRpcRequest::TransactionReview(TransactionReviewParams {
+            session_id: "session-a".into(),
+            transaction_id: uuid::Uuid::nil().to_string(),
+            action: TransactionReviewAction::Rollback,
+            risk_acknowledged: true,
+        })
+        .to_json_rpc(Some(13))
+        .unwrap();
+        assert_eq!(request["method"], "task.review/settle/v1");
+        assert_eq!(request["params"]["action"], "rollback");
+        assert_eq!(request["params"]["risk_acknowledged"], true);
+        assert!(request["params"].get("working_dir").is_none());
+    }
+}

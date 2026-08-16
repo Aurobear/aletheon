@@ -3,9 +3,9 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use ::contracts::EmbeddingProvider;
 use anyhow::{ensure, Context};
 use async_trait::async_trait;
-use fabric::EmbeddingProvider;
 use rusqlite::{params, Connection};
 
 use crate::recall::pipeline::{

@@ -23,6 +23,13 @@ pub mod bridge;
 pub mod composition;
 pub mod config;
 pub mod core;
+pub mod domain;
+pub mod evolution;
+pub use domain::{
+    BehaviorAdjustment, CostEstimate, CriticismDimension, CriticismSeverity, Critique,
+    EvolutionLogEntry, ExecutionResult, Experience, LearnedRule, Observation, Plan, PlanStep,
+    Reflection, ReflectionEntry, ReflectionOutcome, ReflectionTrigger,
+};
 pub mod harness;
 pub mod ports;
 
@@ -53,7 +60,9 @@ pub use harness::config::HarnessConfig;
 pub use harness::{
     CanonicalRuntimeTurnEventSink, CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError,
     CognitErrorKind, CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies,
-    CognitiveStreamEvent, CognitiveStreamSink, HarnessKind,
+    CognitiveSessionFactory, CognitiveStreamEvent, CognitiveStreamSink,
+    ExecutionTargetRoutingError, HarnessKind, RobotSessionCapability,
+    TargetRoutedCognitiveSessionFactory,
 };
 /// Stable inference contracts and the runtime scheduling facade.
 ///
@@ -75,9 +84,7 @@ pub mod inference {
     pub mod scheduler {
         pub use crate::adapters::inference::scheduler::*;
     }
-    pub use crate::adapters::inference::backpressure::{
-        provider_backpressure_snapshot, MachineProviderBackpressure, ProviderBackpressureSnapshot,
-    };
+    pub use ::contracts::memory::ProviderBackpressureSnapshot;
     pub use scheduler::*;
 }
 

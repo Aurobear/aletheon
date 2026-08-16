@@ -161,8 +161,11 @@ mod tests {
 
     fn default_config() -> SandboxConfig {
         SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
-                .unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
+                "/tmp/work".into(),
+                vec![],
+            )
+            .unwrap(),
             environment: Default::default(),
             policy: None,
         }
@@ -270,8 +273,11 @@ mod tests {
         let mut env = std::collections::BTreeMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
-                .unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
+                "/tmp/work".into(),
+                vec![],
+            )
+            .unwrap(),
             environment: env,
             policy: None,
         };

@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use fabric::tool::{PermissionLevel, ToolCacheDependencies, ToolCachePolicy};
+use ::contracts::tool::{PermissionLevel, ToolCacheDependencies, ToolCachePolicy};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -106,7 +106,7 @@ pub fn read_only_cache_key(
 pub fn dependency_fingerprint(
     dependencies: ToolCacheDependencies,
     args: &Value,
-    workspace: &fabric::WorkspacePolicy,
+    workspace: &::contracts::WorkspacePolicy,
 ) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update(b"aletheon.tool-cache-dependencies.v1\0");
@@ -341,7 +341,7 @@ pub type ToolCacheMetricsSnapshot = BTreeMap<String, ToolCacheCounters>;
 struct Entry {
     stored_at: Instant,
     ttl: Duration,
-    value: fabric::CapabilityResult,
+    value: ::contracts::CapabilityResult,
 }
 
 impl ReadOnlyToolResultCache {
@@ -354,7 +354,7 @@ impl ReadOnlyToolResultCache {
 
     /// Look up a cached result, expiring stale entries and refreshing recency
     /// on a hit. Returns `None` on miss/expiry or lock failure (fail-open).
-    pub fn get(&self, tool_name: &str, key: &str) -> Option<fabric::CapabilityResult> {
+    pub fn get(&self, tool_name: &str, key: &str) -> Option<::contracts::CapabilityResult> {
         let now = Instant::now();
         let mut inner = self
             .inner
@@ -422,7 +422,7 @@ impl ReadOnlyToolResultCache {
     }
 
     /// Store a result under a key with the policy TTL.
-    pub fn insert(&self, key: String, value: fabric::CapabilityResult, ttl: Duration) {
+    pub fn insert(&self, key: String, value: ::contracts::CapabilityResult, ttl: Duration) {
         let now = Instant::now();
         let mut inner = self
             .inner
@@ -452,10 +452,10 @@ impl ReadOnlyToolResultCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::tool::PermissionLevel::{L0, L1};
+    use ::contracts::tool::PermissionLevel::{L0, L1};
 
-    fn result(payload: &str) -> fabric::CapabilityResult {
-        fabric::CapabilityResult {
+    fn result(payload: &str) -> ::contracts::CapabilityResult {
+        ::contracts::CapabilityResult {
             call_id: "call-1".into(),
             output: payload.into(),
             is_error: false,
@@ -588,7 +588,7 @@ mod tests {
         std::fs::create_dir(temp.path().join(".git")).unwrap();
         std::fs::write(temp.path().join(".git/HEAD"), "ref: refs/heads/dev\n").unwrap();
         std::fs::write(temp.path().join(".git/index"), b"index-v1").unwrap();
-        let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+        let workspace = ::contracts::WorkspacePolicy::from_resolved_roots(
             std::fs::canonicalize(temp.path()).unwrap(),
             Vec::new(),
         )
@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn undeclared_or_escaping_workspace_dependencies_fail_closed() {
         let temp = tempfile::tempdir().unwrap();
-        let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+        let workspace = ::contracts::WorkspacePolicy::from_resolved_roots(
             std::fs::canonicalize(temp.path()).unwrap(),
             Vec::new(),
         )

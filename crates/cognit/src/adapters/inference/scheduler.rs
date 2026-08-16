@@ -9,15 +9,24 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use fabric::evolution::{LlmPurpose, ProviderHealth};
-use fabric::message::Message;
-use fabric::Clock;
+use crate::evolution::{LlmPurpose, ProviderHealth};
+use ::contracts::message::Message;
+use ::contracts::Clock;
 
 use super::provider::{
     InferenceFailure, InferenceFailureKind, LlmProvider, LlmResponse, ToolDefinition,
 };
-use crate::composition::inference_factory::{create_provider, ProviderBuildOptions};
 use crate::config::{ProviderConfig, ProviderTimeoutConfig};
+
+pub trait SchedulerProviderFactory: Send + Sync {
+    fn create(
+        &self,
+        config: &ProviderConfig,
+        model: &str,
+        max_tokens: u32,
+        timeouts: ProviderTimeoutConfig,
+    ) -> Result<Arc<dyn LlmProvider>>;
+}
 
 /// How a provider error should be handled during retry/failover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,16 +153,18 @@ impl LlmScheduler {
     }
 
     /// Create a new scheduler from config.
-    pub fn new(config: &SchedulerConfig, clock: Arc<dyn Clock>) -> Result<Self> {
+    pub fn new(
+        config: &SchedulerConfig,
+        clock: Arc<dyn Clock>,
+        provider_factory: &dyn SchedulerProviderFactory,
+    ) -> Result<Self> {
         let mut providers = HashMap::new();
         for pc in &config.providers {
-            let provider = create_provider(
+            let provider = provider_factory.create(
                 &pc.definition,
                 &pc.model,
-                ProviderBuildOptions {
-                    max_tokens: config.max_tokens,
-                    timeouts: config.provider_timeouts,
-                },
+                config.max_tokens,
+                config.provider_timeouts,
             )?;
             providers.insert(pc.definition.name.clone(), provider);
         }
@@ -418,7 +429,7 @@ impl LlmScheduler {
 mod tests {
     use super::super::provider::{InferenceUsage, LlmResponse, LlmStream, StopReason};
     use super::*;
-    use fabric::message::ContentBlock;
+    use ::contracts::message::ContentBlock;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]

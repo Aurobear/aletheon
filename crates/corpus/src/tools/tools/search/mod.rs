@@ -1,6 +1,6 @@
 pub mod tool_search;
 
-use fabric::tool::ToolExposure;
+use ::contracts::tool::ToolExposure;
 
 /// A single entry in the BM25 search catalog.
 #[derive(Debug, Clone)]

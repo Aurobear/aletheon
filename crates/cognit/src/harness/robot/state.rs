@@ -1,9 +1,9 @@
 //! RobotHarness state machine — bounded retry/replan with deterministic verification.
 
-use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillId};
-use fabric::types::expected_outcome::ExpectedOutcome;
-use fabric::types::robot_failure::RobotFailureClass;
-use fabric::types::world_state::WorldSnapshot;
+use ::contracts::types::embodiment::{DeviceId, SkillDescriptor, SkillId};
+use ::contracts::types::expected_outcome::ExpectedOutcome;
+use ::contracts::types::robot_failure::RobotFailureClass;
+use ::contracts::types::world_state::WorldSnapshot;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;

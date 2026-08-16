@@ -1,6 +1,7 @@
 //! Rendering for the sanitized conscious-core inspector contract.
 
-use fabric::{ConsciousCoreSnapshot, ProcessorHealth};
+use ::contracts::ProcessorHealth;
+use gateway::protocol::ConsciousCoreSnapshot;
 
 pub fn render_snapshot(snapshot: &ConsciousCoreSnapshot) -> Vec<String> {
     let mut lines = vec![format!(

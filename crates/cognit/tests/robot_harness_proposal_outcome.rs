@@ -6,22 +6,22 @@
 //! PR2 companion assertions: every recorded attempt carries a real UUID
 //! `OperationId`, never the legacy `"op"` placeholder.
 
+use ::contracts::types::embodiment::{
+    DeviceId, RiskClass, SkillDescriptor, SkillId, SkillOutcome, SkillRequest, SkillResult,
+};
+use ::contracts::types::episode_report::EpisodeSettlement;
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::types::outcome_verification::{VerificationDecision, VerificationReport};
+use ::contracts::types::robot_failure::RobotFailureClass;
+use ::contracts::types::skill_proposal::{GoalAlignment, PolicyProvenance, SkillProposal};
+use ::contracts::types::world_state::{WorldSnapshot, WorldStatePort};
+use ::contracts::{MonoDeadline, OperationId};
 use cognit::harness::robot::state::RobotHarnessConfig;
+use cognit::harness::robot::PerceptionObservation;
 use cognit::harness::robot::{
     EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, RobotExecutionError, RobotHarness,
 };
 use cognit::ports::policy_provider::PolicyProviderPort;
-use fabric::types::embodiment::{
-    DeviceId, RiskClass, SkillDescriptor, SkillId, SkillOutcome, SkillRequest, SkillResult,
-};
-use fabric::types::episode_report::EpisodeSettlement;
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};
-use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::robot_failure::RobotFailureClass;
-use fabric::types::skill_proposal::{GoalAlignment, PolicyProvenance, SkillProposal};
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
-use fabric::{MonoDeadline, OperationId};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -34,7 +34,7 @@ impl FakeWorldState {
             schema_version: 1,
             sequence: 1,
             payload: serde_json::json!({"mode": "stance2"}),
-            observed_at: fabric::MonoTime(1),
+            observed_at: ::contracts::MonoTime(1),
             valid_until: None,
             stale: false,
         }
@@ -185,7 +185,7 @@ impl EpisodeSink for RecordingEpisodes {
     async fn load_attempts(
         &self,
         _episode_id: &str,
-    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String> {
+    ) -> Result<Vec<::contracts::types::episode_report::AttemptRecord>, String> {
         Ok(vec![])
     }
 }

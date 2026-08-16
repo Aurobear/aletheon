@@ -141,7 +141,7 @@ impl Renderable for HeaderRenderable<'_> {
 pub struct TaskConsoleRenderable<'a> {
     pub caps: &'a TermCaps,
     pub state: &'a AppState,
-    pub workspace: &'a fabric::WorkspacePolicy,
+    pub workspace_name: &'a str,
     pub selected_activity: Option<usize>,
     pub next_agent_runtime: Option<&'a str>,
 }
@@ -151,7 +151,7 @@ impl Renderable for TaskConsoleRenderable<'_> {
         TaskConsole {
             state: self.state,
             caps: self.caps,
-            workspace: self.workspace,
+            workspace_name: self.workspace_name,
             selected_activity: self.selected_activity,
             next_agent_runtime: self.next_agent_runtime,
         }

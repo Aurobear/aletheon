@@ -5,19 +5,24 @@
 
 pub mod artifact_store;
 pub mod backend;
+pub mod deployment;
 pub mod desktop;
 pub mod error;
 pub mod filesystem;
 pub mod manifest;
 pub mod path;
 pub mod process;
+pub mod process_controller;
 pub mod pty;
 pub mod receipt;
 pub mod registry;
 pub mod sandbox;
 pub mod selector;
 pub mod service;
+pub mod storage_health;
+pub mod storage_quota;
 pub mod structured_patch;
+pub mod workflow_store;
 
 pub use desktop::DesktopHost;
 pub use error::{HostError, HostErrorKind};
@@ -112,3 +117,15 @@ mod tests {
         assert_eq!(m.state_of(&HostFeature::Pty), FeatureState::Unsupported);
     }
 }
+
+pub use deployment::{
+    DeploymentInfo, DeploymentManifest, DeploymentRollbackReceipt, DeploymentRollbackService,
+    FileRollbackExecutor, RollbackExecutor, RollbackPlan, CORE_RUNTIME_VERSION,
+};
+
+pub use storage_quota::{
+    QuotaError, StorageClass, StorageLimit, StorageQuota, StorageReservation, StorageRoot,
+    StorageUsage,
+};
+
+pub mod workspace_identity;

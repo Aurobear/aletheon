@@ -29,7 +29,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List
 
-# Real TurnMetrics fields from crates/fabric/src/types/turn.rs:84-92
+# Real TurnMetrics fields from crates/contracts/src/types/turn.rs:84-92
 REAL_METRICS = (
     "tool_calls_made", "tool_errors", "provider_retries",
     "elapsed_ms", "iterations", "completed_normally",

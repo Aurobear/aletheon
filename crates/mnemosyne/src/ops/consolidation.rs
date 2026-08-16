@@ -3,11 +3,11 @@
 //! Promotes frequently-accessed episodic memories (reflections) to semantic
 //! knowledge. High-activation reflections become long-term semantic entries.
 
+use crate::memory::{MemoryBackend, MemoryEntry, MemoryType};
+use ::contracts::wall_to_datetime;
 use anyhow::Result;
-use fabric::wall_to_datetime;
+use cognit::domain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 use uuid::Uuid;
-
-use fabric::{MemoryBackend, MemoryEntry, MemoryType};
 
 use crate::backends::episodic::EpisodicMemory;
 use crate::backends::semantic::SemanticMemory;
@@ -64,7 +64,7 @@ pub async fn consolidate(
 
     // 2. Filter by activation score and access count.
     let now = episodic.clock.wall_now().0 / 1000;
-    let mut qualified: Vec<(&fabric::ReflectionEntry, u64, &str)> = Vec::new();
+    let mut qualified: Vec<(&cognit::domain::ReflectionEntry, u64, &str)> = Vec::new();
 
     for (reflection, access_count, importance) in &reflections_with_access {
         let activation = compute_activation(
@@ -142,7 +142,7 @@ struct ExtractedKnowledge {
     importance: f64,
 }
 
-fn extract_knowledge(reflection: &fabric::ReflectionEntry) -> ExtractedKnowledge {
+fn extract_knowledge(reflection: &cognit::domain::ReflectionEntry) -> ExtractedKnowledge {
     let mut parts = Vec::new();
 
     // Topic: task_summary
@@ -182,12 +182,10 @@ fn extract_knowledge(reflection: &fabric::ReflectionEntry) -> ExtractedKnowledge
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::{
-        ReflectionEntry, ReflectionOutcome, ReflectionTrigger, Subsystem, SubsystemContext,
-    };
+    use ::contracts::{Subsystem, SubsystemContext};
     use std::sync::Arc;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(kernel::chronos::TestClock::default())
     }
 
@@ -218,7 +216,6 @@ mod tests {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
             config: serde_json::Value::Null,
-            bus: None,
         };
         mem.init(&ctx).await.unwrap();
     }
@@ -228,7 +225,6 @@ mod tests {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
             config: serde_json::Value::Null,
-            bus: None,
         };
         mem.init(&ctx).await.unwrap();
     }
@@ -359,7 +355,7 @@ mod tests {
         assert_eq!(result.promoted, 1);
 
         // Verify the entry appears in semantic memory
-        let query = fabric::MemoryQuery {
+        let query = crate::memory::MemoryQuery {
             tags: Some(vec!["consolidated".into()]),
             limit: 10,
             ..Default::default()

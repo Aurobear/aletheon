@@ -11,11 +11,11 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 
-use fabric::Clock;
-use fabric::Timer;
+use ::contracts::Clock;
+use ::contracts::Timer;
 use tracing::warn;
 
-use fabric::hook::{HookContext, HookPoint, HookResult};
+use crate::hook::{HookContext, HookPoint, HookResult};
 
 const MAX_HOOK_ENVELOPE_BYTES: usize = 128 * 1024;
 const MAX_HOOK_METRIC_SERIES: usize = 256;
@@ -91,8 +91,8 @@ pub struct HookRegistry {
     hooks: HashMap<HookPoint, Vec<RegisteredHook>>,
     package_hook_owners: HashMap<String, String>,
     clock: Arc<dyn Clock>,
-    event_bus: Option<Arc<fabric::CanonicalEventBus>>,
-    event_spine: Option<Arc<dyn fabric::EventSpine>>,
+    event_bus: Option<Arc<runtime::event_projection::CanonicalEventBus>>,
+    event_spine: Option<Arc<dyn runtime::EventSpine>>,
     execution_timeout: Duration,
 }
 
@@ -118,19 +118,22 @@ impl HookRegistry {
         }
     }
 
-    pub fn with_event_bus(mut self, event_bus: Option<Arc<fabric::CanonicalEventBus>>) -> Self {
+    pub fn with_event_bus(
+        mut self,
+        event_bus: Option<Arc<runtime::event_projection::CanonicalEventBus>>,
+    ) -> Self {
         self.event_bus = event_bus;
         self
     }
 
     /// Attach the durable event spine used for terminal Hook receipts.
-    pub fn with_event_spine(mut self, event_spine: Option<Arc<dyn fabric::EventSpine>>) -> Self {
+    pub fn with_event_spine(mut self, event_spine: Option<Arc<dyn runtime::EventSpine>>) -> Self {
         self.event_spine = event_spine;
         self
     }
 
     /// Attach or replace the durable event spine after composition completes.
-    pub fn set_event_spine(&mut self, event_spine: Option<Arc<dyn fabric::EventSpine>>) {
+    pub fn set_event_spine(&mut self, event_spine: Option<Arc<dyn runtime::EventSpine>>) {
         self.event_spine = event_spine;
     }
 
@@ -205,7 +208,7 @@ impl HookRegistry {
         if let Some(bus) = &self.event_bus {
             let _ = bus
                 .publish_event(
-                    fabric::SchemaId::from("aletheon.event.hook_triggered/v1"),
+                    ::contracts::SchemaId::from("aletheon.event.hook_triggered/v1"),
                     format!("session:{}", ctx.session_id),
                     serde_json::json!({
                         "hook_event_name": ctx.point.event_name(),
@@ -283,7 +286,7 @@ impl HookRegistry {
             if let Some(bus) = &self.event_bus {
                 let _ = bus
                     .publish_event(
-                        fabric::SchemaId::from("aletheon.event.hook_restricted/v1"),
+                        ::contracts::SchemaId::from("aletheon.event.hook_restricted/v1"),
                         format!("session:{}", ctx.session_id),
                         serde_json::json!({
                             "hook": hook.name,
@@ -416,29 +419,29 @@ impl HookRegistry {
             "result_kind": result_kind,
             "elapsed_micros": elapsed.as_micros().try_into().unwrap_or(u64::MAX),
         });
-        let event_id = fabric::EventId::new();
-        let mut envelope = fabric::EnvelopeV2::new(
-            fabric::SchemaId::from("aletheon.event.hook_completed/v1"),
-            fabric::EnvelopeV2Target(format!("session:{}", ctx.session_id)),
-            fabric::EnvelopeV2Target("broadcast".into()),
-            fabric::EnvelopeV2Delivery::FanOut,
-            fabric::NamespaceId("default".into()),
+        let event_id = runtime::EventId::new();
+        let mut envelope = ::contracts::EnvelopeV2::new(
+            ::contracts::SchemaId::from("aletheon.event.hook_completed/v1"),
+            ::contracts::EnvelopeV2Target(format!("session:{}", ctx.session_id)),
+            ::contracts::EnvelopeV2Target("broadcast".into()),
+            ::contracts::EnvelopeV2Delivery::FanOut,
+            ::contracts::NamespaceId("default".into()),
             payload.clone(),
         );
-        envelope.id = fabric::MessageId(event_id.0);
+        envelope.id = ::contracts::MessageId(event_id.0);
         if let Some(spine) = &self.event_spine {
-            let _ = spine.append(fabric::UnsequencedEvent {
-                tree_id: fabric::EventTreeId::for_root_session(&ctx.session_id),
+            let _ = spine.append(runtime::UnsequencedEvent {
+                tree_id: runtime::EventTreeId::for_root_session(&ctx.session_id),
                 event_id,
                 parent: None,
-                identity: fabric::EventIdentity {
+                identity: runtime::EventIdentity {
                     root_session_id: ctx.session_id.clone(),
                     session_id: ctx.session_id.clone(),
                     agent_id: None,
                 },
                 envelope: envelope.clone(),
-                visibility: fabric::EventVisibility::Control,
-                payload: fabric::EventPayload::Inline {
+                visibility: runtime::EventVisibility::Control,
+                payload: runtime::EventPayload::Inline {
                     value: payload.clone(),
                 },
             });
@@ -572,10 +575,10 @@ mod tests {
     use tempfile::TempDir;
 
     #[derive(Default)]
-    struct RecordingSpine(Mutex<Vec<fabric::UnsequencedEvent>>);
+    struct RecordingSpine(Mutex<Vec<runtime::UnsequencedEvent>>);
 
-    impl fabric::EventSpine for RecordingSpine {
-        fn append(&self, event: fabric::UnsequencedEvent) -> anyhow::Result<fabric::SpineEvent> {
+    impl runtime::EventSpine for RecordingSpine {
+        fn append(&self, event: runtime::UnsequencedEvent) -> anyhow::Result<runtime::SpineEvent> {
             event.validate()?;
             let sequence = {
                 let mut events = self
@@ -585,12 +588,12 @@ mod tests {
                 events.push(event.clone());
                 events.len() as u64
             };
-            Ok(fabric::SpineEvent {
-                position: fabric::EventPosition {
+            Ok(runtime::SpineEvent {
+                position: runtime::EventPosition {
                     tree_id: event.tree_id,
                     event_id: event.event_id,
                     parent: event.parent,
-                    sequence: fabric::TreeSequence(sequence),
+                    sequence: runtime::TreeSequence(sequence),
                 },
                 identity: event.identity,
                 schema: event.envelope.schema.clone(),
@@ -705,9 +708,10 @@ mod tests {
         let directory = TempDir::new().unwrap();
         let script = directory.path().join("hook.sh");
         std::fs::write(&script, "#!/bin/sh\necho should-not-run").unwrap();
-        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
-        let mut receipts =
-            bus.subscribe_channel(fabric::SchemaId::from("aletheon.event.hook_restricted/v1"));
+        let bus = Arc::new(runtime::event_projection::CanonicalEventBus::new(8));
+        let mut receipts = bus.subscribe_channel(::contracts::SchemaId::from(
+            "aletheon.event.hook_restricted/v1",
+        ));
         let mut registry = HookRegistry::default().with_event_bus(Some(bus));
         registry.register(RegisteredHook {
             name: "repo-hook".into(),
@@ -742,9 +746,10 @@ mod tests {
 
     #[tokio::test]
     async fn completed_hook_emits_broadcast_and_durable_terminal_receipt() {
-        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
-        let mut receipts =
-            bus.subscribe_channel(fabric::SchemaId::from("aletheon.event.hook_completed/v1"));
+        let bus = Arc::new(runtime::event_projection::CanonicalEventBus::new(8));
+        let mut receipts = bus.subscribe_channel(::contracts::SchemaId::from(
+            "aletheon.event.hook_completed/v1",
+        ));
         let spine = Arc::new(RecordingSpine::default());
         let mut registry = HookRegistry::default()
             .with_event_bus(Some(bus))

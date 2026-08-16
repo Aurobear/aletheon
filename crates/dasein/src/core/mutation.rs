@@ -3,9 +3,9 @@
 //! Tracks mutation requests (changes to the agent's own configuration).
 //! Irreversible mutations to core identity fields are auto-denied.
 
+use crate::core::contracts::AwarenessRiskLevel;
+use crate::core::contracts::{MutationIntent, Verdict};
 use chrono::{DateTime, Utc};
-use fabric::self_field::AwarenessRiskLevel;
-use fabric::{MutationIntent, Verdict};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -41,11 +41,11 @@ const CORE_IDENTITY_FIELDS: &[&str] = &[
 /// MutationLayer — tracks and reviews mutation requests.
 pub struct MutationLayer {
     records: RwLock<Vec<MutationRecord>>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl MutationLayer {
-    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             records: RwLock::new(Vec::new()),
             clock,
@@ -62,7 +62,7 @@ impl MutationLayer {
                 reason: mutation.reason.clone(),
                 reversible: mutation.reversible,
                 status: MutationStatus::Denied,
-                reviewed_at: Some(fabric::wall_to_datetime(self.clock.wall_now())),
+                reviewed_at: Some(::contracts::wall_to_datetime(self.clock.wall_now())),
                 denial_reason: Some("Irreversible change to core identity field".to_string()),
             };
             self.records.write().push(record);
@@ -102,7 +102,7 @@ impl MutationLayer {
             reason: mutation.reason.clone(),
             reversible: mutation.reversible,
             status: MutationStatus::Approved,
-            reviewed_at: Some(fabric::wall_to_datetime(self.clock.wall_now())),
+            reviewed_at: Some(::contracts::wall_to_datetime(self.clock.wall_now())),
             denial_reason: None,
         };
         self.records.write().push(record);
@@ -129,7 +129,7 @@ impl MutationLayer {
             .find(|r| r.target == target && r.status == MutationStatus::Pending)
         {
             record.status = MutationStatus::Approved;
-            record.reviewed_at = Some(fabric::wall_to_datetime(self.clock.wall_now()));
+            record.reviewed_at = Some(::contracts::wall_to_datetime(self.clock.wall_now()));
             true
         } else {
             false
@@ -144,7 +144,7 @@ impl MutationLayer {
             .find(|r| r.target == target && r.status == MutationStatus::Pending)
         {
             record.status = MutationStatus::Denied;
-            record.reviewed_at = Some(fabric::wall_to_datetime(self.clock.wall_now()));
+            record.reviewed_at = Some(::contracts::wall_to_datetime(self.clock.wall_now()));
             record.denial_reason = Some(reason.to_string());
             true
         } else {
@@ -250,7 +250,7 @@ mod tests {
     use kernel::chronos::TestClock;
     use serde_json::json;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 

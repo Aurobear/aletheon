@@ -2,11 +2,16 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/config" "$tmp/target" \
+mkdir -p "$tmp/config/architecture" "$tmp/target" \
   "$tmp/crates/corpus/src/legacy" "$tmp/crates/dasein/src" \
-  "$tmp/crates/executive/src" "$tmp/crates/interact/src" "$tmp/crates/fabric/src"
+  "$tmp/crates/executive/src" "$tmp/crates/interact/src" "$tmp/crates/contracts/src"
 mkdir -p "$tmp/crates/metacog/src"
-printf 'pub use example::Example;\n' > "$tmp/crates/fabric/src/lib.rs"
+# The production architecture gate requires the reviewed retired-authority
+# inventory even for synthetic fixtures. Copy the repository baseline so this
+# test exercises the fixture-specific findings rather than failing at setup.
+cp "$ROOT/config/architecture/retired-authorities.tsv" \
+  "$tmp/config/architecture/retired-authorities.tsv"
+printf 'pub use example::Example;\n' > "$tmp/crates/contracts/src/lib.rs"
 cat > "$tmp/architecture-status.toml" <<'TOML'
 [freeze]
 fabric_root_reexports_max = 1
@@ -18,7 +23,7 @@ cat > "$tmp/crates/dasein/src/lib.rs" <<'RS'
 fn clock() { SystemClock::new(); }
 RS
 cat > "$tmp/crates/executive/src/lib.rs" <<'RS'
-use fabric::envelope::Envelope;
+use contracts::envelope::Envelope;
 use executive::impl::kernel::Table;
 fn fields(x: X) { let _ = x.runtime; }
 RS
@@ -27,11 +32,12 @@ concrete_clock|crates/dasein/src/lib.rs|fn clock() { SystemClock::new(); }
 core_systems_field|crates/executive/src/lib.rs|fn fields(x: X) { let _ = x.runtime; }
 direct_tool|crates/corpus/src/legacy/mod.rs|tool.execute(x)
 duplicate_kernel|crates/executive/src/lib.rs|use executive::impl::kernel::Table;
-legacy_event|crates/executive/src/lib.rs|use fabric::envelope::Envelope;
+executive_store_import|crates/executive/src/application/verification/command.rs|use corpus::tools::subagent::CommandRunner;
+legacy_event|crates/executive/src/lib.rs|use contracts::envelope::Envelope;
 BASE
 : > "$tmp/config/architecture-dependencies.txt"
 : > "$tmp/config/architecture-path-inventory.txt"
-ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+ARCH_ROOT="$tmp" ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null
 
 # A refactor may relocate an already-ledgered finding, but it must not increase
@@ -41,15 +47,26 @@ git -C "$tmp" config user.name architecture-fixture
 git -C "$tmp" config user.email architecture-fixture@example.invalid
 git -C "$tmp" add config
 git -C "$tmp" commit -qm baseline
+# Renaming Executive to Aletheon relocates the same ledgered application debt;
+# it must retain the old category budget rather than appear as new debt.
+mkdir -p "$tmp/crates/aletheon/src/wiring/application/verification"
+printf 'use corpus::tools::subagent::CommandRunner;\n' \
+  > "$tmp/crates/aletheon/src/wiring/application/verification/command.rs"
+sed -i \
+  's#executive_store_import|crates/executive/src/application/verification/command.rs#application_store_import|crates/aletheon/src/wiring/application/verification/command.rs#' \
+  "$tmp/config/architecture-allowlist.txt"
+sort -o "$tmp/config/architecture-allowlist.txt" "$tmp/config/architecture-allowlist.txt"
 mv "$tmp/crates/corpus/src/legacy/mod.rs" "$tmp/crates/corpus/src/legacy/moved.rs"
 sed -i 's#legacy/mod.rs#legacy/moved.rs#' "$tmp/config/architecture-allowlist.txt"
-ARCH_ROOT="$tmp" ARCH_BASE_REF=HEAD ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+ARCH_ROOT="$tmp" ARCH_BASE_REF=HEAD ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+  ARCH_SKIP_X1_GATES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null
+rm -r "$tmp/crates/aletheon"
 printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/moved.rs"
 printf 'direct_tool|crates/corpus/src/legacy/moved.rs|tool.execute(y)\n' \
   >> "$tmp/config/architecture-allowlist.txt"
 sort -o "$tmp/config/architecture-allowlist.txt" "$tmp/config/architecture-allowlist.txt"
-if ARCH_ROOT="$tmp" ARCH_BASE_REF=HEAD ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+if ARCH_ROOT="$tmp" ARCH_BASE_REF=HEAD ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected architecture category growth to fail' >&2; exit 1
 fi
@@ -57,34 +74,34 @@ sed -i '/tool.execute(y)/d' "$tmp/crates/corpus/src/legacy/moved.rs"
 sed -i '/tool.execute(y)/d' "$tmp/config/architecture-allowlist.txt"
 
 mkdir -p "$tmp/crates/metacog/src/core"
-if ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+if ARCH_ROOT="$tmp" ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected retired Metacog roots to fail' >&2; exit 1
 fi
 rmdir "$tmp/crates/metacog/src/core"
 printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/moved.rs"
-if ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+if ARCH_ROOT="$tmp" ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a new finding to fail' >&2; exit 1
 fi
 sed -i '$d' "$tmp/crates/corpus/src/legacy/moved.rs"
 rm "$tmp/crates/dasein/src/lib.rs"
-out=$(ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+out=$(ARCH_ROOT="$tmp" ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh")
 grep -q 'resolved findings entries' <<<"$out"
 
 # A local dependency edge not present in the maximum baseline must also fail.
-deps="$tmp/deps"; mkdir -p "$deps/config" "$deps/target" "$deps/crates/fabric/src" "$deps/crates/kernel/src"
+deps="$tmp/deps"; mkdir -p "$deps/config" "$deps/target" "$deps/crates/contracts/src" "$deps/crates/kernel/src"
 cat > "$deps/Cargo.toml" <<'TOML'
 [workspace]
 resolver = "2"
-members = ["crates/fabric", "crates/kernel"]
+members = ["crates/contracts", "crates/kernel"]
 TOML
-printf 'pub fn fabric() {}\n' > "$deps/crates/fabric/src/lib.rs"
+printf 'pub fn fabric() {}\n' > "$deps/crates/contracts/src/lib.rs"
 printf 'pub fn kernel() {}\n' > "$deps/crates/kernel/src/lib.rs"
-cat > "$deps/crates/fabric/Cargo.toml" <<'TOML'
+cat > "$deps/crates/contracts/Cargo.toml" <<'TOML'
 [package]
-name = "fabric"
+name = "contracts"
 version = "0.1.0"
 edition = "2021"
 [dependencies]
@@ -99,7 +116,7 @@ TOML
 : > "$deps/config/architecture-allowlist.txt"
 : > "$deps/config/architecture-dependencies.txt"
 : > "$deps/config/architecture-path-inventory.txt"
-if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
+if ARCH_ROOT="$deps" ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a new dependency to fail' >&2; exit 1
 fi
@@ -107,9 +124,9 @@ fi
 # Workspace package names are semantic domain names. Do not permit the deleted
 # api/types/broker/platform-* split-crate convention (or any other hyphenated
 # package name) to return.
-sed -i '/^\[dependencies\]/,$d' "$deps/crates/fabric/Cargo.toml"
+sed -i '/^\[dependencies\]/,$d' "$deps/crates/contracts/Cargo.toml"
 sed -i 's/name = "kernel"/name = "runtime-api"/' "$deps/crates/kernel/Cargo.toml"
-if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
+if ARCH_ROOT="$deps" ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a hyphenated workspace package to fail' >&2; exit 1
 fi
@@ -119,27 +136,29 @@ fi
 # opaque JSON inspection inside an adapter.
 phase0="$tmp/phase0"
 mkdir -p "$phase0/config/architecture" "$phase0/config" "$phase0/target" \
-  "$phase0/crates/fabric/src/protocol" "$phase0/crates/fabric/src/application" \
-  "$phase0/crates/fabric/src/composition" "$phase0/crates/fabric/src/adapter"
+  "$phase0/crates/contracts/src/protocol" "$phase0/crates/contracts/src/application" \
+  "$phase0/crates/contracts/src/composition" "$phase0/crates/contracts/src/adapter"
+cp "$ROOT/config/architecture/retired-authorities.tsv" \
+  "$phase0/config/architecture/retired-authorities.tsv"
 cat > "$phase0/Cargo.toml" <<'TOML'
 [workspace]
 resolver = "2"
-members = ["crates/fabric"]
+members = ["crates/contracts"]
 TOML
-cat > "$phase0/crates/fabric/Cargo.toml" <<'TOML'
+cat > "$phase0/crates/contracts/Cargo.toml" <<'TOML'
 [package]
-name = "fabric"
+name = "contracts"
 version = "0.1.0"
 edition = "2021"
 TOML
-cat > "$phase0/crates/fabric/src/lib.rs" <<'RS'
+cat > "$phase0/crates/contracts/src/lib.rs" <<'RS'
 pub fn stable_contract() {}
 RS
-printf 'pub struct Request;\n' > "$phase0/crates/fabric/src/protocol/client.rs"
-cat > "$phase0/crates/fabric/src/composition/registry.rs" <<'RS'
+printf 'pub struct Request;\n' > "$phase0/crates/contracts/src/protocol/client.rs"
+cat > "$phase0/crates/contracts/src/composition/registry.rs" <<'RS'
 fn construct(adapter_id: &str) { match adapter_id { "messages-http" => (), _ => () } }
 RS
-cat > "$phase0/crates/fabric/src/adapter/json.rs" <<'RS'
+cat > "$phase0/crates/contracts/src/adapter/json.rs" <<'RS'
 fn decode(value: serde_json::Value) { let _ = value.get("open_payload"); }
 RS
 cat > "$phase0/architecture-status.toml" <<'TOML'
@@ -151,7 +170,7 @@ TOML
 : > "$phase0/config/architecture-path-inventory.txt"
 cat > "$phase0/config/architecture/module-boundaries.txt" <<'EOF'
 # frozen_commit=fixture
-fabric|crates/fabric|-|protocol|false|adapter
+contracts|crates/contracts|-|protocol|false|adapter
 EOF
 cat > "$phase0/config/architecture/executive-layers.tsv" <<'EOF'
 # frozen_commit=fixture
@@ -159,19 +178,19 @@ cat > "$phase0/config/architecture/executive-layers.tsv" <<'EOF'
 EOF
 cat > "$phase0/config/architecture/external-identifiers.txt" <<'EOF'
 # frozen_commit=fixture
-evil	\bEvilCorp\b	crates/fabric/src/adapter/	fixture external name	neutral contract	1
+evil	\bEvilCorp\b	crates/contracts/src/adapter/	fixture external name	neutral contract	1
 EOF
 cat > "$phase0/config/architecture/wire-surfaces.tsv" <<'EOF'
 # frozen_commit=fixture
-wire-exposed	Request	crates/fabric/src/protocol/client.rs	client,server	fabric	v1	additive	1
+wire-exposed	Request	crates/contracts/src/protocol/client.rs	client,server	fabric	v1	additive	1
 EOF
 cat > "$phase0/config/architecture/persistence-surfaces.tsv" <<'EOF'
 # frozen_commit=fixture
-fixture	fabric	crates/fabric/src/store.rs	v1	reader	writer	versioned	1
+fixture	fabric	crates/contracts/src/store.rs	v1	reader	writer	versioned	1
 EOF
 cat > "$phase0/config/architecture/compatibility-debt.tsv" <<'EOF'
 # frozen_commit=fixture
-legacy	crates/fabric/src/lib.rs	LEGACY	fixture debt	stable contract	0	1
+legacy	crates/contracts/src/lib.rs	LEGACY	fixture debt	stable contract	0	1
 EOF
 cat > "$phase0/config/architecture/metrics.env" <<'EOF'
 # frozen_commit=fixture
@@ -208,33 +227,33 @@ name = "extra"
 version = "0.1.0"
 edition = "2021"
 TOML
-sed -i 's#members = \["crates/fabric"\]#members = ["crates/fabric", "crates/extra"]#' "$phase0/Cargo.toml"
+sed -i 's#members = \["crates/contracts"\]#members = ["crates/contracts", "crates/extra"]#' "$phase0/Cargo.toml"
 expect_phase0_rejection 'unregistered workspace crate'
-sed -i 's#members = \["crates/fabric", "crates/extra"\]#members = ["crates/fabric"]#' "$phase0/Cargo.toml"; rm -r "$phase0/crates/extra"
-mkdir -p "$phase0/crates/fabric/src/impl"
-expect_phase0_rejection 'unregistered top-level impl tree'; rmdir "$phase0/crates/fabric/src/impl"
-printf 'fn leak() { let _ = EvilCorp::new(); }\n' > "$phase0/crates/fabric/src/application/leak.rs"
-expect_phase0_rejection 'external name in core'; rm "$phase0/crates/fabric/src/application/leak.rs"
-printf 'use executive::adapter::Store;\n' > "$phase0/crates/fabric/src/application/leak.rs"
-expect_phase0_rejection 'application adapter import'; rm "$phase0/crates/fabric/src/application/leak.rs"
-printf 'pub mod adapter;\n' >> "$phase0/crates/fabric/src/lib.rs"
-expect_phase0_rejection 'public adapter export'; sed -i '$d' "$phase0/crates/fabric/src/lib.rs"
-printf 'fn choose(provider: &str) { if provider == "evil" {} }\n' > "$phase0/crates/fabric/src/application/leak.rs"
-expect_phase0_rejection 'provider-name business branch'; rm "$phase0/crates/fabric/src/application/leak.rs"
-printf 'pub struct NewWire;\n' > "$phase0/crates/fabric/src/protocol/new_wire.rs"
-expect_phase0_rejection 'unregistered wire surface'; rm "$phase0/crates/fabric/src/protocol/new_wire.rs"
-mkdir -p "$phase0/crates/fabric/src/migrations"; printf 'SELECT 1;\n' > "$phase0/crates/fabric/src/migrations/001.sql"
-expect_phase0_rejection 'unregistered persistence migration'; rm -r "$phase0/crates/fabric/src/migrations"
-printf '// LEGACY\n' >> "$phase0/crates/fabric/src/lib.rs"
-expect_phase0_rejection 'compatibility debt growth'; sed -i '$d' "$phase0/crates/fabric/src/lib.rs"
-printf 'fn inspect(value: serde_json::Value) { let _ = value.get("business_kind"); }\n' > "$phase0/crates/fabric/src/application/leak.rs"
-expect_phase0_rejection 'opaque JSON field inspection in core'; rm "$phase0/crates/fabric/src/application/leak.rs"
-printf 'fn main() { Cli::parse(); }\n' > "$phase0/crates/fabric/src/main.rs"
-expect_phase0_rejection 'additional production CLI parser'; rm "$phase0/crates/fabric/src/main.rs"
-printf 'impl SessionAppendStore for Rogue {}\n' > "$phase0/crates/fabric/src/application/leak.rs"
-expect_phase0_rejection 'additional Session append writer'; rm "$phase0/crates/fabric/src/application/leak.rs"
-printf 'fn bypass() { hardware::grpc::provider::connect(); }\n' > "$phase0/crates/fabric/src/application/leak.rs"
-expect_phase0_rejection 'hardware adapter bypass'; rm "$phase0/crates/fabric/src/application/leak.rs"
+sed -i 's#members = \["crates/contracts", "crates/extra"\]#members = ["crates/contracts"]#' "$phase0/Cargo.toml"; rm -r "$phase0/crates/extra"
+mkdir -p "$phase0/crates/contracts/src/impl"
+expect_phase0_rejection 'unregistered top-level impl tree'; rmdir "$phase0/crates/contracts/src/impl"
+printf 'fn leak() { let _ = EvilCorp::new(); }\n' > "$phase0/crates/contracts/src/application/leak.rs"
+expect_phase0_rejection 'external name in core'; rm "$phase0/crates/contracts/src/application/leak.rs"
+printf 'use executive::adapter::Store;\n' > "$phase0/crates/contracts/src/application/leak.rs"
+expect_phase0_rejection 'application adapter import'; rm "$phase0/crates/contracts/src/application/leak.rs"
+printf 'pub mod adapter;\n' >> "$phase0/crates/contracts/src/lib.rs"
+expect_phase0_rejection 'public adapter export'; sed -i '$d' "$phase0/crates/contracts/src/lib.rs"
+printf 'fn choose(provider: &str) { if provider == "evil" {} }\n' > "$phase0/crates/contracts/src/application/leak.rs"
+expect_phase0_rejection 'provider-name business branch'; rm "$phase0/crates/contracts/src/application/leak.rs"
+printf 'pub struct NewWire;\n' > "$phase0/crates/contracts/src/protocol/new_wire.rs"
+expect_phase0_rejection 'unregistered wire surface'; rm "$phase0/crates/contracts/src/protocol/new_wire.rs"
+mkdir -p "$phase0/crates/contracts/src/migrations"; printf 'SELECT 1;\n' > "$phase0/crates/contracts/src/migrations/001.sql"
+expect_phase0_rejection 'unregistered persistence migration'; rm -r "$phase0/crates/contracts/src/migrations"
+printf '// LEGACY\n' >> "$phase0/crates/contracts/src/lib.rs"
+expect_phase0_rejection 'compatibility debt growth'; sed -i '$d' "$phase0/crates/contracts/src/lib.rs"
+printf 'fn inspect(value: serde_json::Value) { let _ = value.get("business_kind"); }\n' > "$phase0/crates/contracts/src/application/leak.rs"
+expect_phase0_rejection 'opaque JSON field inspection in core'; rm "$phase0/crates/contracts/src/application/leak.rs"
+printf 'fn main() { Cli::parse(); }\n' > "$phase0/crates/contracts/src/main.rs"
+expect_phase0_rejection 'additional production CLI parser'; rm "$phase0/crates/contracts/src/main.rs"
+printf 'impl SessionAppendStore for Rogue {}\n' > "$phase0/crates/contracts/src/application/leak.rs"
+expect_phase0_rejection 'additional Session append writer'; rm "$phase0/crates/contracts/src/application/leak.rs"
+printf 'fn bypass() { hardware::grpc::provider::connect(); }\n' > "$phase0/crates/contracts/src/application/leak.rs"
+expect_phase0_rejection 'hardware adapter bypass'; rm "$phase0/crates/contracts/src/application/leak.rs"
 mkdir -p "$phase0/crates/interact"
 cat > "$phase0/crates/interact/Cargo.toml" <<'TOML'
 [package]
@@ -254,8 +273,10 @@ echo 'architecture-check fixture: pass'
 # are proven fail-closed rather than inferred from the production checkout.
 x1="$tmp/x1"
 mkdir -p "$x1/config/architecture" "$x1/config" "$x1/target" \
-  "$x1/crates/fabric/src" "$x1/crates/fabric/tests" "$x1/docs" \
-  "$x1/crates/executive/src/host/daemon/handler"
+  "$x1/crates/contracts/src" "$x1/crates/contracts/tests" "$x1/docs" \
+  "$x1/crates/aletheon/src/wiring/daemon/handler"
+cp "$ROOT/config/architecture/retired-authorities.tsv" \
+  "$x1/config/architecture/retired-authorities.tsv"
 : > "$x1/config/architecture-allowlist.txt"
 : > "$x1/config/architecture-dependencies.txt"
 : > "$x1/config/architecture-path-inventory.txt"
@@ -263,34 +284,34 @@ cat > "$x1/architecture-status.toml" <<'TOML'
 [freeze]
 fabric_root_reexports_max = 0
 TOML
-printf 'pub struct Baseline;\n' > "$x1/crates/fabric/src/lib.rs"
+printf 'pub struct Baseline;\n' > "$x1/crates/contracts/src/lib.rs"
 printf '# decision\n' > "$x1/docs/decision.md"
-cat > "$x1/crates/fabric/tests/architecture_contract.rs" <<'RS'
+cat > "$x1/crates/contracts/tests/architecture_contract.rs" <<'RS'
 fn a_dep_001_fixture() {}
 fn a_dep_002_fixture() {}
 fn a_dep_003_fixture() {}
 RS
 cat > "$x1/config/architecture/contract-migrations.tsv" <<'EOF'
 # component	scope	current_symbol	action	canonical_target	owner	consumers	surface_impact	evidence	decision_reference	exit_node
-turn	turn	Turn	existing	Turn	owner	consumer	none	crates/fabric/src/lib.rs:1	docs/decision.md#decision	X1
-session	session	Session	extend	Session	owner	consumer	none	crates/fabric/src/lib.rs:1	docs/decision.md#decision	X1
-plan	plan	Plan	project	Plan	owner	consumer	none	crates/fabric/src/lib.rs:1	docs/decision.md#decision	X1
-memory	memory	Memory	v2	Memory	owner	consumer	none	crates/fabric/src/lib.rs:1	docs/decision.md#decision	X1
-agent	agent	Agent	new	Agent	owner	consumer	none	crates/fabric/src/lib.rs:1	docs/decision.md#decision	X1
-command	command	Command	delete	Command	owner	consumer	none	crates/fabric/src/lib.rs:1	docs/decision.md#decision	X1
-receipt	receipt	Receipt	existing	Receipt	owner	consumer	none	crates/fabric/src/lib.rs:1	docs/decision.md#decision	X1
-id	id	Id	existing	Id	owner	consumer	none	crates/fabric/src/lib.rs:1	docs/decision.md#decision	X1
+turn	turn	Turn	existing	Turn	owner	consumer	none	crates/contracts/src/lib.rs:1	docs/decision.md#decision	X1
+session	session	Session	extend	Session	owner	consumer	none	crates/contracts/src/lib.rs:1	docs/decision.md#decision	X1
+plan	plan	Plan	project	Plan	owner	consumer	none	crates/contracts/src/lib.rs:1	docs/decision.md#decision	X1
+memory	memory	Memory	v2	Memory	owner	consumer	none	crates/contracts/src/lib.rs:1	docs/decision.md#decision	X1
+agent	agent	Agent	new	Agent	owner	consumer	none	crates/contracts/src/lib.rs:1	docs/decision.md#decision	X1
+command	command	Command	delete	Command	owner	consumer	none	crates/contracts/src/lib.rs:1	docs/decision.md#decision	X1
+receipt	receipt	Receipt	existing	Receipt	owner	consumer	none	crates/contracts/src/lib.rs:1	docs/decision.md#decision	X1
+id	id	Id	existing	Id	owner	consumer	none	crates/contracts/src/lib.rs:1	docs/decision.md#decision	X1
 EOF
 cat > "$x1/config/architecture/acceptance-ids.tsv" <<'EOF'
 # id	node	kind	target
-A-DEP-001	X1	test	crates/fabric/tests/architecture_contract.rs
-A-DEP-002	X1	test	crates/fabric/tests/architecture_contract.rs
-A-DEP-003	X1	test	crates/fabric/tests/architecture_contract.rs
+A-DEP-001	X1	test	crates/contracts/tests/architecture_contract.rs
+A-DEP-002	X1	test	crates/contracts/tests/architecture_contract.rs
+A-DEP-003	X1	test	crates/contracts/tests/architecture_contract.rs
 EOF
 cat > "$x1/config/architecture/fabric-public-types.tsv" <<'EOF'
 # baseline_count=1
 # path	kind	symbol	provenance	owner	consumers	decision_reference
-crates/fabric/src/lib.rs	struct	Baseline	baseline	-	-	-
+crates/contracts/src/lib.rs	struct	Baseline	baseline	-	-	-
 EOF
 cat > "$x1/config/architecture/id-collisions.tsv" <<'EOF'
 # symbol	paths	representations	decision	canonical_target	exit_node
@@ -308,20 +329,20 @@ x1_check || {
     bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh"
   exit 1
 }
-printf 'pub struct Unregistered;\n' >> "$x1/crates/fabric/src/lib.rs"
+printf 'pub struct Unregistered;\n' >> "$x1/crates/contracts/src/lib.rs"
 expect_x1_rejection 'unregistered Fabric public type'
-printf 'crates/fabric/src/lib.rs\tstruct\tUnregistered\tgoverned\t-\t-\t-\n' \
+printf 'crates/contracts/src/lib.rs\tstruct\tUnregistered\tgoverned\t-\t-\t-\n' \
   >> "$x1/config/architecture/fabric-public-types.tsv"
 expect_x1_rejection 'Fabric public type without owner consumer and decision metadata'
-sed -i '$c crates/fabric/src/lib.rs\tstruct\tUnregistered\tgoverned\tfabric\tclient\tdocs/decision.md#decision' \
+sed -i '$c crates/contracts/src/lib.rs\tstruct\tUnregistered\tgoverned\tfabric\tclient\tdocs/decision.md#decision' \
   "$x1/config/architecture/fabric-public-types.tsv"
 x1_check || { echo 'governed Fabric public type metadata was rejected' >&2; exit 1; }
-sed -i '$d' "$x1/crates/fabric/src/lib.rs"; sed -i '$d' "$x1/config/architecture/fabric-public-types.tsv"
+sed -i '$d' "$x1/crates/contracts/src/lib.rs"; sed -i '$d' "$x1/config/architecture/fabric-public-types.tsv"
 mkdir -p "$x1/crates/alpha/src" "$x1/crates/beta/src"
 printf 'pub struct DuplicateId(pub u64);\n' > "$x1/crates/alpha/src/lib.rs"
 printf 'pub struct DuplicateId(pub String);\n' > "$x1/crates/beta/src/lib.rs"
 expect_x1_rejection 'unregistered duplicate ID wrapper'; rm -r "$x1/crates/alpha" "$x1/crates/beta"
-cat > "$x1/crates/executive/src/host/daemon/handler/rpc.rs" <<'RS'
+cat > "$x1/crates/aletheon/src/wiring/daemon/handler/rpc.rs" <<'RS'
 fn dispatch(method: &str) {
     match method {
         "test.method" => (),
@@ -330,8 +351,8 @@ fn dispatch(method: &str) {
     }
 }
 RS
-expect_x1_rejection 'duplicate RPC method arm'; rm "$x1/crates/executive/src/host/daemon/handler/rpc.rs"
-sed -i '/a_dep_003_fixture/d' "$x1/crates/fabric/tests/architecture_contract.rs"
+expect_x1_rejection 'duplicate RPC method arm'; rm "$x1/crates/aletheon/src/wiring/daemon/handler/rpc.rs"
+sed -i '/a_dep_003_fixture/d' "$x1/crates/contracts/tests/architecture_contract.rs"
 expect_x1_rejection 'acceptance ID without a test function'
 echo 'X1 contract negative fixtures: pass'
 
@@ -349,14 +370,17 @@ fi
 if git -C "$ROOT" grep -n 'default_session_id.lock' -- crates/executive/src/application/daemon_turn; then
   echo 'turn path still rereads the default session' >&2; exit 1
 fi
-if grep -qE 'ProviderRegistry|api_key|api_url' "$ROOT/crates/executive/src/composition/user_runtime/mod.rs"; then
+if grep -qE 'ProviderRegistry|api_key|api_url' "$ROOT/crates/aletheon/src/wiring/user_runtime.rs"; then
   echo 'user runtime exposes machine provider authority' >&2; exit 1
 fi
-if grep -qE 'RequestHandler|ToolRegistry|Sandbox' "$ROOT/crates/executive/src/core/system_core_runtime.rs"; then
+if grep -qE 'RequestHandler|ToolRegistry|Sandbox' "$ROOT/crates/aletheon/src/wiring/core_runtime.rs"; then
   echo 'system core exposes user execution authority' >&2; exit 1
 fi
-test "$(git -C "$ROOT" grep -l 'resolve_and_create' -- crates/executive/src | wc -l)" -eq 1
-git -C "$ROOT" grep -q 'resolve_and_create' -- crates/executive/src/core/system_core_runtime.rs
+# The adapter registry owns the factory definition; exactly one host wiring
+# file may call it, and that caller must remain the machine core.
+test "$(rg -l 'resolve_and_create' "$ROOT/crates/aletheon/src/wiring" \
+  -g '!**/adapters/inference/registry.rs' | wc -l)" -eq 1
+rg -q 'resolve_and_create' "$ROOT/crates/aletheon/src/wiring/core_runtime.rs"
 echo 'multi-user runtime architecture boundary: pass'
 python3 "$ROOT/scripts/verify-approval-closure.py"
 

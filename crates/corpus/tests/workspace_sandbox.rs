@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ::contracts::WorkspacePolicy;
 use corpus::security::sandbox::{
     BubblewrapBackend, BwrapBuilder, FilesystemPolicy, SandboxBackend, SandboxConfig,
 };
-use fabric::WorkspacePolicy;
 use kernel::chronos::TestClock;
 
 fn count_triplet(args: &[String], flag: &str, source: &str, target: &str) -> usize {

@@ -3,14 +3,15 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use fabric::cognitive_workflow::{
+use ::contracts::cognitive_workflow::{
     AgoraProjectionRequest, ClarificationId, ClarificationRecord, ClarificationState,
     CognitiveArtifactId, CognitiveArtifactKind, CognitiveCheckpoint, CognitiveRole,
     CognitiveRoleProfile, CognitiveStage, CognitiveTaskNode, CognitiveTaskNodeId,
     CognitiveTaskStatus,
 };
-use fabric::{AgoraOperation, AgoraProposal, AgoraService, AgoraSpaceId, ProcessId};
+use ::contracts::{AgoraSpaceId, ProcessId};
+use agora::{AgoraOperation, AgoraProposal, AgoraService};
+use async_trait::async_trait;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -84,7 +85,7 @@ impl AgoraTaskTools {
             confidence: 1.0,
             expires_at_ms: None,
         };
-        let permit = fabric::WorkspaceCommitPermit::issue_for(&proposal, i64::MAX)?;
+        let permit = agora::WorkspaceCommitPermit::issue_for(&proposal, i64::MAX)?;
         let proposal_id = self.service.propose(proposal).await?;
         let receipt = self.service.commit(proposal_id, permit).await?;
         Ok(json!({
@@ -117,7 +118,7 @@ impl AgoraTaskTool {
 
     fn result(
         context: &ToolContext,
-        start: fabric::MonoTime,
+        start: ::contracts::MonoTime,
         value: anyhow::Result<Value>,
     ) -> ToolResult {
         match value {
@@ -254,7 +255,7 @@ impl AgoraTaskTool {
         let view = self
             .backend
             .service
-            .view(fabric::AgoraViewRequest {
+            .view(agora::AgoraViewRequest {
                 space: AgoraSpaceId(context.session_id.clone()),
             })
             .await?;

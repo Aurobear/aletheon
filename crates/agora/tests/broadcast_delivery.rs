@@ -1,16 +1,16 @@
+use ::contracts::dasein::SelfVersion;
+use ::contracts::{
+    AgoraSpaceId, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, CandidateScore, ContentId,
+    MonoTime, ProcessId, SalienceVector, SelectionExplanation, SelectionResult, VisibilityScope,
+    WallTime, WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
+    WORKSPACE_SCHEMA_V1,
+};
 use agora::{
     AdmissionOutcome, BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, BroadcastProcessor,
     CandidatePool, CandidatePoolConfig, ProcessorRegistration, SelectionPolicy,
     SqliteBroadcastStore,
 };
 use async_trait::async_trait;
-use fabric::dasein::SelfVersion;
-use fabric::{
-    AgoraSpaceId, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, CandidateScore, ContentId,
-    MonoTime, ProcessId, SalienceVector, SelectionExplanation, SelectionResult, VisibilityScope,
-    WallTime, WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
-    WORKSPACE_SCHEMA_V1,
-};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,7 +29,7 @@ fn candidate(id: u128, visibility: VisibilityScope) -> WorkspaceCandidate {
             what: format!("selected-{id}"),
             source: "fixture".into(),
             data: serde_json::json!({"id": id}),
-            attribution: fabric::WorkspaceAttribution::Environment,
+            attribution: ::contracts::WorkspaceAttribution::Environment,
         }),
         confidence: 1.0,
         salience: SalienceVector {
@@ -72,7 +72,7 @@ fn ack(epoch: u64, processor: u128) -> BroadcastAck {
     BroadcastAck {
         schema_version: WORKSPACE_SCHEMA_V1,
         space: AgoraSpaceId("space".into()),
-        epoch: fabric::BroadcastEpoch(epoch),
+        epoch: ::contracts::BroadcastEpoch(epoch),
         processor: ProcessId(Uuid::from_u128(processor)),
         response_ids: Vec::new(),
         status: BroadcastAckStatus::Delivered,
@@ -146,7 +146,7 @@ fn store_rejects_conflicts_closed_acks_and_checksum_corruption() {
     store
         .close_epoch(
             &AgoraSpaceId("space".into()),
-            fabric::BroadcastEpoch(1),
+            ::contracts::BroadcastEpoch(1),
             WallTime(3),
         )
         .unwrap();

@@ -1,0 +1,13 @@
+//! Concrete infrastructure adapters.
+//!
+//! Application modules depend on ports; composition is the only production
+//! layer allowed to construct these implementations.
+
+pub mod channel;
+pub mod external;
+pub mod gbrain;
+pub mod google;
+pub mod inference;
+pub mod runtime;
+
+pub mod session;

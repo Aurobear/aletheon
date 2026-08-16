@@ -2,10 +2,10 @@ use super::*;
 use crate::adapters::inference::provider::{
     InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk,
 };
+use ::contracts::compaction::{CompactionFailure, CompactionOutcome};
+use ::contracts::message::{ContentBlock, Message};
+use ::contracts::ToolDefinition;
 use async_trait::async_trait;
-use fabric::message::{ContentBlock, Message};
-use fabric::CompactionOutcome;
-use fabric::ToolDefinition;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -136,7 +136,7 @@ impl crate::harness::event_sink::EventSink for CollectingEventSink {
 }
 
 struct CollectingGroundedSink {
-    outcomes: Mutex<Vec<fabric::cognitive_workflow::GroundedCognitiveOutcome>>,
+    outcomes: Mutex<Vec<::contracts::cognitive_workflow::GroundedCognitiveOutcome>>,
     fail: bool,
 }
 
@@ -144,7 +144,7 @@ struct CollectingGroundedSink {
 impl crate::core::GroundedOutcomeSink for CollectingGroundedSink {
     async fn publish(
         &self,
-        outcome: fabric::cognitive_workflow::GroundedCognitiveOutcome,
+        outcome: ::contracts::cognitive_workflow::GroundedCognitiveOutcome,
     ) -> anyhow::Result<()> {
         if self.fail {
             anyhow::bail!("observational sink unavailable");
@@ -170,7 +170,7 @@ fn compaction_outcome_updates_metrics_emits_event_and_hands_off_evicted() {
         tokens_before: 100,
         tokens_after: 100,
         evicted: Vec::new(),
-        failure: Some(fabric::CompactionFailure::DegenerateSummary {
+        failure: Some(CompactionFailure::DegenerateSummary {
             reason: "short".into(),
         }),
     };
@@ -215,7 +215,7 @@ fn sampler_failure_increments_its_distinct_metric() {
             tokens_before: 1,
             tokens_after: 1,
             evicted: Vec::new(),
-            failure: Some(fabric::CompactionFailure::SamplerError {
+            failure: Some(CompactionFailure::SamplerError {
                 detail: "offline".into(),
             }),
         },
@@ -708,7 +708,7 @@ async fn run_and_capture_user_message(lp: &mut ReActLoop) -> String {
     calls[0]
         .iter()
         .rev()
-        .find(|message| message.role == fabric::message::Role::User)
+        .find(|message| message.role == ::contracts::message::Role::User)
         .and_then(|message| {
             message.content.iter().find_map(|block| match block {
                 ContentBlock::Text { text } => Some(text.clone()),
@@ -936,7 +936,7 @@ fn partition_empty() {
 
 // ── M-C Verifier tests ─────────────────────────────────────────────────
 
-use fabric::policy::verifier::{Verdict, Verifier};
+use crate::ports::verifier::{Verdict, Verifier};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Rejects the first candidate answer, accepts all subsequent ones.
@@ -1187,7 +1187,7 @@ async fn grounded_outcomes_follow_deterministic_completion_decision() {
         CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, CompletionGateMode,
         RequiredAction,
     };
-    use fabric::cognitive_workflow::GroundedCognitiveOutcome;
+    use ::contracts::cognitive_workflow::GroundedCognitiveOutcome;
 
     let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
     lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
@@ -1300,7 +1300,7 @@ async fn enforced_gate_blocks_bounded_false_completion() {
         .await
         .unwrap();
 
-    assert_eq!(metrics.stop, fabric::TurnStop::Blocked);
+    assert_eq!(metrics.stop, ::contracts::TurnStop::Blocked);
     assert!(!metrics.completed_normally);
     assert!(output.contains("Task incomplete after 3 completion attempts"));
     assert_eq!(*llm.calls.lock().unwrap(), 3);
@@ -1339,7 +1339,7 @@ async fn enforced_gate_accepts_matching_terminal_tool_evidence() {
         .unwrap();
 
     assert_eq!(output, "done: hi");
-    assert_eq!(metrics.stop, fabric::TurnStop::Completed);
+    assert_eq!(metrics.stop, ::contracts::TurnStop::Completed);
     assert!(metrics.completed_normally);
 }
 
@@ -1421,7 +1421,7 @@ async fn durable_clarification_tool_blocks_without_another_inference() {
         )
         .await
         .unwrap();
-    assert_eq!(metrics.stop, fabric::TurnStop::Blocked);
+    assert_eq!(metrics.stop, ::contracts::TurnStop::Blocked);
     assert!(!metrics.completed_normally);
     assert_eq!(*llm.calls.lock().unwrap(), 1);
     assert_eq!(output, "Waiting for user clarification: Which behavior?");
@@ -1527,7 +1527,7 @@ async fn coding_loop_rejects_apply_and_diff_only_then_completes_exact_closure() 
         .unwrap();
 
     assert_eq!(output, "version-bound change completed");
-    assert_eq!(metrics.stop, fabric::TurnStop::Completed);
+    assert_eq!(metrics.stop, ::contracts::TurnStop::Completed);
     assert_eq!(*llm.calls.lock().unwrap(), 6);
     assert_eq!(metrics.tool_calls_made, 3);
     assert!(matches!(

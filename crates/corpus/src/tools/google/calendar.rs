@@ -1,12 +1,14 @@
 //! Read-only Google Calendar capability adapter.
 
 use super::client::{GoogleApiClient, GoogleApiError};
+use crate::tools::google::{
+    CalendarEntry, CalendarEntryPage, CalendarQuery, ExternalRecordRef, OpaqueCursor,
+    OpaqueProviderObjectId,
+};
+use ::contracts::PrincipalId;
+use application::ExternalCapabilityId;
 use async_trait::async_trait;
 use chrono::DateTime;
-use fabric::{
-    CalendarEntry, CalendarEntryPage, CalendarQuery, ExternalCapabilityId, ExternalRecordRef,
-    OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
-};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -122,7 +124,7 @@ struct RawEventTime {
 }
 
 fn normalize_event(
-    account: fabric::ExternalIdentityId,
+    account: application::ExternalIdentityId,
     requested_timezone: &str,
     raw: RawEvent,
 ) -> Result<CalendarEntry, GoogleApiError> {

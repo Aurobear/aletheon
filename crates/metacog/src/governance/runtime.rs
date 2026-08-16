@@ -2,12 +2,10 @@
 //!
 //! Wires together: SelfReader → CandidateGenerator → SandboxRunner → Evaluator → MigrationManager → RollbackManager
 
+use ::contracts::{Clock, Subsystem, SubsystemContext, SubsystemHealth, Version};
 use anyhow::Result;
 use async_trait::async_trait;
-use fabric::{
-    Clock, Evaluation, Genome, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate,
-    Subsystem, SubsystemContext, SubsystemHealth, TestResult, Version,
-};
+use dasein::MutationIntent;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -17,7 +15,11 @@ use crate::evolution::lineage::LineageTracker;
 use crate::evolution::migration::MigrationManager;
 use crate::evolution::rollback::RollbackManager;
 use crate::evolution::sandbox_runner::SandboxRunner;
+use crate::genome::contracts::Genome;
 use crate::genome::loader::GenomeLoader;
+use crate::governance::contracts::{
+    Evaluation, MetaRuntimeOps, MigrationResult, RuntimeCandidate, TestResult,
+};
 use crate::governance::self_reader::SelfReader;
 
 /// Concrete MetaRuntime implementation.

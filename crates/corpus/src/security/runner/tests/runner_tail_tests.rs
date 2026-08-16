@@ -116,14 +116,14 @@ async fn audit_record_preserves_session_and_dynamic_command_risk() {
     );
     runner
         .log_audit(
-            fabric::AuditEventId::new(),
+            ::contracts::AuditEventId::new(),
             "exec_command",
             &serde_json::json!({"command":"which glab"}),
             PermissionLevel::L1,
             "turn-1",
             "session-1",
             None,
-            &fabric::MonoTime(0),
+            &::contracts::MonoTime(0),
             "Allow",
         )
         .await

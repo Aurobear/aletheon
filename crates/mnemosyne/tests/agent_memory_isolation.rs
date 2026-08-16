@@ -1,5 +1,5 @@
+use ::contracts::{AgentId, AgentTaskId, ProcessId};
 use chrono::Utc;
-use fabric::{AgentId, AgentTaskId, ProcessId};
 use mnemosyne::{
     AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft, DefaultMemoryWorkspaceProjector,
     MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProjection, MemoryProjectionLimits,

@@ -1,5 +1,6 @@
 //! Agent process table and handles.
 
+pub mod controller;
 pub mod handle;
 pub(crate) mod table;
 

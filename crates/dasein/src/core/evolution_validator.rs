@@ -4,7 +4,7 @@
 //! core invariants (identity immutability, safety floors, weight ranges).
 //! Provides snapshot/compare/rollback for safe experimentation.
 
-use fabric::cognit::BehaviorAdjustment;
+use crate::core::evolution_input::BehaviorAdjustment;
 use serde::{Deserialize, Serialize};
 
 use crate::core::attention::FocusTopic;
@@ -354,12 +354,47 @@ fn average_weight(weights: &[(String, f64)]) -> f64 {
 mod tests {
     use super::*;
     use crate::core::boundary::{BoundaryAction, BoundaryRule};
+    use crate::core::contracts::AwarenessRiskLevel;
     use crate::core::{SelfField, SelfFieldConfig};
-    use fabric::self_field::AwarenessRiskLevel;
+
+    struct AllowPolicy;
+    impl crate::bridge::policy::PolicyDecisionPort for AllowPolicy {
+        fn check(
+            &self,
+            _tool_name: &str,
+            _input: &serde_json::Value,
+        ) -> crate::bridge::policy::PolicyDecision {
+            crate::bridge::policy::PolicyDecision::Allow
+        }
+    }
+
+    struct NoopLoop;
+    impl crate::bridge::loop_detector::LoopDecisionPort for NoopLoop {
+        fn on_new_turn(&self, _turn_id: &str) {}
+        fn pre_check(
+            &self,
+            _tool_name: &str,
+            _args: &serde_json::Value,
+            _turn_id: &str,
+        ) -> crate::bridge::loop_detector::LoopDecision {
+            crate::bridge::loop_detector::LoopDecision::Allow
+        }
+        fn post_check(
+            &self,
+            _tool_name: &str,
+            _args: &serde_json::Value,
+            _result: &::contracts::tool::ToolResult,
+            _turn_id: &str,
+        ) {
+        }
+        fn end_turn(&self, _turn_id: &str) {}
+    }
 
     fn make_self_field() -> SelfField {
         SelfField::new(SelfFieldConfig {
             clock: Some(std::sync::Arc::new(kernel::chronos::TestClock::default())),
+            policy_decisions: Some(std::sync::Arc::new(AllowPolicy)),
+            loop_decisions: Some(std::sync::Arc::new(NoopLoop)),
             ..SelfFieldConfig::default()
         })
     }

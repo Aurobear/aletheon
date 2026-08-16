@@ -140,14 +140,14 @@ fn no_mutation_intent_appears_in_api() {
         .iter()
         .all(|proposal| proposal.state == metacog::improvement::ProposalState::Proposed));
     // No MutationIntent type anywhere in the report or its fields
-    // (this is a compile-time assertion — the ReflectionReport has no fabric::MutationIntent field)
+    // (this is a compile-time assertion — the ReflectionReport has no dasein::MutationIntent field)
 }
 
 #[test]
 fn strengths_and_weaknesses_derived_from_evaluations() {
     let engine = DeterministicReflectionEngine;
 
-    use fabric::types::metacognition_evaluation::{EvaluationReport, GateResult, RubricId};
+    use ::contracts::types::metacognition_evaluation::{EvaluationReport, GateResult, RubricId};
 
     let eval_passed = EvaluationReport {
         rubric: RubricId("rubric-1".into()),
@@ -193,7 +193,7 @@ fn strengths_and_weaknesses_derived_from_evaluations() {
 fn knowledge_gaps_from_unknown_dimensions() {
     let engine = DeterministicReflectionEngine;
 
-    use fabric::types::metacognition_evaluation::{
+    use ::contracts::types::metacognition_evaluation::{
         DimensionScore, DimensionValue, EvaluationReport, RubricId,
     };
 

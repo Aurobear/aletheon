@@ -1,8 +1,8 @@
-use fabric::protocol::client::{
+use ::contracts::protocol::client::{
     ActivityKind, ActivitySnapshot, ActivityState, ClientEvent, EventCursor, ItemEvent, ItemPhase,
     SessionEventPage, SessionReadSnapshot, TaskPhase, TaskSnapshot, UiSnapshot,
 };
-use fabric::{
+use ::contracts::{
     EvaluationContractId, EvaluationDecision, EvaluationReceiptId, EvaluationReceiptRef, ItemId,
     ItemPayload, ItemRecord, SessionId, SessionRecord, SessionStatus, TurnId,
     SESSION_READ_MODEL_SCHEMA_VERSION, SESSION_SCHEMA_VERSION,
@@ -29,7 +29,7 @@ fn completed(sequence: u64, content: &str) -> ItemRecord {
 fn user_target(
     sequence: u64,
     turn: u128,
-    execution_target: fabric::ExecutionTargetSelection,
+    execution_target: ::contracts::ExecutionTargetSelection,
 ) -> ItemRecord {
     ItemRecord {
         schema_version: SESSION_SCHEMA_VERSION,
@@ -210,14 +210,15 @@ fn snapshot_then_incremental_events_and_reconnect_are_deterministic_and_idempote
 
 #[test]
 fn general_robot_general_start_facts_project_only_the_latest_turn_target() {
-    let robot = fabric::ExecutionTargetSelection::robot(
+    let robot = ::contracts::ExecutionTargetSelection::robot(
         "robot-1",
-        fabric::types::embodiment::ExecutionEnvironment::Simulation,
-        fabric::ExecutionTargetSource::UserCommand,
+        ::contracts::types::embodiment::ExecutionEnvironment::Simulation,
+        ::contracts::ExecutionTargetSource::UserCommand,
     )
     .unwrap();
-    let final_general =
-        fabric::ExecutionTargetSelection::general(fabric::ExecutionTargetSource::UserCommand);
+    let final_general = ::contracts::ExecutionTargetSelection::general(
+        ::contracts::ExecutionTargetSource::UserCommand,
+    );
     let mut state = AppState::default();
     reduce(
         &mut state,
@@ -230,7 +231,7 @@ fn general_robot_general_start_facts_project_only_the_latest_turn_target() {
             provider: None,
             model: None,
             items: vec![
-                user_target(1, 1, fabric::ExecutionTargetSelection::default()),
+                user_target(1, 1, ::contracts::ExecutionTargetSelection::default()),
                 user_target(2, 2, robot),
                 user_target(3, 3, final_general.clone()),
             ],
@@ -252,14 +253,15 @@ fn general_robot_general_start_facts_project_only_the_latest_turn_target() {
 
 #[test]
 fn local_target_selection_survives_stale_projection_until_newer_start_is_durable() {
-    let robot = fabric::ExecutionTargetSelection::robot(
+    let robot = ::contracts::ExecutionTargetSelection::robot(
         "robot-1",
-        fabric::types::embodiment::ExecutionEnvironment::Simulation,
-        fabric::ExecutionTargetSource::UserCommand,
+        ::contracts::types::embodiment::ExecutionEnvironment::Simulation,
+        ::contracts::ExecutionTargetSource::UserCommand,
     )
     .unwrap();
-    let explicit_general =
-        fabric::ExecutionTargetSelection::general(fabric::ExecutionTargetSource::UserCommand);
+    let explicit_general = ::contracts::ExecutionTargetSelection::general(
+        ::contracts::ExecutionTargetSource::UserCommand,
+    );
     let mut state = AppState::default();
     reduce(
         &mut state,
@@ -274,7 +276,7 @@ fn local_target_selection_survives_stale_projection_until_newer_start_is_durable
             items: vec![user_target(
                 1,
                 1,
-                fabric::ExecutionTargetSelection::default(),
+                ::contracts::ExecutionTargetSelection::default(),
             )],
             approvals: vec![],
             agents: vec![],
@@ -295,7 +297,7 @@ fn local_target_selection_survives_stale_projection_until_newer_start_is_durable
             items: vec![user_target(
                 1,
                 1,
-                fabric::ExecutionTargetSelection::default(),
+                ::contracts::ExecutionTargetSelection::default(),
             )],
             approvals: vec![],
             agents: vec![],
@@ -334,7 +336,7 @@ fn local_target_selection_survives_stale_projection_until_newer_start_is_durable
             provider: None,
             model: None,
             items: vec![
-                user_target(1, 1, fabric::ExecutionTargetSelection::default()),
+                user_target(1, 1, ::contracts::ExecutionTargetSelection::default()),
                 user_target(11, 2, robot),
             ],
             approvals: vec![],

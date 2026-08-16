@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::command::{BuiltinCommand, CommandType};
-use fabric::contract::command::{
+use ::contracts::contract::command::{
     command_specs, CommandAvailability as SpecAvailability, CommandExecution, CommandSpec,
     CommandSurface, CommandVisibility,
 };

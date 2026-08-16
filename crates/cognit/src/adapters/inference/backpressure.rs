@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use ::contracts::memory::{ProviderBackpressurePort, ProviderRequestPermit};
 use async_trait::async_trait;
-use fabric::memory::{ProviderBackpressurePort, ProviderRequestPermit};
 use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
 
 use crate::config::ProviderBackpressureConfig;

@@ -4,10 +4,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ::contracts::memory::{ProviderBackpressurePort, DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS};
+use ::contracts::{Clock, EmbeddingProvider};
 use anyhow::{ensure, Context};
 use async_trait::async_trait;
-use fabric::memory::{ProviderBackpressurePort, DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS};
-use fabric::{Clock, EmbeddingProvider};
 use serde::Deserialize;
 
 use crate::credential::EmbeddingCredentialGrant;
@@ -65,7 +65,7 @@ impl RemoteEmbeddingProvider {
         ensure!(dimension > 0, "embedding dimension must be positive");
         let base_url = base_url.into();
         let model = model.into();
-        let provider_key = fabric::memory::provider_backpressure_key(&base_url, &model);
+        let provider_key = ::contracts::memory::provider_backpressure_key(&base_url, &model);
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(timeout.min(Duration::from_secs(10)))

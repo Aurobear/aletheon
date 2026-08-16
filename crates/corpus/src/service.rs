@@ -3,19 +3,20 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use fabric::hook::{HookContext, HookResult};
-use fabric::{
+use crate::hook::{HookContext, HookResult};
+use ::contracts::{
     AgentId, CapabilityId, CapabilityRequest, CapabilityResult, CapabilityScope, ExecutionPermit,
-    ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionSnapshot, PrincipalId, Registry,
-    Tool,
+    PrincipalId, Tool,
 };
+use async_trait::async_trait;
 use kernel::capability::ToolExecutor;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::catalog::ExtensionCatalog;
+use crate::tools::tools::Registry;
+use crate::{ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionSnapshot};
 
 /// Trusted, Executive-issued scope used for discovery and activation.
 #[derive(Debug, Clone)]
@@ -134,13 +135,13 @@ pub trait CorpusService: Send + Sync {
     async fn invoke_streaming(
         &self,
         invocation: GovernedInvocation,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) -> Result<CapabilityResult, CorpusError> {
         let result = self.invoke(invocation).await?;
-        sink.terminal(Ok(fabric::ToolResult {
+        sink.terminal(Ok(::contracts::ToolResult {
             content: result.output.clone(),
             is_error: result.is_error,
-            metadata: fabric::ToolResultMeta {
+            metadata: ::contracts::ToolResultMeta {
                 execution_time_ms: result.usage.wall_time_ms,
                 truncated: false,
                 patch_delta: None,
@@ -353,7 +354,7 @@ impl CorpusService for DefaultCorpusService {
     async fn invoke_streaming(
         &self,
         invocation: GovernedInvocation,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) -> Result<CapabilityResult, CorpusError> {
         self.validate_invocation(&invocation).await?;
         Ok(self
@@ -441,7 +442,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
         &self,
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) -> CapabilityResult {
         let extension_id = match ExtensionId::new(ExtensionKind::Tool, &request.call.name) {
             Ok(id) => id,

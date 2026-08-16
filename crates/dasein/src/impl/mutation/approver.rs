@@ -3,10 +3,10 @@
 //! Uses simple heuristics to generate mutation intents from evolution context,
 //! then validates each against boundary rules and identity continuity.
 
+use crate::core::contracts::{MutationIntent, Verdict};
+use crate::core::evolution_input::EvolutionTrigger;
 use crate::core::mutation::MutationLayer;
 use anyhow::Result;
-use fabric::evolution::EvolutionTriggeredPayload;
-use fabric::self_field::{MutationIntent, Verdict};
 use std::sync::Arc;
 
 /// Validates evolution triggers and generates approved mutation intents.
@@ -29,7 +29,7 @@ impl MutationApprover {
     }
 
     /// Process an evolution trigger. Returns approved mutation intents.
-    pub fn handle(&self, trigger: &EvolutionTriggeredPayload) -> Result<Vec<MutationIntent>> {
+    pub fn handle(&self, trigger: &EvolutionTrigger) -> Result<Vec<MutationIntent>> {
         // 1. Generate mutation intents via simple heuristic
         let intents = self.generate_intents(trigger);
 
@@ -58,7 +58,7 @@ impl MutationApprover {
     ///
     /// - If trigger_reason is "consecutive_failures", generate intent to increase safety_weight
     /// - If trigger_reason is "confidence_drop", generate intent to reduce mutation frequency
-    fn generate_intents(&self, trigger: &EvolutionTriggeredPayload) -> Vec<MutationIntent> {
+    fn generate_intents(&self, trigger: &EvolutionTrigger) -> Vec<MutationIntent> {
         let mut intents = Vec::new();
 
         match trigger.trigger_reason.as_str() {
@@ -104,12 +104,12 @@ mod tests {
     use kernel::chronos::TestClock;
     use uuid::Uuid;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 
-    fn make_trigger(reason: &str) -> EvolutionTriggeredPayload {
-        EvolutionTriggeredPayload {
+    fn make_trigger(reason: &str) -> EvolutionTrigger {
+        EvolutionTrigger {
             trigger_reason: reason.to_string(),
             recent_reflections: vec![Uuid::new_v4(), Uuid::new_v4()],
             current_rules_snapshot: vec![],

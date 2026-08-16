@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use ::contracts::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use fabric::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 use rusqlite::Connection;
 
 use crate::ops::schema;
@@ -14,11 +14,11 @@ use crate::ops::schema;
 pub struct EpisodicMemory {
     pub(crate) db_path: PathBuf,
     pub(crate) conn: Mutex<Option<Connection>>,
-    pub(crate) clock: Arc<dyn fabric::Clock>,
+    pub(crate) clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl EpisodicMemory {
-    pub fn new(db_path: PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(db_path: PathBuf, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),

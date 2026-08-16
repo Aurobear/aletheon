@@ -149,7 +149,7 @@ pub struct ExecEntry {
     /// Whether keyboard activity navigation currently targets this entry.
     pub selected: bool,
     /// Structured filesystem delta from apply_patch (None for other tools).
-    pub patch_delta: Option<fabric::PatchDelta>,
+    pub patch_delta: Option<::contracts::PatchDelta>,
 }
 
 impl ExecEntry {
@@ -181,7 +181,7 @@ impl ExecEntry {
         &mut self,
         output: &str,
         is_error: bool,
-        patch_delta: Option<fabric::PatchDelta>,
+        patch_delta: Option<::contracts::PatchDelta>,
     ) {
         self.output = output.to_string();
         self.is_error = is_error;
@@ -189,7 +189,7 @@ impl ExecEntry {
         self.patch_delta = patch_delta;
     }
 
-    pub fn set_delta(&mut self, delta: fabric::PatchDelta) {
+    pub fn set_delta(&mut self, delta: ::contracts::PatchDelta) {
         self.patch_delta = Some(delta);
     }
 
@@ -543,7 +543,7 @@ impl ChatWidget {
         call_id: &str,
         output: &str,
         is_error: bool,
-        patch_delta: Option<fabric::PatchDelta>,
+        patch_delta: Option<::contracts::PatchDelta>,
     ) {
         let mut changed = false;
         for entry in self.entries.iter_mut() {

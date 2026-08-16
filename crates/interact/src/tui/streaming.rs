@@ -4,7 +4,7 @@
 //! - Stable region: committed content in scrollback (immutable)
 //! - Tail region: currently-streaming content (mutable, real-time)
 
-use fabric::{Clock, MonoTime};
+use ::contracts::{Clock, MonoTime};
 use std::sync::Arc;
 
 const THINKING_VIEW_MAX: usize = 4096; // 4KB cap for thinking tail
@@ -308,7 +308,7 @@ impl StreamController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::WallTime;
+    use ::contracts::WallTime;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     #[derive(Default)]

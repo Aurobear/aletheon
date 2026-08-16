@@ -4,11 +4,11 @@
 //! This bridge subscribes to canonical schemas
 //! and translates system events into DaseinEvent messages on the DaseinModule's channel.
 
-use fabric::ipc::envelope_v2::SchemaId;
-use fabric::CanonicalEventBus;
+use ::contracts::ipc::envelope_v2::SchemaId;
+use runtime::event_projection::CanonicalEventBus;
 use tokio::sync::mpsc;
 
-use fabric::dasein::DaseinEvent;
+use ::contracts::dasein::DaseinEvent;
 
 /// Bridges canonical events to DaseinModule's internal event channel.
 ///

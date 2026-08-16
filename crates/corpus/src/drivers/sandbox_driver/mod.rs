@@ -130,7 +130,7 @@ impl CgroupManager {
     pub fn create(id: &str) -> Result<Self> {
         let path = PathBuf::from(format!(
             "/sys/fs/cgroup/{}-{id}",
-            fabric::paths::CGROUP_PREFIX
+            ::contracts::paths::CGROUP_PREFIX
         ));
         fs::create_dir_all(&path)
             .context("Failed to create cgroup. Need root or cgroup write access.")?;

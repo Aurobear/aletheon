@@ -39,7 +39,7 @@ use metacog::problem::model::ProblemTransition;
 
 fn report(total: u32, eligible: bool, gates: Vec<GateResult>) -> EvalReport {
     EvalReport {
-        rubric: fabric::types::metacognition_evaluation::RubricId("synthetic-v1".into()),
+        rubric: ::contracts::types::metacognition_evaluation::RubricId("synthetic-v1".into()),
         rubric_version: 1,
         dimensions: Vec::new(),
         gates,

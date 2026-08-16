@@ -1,48 +1,34 @@
 //! Security pipeline and sandbox execution.
 
 pub mod approval;
+pub mod audit;
+pub mod circuit_breaker;
 pub(crate) mod command_effect;
 pub mod credential_vault;
 pub mod escape_detector;
 pub mod exec_policy;
+pub mod execd_backend;
+pub mod execpolicy;
+pub mod loop_detector;
+pub mod network_policy;
+pub mod output_guardrail;
 pub mod permission_rules;
+pub mod policy;
+pub mod risk_classifier;
 pub mod runner;
 pub mod sandbox;
+mod sandbox_glob;
 pub mod socket_approval;
 pub mod storm_breaker;
 pub mod strategy;
 pub mod structured_sandbox;
 
-// Shared security types — re-exported from fabric (single source of truth).
-// Both corpus and dasein share these types via fabric::security.
-pub use fabric::security::{
-    audit::AuditLogger,
-    circuit_breaker::LoopCircuitBreaker,
-    loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict},
-    output_guardrail::OutputGuardrail,
-    policy::{PolicyEngine, PolicyVerdict},
-    risk_classifier::{RiskCategory, RiskClassifier},
-};
+pub use audit::AuditLogger;
+pub use risk_classifier::{RiskCategory, RiskClassifier};
 
-// Backward-compatible module re-exports for code using `use crate::security::audit;` etc.
-pub mod audit {
-    pub use fabric::security::audit::*;
-}
-pub mod circuit_breaker {
-    pub use fabric::security::circuit_breaker::*;
-}
-pub mod loop_detector {
-    pub use fabric::security::loop_detector::*;
-}
-pub mod output_guardrail {
-    pub use fabric::security::output_guardrail::*;
-}
-pub mod policy {
-    pub use fabric::security::policy::*;
-}
-pub mod risk_classifier {
-    pub use fabric::security::risk_classifier::*;
-}
+pub use circuit_breaker::LoopCircuitBreaker;
+pub use loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
+pub use output_guardrail::OutputGuardrail;
 
 // Re-export key types
 pub use approval::{

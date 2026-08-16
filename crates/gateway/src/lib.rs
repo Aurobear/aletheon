@@ -1,37 +1,30 @@
 //! Aletheon Gateway — the neutral channel dispatch engine.
 //!
 //! This crate holds channel-provider-agnostic types (intents, effects,
-//! durable store, capability registry, dispatcher) plus the concrete
-//! Telegram transport. It depends only on `fabric` and infrastructure
-//! crates (tokio/reqwest/rusqlite/...) — never on `executive`. Executive
-//! implements the ports declared here (transports, turn/goal executors,
-//! approval repositories) and wires the dispatcher into the daemon.
+//! durable projection ports, capability registry, and routing). It depends
+//! only on neutral contracts and async infrastructure, never on a physical
+//! persistence implementation. Aletheon composition supplies concrete ports.
+//!
+//! The typed protocol, client, server route adapter and Telegram channel
+//! transport were converged here from the former `gateway-protocol`,
+//! `gateway-client`, `gateway-server` and `gateway-channel-telegram` owner
+//! seam crates (Gateway five-crate convergence). Wire schema, protocol
+//! version and error codes are unchanged.
 
-mod adapters;
-pub mod dispatcher;
+pub mod capability;
+pub mod channel;
+#[cfg(feature = "client")]
+pub mod client;
 pub mod effect;
-pub mod handlers;
+pub mod external_read;
 pub mod intent;
 pub mod notify;
 pub mod ports;
+#[cfg(feature = "protocol")]
+pub mod protocol;
 pub mod registry;
+pub mod router;
+#[cfg(feature = "server")]
+pub mod server;
 
-mod store_facade {
-    pub use crate::adapters::sqlite_store::{ChannelStore, InsertOutcome};
-}
-pub use store_facade::{ChannelStore, InsertOutcome};
-
-/// Construct the built-in owner channel behind the stable transport port.
-pub fn build_telegram_transport(
-    token: String,
-    api_base: Option<String>,
-    poll_timeout_secs: u64,
-    cancel: tokio_util::sync::CancellationToken,
-) -> std::sync::Arc<dyn dispatcher::ChannelTransport> {
-    std::sync::Arc::new(adapters::telegram::TelegramTransport::new(
-        token,
-        api_base,
-        poll_timeout_secs,
-        cancel,
-    ))
-}
+pub use ports::ChannelProjectionStore;

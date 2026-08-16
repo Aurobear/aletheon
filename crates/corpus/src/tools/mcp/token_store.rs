@@ -5,7 +5,8 @@
 //! external identity rather than by an untrusted account label.
 
 use anyhow::{Context, Result};
-use fabric::{ExternalIdentityId, ExternalProviderId};
+use application::{ExternalIdentityId, ExternalProviderId};
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -219,13 +220,13 @@ impl TokenStore {
     }
 
     pub fn default_path() -> Result<PathBuf> {
-        Ok(fabric::paths::credential_vault_path())
+        Ok(::contracts::paths::credential_vault_path())
     }
 
     pub fn open_default() -> Result<Self> {
         let persistence = crate::security::credential_vault::CredentialVault::open(
             Self::default_path()?,
-            &fabric::paths::credential_master_key_path(),
+            &::contracts::paths::credential_master_key_path(),
         )?;
         Self::from_persistence(Box::new(persistence))
     }
@@ -237,7 +238,7 @@ impl TokenStore {
         let path = Self::mcp_server_vault_path(server_id)?;
         let persistence = crate::security::credential_vault::CredentialVault::open(
             path,
-            &fabric::paths::credential_master_key_path(),
+            &::contracts::paths::credential_master_key_path(),
         )?;
         Self::from_persistence(Box::new(persistence))
     }
@@ -264,7 +265,7 @@ impl TokenStore {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        Ok(fabric::paths::xdg_data_dir()
+        Ok(::contracts::paths::xdg_data_dir()
             .join("mcp")
             .join("oauth")
             .join(format!("{safe_id}-{digest_prefix}.vault")))
@@ -273,7 +274,7 @@ impl TokenStore {
     /// Legacy plaintext path is exposed only for an explicit one-shot
     /// migration; it is never read by `open_default`.
     pub fn legacy_default_path() -> PathBuf {
-        fabric::paths::mcp_tokens_path()
+        ::contracts::paths::mcp_tokens_path()
     }
 
     pub fn get(&self, server_id: &str) -> Option<&TokenEntry> {
@@ -462,10 +463,10 @@ mod tests {
         let first = TokenStore::mcp_server_vault_path("team/search").unwrap();
         let second = TokenStore::mcp_server_vault_path("team?search").unwrap();
         assert_ne!(first, second, "sanitized server ids must not alias");
-        assert!(first.starts_with(fabric::paths::xdg_data_dir()));
+        assert!(first.starts_with(::contracts::paths::xdg_data_dir()));
         assert_eq!(
             first.parent().unwrap(),
-            fabric::paths::xdg_data_dir().join("mcp/oauth")
+            ::contracts::paths::xdg_data_dir().join("mcp/oauth")
         );
         assert_eq!(
             first.extension().and_then(|value| value.to_str()),

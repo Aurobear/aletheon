@@ -2,8 +2,8 @@
 //!
 //! Renders sub-agent status cards inline in the chat area.
 
+use super::presentation::{SubAgentHandle, SubAgentStatus};
 use super::term_compat::TermCaps;
-use fabric::ui_event::{SubAgentHandle, SubAgentStatus};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 

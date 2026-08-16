@@ -4,8 +4,9 @@
 //! and tracks entity state derived from those observations.
 //! Provides snapshot summaries for the Reasoner to use as context.
 
+use crate::domain::Observation;
+use ::contracts::Clock;
 use chrono::{DateTime, Utc};
-use fabric::{Clock, Observation};
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -69,7 +70,7 @@ impl WorldModel {
     /// The observation's `data` is merged into the entity's properties,
     /// and the `what` field is recorded as the latest event.
     pub fn update_entity(&self, observation: &Observation) {
-        let now = fabric::wall_to_datetime(self.clock.wall_now());
+        let now = ::contracts::wall_to_datetime(self.clock.wall_now());
         let mut entities = self.entities.write();
 
         let entity = entities

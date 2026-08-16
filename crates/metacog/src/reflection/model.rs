@@ -57,9 +57,9 @@ pub struct ProblemSummary {
 #[derive(Debug, Clone)]
 pub struct ReflectionInput {
     /// Experience envelopes to reflect upon.
-    pub experiences: Vec<fabric::types::metacognition_experience::ExperienceEnvelope>,
+    pub experiences: Vec<::contracts::types::metacognition_experience::ExperienceEnvelope>,
     /// Evaluation reports for the experiences.
-    pub evaluations: Vec<fabric::types::metacognition_evaluation::EvaluationReport>,
+    pub evaluations: Vec<::contracts::types::metacognition_evaluation::EvaluationReport>,
     /// Problem summaries derived from the problem ledger.
     pub problems: Vec<ProblemSummary>,
 }

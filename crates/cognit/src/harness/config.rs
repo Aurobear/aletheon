@@ -1,9 +1,14 @@
-//! Harness configuration — extracted subset of ExecutiveConfig used by ReActLoop.
+//! Harness configuration — the subset of `CognitiveRuntimeConfig` consumed when
+//! constructing a cognitive session.
 //!
 //! Lives in the cognit crate to avoid a circular dependency (runtime → cognit).
-//! The orchestrator converts ExecutiveConfig → HarnessConfig when creating the harness.
+//! The composition root converts its effective config into a `HarnessConfig`
+//! when creating the harness.
 
-/// Configuration for a cognitive harness (e.g. ReActLoop).
+/// Configuration for a cognitive harness.
+///
+/// Used by the General production factory (`HarnessCognitiveSessionFactory`)
+/// and honored by the legacy `ReActLoop` compat implementation.
 #[derive(Debug, Clone)]
 pub struct HarnessConfig {
     pub max_iterations: usize,

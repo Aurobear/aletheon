@@ -5,7 +5,7 @@
 
 use super::self_model::*;
 use super::types::*;
-use fabric::dasein::Stimmung;
+use ::contracts::dasein::Stimmung;
 
 /// The source of a negation.
 #[derive(Clone, Debug)]
@@ -70,7 +70,7 @@ impl NegativityEngine {
         match mood {
             Stimmung::Angst { facing } => Some(PendingNegation::AngstSignal(format!("{facing:?}"))),
             Stimmung::Langeweile {
-                depth: fabric::dasein::BoredomDepth::Deep,
+                depth: ::contracts::dasein::BoredomDepth::Deep,
             } => Some(PendingNegation::AngstSignal(
                 "deep boredom — confronting meaninglessness".to_string(),
             )),
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn test_mood_negation_angst() {
         let mood = Stimmung::Angst {
-            facing: fabric::dasein::AngstSource::Freedom,
+            facing: ::contracts::dasein::AngstSource::Freedom,
         };
         let negation = NegativityEngine::check_mood_negation(&mood);
         assert!(matches!(negation, Some(PendingNegation::AngstSignal(_))));
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn test_mood_negation_deep_boredom() {
         let mood = Stimmung::Langeweile {
-            depth: fabric::dasein::BoredomDepth::Deep,
+            depth: ::contracts::dasein::BoredomDepth::Deep,
         };
         let negation = NegativityEngine::check_mood_negation(&mood);
         assert!(matches!(negation, Some(PendingNegation::AngstSignal(_))));

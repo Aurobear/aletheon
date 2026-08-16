@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ::contracts::Timer;
 use async_trait::async_trait;
-use fabric::Timer;
 use kernel::chronos::SystemTimer;
 use tokio::sync::mpsc;
 
-use fabric::Clock;
+use ::contracts::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;

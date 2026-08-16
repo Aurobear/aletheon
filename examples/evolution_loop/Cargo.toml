@@ -7,14 +7,14 @@ license.workspace = true
 publish = false
 
 [dependencies]
-fabric = { path = "../../crates/fabric" }
+contracts = { path = "../../crates/contracts" }
+runtime = { path = "../../crates/runtime" }
 kernel = { path = "../../crates/kernel" }
 cognit = { path = "../../crates/cognit" }
 corpus = { path = "../../crates/corpus" }
 dasein = { path = "../../crates/dasein" }
 mnemosyne = { path = "../../crates/mnemosyne" }
 metacog = { path = "../../crates/metacog" }
-executive = { path = "../../crates/executive" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

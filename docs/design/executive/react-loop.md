@@ -13,10 +13,10 @@
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
 | ReAct loop | Implemented | `crates/cognit/src/harness/linear/step.rs` | Core tool loop works end-to-end |
-| ContentBlock types | Implemented | `crates/fabric/src/types/message.rs` | Text, ToolUse, ToolResult, Image |
+| ContentBlock types | Implemented | `crates/contracts/src/types/message.rs` | Text, ToolUse, ToolResult, Image |
 | Context compaction | Implemented | `crates/mnemosyne/src/application/compressor/` | AdvancedCompressor with token-budget tail protection, iterative summary, tool output pre-pruning |
 | Streaming | Implemented | `crates/cognit/src/adapters/inference/provider.rs` | `LlmStream` trait with SSE chunk streaming |
-| LoopDetector integration | Implemented | `crates/fabric/src/security/loop_detector.rs` | Wired to engine via `pre_check()`/`post_check()` |
+| LoopDetector integration | Implemented | `crates/corpus/src/security/loop_detector.rs` | Wired to engine via `pre_check()`/`post_check()` |
 
 ---
 
@@ -55,7 +55,7 @@
 ## 2. Content-Block Message Protocol
 
 **ContentBlock** — Unified content-block message format (inspired by Anthropic SDK), used for all agent communication.
-- Code location: `crates/fabric/src/types/message.rs`
+- Code location: `crates/contracts/src/types/message.rs`
 - Contains Text, ToolUse, ToolResult, Image four variants
 - Aligned with LLM API native format, reducing conversion overhead; `ToolResult`'s `is_error` field implements structured tool errors
 
@@ -77,7 +77,7 @@ struct Message {
 
 ## 3. LoopDetector Integration
 
-The security model's `LoopDetector` (`crates/fabric/src/security/loop_detector.rs`) provides pre-check and post-check hooks integrated into the ReAct loop.
+The security model's `LoopDetector` (`crates/corpus/src/security/loop_detector.rs`) provides pre-check and post-check hooks integrated into the ReAct loop.
 
 **Integration points:**
 1. Pre-check before tool call: risk classification + loop detection
@@ -132,6 +132,6 @@ async fn compact(&mut self) {
 | Component | Code Location | Key Types |
 |-----------|---------------|-----------|
 | ReAct loop | `crates/cognit/src/harness/linear/step.rs` | `Engine`, `TurnConfig`, `TurnResult` |
-| ContentBlock protocol | `crates/fabric/src/types/message.rs` | `ContentBlock` (Text/ToolUse/ToolResult/Image), `Message` |
-| LoopDetector integration | `crates/fabric/src/security/loop_detector.rs` | `LoopDetector`, `pre_check()`, `post_check()` |
+| ContentBlock protocol | `crates/contracts/src/types/message.rs` | `ContentBlock` (Text/ToolUse/ToolResult/Image), `Message` |
+| LoopDetector integration | `crates/corpus/src/security/loop_detector.rs` | `LoopDetector`, `pre_check()`, `post_check()` |
 | Compressor | `crates/mnemosyne/src/application/compressor/` | `AdvancedCompressor`, `TailProtectionConfig`, `SummaryTemplate` |

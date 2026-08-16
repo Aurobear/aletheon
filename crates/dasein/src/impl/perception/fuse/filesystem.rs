@@ -38,11 +38,11 @@ pub struct AgentFs {
     mount_point: std::path::PathBuf,
     nodes: Arc<RwLock<HashMap<String, FsNode>>>,
     paused: Arc<RwLock<bool>>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl AgentFs {
-    pub fn new(mount_point: std::path::PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(mount_point: std::path::PathBuf, clock: Arc<dyn ::contracts::Clock>) -> Self {
         let mut nodes = HashMap::new();
 
         // Create directory structure
@@ -286,7 +286,7 @@ impl AgentFs {
                 let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
                 let cpu_info = serde_json::json!({
                     "load_avg": load.trim(),
-                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    "timestamp": ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&cpu_info)?.into_bytes())
             }
@@ -301,7 +301,7 @@ impl AgentFs {
                     }
                 }
                 mem["timestamp"] = serde_json::Value::String(
-                    fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 );
                 Ok(serde_json::to_string_pretty(&mem)?.into_bytes())
             }
@@ -320,7 +320,7 @@ impl AgentFs {
                 }
                 let disk_info = serde_json::json!({
                     "disks": disks,
-                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    "timestamp": ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&disk_info)?.into_bytes())
             }
@@ -339,7 +339,7 @@ impl AgentFs {
                 }
                 let net_info = serde_json::json!({
                     "interfaces": interfaces,
-                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    "timestamp": ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&net_info)?.into_bytes())
             }
@@ -358,7 +358,7 @@ impl AgentFs {
                     "agent": "main",
                     "state": "running",
                     "uptime_seconds": 0,
-                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    "timestamp": ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&status)?.into_bytes())
             }
@@ -376,7 +376,7 @@ mod tests {
     use kernel::chronos::TestClock;
     use std::path::PathBuf;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 

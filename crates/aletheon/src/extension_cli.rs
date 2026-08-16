@@ -3,15 +3,10 @@
 
 use std::path::PathBuf;
 
+use ::contracts::paths::{ProcessRuntimeEnvironment, RuntimeEnvironment, UserRuntimePaths};
 use clap::Subcommand;
-use fabric::paths::{ProcessRuntimeEnvironment, RuntimeEnvironment, UserRuntimePaths};
-use fabric::protocol::client::ClientRpcRequest;
-use fabric::protocol::extension::{
-    ExtensionEnableRequestV1, ExtensionPackageIdRequestV1, ExtensionPackagePathRequestV1,
-    EXTENSION_PROTOCOL_SCHEMA_V1,
-};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufStream};
-use tokio::net::UnixStream;
+use gateway::client::{CommandOutcome, GatewayClient, UnixSocketTransport};
+use gateway::protocol::{Command, ExtensionRequest};
 
 #[derive(Subcommand)]
 pub(crate) enum ExtensionCmd {
@@ -70,7 +65,7 @@ pub(crate) async fn run(
         _ => {
             let request = request(command)?;
             let mut client = ExtensionRpcClient::connect(explicit_socket).await?;
-            let value = client.request(request).await?;
+            let value = client.request(Command::ManageExtension(request)).await?;
             println!("{}", serde_json::to_string_pretty(&value)?);
             Ok(())
         }
@@ -78,8 +73,7 @@ pub(crate) async fn run(
 }
 
 fn inspect(path: &std::path::Path, validate_only: bool) -> anyhow::Result<()> {
-    let result =
-        executive::application::extension_install::ExtensionInstallService::inspect_archive(path)?;
+    let result = aletheon::extension::inspect_archive(path)?;
     if validate_only {
         println!("Package is valid.");
         return Ok(());
@@ -96,54 +90,43 @@ fn inspect(path: &std::path::Path, validate_only: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn request(command: &ExtensionCmd) -> anyhow::Result<ClientRpcRequest> {
-    let schema_version = EXTENSION_PROTOCOL_SCHEMA_V1;
+fn request(command: &ExtensionCmd) -> anyhow::Result<ExtensionRequest> {
     Ok(match command {
         ExtensionCmd::Install {
             path,
             trust_workspace,
-        } => ClientRpcRequest::ExtensionInstall(ExtensionPackagePathRequestV1 {
-            schema_version,
-            path: canonical_package_path(path)?,
+        } => ExtensionRequest::Install {
+            path: canonical_package_path(path)?.to_string_lossy().into_owned(),
             trust_workspace: *trust_workspace,
             approve_permissions: false,
-        }),
-        ExtensionCmd::List => ClientRpcRequest::ExtensionList,
-        ExtensionCmd::Show { id } => ClientRpcRequest::ExtensionShow(package_id(id)),
+        },
+        ExtensionCmd::List => ExtensionRequest::List,
+        ExtensionCmd::Show { id } => ExtensionRequest::Show { id: id.clone() },
         ExtensionCmd::Enable {
             id,
             approve_permissions,
-        } => ClientRpcRequest::ExtensionEnable(ExtensionEnableRequestV1 {
-            schema_version,
-            package_id: id.clone(),
+        } => ExtensionRequest::Enable {
+            id: id.clone(),
             approve_permissions: *approve_permissions,
-        }),
-        ExtensionCmd::Disable { id } => ClientRpcRequest::ExtensionDisable(package_id(id)),
+        },
+        ExtensionCmd::Disable { id } => ExtensionRequest::Disable { id: id.clone() },
         ExtensionCmd::Upgrade {
             path,
             approve_permissions,
             trust_workspace,
-        } => ClientRpcRequest::ExtensionUpgrade(ExtensionPackagePathRequestV1 {
-            schema_version,
-            path: canonical_package_path(path)?,
+        } => ExtensionRequest::Upgrade {
+            path: canonical_package_path(path)?.to_string_lossy().into_owned(),
             trust_workspace: *trust_workspace,
             approve_permissions: *approve_permissions,
-        }),
-        ExtensionCmd::Rollback { id } => ClientRpcRequest::ExtensionRollback(package_id(id)),
-        ExtensionCmd::Remove { id } => ClientRpcRequest::ExtensionRemove(package_id(id)),
-        ExtensionCmd::Purge { id } => ClientRpcRequest::ExtensionPurge(package_id(id)),
-        ExtensionCmd::Doctor { id } => ClientRpcRequest::ExtensionDoctor(package_id(id)),
+        },
+        ExtensionCmd::Rollback { id } => ExtensionRequest::Rollback { id: id.clone() },
+        ExtensionCmd::Remove { id } => ExtensionRequest::Remove { id: id.clone() },
+        ExtensionCmd::Purge { id } => ExtensionRequest::Purge { id: id.clone() },
+        ExtensionCmd::Doctor { id } => ExtensionRequest::Doctor { id: id.clone() },
         ExtensionCmd::Inspect { .. } | ExtensionCmd::Validate { .. } => {
             anyhow::bail!("offline package inspection does not create an RPC request")
         }
     })
-}
-
-fn package_id(id: &str) -> ExtensionPackageIdRequestV1 {
-    ExtensionPackageIdRequestV1 {
-        schema_version: EXTENSION_PROTOCOL_SCHEMA_V1,
-        package_id: id.to_owned(),
-    }
 }
 
 fn canonical_package_path(path: &std::path::Path) -> anyhow::Result<PathBuf> {
@@ -152,62 +135,30 @@ fn canonical_package_path(path: &std::path::Path) -> anyhow::Result<PathBuf> {
 }
 
 struct ExtensionRpcClient {
-    stream: BufStream<UnixStream>,
-    next_id: u64,
+    client: GatewayClient<UnixSocketTransport>,
 }
 
 impl ExtensionRpcClient {
     async fn connect(explicit_socket: Option<PathBuf>) -> anyhow::Result<Self> {
         let socket = resolve_socket(explicit_socket)?;
-        let stream = UnixStream::connect(&socket)
+        let transport = UnixSocketTransport::connect(&socket)
             .await
             .map_err(|error| anyhow::anyhow!("connecting {}: {error}", socket.display()))?;
         Ok(Self {
-            stream: BufStream::new(stream),
-            next_id: 1,
+            client: GatewayClient::new(transport),
         })
     }
 
-    async fn request(&mut self, request: ClientRpcRequest) -> anyhow::Result<serde_json::Value> {
-        let id = self.allocate_id();
-        let response = self
-            .round_trip_value(id, request.to_json_rpc(Some(id))?)
-            .await?;
-        response
-            .get("result")
-            .cloned()
-            .ok_or_else(|| response_error(&response))
-    }
-
-    fn allocate_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
-        id
-    }
-
-    async fn round_trip_value(
-        &mut self,
-        id: u64,
-        value: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.stream.write_all(value.to_string().as_bytes()).await?;
-        self.stream.write_all(b"\n").await?;
-        self.stream.flush().await?;
-        for _ in 0..32 {
-            let mut line = String::new();
-            anyhow::ensure!(
-                self.stream.read_line(&mut line).await? > 0,
-                "daemon closed the extension control connection"
-            );
-            let response: serde_json::Value = serde_json::from_str(line.trim())?;
-            if response.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
-                if response.get("error").is_some() {
-                    return Err(response_error(&response));
-                }
-                return Ok(response);
-            }
+    async fn request(&mut self, request: Command) -> anyhow::Result<serde_json::Value> {
+        match self
+            .client
+            .send(request)
+            .await
+            .map_err(|error| anyhow::anyhow!("daemon extension request failed: {error}"))?
+        {
+            CommandOutcome::ExtensionResult { result } => Ok(result),
+            other => anyhow::bail!("daemon extension returned unexpected receipt: {other:?}"),
         }
-        anyhow::bail!("too many unrelated daemon messages on extension control connection")
     }
 }
 
@@ -223,13 +174,4 @@ fn resolve_socket(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
         return Ok(PathBuf::from(socket));
     }
     Ok(UserRuntimePaths::resolve(&environment)?.socket_path())
-}
-
-fn response_error(response: &serde_json::Value) -> anyhow::Error {
-    anyhow::anyhow!(
-        "daemon extension request failed: {}",
-        response["error"]["message"]
-            .as_str()
-            .unwrap_or("missing result")
-    )
 }

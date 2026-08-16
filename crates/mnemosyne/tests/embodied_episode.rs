@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use fabric::types::embodiment::{DeviceId, SkillId};
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::OperationId;
+use ::contracts::types::embodiment::{DeviceId, SkillId};
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::OperationId;
 use mnemosyne::embodied_episode::EmbodiedEpisodeRepository;
 
 fn temp_db() -> PathBuf {

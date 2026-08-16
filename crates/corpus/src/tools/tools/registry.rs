@@ -1,10 +1,30 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use fabric::{tool::ToolExposure, AgentError, RegistrationId, Registry};
+use ::contracts::tool::ToolExposure;
+
+use super::registry_error::RegistryError;
 
 use super::search::{tool_search::ToolSearchTool, BM25Catalog, CatalogEntry};
 use super::Tool;
+
+/// Corpus-local handle for a registered tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RegistrationId(pub u64);
+
+/// Corpus-local registry contract. This is intentionally owned beside the
+/// only production implementation instead of exported as shared infrastructure.
+pub trait Registry<T> {
+    fn register(&mut self, item: T) -> Result<RegistrationId, RegistryError>;
+    fn unregister(&mut self, id: RegistrationId) -> Result<T, RegistryError>;
+    fn get(&self, name: &str) -> Option<&T>;
+    fn contains(&self, name: &str) -> bool;
+    fn names(&self) -> Vec<&str>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
 
 /// Central registry for all available tools.
 pub struct ToolRegistry {
@@ -53,7 +73,7 @@ impl ToolRegistry {
         &mut self,
         owner: &str,
         tools: Vec<Arc<dyn Tool>>,
-    ) -> Result<(), AgentError> {
+    ) -> Result<(), RegistryError> {
         self.replace_package_tool_sets(&[owner.to_owned()], vec![(owner.to_owned(), tools)])
     }
 
@@ -63,7 +83,7 @@ impl ToolRegistry {
         &mut self,
         replaced_owners: &[String],
         replacements: Vec<(String, Vec<Arc<dyn Tool>>)>,
-    ) -> Result<(), AgentError> {
+    ) -> Result<(), RegistryError> {
         self.validate_package_tool_sets(replaced_owners, &replacements)?;
         let replaced: std::collections::HashSet<_> = replaced_owners.iter().cloned().collect();
         let mut incoming = HashMap::<String, (String, Arc<dyn Tool>)>::new();
@@ -107,29 +127,29 @@ impl ToolRegistry {
         &self,
         replaced_owners: &[String],
         replacements: &[(String, Vec<Arc<dyn Tool>>)],
-    ) -> Result<(), AgentError> {
+    ) -> Result<(), RegistryError> {
         let replaced: std::collections::HashSet<_> = replaced_owners.iter().cloned().collect();
         if replaced.iter().any(|owner| owner.trim().is_empty()) {
-            return Err(AgentError::config_missing(
+            return Err(RegistryError::config_missing(
                 "package tool owner cannot be empty",
             ));
         }
         let mut incoming = std::collections::HashSet::new();
         for (owner, tools) in replacements {
             if !replaced.contains(owner) {
-                return Err(AgentError::config_missing(&format!(
+                return Err(RegistryError::config_missing(&format!(
                     "package tool replacement owner '{owner}' is outside its replacement set"
                 )));
             }
             for tool in tools {
                 let name = tool.name();
                 if name.trim().is_empty() {
-                    return Err(AgentError::config_missing(
+                    return Err(RegistryError::config_missing(
                         "package tool name cannot be empty",
                     ));
                 }
                 if !incoming.insert(name.to_owned()) {
-                    return Err(AgentError::already_exists(name));
+                    return Err(RegistryError::already_exists(name));
                 }
                 if self.tools.contains_key(name)
                     && self
@@ -137,7 +157,7 @@ impl ToolRegistry {
                         .get(name)
                         .is_none_or(|registered_owner| !replaced.contains(registered_owner))
                 {
-                    return Err(AgentError::already_exists(name));
+                    return Err(RegistryError::already_exists(name));
                 }
             }
         }
@@ -151,7 +171,13 @@ impl ToolRegistry {
         &self,
         replaced_owners: &[String],
         replacements: &[(String, Vec<Arc<dyn Tool>>)],
-    ) -> Result<(Vec<fabric::ToolDefinition>, Vec<fabric::ToolDefinition>), AgentError> {
+    ) -> Result<
+        (
+            Vec<::contracts::ToolDefinition>,
+            Vec<::contracts::ToolDefinition>,
+        ),
+        RegistryError,
+    > {
         self.validate_package_tool_sets(replaced_owners, replacements)?;
         let replaced = replaced_owners
             .iter()
@@ -176,7 +202,7 @@ impl ToolRegistry {
                     ToolExposure::Direct | ToolExposure::DirectModelOnly
                 )
             })
-            .map(|(name, tool)| fabric::ToolDefinition {
+            .map(|(name, tool)| ::contracts::ToolDefinition {
                 name: (*name).to_owned(),
                 description: tool.description().to_owned(),
                 input_schema: tool.input_schema(),
@@ -185,7 +211,7 @@ impl ToolRegistry {
         let mut authorized = all
             .iter()
             .filter(|(_, tool)| tool.exposure() != ToolExposure::Hidden)
-            .map(|(name, tool)| fabric::ToolDefinition {
+            .map(|(name, tool)| ::contracts::ToolDefinition {
                 name: (*name).to_owned(),
                 description: tool.description().to_owned(),
                 input_schema: tool.input_schema(),
@@ -196,12 +222,12 @@ impl ToolRegistry {
         Ok((visible, authorized))
     }
 
-    pub fn remove_package_tools(&mut self, owner: &str) -> Result<(), AgentError> {
+    pub fn remove_package_tools(&mut self, owner: &str) -> Result<(), RegistryError> {
         self.replace_package_tool_sets(&[owner.to_owned()], Vec::new())
     }
 
     /// Get tool definitions for LLM (name, description, schema).
-    pub fn definitions(&self) -> Vec<fabric::ToolDefinition> {
+    pub fn definitions(&self) -> Vec<::contracts::ToolDefinition> {
         let mut definitions: Vec<_> = self
             .tools
             .values()
@@ -211,7 +237,7 @@ impl ToolRegistry {
                     ToolExposure::Direct | ToolExposure::DirectModelOnly
                 )
             })
-            .map(|t| fabric::ToolDefinition {
+            .map(|t| ::contracts::ToolDefinition {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
                 input_schema: t.input_schema(),
@@ -224,12 +250,12 @@ impl ToolRegistry {
     /// Snapshot every executable tool for host-side authorization and profile
     /// validation. Unlike [`Self::definitions`], this includes deferred tools;
     /// callers must not pass this catalog wholesale to a model request.
-    pub fn profile_definitions(&self) -> Vec<fabric::ToolDefinition> {
+    pub fn profile_definitions(&self) -> Vec<::contracts::ToolDefinition> {
         let mut definitions: Vec<_> = self
             .tools
             .values()
             .filter(|tool| tool.exposure() != ToolExposure::Hidden)
-            .map(|tool| fabric::ToolDefinition {
+            .map(|tool| ::contracts::ToolDefinition {
                 name: tool.name().to_string(),
                 description: tool.description().to_string(),
                 input_schema: tool.input_schema(),
@@ -241,9 +267,9 @@ impl ToolRegistry {
 
     /// Bind the existing BM25 catalog to this registry and expose its single
     /// bridge tool. Later registrations refresh the same shared catalog.
-    pub fn enable_tool_search(&mut self) -> Result<RegistrationId, AgentError> {
+    pub fn enable_tool_search(&mut self) -> Result<RegistrationId, RegistryError> {
         if self.tools.contains_key("tool_search") {
-            return Err(AgentError::already_exists("tool_search"));
+            return Err(RegistryError::already_exists("tool_search"));
         }
         let catalog = Arc::new(RwLock::new(self.build_search_catalog()));
         self.search_catalog = Some(catalog.clone());
@@ -281,12 +307,12 @@ impl ToolRegistry {
         &mut self,
         name: &str,
         confidence: f32,
-    ) -> Result<(), AgentError> {
+    ) -> Result<(), RegistryError> {
         if !self.tools.contains_key(name) {
-            return Err(AgentError::not_found(name));
+            return Err(RegistryError::not_found(name));
         }
         if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
-            return Err(AgentError::config_missing(&format!(
+            return Err(RegistryError::config_missing(&format!(
                 "proposal confidence for {name} must be finite and within [0,1]"
             )));
         }
@@ -304,9 +330,9 @@ impl ToolRegistry {
     /// task graph. Existing tool names stay stable for model profiles.
     pub fn bind_agora_task_tools(
         &mut self,
-        service: Arc<dyn fabric::AgoraService>,
-        host_process: fabric::ProcessId,
-    ) -> Result<(), AgentError> {
+        service: Arc<dyn agora::AgoraService>,
+        host_process: ::contracts::ProcessId,
+    ) -> Result<(), RegistryError> {
         for name in [
             "task_create",
             "task_update",
@@ -333,7 +359,7 @@ impl ToolRegistry {
         gmail: Option<Arc<dyn crate::tools::google::GmailCapability>>,
         calendar: Option<Arc<dyn crate::tools::google::CalendarCapability>>,
         accounts: Arc<dyn crate::tools::google::GoogleAccountResolver>,
-    ) -> Result<Vec<RegistrationId>, AgentError> {
+    ) -> Result<Vec<RegistrationId>, RegistryError> {
         let mut registrations = Vec::new();
         if let Some(gmail) = gmail {
             registrations.push(self.register(Arc::new(
@@ -353,8 +379,8 @@ impl ToolRegistry {
 
     pub fn register_robot_tools(
         &mut self,
-        port: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>,
-    ) -> Result<Vec<RegistrationId>, AgentError> {
+        port: Arc<dyn ::contracts::types::embodiment::EmbodimentExecutionPort>,
+    ) -> Result<Vec<RegistrationId>, RegistryError> {
         use super::robot::{
             RobotCancelTool, RobotExecuteSkillTool, RobotGetStateTool, RobotListSkillsTool,
             RobotObserveTool, RobotSafeStopTool,
@@ -385,10 +411,10 @@ impl ToolRegistry {
 }
 
 impl Registry<Arc<dyn Tool>> for ToolRegistry {
-    fn register(&mut self, tool: Arc<dyn Tool>) -> Result<RegistrationId, AgentError> {
+    fn register(&mut self, tool: Arc<dyn Tool>) -> Result<RegistrationId, RegistryError> {
         let name = tool.name().to_string();
         if self.tools.contains_key(&name) {
-            return Err(AgentError::already_exists(&name));
+            return Err(RegistryError::already_exists(&name));
         }
         let id = RegistrationId(self.next_id);
         self.next_id += 1;
@@ -398,18 +424,18 @@ impl Registry<Arc<dyn Tool>> for ToolRegistry {
         Ok(id)
     }
 
-    fn unregister(&mut self, id: RegistrationId) -> Result<Arc<dyn Tool>, AgentError> {
+    fn unregister(&mut self, id: RegistrationId) -> Result<Arc<dyn Tool>, RegistryError> {
         let name = self
             .id_map
             .remove(&id)
-            .ok_or_else(|| AgentError::not_found(&format!("{id:?}")))?;
+            .ok_or_else(|| RegistryError::not_found(&format!("{id:?}")))?;
         let removed = self
             .tools
             .remove(&name)
             .inspect(|_| {
                 self.proposal_confidences.remove(&name);
             })
-            .ok_or_else(|| AgentError::not_found(&name))?;
+            .ok_or_else(|| RegistryError::not_found(&name))?;
         self.refresh_search_catalog();
         Ok(removed)
     }
@@ -433,19 +459,19 @@ impl Registry<Arc<dyn Tool>> for ToolRegistry {
 
 impl Default for ToolRegistry {
     fn default() -> Self {
-        Self::with_network_policy(fabric::network_policy::NetworkPolicy::default())
+        Self::with_network_policy(crate::security::network_policy::NetworkPolicy::default())
     }
 }
 
 impl ToolRegistry {
     /// Construct the built-in registry with daemon-trusted network authority.
     /// The policy is host configuration, never tool/model input.
-    pub fn with_network_policy(policy: fabric::network_policy::NetworkPolicy) -> Self {
+    pub fn with_network_policy(policy: crate::security::network_policy::NetworkPolicy) -> Self {
         Self::with_network_policy_and_search(policy, None)
     }
 
     pub fn with_network_policy_and_search(
-        policy: fabric::network_policy::NetworkPolicy,
+        policy: crate::security::network_policy::NetworkPolicy,
         search: Option<super::web_search::WebSearchConfig>,
     ) -> Self {
         Self::with_network_policy_search_and_tasks(policy, search, None)
@@ -456,7 +482,7 @@ impl ToolRegistry {
     /// survive daemon restarts. `None` keeps the existing in-memory-only
     /// behavior.
     pub fn with_network_policy_search_and_tasks(
-        policy: fabric::network_policy::NetworkPolicy,
+        policy: crate::security::network_policy::NetworkPolicy,
         search: Option<super::web_search::WebSearchConfig>,
         tasks_db: Option<std::path::PathBuf>,
     ) -> Self {
@@ -464,17 +490,17 @@ impl ToolRegistry {
             policy,
             search,
             tasks_db,
-            fabric::SandboxPreference::Forbid,
+            ::contracts::SandboxPreference::Forbid,
         )
     }
 
     /// Production constructor that binds persistent managed commands to the
     /// same sandbox preference as the daemon tool runner.
     pub fn with_network_policy_search_tasks_and_sandbox(
-        policy: fabric::network_policy::NetworkPolicy,
+        policy: crate::security::network_policy::NetworkPolicy,
         search: Option<super::web_search::WebSearchConfig>,
         tasks_db: Option<std::path::PathBuf>,
-        sandbox_preference: fabric::SandboxPreference,
+        sandbox_preference: ::contracts::SandboxPreference,
     ) -> Self {
         let mut registry = Self::new();
         let change_transactions = super::change_transaction::ChangeTransactionRegistry::default();
@@ -646,8 +672,8 @@ impl ToolRegistry {
 
 #[cfg(test)]
 mod tests {
+    use super::Registry;
     use super::*;
-    use fabric::Registry;
 
     /// A minimal mock tool for testing.
     struct MockTool {
@@ -676,19 +702,19 @@ mod tests {
             serde_json::json!({})
         }
 
-        fn permission_level(&self) -> fabric::tool::PermissionLevel {
-            fabric::tool::PermissionLevel::L0
+        fn permission_level(&self) -> ::contracts::tool::PermissionLevel {
+            ::contracts::tool::PermissionLevel::L0
         }
 
         async fn execute(
             &self,
             _params: serde_json::Value,
-            _ctx: &fabric::tool::ToolContext,
-        ) -> fabric::tool::ToolResult {
-            fabric::tool::ToolResult {
+            _ctx: &::contracts::tool::ToolContext,
+        ) -> ::contracts::tool::ToolResult {
+            ::contracts::tool::ToolResult {
                 content: String::new(),
                 is_error: false,
-                metadata: fabric::tool::ToolResultMeta::default(),
+                metadata: ::contracts::tool::ToolResultMeta::default(),
             }
         }
 
@@ -766,8 +792,9 @@ mod tests {
         let result = Registry::<Arc<dyn Tool>>::register(&mut reg, tool2);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.message.contains("dup_tool"));
-        assert!(err.message.contains("already registered"));
+        let message = err.to_string();
+        assert!(message.contains("dup_tool"));
+        assert!(message.contains("already registered"));
     }
 
     #[test]
@@ -804,7 +831,7 @@ mod tests {
             Registry::<Arc<dyn Tool>>::register(&mut reg, Arc::new(MockTool::new(name))).unwrap();
         }
 
-        let names = |definitions: Vec<fabric::ToolDefinition>| {
+        let names = |definitions: Vec<::contracts::ToolDefinition>| {
             definitions
                 .into_iter()
                 .map(|definition| definition.name)

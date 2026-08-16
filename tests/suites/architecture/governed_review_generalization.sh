@@ -4,9 +4,9 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 cd "$repo_root"
 
 paths=(
-  crates/fabric/src/types/governed_review.rs
+  crates/contracts/src/types/governed_review.rs
   crates/executive/src/application/governed_review
-  crates/executive/src/composition/config/governed_review.rs
+  crates/aletheon-config/src/governed_review.rs
   crates/executive/src/host/daemon/handler/rpc/rpc_review.rs
   scripts/libexec/aletheon/governed-review-smoke.py
 )

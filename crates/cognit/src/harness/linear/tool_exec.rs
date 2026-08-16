@@ -12,8 +12,8 @@ use crate::core::{
     EvidenceRecord, EvidenceSource, EvidenceSubject, RequiredAction, TerminalStatus,
 };
 use crate::inference::{classify_error, ErrorClass};
-use fabric::message::{ContentBlock, Message, Role};
-use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
+use ::contracts::message::{ContentBlock, Message, Role};
+use ::contracts::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -68,7 +68,7 @@ impl ReActLoop {
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
-                        stop: fabric::TurnStop::Cancelled,
+                        stop: ::contracts::TurnStop::Cancelled,
                     };
                     return Ok((msg, metrics));
                 }
@@ -218,7 +218,7 @@ impl ReActLoop {
                             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                             iterations: self.iteration,
                             completed_normally: false,
-                            stop: fabric::TurnStop::Blocked,
+                            stop: ::contracts::TurnStop::Blocked,
                         };
                         return Ok((message, metrics));
                     }
@@ -245,7 +245,7 @@ impl ReActLoop {
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: true,
-                    stop: fabric::TurnStop::Completed,
+                    stop: ::contracts::TurnStop::Completed,
                 };
                 return Ok((final_text, metrics));
             }
@@ -255,8 +255,8 @@ impl ReActLoop {
             let calls: Vec<CapabilityCall> = tool_calls
                 .iter()
                 .map(|(id, name, input)| CapabilityCall {
-                    operation_id: fabric::OperationId::new(),
-                    process_id: fabric::ProcessId::new(),
+                    operation_id: ::contracts::OperationId::new(),
+                    process_id: ::contracts::ProcessId::new(),
                     name: name.clone(),
                     input: input.clone(),
                     call_id: id.clone(),
@@ -390,7 +390,7 @@ impl ReActLoop {
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: true,
-                        stop: fabric::TurnStop::Completed,
+                        stop: ::contracts::TurnStop::Completed,
                     },
                 ));
             }
@@ -482,7 +482,7 @@ impl ReActLoop {
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
-                        stop: fabric::TurnStop::Blocked,
+                        stop: ::contracts::TurnStop::Blocked,
                     };
                     return Ok((msg, metrics));
                 }
@@ -537,7 +537,7 @@ impl ReActLoop {
                             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                             iterations: self.iteration,
                             completed_normally: false,
-                            stop: fabric::TurnStop::Blocked,
+                            stop: ::contracts::TurnStop::Blocked,
                         };
                         return Ok((msg, metrics));
                     }
@@ -705,7 +705,7 @@ impl ReActLoop {
                             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                             iterations: self.iteration,
                             completed_normally: false,
-                            stop: fabric::TurnStop::Blocked,
+                            stop: ::contracts::TurnStop::Blocked,
                         },
                     ));
                 }
@@ -778,7 +778,7 @@ impl ReActLoop {
                                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                                     iterations: self.iteration,
                                     completed_normally: false,
-                                    stop: fabric::TurnStop::Blocked,
+                                    stop: ::contracts::TurnStop::Blocked,
                                 },
                             ));
                         }
@@ -800,7 +800,7 @@ impl ReActLoop {
                                 elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                                 iterations: self.iteration,
                                 completed_normally: false,
-                                stop: fabric::TurnStop::Blocked,
+                                stop: ::contracts::TurnStop::Blocked,
                             },
                         ));
                     }
@@ -901,7 +901,7 @@ impl ReActLoop {
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
-                        stop: fabric::TurnStop::Blocked,
+                        stop: ::contracts::TurnStop::Blocked,
                     },
                 ));
             }
@@ -963,7 +963,7 @@ impl ReActLoop {
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: false,
-                    stop: fabric::TurnStop::Blocked,
+                    stop: ::contracts::TurnStop::Blocked,
                 };
                 return Ok((fallback, metrics));
             }
@@ -1006,7 +1006,7 @@ impl ReActLoop {
             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
             iterations: self.iteration,
             completed_normally: false,
-            stop: fabric::TurnStop::Blocked,
+            stop: ::contracts::TurnStop::Blocked,
         };
         Ok((fallback, metrics))
     }
@@ -1573,7 +1573,7 @@ mod change_transaction_tests {
     use crate::adapters::inference::provider::LlmProvider;
     use crate::core::{Obligation, ProgressAuditor, ProgressDecision};
     use crate::harness::linear::{CompactorTrait, HarnessConfig};
-    use fabric::message::Message;
+    use ::contracts::message::Message;
     use std::pin::Pin;
 
     struct NoopCompressor;
@@ -1971,7 +1971,7 @@ mod streaming_backoff_tests {
     };
     use crate::core::{AgentRuntimeId, TerminalStatus};
     use crate::harness::event_sink::{Event, EventSink};
-    use fabric::ContentBlock;
+    use ::contracts::ContentBlock;
     use std::sync::Mutex;
 
     #[derive(Default)]

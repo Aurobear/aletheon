@@ -7,8 +7,8 @@
 #[cfg(test)]
 use std::collections::HashMap;
 
+use crate::core::contracts::Care;
 use anyhow::Result;
-use fabric::Care;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 

@@ -54,20 +54,20 @@ impl Tool for ArtifactReadTool {
         PermissionLevel::L0
     }
 
-    fn cache_policy(&self) -> fabric::tool::ToolCachePolicy {
+    fn cache_policy(&self) -> ::contracts::tool::ToolCachePolicy {
         // Artifact IDs are SHA-256 content identities. Principal + Session
         // scoping prevents one caller from learning another caller's artifact
         // through the local result cache, while the digest itself supplies the
         // dependency version required for safe reuse.
-        fabric::tool::ToolCachePolicy::Session { ttl_ms: 60_000 }
+        ::contracts::tool::ToolCachePolicy::Session { ttl_ms: 60_000 }
     }
 
     fn cache_implementation_version(&self) -> &'static str {
         "artifact-read/v1"
     }
 
-    fn cache_dependencies(&self) -> Option<fabric::tool::ToolCacheDependencies> {
-        Some(fabric::tool::ToolCacheDependencies::ContentAddressed {
+    fn cache_dependencies(&self) -> Option<::contracts::tool::ToolCacheDependencies> {
+        Some(::contracts::tool::ToolCacheDependencies::ContentAddressed {
             argument_names: &["artifact_ref"],
         })
     }
@@ -166,7 +166,7 @@ mod tests {
         };
         assert_eq!(
             tool.cache_policy(),
-            fabric::tool::ToolCachePolicy::Session { ttl_ms: 60_000 }
+            ::contracts::tool::ToolCachePolicy::Session { ttl_ms: 60_000 }
         );
 
         let result = tool

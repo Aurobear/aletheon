@@ -1,6 +1,6 @@
 //! Deterministic host-authored activation policy for the canonical role graph.
 
-use fabric::{
+use ::contracts::{
     AgentBudget, AgentDelegationAuthority, AgentRuntimeCapability, TaskKind, TurnRequirement,
 };
 

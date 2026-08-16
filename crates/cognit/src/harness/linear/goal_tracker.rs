@@ -1,5 +1,5 @@
 // crates/runtime/src/core/react_loop/goal_tracker.rs
-use fabric::Clock;
+use ::contracts::Clock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
@@ -55,7 +55,7 @@ pub enum GoalStatus {
 #[derive(Debug, Clone)]
 pub struct Goal {
     pub description: String,
-    pub created_at: fabric::MonoTime,
+    pub created_at: ::contracts::MonoTime,
     pub status: GoalStatus,
 }
 

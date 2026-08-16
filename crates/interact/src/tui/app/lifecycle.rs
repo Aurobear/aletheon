@@ -3,116 +3,32 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ::contracts::Clock;
 use crossterm::event::Event;
-use fabric::protocol::client::{
-    ClientRequest, ClientRpcRequest, SnapshotRequest, TransientApprovalDecision,
+use gateway::client::{
+    CommandOutcome as GatewayCommandOutcome, GatewayClient, ReconnectPolicy, UnixSocketTransport,
 };
-use fabric::Clock;
+use gateway::protocol::{
+    CheckpointListQuery, Command, Query, RequestSessionCreation, RequestedExecutionTarget,
+    RestoreWorkspaceCheckpoint, ResumeSessionReference, SessionRef, SessionSnapshotQuery,
+    SubmitPromptRequest,
+};
 use ratatui::Terminal;
-use tokio::net::UnixStream;
 
 use crate::tui::host_time::ClientTimer;
-use fabric::Timer;
+use ::contracts::Timer;
 
-use super::super::response::{
-    format_models, format_sessions, format_status, try_read_socket_with_recorder,
-};
+use super::super::render::TuiRenderer;
+use super::super::response::{format_models, format_sessions};
 use super::super::term_compat::TermCaps;
 use super::super::test_infra::{EventRecorder, FrameRecorder, TestConfig, TestInputReader};
-use super::super::App;
+use super::super::TuiModel;
 use super::super::{
     command::{looks_like_command, BuiltinCommand, CommandType},
     registry::CommandRegistry,
 };
 use super::key_handler::{handle_key, handle_mouse};
-use super::submit::submit_message;
-
-enum InitialRequest {
-    Legacy(ClientRpcRequest),
-    Projection(ClientRequest),
-}
-
-enum LineModeAction {
-    Request(Box<InitialRequest>),
-    Display(String),
-    Quit,
-}
-
-fn line_mode_request(request: InitialRequest) -> LineModeAction {
-    LineModeAction::Request(Box::new(request))
-}
-
-fn resolve_line_mode_input(
-    trimmed: &str,
-    registry: &CommandRegistry,
-    workspace: &fabric::WorkspacePolicy,
-    turn_requirements: &[fabric::TurnRequirement],
-    task_kind: Option<fabric::TaskKind>,
-) -> LineModeAction {
-    if !looks_like_command(trimmed) {
-        return line_mode_request(InitialRequest::Legacy(crate::intent::rpc(
-            crate::intent::submit_prompt(crate::intent::PromptIntent {
-                surface: fabric::contract::command::ClientSurface::Tui,
-                correlation_id: format!("line:{}", uuid::Uuid::new_v4()),
-                content: trimmed,
-                session_id: None,
-                workspace,
-                requirements: turn_requirements.to_vec(),
-                task_kind,
-                permission_mode: crate::host::permission_mode_from_environment(),
-                execution_target: fabric::ExecutionTargetSelection::default(),
-            }),
-        )));
-    }
-    match registry.parse(trimmed) {
-        Some(CommandType::Builtin(BuiltinCommand::Quit)) => LineModeAction::Quit,
-        Some(CommandType::Builtin(BuiltinCommand::Help)) => {
-            LineModeAction::Display(registry.help_text())
-        }
-        Some(CommandType::Builtin(BuiltinCommand::Clear)) => {
-            line_mode_request(InitialRequest::Legacy(ClientRpcRequest::Clear))
-        }
-        Some(CommandType::Builtin(BuiltinCommand::Status)) => line_mode_request(
-            InitialRequest::Legacy(crate::intent::rpc(crate::intent::status(
-                fabric::contract::command::ClientSurface::Tui,
-                format!("line-status:{}", uuid::Uuid::new_v4()),
-                None,
-            ))),
-        ),
-        Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-            line_mode_request(InitialRequest::Projection(ClientRequest::ReadSessions))
-        }
-        Some(CommandType::Builtin(BuiltinCommand::Resume { id })) if !id.is_empty() => {
-            line_mode_request(InitialRequest::Projection(ClientRequest::ReadSnapshot(
-                SnapshotRequest {
-                    session_id: fabric::SessionId(id),
-                },
-            )))
-        }
-        Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
-            line_mode_request(InitialRequest::Legacy(ClientRpcRequest::Compact))
-        }
-        Some(CommandType::Builtin(BuiltinCommand::Model)) => {
-            line_mode_request(InitialRequest::Legacy(ClientRpcRequest::ModelList))
-        }
-        Some(CommandType::Skill { name, args }) => line_mode_request(InitialRequest::Legacy(
-            ClientRpcRequest::skill_invoke(name, args, workspace),
-        )),
-        Some(CommandType::Unknown {
-            name, suggestions, ..
-        }) => LineModeAction::Display(if suggestions.is_empty() {
-            format!("Unknown command: /{name}")
-        } else {
-            format!(
-                "Unknown command: /{name}. Did you mean {}?",
-                suggestions.join(", ")
-            )
-        }),
-        Some(CommandType::Builtin(_)) | None => {
-            LineModeAction::Display(format!("Command is unavailable in line mode: {trimmed}"))
-        }
-    }
-}
+use super::submit::{refresh_typed_skill_catalog, submit_message, typed_workspace_rewind};
 
 fn scripted_followup_ready(
     initial_submit_pending: bool,
@@ -123,70 +39,141 @@ fn scripted_followup_ready(
     !initial_submit_pending && !submitted_script_line && !turn_active && !streaming
 }
 
-fn initial_session_request(
+/// Establish a Session/Turn authority through the typed Gateway. Session pick
+/// is a typed projection query; it never falls back to a legacy Session RPC in
+/// the production path.
+async fn initialize_typed_session(
+    app: &mut TuiModel,
     initial_session: crate::host::InitialSession,
-) -> (InitialRequest, super::super::PendingCommand) {
-    match initial_session {
-        crate::host::InitialSession::New => (
-            InitialRequest::Legacy(ClientRpcRequest::SessionNew),
-            super::super::PendingCommand::InitializeSession,
-        ),
-        crate::host::InitialSession::Resume(session_id) => {
-            let requested_session_id = session_id.0.clone();
-            (
-                InitialRequest::Projection(ClientRequest::ReadSnapshot(SnapshotRequest {
-                    session_id,
-                })),
-                super::super::PendingCommand::ProjectionSnapshot {
-                    session_id: requested_session_id,
-                },
-            )
+) -> bool {
+    let Some(client) = app.controller.typed_gateway.as_mut() else {
+        return false;
+    };
+    if matches!(initial_session, crate::host::InitialSession::Pick) {
+        let result = client.query(Query::SessionList).await;
+        match result {
+            Ok(value) => {
+                match serde_json::from_value::<::contracts::protocol::client::SessionListSnapshot>(
+                    value,
+                ) {
+                    Ok(list)
+                        if list.schema_version
+                            == ::contracts::SESSION_READ_MODEL_SCHEMA_VERSION =>
+                    {
+                        match serde_json::to_value(list.sessions)
+                            .map_err(|error| error.to_string())
+                            .and_then(|sessions| {
+                                super::super::session_picker::SessionPicker::from_json(
+                                    &sessions,
+                                    app.app_state.session_id.clone(),
+                                )
+                                .map_err(|error| error.to_string())
+                            }) {
+                            Ok(picker) => app.session_picker = Some(picker),
+                            Err(error) => app.system_notices.push(
+                                super::super::chat::Role::System,
+                                format!("无法打开会话列表：{error}"),
+                            ),
+                        }
+                    }
+                    Ok(list) => app.system_notices.push(
+                        super::super::chat::Role::System,
+                        format!(
+                            "无法打开会话列表：unsupported schema {}",
+                            list.schema_version
+                        ),
+                    ),
+                    Err(error) => app.system_notices.push(
+                        super::super::chat::Role::System,
+                        format!("无法打开会话列表：{error}"),
+                    ),
+                }
+            }
+            Err(error) => app.system_notices.push(
+                super::super::chat::Role::System,
+                format!("Typed Gateway session list failed: {error}"),
+            ),
         }
-        crate::host::InitialSession::Pick => (
-            InitialRequest::Projection(ClientRequest::ReadSessions),
-            super::super::PendingCommand::OpenSessionPicker,
-        ),
+        return true;
     }
-}
-
-fn startup_requests(
-    initial_session: crate::host::InitialSession,
-) -> Vec<(InitialRequest, super::super::PendingCommand)> {
-    let initial = initial_session_request(initial_session);
-    // The TUI still uses legacy mutation commands while it migrates its reads
-    // to the typed Session projection. Establish the daemon's legacy protocol
-    // state before issuing a versioned read; otherwise `aletheon resume ID`
-    // sends ReadSnapshot on a new connection and the daemon correctly rejects
-    // it as uninitialised.
-    vec![
-        (
-            InitialRequest::Legacy(ClientRpcRequest::SkillsList),
-            super::super::PendingCommand::InitializeSkills,
-        ),
-        initial,
-    ]
+    let command = match initial_session {
+        crate::host::InitialSession::New => Command::CreateSession(RequestSessionCreation {
+            principal_hint: None,
+            workspace: Some(app.workspace.cwd().to_string_lossy().into_owned()),
+        }),
+        crate::host::InitialSession::Resume(session) => {
+            Command::ResumeSession(ResumeSessionReference {
+                reference: session.0,
+            })
+        }
+        crate::host::InitialSession::Pick => unreachable!("typed Pick handled above"),
+    };
+    let outcome = client.send(command).await;
+    let session = match outcome {
+        Ok(GatewayCommandOutcome::Created { session })
+        | Ok(GatewayCommandOutcome::Resumed { session }) => session,
+        Ok(other) => {
+            app.system_notices.push(
+                super::super::chat::Role::System,
+                format!("Gateway session response invalid: {other:?}"),
+            );
+            return false;
+        }
+        Err(error) => {
+            app.system_notices.push(
+                super::super::chat::Role::System,
+                format!("Gateway session initialization failed: {error}"),
+            );
+            return false;
+        }
+    };
+    app.app_state.session_id = Some(session.0.clone());
+    app.active_turn_ref = None;
+    app.turn_active = false;
+    app.streaming = false;
+    app.app_state.turn_active = false;
+    app.app_state.streaming = false;
+    app.projection_target_session_id = Some(session.0.clone());
+    app.projection_session_id = None;
+    app.projection_request_in_flight = false;
+    app.projection_polling = false;
+    true
 }
 
 pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
-    stream: UnixStream,
+    typed_gateway: Option<GatewayClient<UnixSocketTransport>>,
     caps: TermCaps,
     model_name: String,
     test_config: TestConfig,
     is_test_mode: bool,
     clock: Arc<dyn Clock>,
-    workspace: fabric::WorkspacePolicy,
-    turn_requirements: Vec<fabric::TurnRequirement>,
-    task_kind: Option<fabric::TaskKind>,
+    workspace: ::contracts::WorkspacePolicy,
+    turn_requirements: Vec<::contracts::TurnRequirement>,
+    task_kind: Option<::contracts::TaskKind>,
     initial_session: crate::host::InitialSession,
+    requested_permission: gateway::protocol::RequestedPermissionMode,
 ) -> anyhow::Result<()> {
-    let mut app = App::new(
-        stream,
+    #[cfg(test)]
+    let mut app = TuiModel::new_with_gateway(
+        None,
+        typed_gateway,
         caps,
         model_name.clone(),
         clock,
         workspace,
         turn_requirements,
+        requested_permission,
+    );
+    #[cfg(not(test))]
+    let mut app = TuiModel::new_with_gateway(
+        typed_gateway,
+        caps,
+        model_name.clone(),
+        clock,
+        workspace,
+        turn_requirements,
+        requested_permission,
     );
     app.requested_task_kind = task_kind;
 
@@ -210,26 +197,24 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     let test_timeout = Duration::from_secs(test_config.test_timeout);
     let mut needs_redraw = true;
 
-    // Populate completion/help from the daemon-owned Skill catalog. The
+    // // Populate completion/help from the daemon-owned Skill catalog. The
     // registry retains its last valid catalog if a later refresh fails.
     // The top-level CLI chooses whether this terminal owns a fresh session,
     // resumes an explicit session, or opens the daemon-backed history picker.
-    for (request, pending) in startup_requests(initial_session) {
-        let request_id = match request {
-            InitialRequest::Legacy(request) => {
-                super::submit::write_request(&mut app, request).await
-            }
-            InitialRequest::Projection(request) => {
-                super::submit::write_protocol_request(&mut app, request).await
-            }
-        };
-        if let super::super::PendingCommand::ProjectionSnapshot { session_id } = &pending {
-            app.projection_target_session_id = Some(session_id.clone());
-            app.projection_request_in_flight = true;
-        }
-        app.pending_commands.insert(request_id, pending);
+    let typed_session_initialized =
+        initialize_typed_session(&mut app, initial_session.clone()).await;
+    if !typed_session_initialized {
+        // Every TUI mode must fail closed rather than silently falling back to
+        // the retired Session RPC branch after a typed Gateway error.
+        return Err(anyhow::anyhow!(
+            "typed Gateway session initialization failed; legacy Session RPC fallback is retired"
+        ));
     }
-
+    anyhow::ensure!(
+        app.controller.has_typed_gateway(),
+        "typed Gateway transport is required; legacy Session RPC fallback is retired"
+    );
+    let _ = refresh_typed_skill_catalog(&mut app).await;
     // A scripted prompt must not race session.new/session.read. Until the
     // canonical projection selects the session, omitting session_id would make
     // the Host route the prompt onto a different thread.
@@ -249,18 +234,16 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         }
 
         // Resize handling
-        if let Ok(size) = terminal.size() {
-            app.compat_transcript.set_width(size.width);
-        }
-
         // Redraw only when state changed. This keeps idle and scroll handling
         // cheap instead of rebuilding the complete terminal frame on a timer.
         if needs_redraw {
-            super::super::render::draw::draw_with_recorder(
-                terminal,
-                &mut app,
-                &mut frame_recorder,
-            )?;
+            // Presentation preparation is local model work; the renderer only
+            // consumes the resulting state and paints it.
+            super::super::app::key_handler::refresh_command_completion(&mut app);
+            app.sync_system_notices();
+            let view = app.view();
+            TuiRenderer::draw(terminal, &view, &mut frame_recorder)?;
+            app.mark_frame_rendered();
             needs_redraw = false;
         }
 
@@ -301,8 +284,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                         app.mark_input_dirty();
                         needs_redraw = true;
                     }
-                    Event::Resize(w, _h) => {
-                        app.compat_transcript.set_width(w);
+                    Event::Resize(_w, _h) => {
                         needs_redraw = true;
                     }
                     Event::Mouse(mouse) => {
@@ -316,21 +298,19 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             // In test mode, wait for socket to be readable (with timeout)
             // This properly registers with the tokio reactor so we wake up
             // when the daemon sends data, instead of busy-polling with try_read.
-            tokio::select! {
-                result = app.stream.readable() => {
-                    if result.is_err() {
-                        app.running = false;
-                        break;
-                    }
-                }
-                _ = ClientTimer.sleep(Duration::from_millis(200)) => {}
-            }
+            ClientTimer.sleep(Duration::from_millis(200)).await;
         }
 
-        // Try reading daemon response (with optional event recording)
-        needs_redraw |= try_read_socket_with_recorder(&mut app, &mut event_recorder);
+        // Production and tests drain only typed Gateway events. No local
+        // JSON-RPC/socket compatibility pump is part of the TUI loop.
+        needs_redraw |= drive_typed_events(&mut app, &mut event_recorder).await;
         drive_deferred_checkpoint_rewind(&mut app).await;
-        drive_session_projection(&mut app).await;
+        // A projection response is a model mutation even when no live event
+        // arrived.  Mark the frame dirty so a canonical terminal settlement
+        // is rendered immediately instead of leaving a stale spinner on
+        // screen until the next keypress.
+        needs_redraw |= drive_session_projection(&mut app).await;
+        drive_agent_inspector_refresh(&mut app).await;
 
         // Check if a turn just completed and we should auto-submit next line
         let mut submitted_script_line = false;
@@ -343,6 +323,10 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 if let Some(line) = reader.next_line() {
                     submit_message(&mut app, line).await;
                     submitted_script_line = true;
+                    // A local command (for example `/help`) may not produce a
+                    // Gateway event.  Still render its model mutation before
+                    // the scripted session decides it is complete.
+                    needs_redraw = true;
                 }
                 initial_test_submit_pending = false;
             }
@@ -368,6 +352,13 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             }
             // All inputs consumed and last turn done
             if reader.done && !app.turn_active && !app.streaming {
+                // Give a local command (such as `/help`) one final render
+                // before ending scripted mode; otherwise the loop would set
+                // `running = false` immediately after reducing the command
+                // and the recorded frame would contain only the startup view.
+                if needs_redraw {
+                    continue;
+                }
                 app.running = false;
             }
         }
@@ -384,32 +375,74 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     Ok(())
 }
 
-async fn drive_deferred_checkpoint_rewind(app: &mut App) {
+async fn drive_agent_inspector_refresh(app: &mut TuiModel) {
+    let Some(inspector) = app.agent_inspector.as_ref() else {
+        return;
+    };
+    if app.clock.mono_now().0 < app.agent_inspector_next_refresh_at.0 {
+        return;
+    }
+    let focus = inspector.focus_id();
+    super::submit::request_agent_inspector(app, focus).await;
+}
+
+async fn drive_typed_events(app: &mut TuiModel, recorder: &mut Option<EventRecorder>) -> bool {
+    let mut changed = false;
+    loop {
+        let result = {
+            let Some(client) = app.controller.typed_gateway.as_mut() else {
+                return changed;
+            };
+            tokio::time::timeout(Duration::from_millis(1), client.next_event()).await
+        };
+        let event = match result {
+            Ok(Ok(event)) => event,
+            Ok(Err(gateway::protocol::ProtocolError::ConnectionClosed)) | Err(_) => break,
+            Ok(Err(error)) => {
+                app.system_notices.push(
+                    super::super::chat::Role::System,
+                    format!("Typed Gateway event rejected: {error}"),
+                );
+                break;
+            }
+        };
+        changed = true;
+        match event {
+            gateway::protocol::Event::Progress(progress) => {
+                if let Some(recorder) = recorder {
+                    recorder.write(&progress.payload, app.app_state.session_id.as_deref());
+                }
+                super::super::response::handle_event(app, &progress.payload);
+            }
+            gateway::protocol::Event::ApprovalRequested(approval) => {
+                super::super::response::handle_typed_approval(app, approval);
+            }
+            _ => {}
+        }
+    }
+    changed
+}
+
+async fn drive_deferred_checkpoint_rewind(app: &mut TuiModel) {
     let Some(deferred) = app.deferred_checkpoint_rewind.take() else {
         return;
     };
-    let request_id = super::submit::write_request(
+    if typed_workspace_rewind(
         app,
-        fabric::protocol::client::ClientRpcRequest::WorkspaceRewind(
-            fabric::protocol::client::WorkspaceRewindParams {
-                session_id: fabric::SessionId(deferred.parent_session_id),
-                prompt_index: deferred.prompt_index,
-            },
-        ),
+        deferred.parent_session_id.clone(),
+        deferred.prompt_index,
+        Some(deferred.child_session_id.clone()),
     )
-    .await;
-    app.pending_commands.insert(
-        request_id,
-        super::super::PendingCommand::CheckpointRewind {
-            child_session_id: Some(deferred.child_session_id),
-        },
+    .await
+    {
+        return;
+    }
+    app.app_state.last_error = Some(
+        "typed Gateway is unavailable for workspace rewind; refusing legacy fallback".to_string(),
     );
-    app.pending_non_turn.insert(request_id);
-    app.streaming = true;
-    app.status.waiting = true;
 }
 
-async fn drive_session_projection(app: &mut App) {
+async fn drive_session_projection(app: &mut TuiModel) -> bool {
     let Some(session_id) = app
         .projection_target_session_id
         .clone()
@@ -417,314 +450,533 @@ async fn drive_session_projection(app: &mut App) {
     else {
         app.projection_session_id = None;
         app.projection_polling = false;
-        return;
+        return false;
     };
     if app.projection_request_in_flight {
-        return;
+        return false;
     }
-    if app.projection_session_id.as_deref() != Some(session_id.as_str()) {
-        let request_id = super::submit::write_protocol_request(
-            app,
-            fabric::protocol::client::ClientRequest::ReadSnapshot(
-                fabric::protocol::client::SnapshotRequest {
-                    session_id: fabric::SessionId(session_id.clone()),
-                },
-            ),
-        )
-        .await;
-        app.pending_commands.insert(
-            request_id,
-            super::super::PendingCommand::ProjectionSnapshot { session_id },
-        );
-        app.projection_request_in_flight = true;
-        return;
+    if app.controller.has_typed_gateway() {
+        let after_cursor =
+            (app.projection_session_id.is_some()).then(|| gateway::protocol::Cursor {
+                sequence: app.app_state.cursor.sequence,
+                event_id: app.app_state.cursor.event_id.clone(),
+            });
+        let query =
+            gateway::protocol::Query::SessionSnapshot(gateway::protocol::SessionSnapshotQuery {
+                session: gateway::protocol::SessionRef(session_id.clone()),
+                after_cursor,
+            });
+        let result = {
+            let client = app
+                .controller
+                .typed_gateway
+                .as_mut()
+                .expect("typed Gateway checked");
+            match client.query(query.clone()).await {
+                Ok(value) => Ok(value),
+                Err(gateway::protocol::ProtocolError::ConnectionClosed) => {
+                    // Reconnect only the presentation transport and replay
+                    // the authenticated projection query after the last
+                    // server-issued cursor. Runtime/session authority is not
+                    // recreated here and no local event replay is inferred.
+                    match client.reconnect(ReconnectPolicy::default()).await {
+                        Ok(()) => client.query(query).await,
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        };
+        match result {
+            Ok(result) => {
+                super::super::response::apply_typed_projection_result(app, &session_id, result);
+            }
+            Err(error) => {
+                app.projection_request_in_flight = false;
+                app.projection_polling = false;
+                app.system_notices.push(
+                    super::super::chat::Role::System,
+                    format!("Typed Gateway projection query failed: {error}"),
+                );
+            }
+        }
+        app.projection_request_in_flight = false;
+        return true;
     }
-    if !app.projection_polling || app.clock.mono_now().0 < app.projection_next_poll_at.0 {
-        return;
-    }
-    let request_id = super::submit::write_protocol_request(
-        app,
-        fabric::protocol::client::ClientRequest::ReadEvents(
-            fabric::protocol::client::EventSubscription {
-                session_id: fabric::SessionId(session_id.clone()),
-                after: app.app_state.cursor.clone(),
-            },
-        ),
-    )
-    .await;
-    app.pending_commands.insert(
-        request_id,
-        super::super::PendingCommand::ProjectionEvents { session_id },
-    );
-    app.projection_request_in_flight = true;
+    // A typed Gateway is mandatory for production. There is deliberately no
+    // raw projection request fallback: reconnect starts from the typed cursor
+    // query above and any transport failure remains visible to the user.
+    app.projection_request_in_flight = false;
+    app.projection_polling = false;
+    false
 }
 
-/// Simple line-based mode for non-TTY (piped) input.
+/// Simple line-based mode for non-TTY (piped) input. It uses the same typed
+/// Gateway command/query path as the full TUI; there is no raw socket or
+/// legacy Session RPC fallback.
 pub async fn simple_line_mode(
-    mut stream: UnixStream,
+    mut typed_gateway: Option<GatewayClient<UnixSocketTransport>>,
     _caps: TermCaps,
     model_name: String,
     _clock: Arc<dyn Clock>,
-    workspace: fabric::WorkspacePolicy,
-    turn_requirements: Vec<fabric::TurnRequirement>,
-    task_kind: Option<fabric::TaskKind>,
+    workspace: ::contracts::WorkspacePolicy,
+    turn_requirements: Vec<::contracts::TurnRequirement>,
+    task_kind: Option<::contracts::TaskKind>,
+    requested_permission: gateway::protocol::RequestedPermissionMode,
 ) -> anyhow::Result<()> {
-    use tokio::io::AsyncWriteExt;
-
     println!("aletheon v0.1.0 (model: {model_name})");
     println!("Type your message and press Enter. /quit to exit.\n");
-
-    let stdin = io::stdin();
-    let mut read_buf = vec![0u8; 8192];
-    let mut response_buf = super::super::json_lines::JsonLineBuffer::default();
+    let mut client = typed_gateway
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("typed Gateway transport is required for line mode"))?;
     let registry = CommandRegistry::new();
-
+    let mut session = match client
+        .send(Command::CreateSession(RequestSessionCreation {
+            principal_hint: None,
+            workspace: Some(workspace.cwd().to_string_lossy().into_owned()),
+        }))
+        .await?
+    {
+        GatewayCommandOutcome::Created { session } => Some(session),
+        other => anyhow::bail!("typed line session initialization returned {other:?}"),
+    };
+    let stdin = io::stdin();
     loop {
         print!("> ");
         io::stdout().flush()?;
-
         let mut input = String::new();
-        match stdin.read_line(&mut input) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(_) => break,
+        if stdin.read_line(&mut input)? == 0 {
+            break;
         }
-
         let trimmed = input.trim();
         if trimmed.is_empty() {
             continue;
         }
-        // Resolve slash syntax through the same catalog as the full TUI. The
-        // line adapter only projects typed commands it can render safely; it
-        // never forwards unknown command text to the model as a chat prompt.
-        let request = match resolve_line_mode_input(
-            trimmed,
-            &registry,
-            &workspace,
-            &turn_requirements,
-            task_kind,
-        ) {
-            LineModeAction::Request(request) => request,
-            LineModeAction::Display(message) => {
-                println!("{message}");
-                continue;
-            }
-            LineModeAction::Quit => break,
-        };
-        let msg = match *request {
-            InitialRequest::Legacy(request) => request.to_json_rpc(Some(1))?,
-            InitialRequest::Projection(request) => request.to_json_rpc(1)?,
-        };
-        let payload = serde_json::to_string(&msg)?;
-        stream.write_all(format!("{payload}\n").as_bytes()).await?;
-        stream.flush().await?;
-
-        // Wait for response — drain out-of-band notifications until we get
-        // the actual JSON-RPC response (identified by having "id" + "result"/"error").
-        // Use Timer::timeout for clean timeout handling.
-        let timeout_duration = Duration::from_secs(120);
-
-        let result = ClientTimer.timeout(timeout_duration, async {
-            loop {
-                // Wait for stream to be readable
-                match stream.readable().await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        eprintln!("Error: {e}");
-                        return Ok::<(), anyhow::Error>(());
-                    }
-                }
-
-                match stream.try_read(&mut read_buf) {
-                    Ok(0) => {
-                        println!("Connection lost");
-                        return Ok(());
-                    }
-                    Ok(n) => {
-                        response_buf.push(&read_buf[..n]);
-                        loop {
-                            let line = match response_buf.take_line() {
-                                Ok(Some(line)) => line,
-                                Ok(None) => break,
-                                Err(error) => {
-                                    eprintln!(
-                                        "Error: daemon protocol contained invalid UTF-8: {error}"
-                                    );
-                                    return Ok(());
-                                }
-                            };
-                            if let Ok(msg) =
-                                serde_json::from_str::<serde_json::Value>(line.trim())
-                            {
-                            // Handle out-of-band approval_request notification
-                            if msg.get("method").and_then(|v| v.as_str()) == Some("approval_request")
-                                && msg.get("result").is_none()
-                                && msg.get("id").is_none()
-                            {
-                                let params = &msg["params"];
-                                let tool = params["tool"].as_str().unwrap_or("?");
-                                let action_summary = params["action_summary"].as_str().unwrap_or("");
-                                let risk_level = params["risk_level"].as_str().unwrap_or("");
-                                let approval_id = params["approval_id"].as_str().unwrap_or("");
-                                println!(
-                                    "\n⚠  Approval required [{risk_level}] {tool}\n   {action_summary}\n   Approve? [y]es / [a]lways / [N]o: ",
-                                );
-                                io::stdout().flush()?;
-                                let mut line = String::new();
-                                let decision = match stdin.read_line(&mut line) {
-                                    Ok(0) | Err(_) => TransientApprovalDecision::Deny,
-                                    Ok(_) => match line.trim().to_lowercase().as_str() {
-                                        "y" | "yes" => TransientApprovalDecision::Approve,
-                                        "a" | "always" => {
-                                            TransientApprovalDecision::ApproveForSession
-                                        }
-                                        _ => TransientApprovalDecision::Deny,
-                                    },
-                                };
-                                let resp = ClientRpcRequest::approval_response(
-                                    approval_id,
-                                    decision,
-                                )
-                                .to_json_rpc(None)?;
-                                let payload = serde_json::to_string(&resp)?;
-                                stream
-                                    .write_all(format!("{payload}\n").as_bytes())
-                                    .await?;
-                                stream.flush().await?;
-                                continue; // go back to wait for the actual response
-                            }
-
-                            // Skip out-of-band notifications (method: "event", etc.)
-                            // These are streaming events from the ReAct loop — not the
-                            // final JSON-RPC response.  A real response has "id" and
-                            // either "result" or "error".
-                            let is_notification = msg.get("method").is_some()
-                                && msg.get("id").is_none_or(|v| v.is_null());
-                            if is_notification {
-                                if let Some(receipt) = evaluation_receipt_from_protocol_message(&msg)
-                                {
-                                    println!(
-                                        "{}",
-                                        super::super::reducer::format_evaluation_receipt_ref(
-                                            &receipt
-                                        )
-                                    );
-                                }
-                                // Print streaming events that carry text content
-                                if let Some(event_type) = msg.pointer("/params/type").and_then(|v| v.as_str()) {
-                                    match event_type {
-                                        "text" | "text_delta" => {
-                                            // Skip text_delta in simple_line_mode to avoid
-                                            // duplicate output (final response has full text)
-                                        }
-                                        "tool_call_start" => {
-                                            if let Some(name) = msg.pointer("/params/tool").and_then(|v| v.as_str()) {
-                                                eprintln!("\n🔧 [{name}]");
-                                            }
-                                        }
-                                        "tool_result" => {
-                                            // Optionally show tool results inline
-                                        }
-                                        "error" => {
-                                            if let Some(err) = msg.pointer("/params/message").and_then(|v| v.as_str()) {
-                                                eprintln!("\n❌ {err}");
-                                            }
-                                        }
-                                        _ => {} // silently skip other event types
-                                    }
-                                }
-                                io::stdout().flush()?;
-                                continue; // keep waiting for the actual response
-                            }
-
-                            // This is the actual JSON-RPC response — process it
-                            if msg["result"]["protocol"].as_str() == Some("command_output") {
-                                match serde_json::from_value::<
-                                    fabric::contract::command::CommandOutputEnvelopeV1,
-                                >(msg["result"].clone())
-                                .map_err(anyhow::Error::from)
-                                .and_then(|output| output.into_v1().map_err(anyhow::Error::from))
-                                {
-                                    Ok(fabric::contract::command::CommandOutputV1::PromptCompleted(
-                                        completion,
-                                    )) => println!("\n{}\n", completion.response),
-                                    Ok(fabric::contract::command::CommandOutputV1::PromptAccepted) => {}
-                                    Ok(fabric::contract::command::CommandOutputV1::CancelRequested(cancel)) => {
-                                        println!("\nCancellation requested for {} active turn(s).\n", cancel.active_turns);
-                                    }
-                                    Ok(fabric::contract::command::CommandOutputV1::Status(status)) => {
-                                        println!("\n{}: {}\n", if status.ready { "ready" } else { "not ready" }, status.summary);
-                                    }
-                                    Ok(fabric::contract::command::CommandOutputV1::StatusProjected(
-                                        status,
-                                    )) => println!(
-                                        "\n{}\n",
-                                        super::super::response::format_status_projection(&status)
-                                    ),
-                                    Ok(fabric::contract::command::CommandOutputV1::Rejected(
-                                        rejection,
-                                    )) => eprintln!(
-                                        "Error {}: {}\n",
-                                        rejection.code, rejection.message
-                                    ),
-                                    Err(error) => eprintln!(
-                                        "Error: command output protocol rejected: {error}\n"
-                                    ),
-                                }
-                            } else if let Ok(message) = serde_json::from_value::<
-                                fabric::protocol::client::ClientMessage<
-                                    fabric::protocol::client::SessionListSnapshot,
-                                >,
-                            >(msg["result"].clone()) {
-                                if let Ok(list) = message.into_v1() {
-                                    let sessions = serde_json::to_value(list.sessions)?;
-                                    println!("\n{}\n", format_sessions(&sessions));
-                                }
-                            } else if let Ok(message) = serde_json::from_value::<
-                                fabric::protocol::client::ClientMessage<
-                                    fabric::protocol::client::SessionReadSnapshot,
-                                >,
-                            >(msg["result"].clone()) {
-                                if let Ok(snapshot) = message.into_v1() {
-                                    println!("\n{}\n", format_read_snapshot(&snapshot));
-                                }
-                            } else if let Some(text) = msg["result"]["response"].as_str() {
-                                println!("\n{text}\n");
-                            } else if !msg["result"]["status"].is_null() {
-                                println!("\n{}\n", format_status(&msg["result"]["status"]));
-                            } else if !msg["result"]["sessions"].is_null() {
-                                println!("\n{}\n", format_sessions(&msg["result"]["sessions"]));
-                            } else if !msg["result"]["models"].is_null() {
-                                println!("\n{}\n", format_models(&msg["result"]));
-                            } else if let Some(msg_text) = msg["result"]["message"].as_str() {
-                                println!("\n{msg_text}\n");
-                            } else if let Some(err) = msg["error"]["message"].as_str() {
-                                eprintln!("Error: {err}\n");
-                            }
-                                return Ok(());
-                            }
-                        }
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        ClientTimer.sleep(Duration::from_millis(50)).await;
-                    }
-                    Err(_) => return Ok(()),
-                }
-            }
-        }).await;
-
-        match result {
-            Ok(inner) => inner?,
-            Err(_) => {
-                eprintln!("\n⏰ Timeout: no response after 120s");
-            }
+        if !looks_like_command(trimmed) {
+            let Some(current) = session.clone() else {
+                anyhow::bail!("typed line session is not initialized");
+            };
+            typed_line_prompt(
+                &mut client,
+                current,
+                trimmed,
+                &workspace,
+                &turn_requirements,
+                task_kind,
+                requested_permission.clone(),
+                &stdin,
+            )
+            .await?;
+            continue;
+        }
+        if trimmed == "/quit" || trimmed == "/exit" {
+            break;
+        }
+        if trimmed == "/help" {
+            println!("{}", registry.help_text());
+            continue;
+        }
+        if !typed_line_command(&mut client, &mut session, trimmed, &registry, &workspace).await? {
+            println!("Command is unavailable in typed line mode: {trimmed}");
         }
     }
-
     Ok(())
 }
 
-fn format_read_snapshot(snapshot: &fabric::protocol::client::SessionReadSnapshot) -> String {
+/// Handle the Session/Projection command subset in non-TTY mode without
+/// falling back to legacy JSON-RPC. Unsupported extension commands continue
+/// through the compatibility adapter until their typed Gateway contracts are
+/// introduced.
+async fn typed_line_command(
+    client: &mut GatewayClient<UnixSocketTransport>,
+    session: &mut Option<SessionRef>,
+    trimmed: &str,
+    registry: &CommandRegistry,
+    workspace: &::contracts::WorkspacePolicy,
+) -> anyhow::Result<bool> {
+    if let Some(CommandType::Skill { name, args }) = registry.parse(trimmed) {
+        let outcome = client
+            .send(Command::InvokeSkill(
+                gateway::protocol::SkillInvokeRequest {
+                    skill_id: name,
+                    user_args: args,
+                    session: session.clone(),
+                    workspace: Some(workspace.cwd().to_string_lossy().into_owned()),
+                },
+            ))
+            .await?;
+        match outcome {
+            GatewayCommandOutcome::Submitted { turn } => {
+                println!("\nSkill turn admitted: {}\n", turn.0);
+                return Ok(true);
+            }
+            other => anyhow::bail!("typed Skill invocation returned {other:?}"),
+        }
+    }
+    let Some(CommandType::Builtin(command)) = registry.parse(trimmed) else {
+        return Ok(false);
+    };
+    let command = match command {
+        BuiltinCommand::Status => {
+            let Some(current) = session.as_ref() else {
+                anyhow::bail!("typed line session is not initialized")
+            };
+            let snapshot = typed_line_snapshot(client, current).await?;
+            println!("\n{}\n", format_read_snapshot(&snapshot));
+            return Ok(true);
+        }
+        BuiltinCommand::Sessions => {
+            let value = client.query(Query::SessionList).await?;
+            let list: ::contracts::protocol::client::SessionListSnapshot =
+                serde_json::from_value(value)?;
+            let sessions = serde_json::to_value(list.sessions)?;
+            println!("\n{}\n", format_sessions(&sessions));
+            return Ok(true);
+        }
+        BuiltinCommand::Resume { id } if !id.is_empty() => {
+            Command::ResumeSession(ResumeSessionReference { reference: id })
+        }
+        BuiltinCommand::New => Command::CreateSession(RequestSessionCreation {
+            principal_hint: None,
+            workspace: Some(workspace.cwd().to_string_lossy().into_owned()),
+        }),
+        BuiltinCommand::Clear => {
+            let Some(current) = session.as_ref() else {
+                anyhow::bail!("typed line session is not initialized")
+            };
+            Command::ClearSession(current.clone())
+        }
+        BuiltinCommand::Compact => {
+            let Some(current) = session.as_ref() else {
+                anyhow::bail!("typed line session is not initialized")
+            };
+            Command::CompactSession(current.clone())
+        }
+        BuiltinCommand::Fork => {
+            let Some(current) = session.as_ref() else {
+                anyhow::bail!("typed line session is not initialized")
+            };
+            let snapshot = typed_line_snapshot(client, current).await?;
+            Command::ForkSession(gateway::protocol::ForkSessionRequest {
+                session: current.clone(),
+                through_sequence: snapshot.through.sequence,
+            })
+        }
+        BuiltinCommand::Rewind { prompt_index } => {
+            let Some(current) = session.as_ref() else {
+                anyhow::bail!("typed line session is not initialized")
+            };
+            if prompt_index.trim().is_empty() {
+                let value = client
+                    .query(Query::CheckpointList(CheckpointListQuery {
+                        session: current.clone(),
+                        limit: 64,
+                    }))
+                    .await?;
+                println!("\n{}\n", serde_json::to_string_pretty(&value)?);
+                return Ok(true);
+            }
+            let prompt_index = prompt_index
+                .parse::<u64>()
+                .map_err(|_| anyhow::anyhow!("usage: /rewind <prompt-index>"))?;
+            Command::RestoreWorkspaceCheckpoint(RestoreWorkspaceCheckpoint {
+                session: current.clone(),
+                prompt_index,
+            })
+        }
+        BuiltinCommand::Memory => {
+            let Some(current) = session.as_ref() else {
+                anyhow::bail!("typed line session is not initialized")
+            };
+            let value = client
+                .query(Query::MemorySnapshot(
+                    gateway::protocol::MemorySnapshotQuery {
+                        session: current.clone(),
+                        memory_type: "all".into(),
+                        limit: 20,
+                    },
+                ))
+                .await?;
+            println!(
+                "\n{}\n",
+                value
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("(memory snapshot is empty)")
+            );
+            return Ok(true);
+        }
+        BuiltinCommand::Skills => {
+            let value = client
+                .query(Query::SkillCatalog(gateway::protocol::SkillCatalogQuery))
+                .await?;
+            let skills = value
+                .get("skills")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for skill in skills {
+                let name = skill
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?");
+                let description = skill
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                println!("/{name} {description}");
+            }
+            return Ok(true);
+        }
+        BuiltinCommand::Model => {
+            let value = client
+                .query(Query::ModelCatalog(gateway::protocol::ModelCatalogQuery))
+                .await?;
+            println!("\n{}\n", format_models(&value));
+            return Ok(true);
+        }
+        BuiltinCommand::Mode { name } => {
+            let mode = match name.as_str() {
+                "" | "default" => gateway::protocol::RequestedCollaborationMode::Default,
+                "plan" => gateway::protocol::RequestedCollaborationMode::Plan,
+                "auto" => gateway::protocol::RequestedCollaborationMode::Auto,
+                "sandbox" => gateway::protocol::RequestedCollaborationMode::Sandbox,
+                other => anyhow::bail!("unsupported collaboration mode: {other}"),
+            };
+            Command::SetCollaborationMode(gateway::protocol::SetCollaborationModeRequest { mode })
+        }
+        BuiltinCommand::Profile => {
+            let value = client
+                .query(Query::AgentProfileCatalog(
+                    gateway::protocol::AgentProfileCatalogQuery,
+                ))
+                .await?;
+            println!(
+                "\n{}\n",
+                serde_json::to_string_pretty(
+                    value
+                        .get("profiles")
+                        .unwrap_or(&serde_json::Value::Array(Vec::new()))
+                )?
+            );
+            return Ok(true);
+        }
+        BuiltinCommand::ProfileSet { name } => {
+            Command::SetAgentProfile(gateway::protocol::SetAgentProfileRequest { profile: name })
+        }
+        BuiltinCommand::SkillRun { name, args } => {
+            Command::InvokeSkill(gateway::protocol::SkillInvokeRequest {
+                skill_id: name,
+                user_args: args,
+                session: session.clone(),
+                workspace: Some(workspace.cwd().to_string_lossy().into_owned()),
+            })
+        }
+        BuiltinCommand::MemoryStatus => {
+            let value = client
+                .query(Query::MemoryStatus(gateway::protocol::MemoryStatusQuery))
+                .await?;
+            println!(
+                "\n{}\n",
+                super::super::response::format_memory_status(&value)
+            );
+            return Ok(true);
+        }
+        BuiltinCommand::MemorySearch { query } => {
+            if query.trim().is_empty() {
+                anyhow::bail!("usage: /memory search <query>");
+            }
+            let value = client
+                .query(Query::MemorySearch(gateway::protocol::MemorySearchQuery {
+                    query,
+                    session: session.as_ref().map(|value| value.0.clone()),
+                }))
+                .await?;
+            println!(
+                "\n{}\n",
+                super::super::response::format_memory_facts(&value)
+            );
+            return Ok(true);
+        }
+        BuiltinCommand::Interrupt => {
+            let Some(current) = session.as_ref() else {
+                anyhow::bail!("typed line session is not initialized");
+            };
+            Command::CancelActiveTurn(gateway::protocol::CancelActiveTurn {
+                session: current.clone(),
+            })
+        }
+        _ => return Ok(false),
+    };
+    let outcome = client.send(command).await?;
+    let next = match outcome {
+        GatewayCommandOutcome::Created { session }
+        | GatewayCommandOutcome::Resumed { session }
+        | GatewayCommandOutcome::SessionUpdated { session }
+        | GatewayCommandOutcome::Forked { session } => session,
+        GatewayCommandOutcome::ModelUpdated { model } => {
+            println!("\nModel: {model}\n");
+            return Ok(true);
+        }
+        GatewayCommandOutcome::CollaborationModeUpdated { mode } => {
+            println!("\nMode: {mode:?}\n");
+            return Ok(true);
+        }
+        GatewayCommandOutcome::AgentProfileUpdated { profile } => {
+            println!("\nProfile: {profile}\n");
+            return Ok(true);
+        }
+        GatewayCommandOutcome::Submitted { turn } => {
+            println!("\nTurn admitted: {}\n", turn.0);
+            return Ok(true);
+        }
+        GatewayCommandOutcome::WorkspaceRestored { outcome } => {
+            println!("\nWorkspace rewind: {outcome:?}\n");
+            return Ok(true);
+        }
+        GatewayCommandOutcome::Cancelled => {
+            println!("\nCancellation requested.\n");
+            return Ok(true);
+        }
+        other => anyhow::bail!("typed line command returned unexpected receipt: {other:?}"),
+    };
+    println!("\nSession: {}\n", next.0);
+    *session = Some(next);
+    Ok(true)
+}
+
+async fn typed_line_snapshot(
+    client: &mut GatewayClient<UnixSocketTransport>,
+    session: &SessionRef,
+) -> anyhow::Result<::contracts::protocol::client::SessionReadSnapshot> {
+    let result = client
+        .query(Query::SessionSnapshot(SessionSnapshotQuery {
+            session: session.clone(),
+            after_cursor: None,
+        }))
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let snapshot = result
+        .get("snapshot")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("typed Gateway query omitted snapshot"))?;
+    serde_json::from_value(snapshot).map_err(anyhow::Error::from)
+}
+
+async fn typed_line_prompt(
+    client: &mut GatewayClient<UnixSocketTransport>,
+    session: SessionRef,
+    content: &str,
+    workspace: &::contracts::WorkspacePolicy,
+    turn_requirements: &[::contracts::TurnRequirement],
+    task_kind: Option<::contracts::TaskKind>,
+    requested_permission: gateway::protocol::RequestedPermissionMode,
+    stdin: &std::io::Stdin,
+) -> anyhow::Result<()> {
+    let baseline = typed_line_snapshot(client, &session).await?;
+    let required_agent_runtimes = turn_requirements
+        .iter()
+        .filter_map(|requirement| match requirement {
+            ::contracts::TurnRequirement::InvokeAgentRuntime { runtime_id } => {
+                Some(runtime_id.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    client
+        .send(Command::SubmitPrompt(SubmitPromptRequest {
+            session: session.clone(),
+            content: content.to_owned(),
+            workspace: Some(workspace.cwd().to_string_lossy().into_owned()),
+            requested_target: RequestedExecutionTarget::Automatic,
+            requested_permission: requested_permission.clone(),
+            required_agent_runtimes,
+            requested_task_kind: task_kind.map(|_| "coding".to_owned()),
+        }))
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+    let result = tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            match tokio::time::timeout(Duration::from_millis(10), client.next_event()).await {
+                Ok(Ok(gateway::protocol::Event::ApprovalRequested(approval))) => {
+                    println!(
+                        "\n⚠  Approval required [{}] {}\n   {}\n   Approve? [y]es / [N]o: ",
+                        approval.risk_level, approval.tool, approval.action_summary
+                    );
+                    io::stdout().flush()?;
+                    let mut line = String::new();
+                    let approved = match stdin.read_line(&mut line) {
+                        Ok(_) => matches!(line.trim().to_lowercase().as_str(), "y" | "yes"),
+                        Err(_) => false,
+                    };
+                    client
+                        .send(Command::SubmitApproval(
+                            gateway::protocol::SubmitApprovalChoice {
+                                session: approval.session,
+                                choice_id: approval.choice_id,
+                                approved,
+                                version: 0,
+                                reason: None,
+                            },
+                        ))
+                        .await
+                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                }
+                Ok(Ok(gateway::protocol::Event::Progress(progress))) => {
+                    if let Some(message) = progress.payload.get("message").and_then(|v| v.as_str())
+                    {
+                        eprintln!("{message}");
+                    }
+                }
+                Ok(Ok(_)) | Err(_) => {}
+                Ok(Err(error)) => {
+                    return Err(anyhow::anyhow!(error.to_string()));
+                }
+            }
+
+            let snapshot = typed_line_snapshot(client, &session).await?;
+            let terminal = snapshot.through.sequence > baseline.through.sequence
+                && snapshot.tasks.iter().any(|task| {
+                    task.active_turn_id.is_none()
+                        && !matches!(task.phase, ::contracts::TaskPhase::Active)
+                });
+            if !terminal {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+            if let Some(item) = snapshot
+                .items
+                .iter()
+                .filter(|item| {
+                    matches!(
+                        item.payload,
+                        ::contracts::ItemPayload::AssistantMessage { .. }
+                    )
+                })
+                .max_by_key(|item| item.sequence)
+            {
+                if let ::contracts::ItemPayload::AssistantMessage { content } = &item.payload {
+                    println!("\n{content}\n");
+                }
+            }
+            if let Some(task) = snapshot.tasks.iter().find(|task| {
+                task.active_turn_id.is_none()
+                    && !matches!(task.phase, ::contracts::TaskPhase::Completed)
+            }) {
+                eprintln!("turn settled with {:?}", task.phase);
+            }
+            return Ok::<(), anyhow::Error>(());
+        }
+    })
+    .await;
+    match result {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!("typed Gateway prompt timed out")),
+    }
+}
+
+fn format_read_snapshot(snapshot: &::contracts::protocol::client::SessionReadSnapshot) -> String {
     let mut lines = vec![format!(
         "Session {} ({} durable items)",
         snapshot.session.id.0,
@@ -732,13 +984,13 @@ fn format_read_snapshot(snapshot: &fabric::protocol::client::SessionReadSnapshot
     )];
     for item in &snapshot.items {
         match &item.payload {
-            fabric::ItemPayload::UserMessage { content, .. } => {
+            ::contracts::ItemPayload::UserMessage { content, .. } => {
                 lines.push(format!("user: {content}"));
             }
-            fabric::ItemPayload::AssistantMessage { content } => {
+            ::contracts::ItemPayload::AssistantMessage { content } => {
                 lines.push(format!("assistant: {content}"));
             }
-            fabric::ItemPayload::SystemNotice { content } => {
+            ::contracts::ItemPayload::SystemNotice { content } => {
                 lines.push(format!("system: {content}"));
             }
             _ => {}
@@ -747,82 +999,29 @@ fn format_read_snapshot(snapshot: &fabric::protocol::client::SessionReadSnapshot
     lines.join("\n")
 }
 
-fn evaluation_receipt_from_protocol_message(
-    message: &serde_json::Value,
-) -> Option<fabric::EvaluationReceiptRef> {
-    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage, ItemPhase};
-
-    let candidate = message
-        .get("params")
-        .or_else(|| message.get("result"))
-        .unwrap_or(message);
-    let message = serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone()).ok()?;
-    match message.into_v1().ok()? {
-        ProtocolEvent::Item(item) if item.phase == ItemPhase::Completed => {
-            item.item.and_then(|record| match record.payload {
-                fabric::ItemPayload::EvaluationReceiptRef { receipt } => Some(receipt),
-                _ => None,
-            })
-        }
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn line_method(action: LineModeAction) -> Option<String> {
-        let request = match action {
-            LineModeAction::Request(request) => request,
-            LineModeAction::Display(_) | LineModeAction::Quit => return None,
-        };
-        let wire = match *request {
-            InitialRequest::Legacy(request) => request.to_json_rpc(Some(1)).unwrap(),
-            InitialRequest::Projection(request) => request.to_json_rpc(1).unwrap(),
-        };
-        wire["method"].as_str().map(str::to_owned)
-    }
-
-    #[test]
-    fn initial_session_selection_uses_typed_session_requests() {
-        let cases = [
-            (crate::host::InitialSession::New, "session.new"),
-            (
-                crate::host::InitialSession::Resume(fabric::SessionId("session-7".into())),
-                "session.read_snapshot/v1",
-            ),
-            (
-                crate::host::InitialSession::Pick,
-                "session.read_sessions/v1",
-            ),
-        ];
-        for (selection, method) in cases {
-            let (request, _) = initial_session_request(selection);
-            let wire = match request {
-                InitialRequest::Legacy(request) => request.to_json_rpc(Some(1)).unwrap(),
-                InitialRequest::Projection(request) => request.to_json_rpc(1).unwrap(),
-            };
-            assert_eq!(wire["method"], method);
-        }
-    }
-
-    #[test]
-    fn startup_establishes_legacy_protocol_before_projection_reads() {
-        for selection in [
-            crate::host::InitialSession::Resume(fabric::SessionId("session-7".into())),
-            crate::host::InitialSession::Pick,
-        ] {
-            let requests = startup_requests(selection);
-            assert!(matches!(
-                &requests[0],
-                (
-                    InitialRequest::Legacy(ClientRpcRequest::SkillsList),
-                    crate::tui::PendingCommand::InitializeSkills
-                )
-            ));
-            assert!(matches!(requests[1].0, InitialRequest::Projection(_)));
-        }
+    #[tokio::test]
+    async fn typed_session_initialization_requires_the_gateway_transport() {
+        let workspace =
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test-model".into(),
+            Arc::new(crate::tui::host_time::ClientClock::default()),
+            workspace,
+            Vec::new(),
+        );
+        assert!(!initialize_typed_session(&mut app, crate::host::InitialSession::New).await);
+        assert!(app.app_state.session_id.is_none());
     }
 
     #[test]
@@ -832,6 +1031,64 @@ mod tests {
         assert!(!scripted_followup_ready(false, false, true, false));
         assert!(!scripted_followup_ready(false, false, false, true));
         assert!(scripted_followup_ready(false, false, false, false));
+    }
+
+    #[tokio::test]
+    async fn open_agent_inspector_refreshes_automatically_without_duplicate_requests() {
+        let workspace =
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test-model".into(),
+            Arc::new(crate::tui::host_time::ClientClock::default()),
+            workspace,
+            Vec::new(),
+        );
+        app.agent_inspector = Some(
+            crate::tui::agent_inspector::AgentInspector::from_json(
+                &serde_json::json!([{
+                    "id": "agent-1",
+                    "task": "inspect repository",
+                    "status": "running",
+                    "runtime_id": "pi-coder",
+                    "profile_id": "pi",
+                    "snapshot": {
+                        "handle": {
+                            "agent_id": "00000000-0000-0000-0000-000000000001",
+                            "root_agent_id": "00000000-0000-0000-0000-000000000002",
+                            "parent_agent_id": null,
+                            "process_id": "00000000-0000-0000-0000-000000000003",
+                            "operation_id": "00000000-0000-0000-0000-000000000004",
+                            "runtime_id": "pi-coder",
+                            "profile_id": "pi"
+                        },
+                        "status": "running",
+                        "result": null,
+                        "created_at_ms": 1,
+                        "started_at_ms": 2,
+                        "ended_at_ms": null,
+                        "last_error": null
+                    },
+                    "timeline": [{"sequence": 1, "kind": "started", "detail": null}]
+                }]),
+                None,
+            )
+            .unwrap(),
+        );
+        app.agent_inspector_next_refresh_at = ::contracts::MonoTime(0);
+
+        drive_agent_inspector_refresh(&mut app).await;
+        assert!(app
+            .app_state
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("typed Gateway")));
     }
 
     #[test]
@@ -857,42 +1114,25 @@ mod tests {
         .all(|color| *color == ratatui::style::Color::Reset));
 
         let registry = CommandRegistry::new();
-        let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let resolve = |input| resolve_line_mode_input(input, &registry, &workspace, &[], None);
-        assert_eq!(
-            line_method(resolve("inspect the workspace")),
-            Some("client.intent".into())
-        );
-        assert_eq!(
-            line_method(resolve("/sessions")),
-            Some("session.read_sessions/v1".into())
-        );
-        assert_eq!(
-            line_method(resolve("/resume session-7")),
-            Some("session.read_snapshot/v1".into())
-        );
-        assert!(matches!(resolve("/quit"), LineModeAction::Quit));
-        let LineModeAction::Display(help) = resolve("/help") else {
-            panic!("line-mode help must remain text")
-        };
+        let help = registry.help_text();
         assert!(help.contains("/sessions"));
         assert!(!help.contains('\u{1b}'));
 
-        let text_snapshot = format_read_snapshot(&fabric::protocol::client::SessionReadSnapshot {
-            schema_version: fabric::SESSION_READ_MODEL_SCHEMA_VERSION,
-            session: fabric::SessionRecord {
-                schema_version: fabric::SESSION_SCHEMA_VERSION,
-                id: fabric::SessionId("session-7".into()),
-                parent: None,
-                created_at_ms: 1,
-                status: fabric::SessionStatus::Active,
-            },
-            through: fabric::protocol::client::EventCursor::origin(),
-            items: Vec::new(),
-            tasks: Vec::new(),
-            activities: Vec::new(),
-        });
+        let text_snapshot =
+            format_read_snapshot(&::contracts::protocol::client::SessionReadSnapshot {
+                schema_version: ::contracts::SESSION_READ_MODEL_SCHEMA_VERSION,
+                session: ::contracts::SessionRecord {
+                    schema_version: ::contracts::SESSION_SCHEMA_VERSION,
+                    id: ::contracts::SessionId("session-7".into()),
+                    parent: None,
+                    created_at_ms: 1,
+                    status: ::contracts::SessionStatus::Active,
+                },
+                through: ::contracts::protocol::client::EventCursor::origin(),
+                items: Vec::new(),
+                tasks: Vec::new(),
+                activities: Vec::new(),
+            });
         assert_eq!(text_snapshot, "Session session-7 (0 durable items)");
     }
 }

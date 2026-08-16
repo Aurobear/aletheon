@@ -1,0 +1,7 @@
+# kind	scope	target	deletion_owner	evidence
+path	crates/executive/src/core/session.rs	-	RA-00	workspace callers/re-exports zero; PR #192 commit 1631ac3f
+path	crates/executive/src/application/agent	-	RA-00	workspace callers/re-exports zero; PR #192 commit d9838d85
+path	crates/executive/src/composition/agents	-	RA-00	workspace production callers/re-exports zero; PR #192 commit d3c5e748
+rust_symbol	crates	TuiSessionManager	RA-00	retired presentation-owned Session authority
+rust_symbol	crates/executive/src/application	AgentRuntime	RA-00	retired Executive application authority; canonical name reserved for runtime owner
+path	crates/interact/src/tui/session_protocol.rs	-	CGP-06	duplicate Session RPC wrapper deleted after typed GatewayClient migration

@@ -6,11 +6,11 @@ use std::sync::{
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
-use fabric::types::embodiment::{
+use ::contracts::types::embodiment::{
     skill_descriptor_digest, DeviceId, EmbodiedObservation, ExecutionEnvironment,
     SafetyCapabilityManifest, SkillDescriptor, SkillResult,
 };
+use async_trait::async_trait;
 use tonic::transport::Channel;
 
 use crate::grpc::convert;
@@ -267,7 +267,7 @@ impl GrpcEmbodimentProvider {
         // Establish liveness before registering the provider. Thereafter a
         // provider-owned task keeps the Bridge-local watchdog fed; if the daemon
         // exits, the task exits with it and the Bridge trips independently.
-        let control_session_id = fabric::OperationId::new().0.to_string();
+        let control_session_id = ::contracts::OperationId::new().0.to_string();
         heartbeat_once(
             &mut client,
             &config,
@@ -665,8 +665,8 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
         }
 
         let local_mono_now = self.clock.as_ref().map_or_else(
-            || fabric::MonoTime(self.fallback_mono_base.elapsed().as_millis() as u64),
-            |clock| fabric::MonoTime(clock.now().0),
+            || ::contracts::MonoTime(self.fallback_mono_base.elapsed().as_millis() as u64),
+            |clock| ::contracts::MonoTime(clock.now().0),
         );
         let local_unix_now_ms = current_unix_ms().map_err(ProviderError::Rejected)?;
         resp.observations

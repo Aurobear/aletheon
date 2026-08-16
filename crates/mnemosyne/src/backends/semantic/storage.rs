@@ -1,11 +1,12 @@
 //! SemanticMemory storage and query operations — full MemoryBackend impl.
 
+use crate::memory::{
+    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
+    MemoryQuery, MemoryStats, MemoryType,
+};
+use ::contracts::{wall_to_datetime, WallTime};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use fabric::{
-    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
-    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, WallTime,
-};
 use rusqlite::params;
 use uuid::Uuid;
 

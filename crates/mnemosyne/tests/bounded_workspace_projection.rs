@@ -1,7 +1,7 @@
-use chrono::{TimeZone, Utc};
-use fabric::{
+use ::contracts::{
     AgoraSpaceId, BroadcastEpoch, MonoTime, ProcessId, VisibilityScope, WorkspaceContent,
 };
+use chrono::{TimeZone, Utc};
 use mnemosyne::{
     DefaultMemoryWorkspaceProjector, MemoryAuthority, MemoryCandidateContext, MemoryMetadata,
     MemoryProjectionLimits, MemoryProvenance, MemoryScope, MemorySensitivity,

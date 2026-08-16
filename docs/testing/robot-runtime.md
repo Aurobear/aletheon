@@ -136,7 +136,7 @@ R2 candidate 满足 ADR 保留的 provider-attested 启动 gate：
   protocol digest、observation schemas、完整 descriptor schema 与非空 allowlist
   (`crates/hardware/src/grpc/provider.rs:154-265`)；
 - deterministic descriptor digest 由 exact startup allowlist 计算
-  (`crates/fabric/src/types/embodiment.rs:97-104`)并写入 report provenance
+  (`crates/contracts/src/types/embodiment.rs:97-104`)并写入 report provenance
   (`crates/cognit/src/harness/robot/session.rs:127-128`)；
 - 本地 candidate bridge 的 manifest/runtime allowlist、capability fields、Unix receive timestamp
   与 build-owned digest 已闭合；bridge pytest 90/90（6 skipped），changed-file Ruff、compileall
@@ -165,13 +165,13 @@ Bridge observation --Unix wall facts--> Hardware receive anchor --local MonoTime
 
 - Cognit 只依赖抽象 `RobotPerceptionPort`（`crates/cognit/src/harness/robot/mod.rs:32-40`）；
 - Executive adapter 按 freshness、device、schema/source sequence、URI prefix、frame 数量和编码字节
-  预算选择 refs（`crates/executive/src/application/robot_perception.rs:25-184`）；
+  预算选择 refs（`crates/cognit/src/harness/robot/perception_store.rs:25-184`）；
 - Hardware 保留原始 Unix captured/received time，并从 RPC receive anchor 计算 process-local MonoTime，
   不再把 epoch 毫秒直接当 monotonic time（`crates/hardware/src/grpc/convert.rs:99-166`）；
 - visual payload 进入 world snapshot 前只保留 URI/digest/camera/sequence；Host 选中的 typed refs 写入
   proposal/report，原图和 base64 不进入 prompt/session/EpisodeReport
-  （`crates/executive/src/application/world_state.rs:146-177`、
-  `crates/fabric/src/types/episode_report.rs:58-72`）。
+  （`crates/hardware/src/world_state.rs:146-177`、
+  `crates/contracts/src/types/episode_report.rs:58-72`）。
 
 本地验证包括 Fabric frame/SkillProposal/report、Hardware conversion、Cognit recording-policy 与
 required-perception gate、Executive cache/world-state/config/session，以及 Dasein aggregator；五个相关
@@ -206,8 +206,8 @@ natural-language goal + fresh typed snapshots + FrameRefs + exact allowlist
   （`crates/cognit/src/harness/robot/proposal_validator.rs:16-235`）；
 - accepted provider/protocol 来自 startup capability connection facts；response provider spoof 会失败，
   model/version/digest 来自 typed response，并随 EpisodeReport 序列化
-  （`crates/fabric/src/types/episode_report.rs:58-101`）；
-- `crates/executive/tests/robot_policy_path.rs` 的 mechanical contract 同时确认 Policy port/adapter 不包含
+  （`crates/contracts/src/types/episode_report.rs:58-101`）；
+- `crates/aletheon/tests/robot_policy_path.rs` 的 mechanical contract 同时确认 Policy port/adapter 不包含
   embodiment execution、cancel 或 safe-stop capability。
 
 本地证据：real in-process gRPC gateway 4/4、validator 10/10、Plan failure 5/5、Policy boundary 4/4、
@@ -266,14 +266,14 @@ physical/local estop -----------------------------> direct stop callback
 
 - simulation/HIL/real 与 safety facts 来自 provider handshake，不由 operator config 升级；real 缺任一
   emergency/joint/velocity/torque-or-current/ownership/safe-stop/independent-hard-stop capability 即 bootstrap
-  fail closed（`crates/fabric/src/types/embodiment.rs:17-167`、
+  fail closed（`crates/contracts/src/types/embodiment.rs:17-167`、
   `crates/hardware/src/grpc/provider.rs:504-568`）；
 - HIL/real profile 必须 pin device serial、canonical safety manifest digest 与 driver limits digest；real
   还要求未过期 evidence 和非 loopback TLS endpoint。live snapshot 在 provider 注册前逐项比较
-  （`crates/executive/src/composition/config/robot.rs:438-632`、
-  `crates/executive/src/host/daemon/bootstrap/embodiment.rs:85-237`）；
+  （`crates/aletheon/src/config/robot.rs:438-632`、
+  `crates/aletheon/src/wiring/daemon/bootstrap/embodiment.rs:85-237`）；
 - high-risk skill 只接受与 principal/device/skill/完整参数 digest/expiry 绑定的 operator receipt，默认 adapter
-  拒绝；approval schema 不含 VLA confidence（`crates/executive/src/application/embodiment_approval.rs:10-85`）；
+  拒绝；approval schema 不含 VLA confidence（`crates/hardware/src/approval.rs:10-85`）；
 - Bridge 用本地 monotonic clock 管理独占 owner、heartbeat、operation deadline 与 lease；daemon/heartbeat
   消失不等待 Agent/LLM。驱动 movement handler 对 compiled/deployment/reviewed 三层最小限制执行 reject，
   不 clamp（bridge `watchdog.py:44-190`、`move_base_timed.py:18-112`）；
@@ -306,23 +306,23 @@ ordered attempts + external evidence refs
 - `EpisodeReport` 保存 model/bridge/scene/descriptor provenance、每次 attempt 的 operation ID 与
   before/after/verified sequence 以及 verifier 实际读取的 predicate paths；`EpisodeSettlement` 是 report 与 `TurnStop` 的同一权威，
   `SettledEpisodeReport` 以 SHA-256 绑定不可变 receipt
-  （`crates/fabric/src/types/episode_report.rs` 中的 `EpisodeSettlement`、`AttemptRecord`、`EpisodeReport` 与
+  （`crates/contracts/src/types/episode_report.rs` 中的 `EpisodeSettlement`、`AttemptRecord`、`EpisodeReport` 与
   `SettledEpisodeReport`）；
 - frame 转换为完整 manifest；旧 provider 只有 URI 时显式标记 metadata incomplete，不伪造
   digest/size/producer/time range，并拒绝大小写变体的 inline/data URI
-  （`crates/fabric/src/types/episode_report.rs:87-325`）；
+  （`crates/contracts/src/types/episode_report.rs:87-325`）；
 - session 从 SQLite 重建全部重试 evidence，然后按 persist→audit→promotion 消费同一不可变
   receipt；失败 episode 保留 evidence 但不进入成功经验
   （`crates/cognit/src/harness/robot/session.rs` 中的 `build_report` 与 `run_turn`、
-  `crates/executive/src/application/robot_episode_promotion.rs:24-50`）；
+  `crates/mnemosyne/src/episode_promotion.rs:24-50`）；
 - fresh SQLite schema 仅保存有界的 expected/result/verification JSON 和 sequence，大 artifact 只保存
   manifest/reference；report 与 tombstone 表有 immutable trigger
-  （`crates/executive/src/adapters/episode/migrations/001_episodes.sql:7-86`）；
+  （`crates/adapters/sqlite/src/migrations/001_episodes.sql:7-86`）；
 - retention 先持久化 tombstone 再删除 bytes，重启清理“已提交 tombstone/尚未删文件”的 crash
   窗口，且拒绝同 digest 复活；若进程在 local artifact expiry 与 episode projection 写入之间退出，
   下一次带 ArtifactStore 的权威读取按 digest 补写 tombstone。report 只以读时 projection 显示 evidence 已过期，不修改 receipt
-  （`crates/executive/src/adapters/artifact/store.rs:273-430`、
-  `crates/executive/src/adapters/episode/sqlite_episode_sink.rs:267-428`）。
+  （`crates/adapters/sqlite/src/artifact.rs:273-430`、
+  `crates/adapters/sqlite/src/episode.rs:267-428`）。
 
 本地验证：Fabric EpisodeReport 9/9；Executive verifier 6/6、SQLite sink 8/8、artifact retention
 1/1、promotion 3/3、audit 5/5、Robot session E2E 3/3；Cognit robot
@@ -333,9 +333,9 @@ installed/runtime acceptance。
 R8 的 safe-stop 证据不再由 failed/cancelled settlement 推断。状态机在 safe-stop executor
 返回后记录 `SafeStopReceipt` 的 attempt、typed trigger 与 succeeded/failed outcome；report
 验证 outcome 与 `SafeStopFailure` 历史一致，audit 只消费该 typed fact
-（`crates/fabric/src/types/episode_report.rs` 中的 `SafeStopReceipt` 与 `EpisodeReport::validate`、
+（`crates/contracts/src/types/episode_report.rs` 中的 `SafeStopReceipt` 与 `EpisodeReport::validate`、
 `crates/cognit/src/harness/robot/mod.rs:493-511`、
-`crates/executive/src/application/robot_audit.rs:77-103`）。Fabric contract、Cognit recovery 和
+`crates/cognit/src/harness/robot/audit_chain.rs:77-103`）。Fabric contract、Cognit recovery 和
 Executive cancellation session 已覆盖成功/失败 safe-stop receipt；这仍不是远端真实 safe-stop 证据。
 
 ### 2.8 R8 安装态证据检查器（只读）

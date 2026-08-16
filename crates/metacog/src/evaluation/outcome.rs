@@ -1,9 +1,9 @@
 //! Deterministic outcome verification — evaluates OutcomePredicate against WorldSnapshot.
 //! No scripting, regex, JSONPath, or natural-language judgment. Dot-path only.
 
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};
-use fabric::types::world_state::WorldSnapshot;
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::types::outcome_verification::{VerificationDecision, VerificationReport};
+use ::contracts::types::world_state::WorldSnapshot;
 
 /// Evaluates a predicate tree against a before and after snapshot.
 /// Returns a VerificationReport with a tagged decision.
@@ -233,12 +233,12 @@ mod tests {
 
     fn snapshot(payload: serde_json::Value, seq: u64, stale: bool) -> WorldSnapshot {
         WorldSnapshot {
-            device: fabric::types::embodiment::DeviceId("bot".into()),
+            device: ::contracts::types::embodiment::DeviceId("bot".into()),
             schema: "test".into(),
             schema_version: 1,
             sequence: seq,
             payload,
-            observed_at: fabric::MonoTime(seq),
+            observed_at: ::contracts::MonoTime(seq),
             valid_until: None,
             stale,
         }

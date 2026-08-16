@@ -3,8 +3,8 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use fabric::types::frame::FrameRef;
-use fabric::types::perception_observation::PerceptionObservation;
+use crate::perception::PerceptionObservation;
+use ::contracts::types::frame::FrameRef;
 
 /// Configuration for visual frame aggregation.
 #[derive(Debug, Clone)]
@@ -110,7 +110,7 @@ impl VisualAggregator {
         let clamped_confidence = confidence.max(0.0).min(1.0);
 
         let obs = PerceptionObservation {
-            device: fabric::types::embodiment::DeviceId(frame.camera_id.clone()),
+            device: ::contracts::types::embodiment::DeviceId(frame.camera_id.clone()),
             schema: "camera.rgb".into(),
             schema_version: 1,
             frame,

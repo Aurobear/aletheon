@@ -157,7 +157,7 @@ impl McpManager {
 mod tests {
     use super::super::config::{McpServerConfig, McpTransportConfig, McpTrustLevel};
     use super::*;
-    use fabric::tool::ConcurrencyClass;
+    use ::contracts::tool::ConcurrencyClass;
     use http_body_util::{BodyExt, Full};
     use hyper::body::{Bytes, Incoming};
     use hyper::server::conn::http1;
@@ -892,7 +892,7 @@ mod tests {
             .expect("Should have docs_readme resource tool");
 
         use std::path::PathBuf;
-        let ctx = fabric::ToolContext {
+        let ctx = ::contracts::ToolContext {
             approval_authority: None,
             agent: None,
             working_dir: PathBuf::from("/tmp"),

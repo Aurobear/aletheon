@@ -237,7 +237,7 @@ async fn read_path(path: &str, offset: usize, limit: usize, ctx: &ToolContext) -
     }
 }
 
-fn error_result(ctx: &ToolContext, start: fabric::MonoTime, content: String) -> ToolResult {
+fn error_result(ctx: &ToolContext, start: ::contracts::MonoTime, content: String) -> ToolResult {
     ToolResult {
         content: json!({"status": "error", "error": content}).to_string(),
         is_error: true,

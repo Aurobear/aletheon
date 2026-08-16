@@ -1,13 +1,15 @@
+use crate::memory::{
+    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
+    MemoryQuery, MemoryStats, MemoryType,
+};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use ::contracts::{
+    wall_to_datetime, Subsystem, SubsystemContext, SubsystemHealth, Version, WallTime,
+};
 use anyhow::Result;
 use async_trait::async_trait;
-use fabric::{
-    wall_to_datetime, CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter,
-    MemoryHandle, MemoryQuery, MemoryStats, MemoryType, Subsystem, SubsystemContext,
-    SubsystemHealth, Version, WallTime,
-};
 use uuid::Uuid;
 
 /// Mock memory backend with in-memory storage.
@@ -19,14 +21,14 @@ pub struct MockMemoryBackend {
     memory_type: MemoryType,
     entries: Mutex<Vec<MemoryEntry>>,
     initialized: Mutex<bool>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl MockMemoryBackend {
     pub fn new(
         name: impl Into<String>,
         memory_type: MemoryType,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -38,22 +40,22 @@ impl MockMemoryBackend {
     }
 
     /// Create a mock for episodic memory.
-    pub fn episodic(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn episodic(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self::new("mock_episodic", MemoryType::Episodic, clock)
     }
 
     /// Create a mock for semantic memory.
-    pub fn semantic(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn semantic(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self::new("mock_semantic", MemoryType::Semantic, clock)
     }
 
     /// Create a mock for procedural memory.
-    pub fn procedural(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn procedural(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self::new("mock_procedural", MemoryType::Procedural, clock)
     }
 
     /// Create a mock for self memory.
-    pub fn self_memory(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn self_memory(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self::new("mock_self", MemoryType::SelfMemory, clock)
     }
 
@@ -276,7 +278,6 @@ mod tests {
             name: "test".into(),
             working_dir: PathBuf::from("/tmp"),
             config: json!({}),
-            bus: None,
         };
         backend.init(&ctx).await.unwrap();
         backend

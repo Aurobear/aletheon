@@ -1,14 +1,16 @@
 //! Read-only Gmail capability adapter.
 
 use super::client::{GoogleApiClient, GoogleApiError};
+use super::source::MAX_MAIL_BODY_BYTES;
+use crate::tools::google::{
+    ExternalRecordRef, MailMessage, MailMessagePage, MailMessageSummary, MailQuery, OpaqueCursor,
+    OpaqueProviderObjectId,
+};
+use ::contracts::PrincipalId;
+use application::{ExternalCapabilityId, ExternalIdentityId};
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use fabric::external_source::MAX_MAIL_BODY_BYTES;
-use fabric::{
-    ExternalCapabilityId, ExternalIdentityId, ExternalRecordRef, MailMessage, MailMessagePage,
-    MailMessageSummary, MailQuery, OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
-};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 

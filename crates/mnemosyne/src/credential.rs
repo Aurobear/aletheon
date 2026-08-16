@@ -39,7 +39,7 @@ impl std::fmt::Debug for SecretHandle {
 /// Credential grant for a remote embedding provider, bound to an exact origin.
 #[derive(Clone)]
 pub struct EmbeddingCredentialGrant {
-    pub principal: fabric::PrincipalId,
+    pub principal: ::contracts::PrincipalId,
     /// Normalized scheme+host+port+base-path. A request must match this exactly.
     pub approved_base_url: String,
     pub provider_id: String,
@@ -73,7 +73,7 @@ impl EmbeddingCredentialGrant {
         secret: impl Into<String>,
     ) -> Self {
         Self {
-            principal: fabric::PrincipalId(principal.into()),
+            principal: ::contracts::PrincipalId(principal.into()),
             approved_base_url: normalize_url(approved_base_url),
             provider_id: provider_id.into(),
             operation: EmbeddingOperation::EmbeddingOnly,

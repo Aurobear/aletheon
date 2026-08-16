@@ -3,9 +3,9 @@
 //! The identity is the agent's self-model. Every mutation preserves
 //! the previous state in a history chain.
 
+use crate::core::contracts::Identity;
 use anyhow::Result;
 use chrono::Utc;
-use fabric::Identity;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -22,7 +22,7 @@ pub struct IdentityRecord {
 pub struct IdentityLayer {
     current: RwLock<Identity>,
     history: RwLock<Vec<IdentityRecord>>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl IdentityLayer {
@@ -30,13 +30,13 @@ impl IdentityLayer {
         name: impl Into<String>,
         description: impl Into<String>,
         version: impl Into<String>,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
     ) -> Self {
         let identity = Identity {
             name: name.into(),
             description: description.into(),
             version: version.into(),
-            created_at: fabric::wall_to_datetime(clock.wall_now()),
+            created_at: ::contracts::wall_to_datetime(clock.wall_now()),
             last_mutation: None,
         };
         Self {
@@ -66,7 +66,7 @@ impl IdentityLayer {
         // Push old to history
         self.history.write().push(IdentityRecord {
             identity: old,
-            mutated_at: fabric::wall_to_datetime(self.clock.wall_now()),
+            mutated_at: ::contracts::wall_to_datetime(self.clock.wall_now()),
             reason: reason.into(),
         });
 
@@ -80,7 +80,7 @@ impl IdentityLayer {
         if let Some(ver) = new_version {
             current.version = ver;
         }
-        current.last_mutation = Some(fabric::wall_to_datetime(self.clock.wall_now()));
+        current.last_mutation = Some(::contracts::wall_to_datetime(self.clock.wall_now()));
 
         current.clone()
     }
@@ -154,7 +154,7 @@ impl IdentityLayer {
                     version: row.get(2)?,
                     created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
                         .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
+                        .unwrap_or_else(|_| ::contracts::wall_to_datetime(self.clock.wall_now())),
                     last_mutation: last_mutation
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|dt| dt.with_timezone(&Utc)),
@@ -181,7 +181,7 @@ impl IdentityLayer {
                             created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
                                 .map(|dt| dt.with_timezone(&Utc))
                                 .unwrap_or_else(|_| {
-                                    fabric::wall_to_datetime(self.clock.wall_now())
+                                    ::contracts::wall_to_datetime(self.clock.wall_now())
                                 }),
                             last_mutation: last_mutation
                                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -189,7 +189,9 @@ impl IdentityLayer {
                         },
                         mutated_at: chrono::DateTime::parse_from_rfc3339(&mutated_at)
                             .map(|dt| dt.with_timezone(&Utc))
-                            .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
+                            .unwrap_or_else(|_| {
+                                ::contracts::wall_to_datetime(self.clock.wall_now())
+                            }),
                         reason: row.get(6)?,
                     })
                 })?
@@ -206,7 +208,7 @@ mod tests {
     use super::*;
     use kernel::chronos::TestClock;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 

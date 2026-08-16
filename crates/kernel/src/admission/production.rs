@@ -24,19 +24,19 @@
 //! → settle(permit, usage) → deduct budget, release lease, audit
 //! ```
 
-use async_trait::async_trait;
-use fabric::types::admission::RiskLevel;
-use fabric::{
-    AdmissionController, AdmissionError, AdmissionRequest, BudgetReservationId, ExecutionPermit,
-    MonoDeadline, PermitId, ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement,
-    UsageReport,
+use ::contracts::types::admission::RiskLevel;
+use ::contracts::{
+    AdmissionError, AdmissionRequest, BudgetReservationId, ExecutionPermit, MonoDeadline, PermitId,
+    ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
+use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use super::budget::InMemoryBudgetController;
 use super::lease::InMemoryResourceLeaseManager;
+use super::AdmissionController;
 
 /// Production admission controller with proper permit lifecycle tracking
 /// and optional budget/lease enforcement.
@@ -57,7 +57,7 @@ use super::lease::InMemoryResourceLeaseManager;
 /// - Double-settle returns `AlreadySettled`.
 /// - `revoke()` after `settle()` returns `AlreadySettled`.
 pub struct ProductionAdmissionController {
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
     active: Mutex<HashMap<PermitId, PermitRecord>>,
     settled: Mutex<HashSet<PermitId>>,
     budget: Option<Arc<InMemoryBudgetController>>,
@@ -70,8 +70,8 @@ pub struct ProductionAdmissionController {
 #[derive(Debug, Clone)]
 struct PermitRecord {
     principal: String,
-    process_id: fabric::ProcessId,
-    operation_id: fabric::OperationId,
+    process_id: ::contracts::ProcessId,
+    operation_id: ::contracts::OperationId,
     budget_reservation: Option<BudgetReservationId>,
     lease: Option<ResourceLeaseId>,
 }
@@ -89,7 +89,7 @@ impl ProductionAdmissionController {
     /// Create a production admission controller backed by the given clock.
     /// Sandbox availability defaults to `true` (optimistic). Wire with
     /// `with_sandbox_available(false)` until Phase 5D detects real backends.
-    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             clock,
             active: Mutex::new(HashMap::new()),
@@ -102,7 +102,7 @@ impl ProductionAdmissionController {
 
     /// Revoke every still-active permit owned by a process. This is the
     /// KernelRuntime terminal cleanup hook; settled permits are already clean.
-    pub async fn revoke_process_permits(&self, process: fabric::ProcessId) {
+    pub async fn revoke_process_permits(&self, process: ::contracts::ProcessId) {
         let permit_ids: Vec<_> = self
             .active
             .lock()
@@ -115,7 +115,7 @@ impl ProductionAdmissionController {
         }
     }
 
-    pub async fn active_for_process(&self, process: fabric::ProcessId) -> usize {
+    pub async fn active_for_process(&self, process: ::contracts::ProcessId) -> usize {
         self.active
             .lock()
             .await
@@ -124,7 +124,7 @@ impl ProductionAdmissionController {
             .count()
     }
 
-    pub async fn active_for_operation(&self, operation: fabric::OperationId) -> usize {
+    pub async fn active_for_operation(&self, operation: ::contracts::OperationId) -> usize {
         self.active
             .lock()
             .await
@@ -133,7 +133,7 @@ impl ProductionAdmissionController {
             .count()
     }
 
-    pub async fn revoke_operation_permits(&self, operation: fabric::OperationId) {
+    pub async fn revoke_operation_permits(&self, operation: ::contracts::OperationId) {
         let permit_ids: Vec<_> = self
             .active
             .lock()
@@ -347,12 +347,12 @@ impl AdmissionController for ProductionAdmissionController {
 mod tests {
     use super::*;
     use crate::chronos::TestClock;
-    use fabric::types::admission::{
+    use ::contracts::types::admission::{
         AdmissionRequest, BudgetRequest, CapabilityId, CapabilityScope, LeaseRequest, PrincipalId,
         RiskLevel,
     };
-    use fabric::types::operation::{OperationId, ProcessId};
-    use fabric::MonoTime;
+    use ::contracts::types::operation::{OperationId, ProcessId};
+    use ::contracts::MonoTime;
 
     fn test_clock(mono_ms: u64) -> Arc<TestClock> {
         Arc::new(TestClock::new(0, mono_ms))

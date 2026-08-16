@@ -1,8 +1,8 @@
 //! Ownership-checked temporary git worktrees for coding jobs.
 
 use super::command::{CommandOutput, CommandRequest, CommandRunner};
+use ::contracts::{ChangedFile, ChangedFileKind, Clock, CodingJobId, WorkspaceBoundary};
 use anyhow::{bail, Context, Result};
-use fabric::{ChangedFile, ChangedFileKind, Clock, CodingJobId, WorkspaceBoundary};
 use kernel::chronos::SystemClock;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};

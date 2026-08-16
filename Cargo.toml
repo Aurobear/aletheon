@@ -2,7 +2,9 @@
 resolver = "2"
 members = [
     "crates/aletheon",
-    "crates/fabric",
+    "crates/adapters/sqlite",
+    "crates/adapters/agent-profile",
+    "crates/contracts",
     "crates/cognit",
     "crates/corpus",
     "crates/dasein",
@@ -12,10 +14,10 @@ members = [
     "crates/metacog",
     "crates/kernel",
     "crates/gateway",
-    "crates/executive",
     "crates/execd",
     "crates/platform",
     "crates/runtime",
+    "crates/application",
     "crates/hardware",
     "examples/basic_agent",
     "examples/evolution_loop",
@@ -84,7 +86,6 @@ debug = 1
 incremental = true
 
 # Local deployment is an edit/verify loop too. Preserve optimized codegen units
-# between deployments instead of rebuilding the 120k-line executive crate after
 # every source edit. The tagged release workflow explicitly overrides this with
 # CARGO_INCREMENTAL=0 for distributable artifacts.
 [profile.release]

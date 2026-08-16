@@ -3,9 +3,9 @@
 //! Opens .tar.gz packages, validates structure, verifies checksums,
 //! and extracts to a staging directory.
 
+use crate::extension::asset::AssetKind;
+use crate::extension::package::PackageManifest;
 use anyhow::{bail, Context, Result};
-use fabric::types::extension_asset::AssetKind;
-use fabric::types::extension_package::PackageManifest;
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

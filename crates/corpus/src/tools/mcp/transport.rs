@@ -122,7 +122,7 @@ impl ToolNameConfig {
 }
 
 fn truncate_to(mut s: String, max_len: usize) -> String {
-    fabric::truncate_utf8_bytes(&mut s, max_len);
+    runtime::compaction::truncate_utf8_bytes(&mut s, max_len);
     s
 }
 

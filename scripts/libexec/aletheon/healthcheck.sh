@@ -91,7 +91,10 @@ def daemon_health(path, expected_uid=None, expected_gid=None):
             "readiness": readiness,
             "components": result.get("components", {}),
         }
-        return report, {"ready": 0, "degraded": 1, "unready": 2}.get(readiness, 2)
+        # Optional degradation is still admission-ready.  The typed component
+        # classes distinguish it from `required_unready`; deployment must not
+        # wait forever for a deliberately optional integration.
+        return report, {"ready": 0, "degraded": 0, "unready": 2}.get(readiness, 2)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         fail(f"local daemon unavailable: {path}: {error}")
     finally:

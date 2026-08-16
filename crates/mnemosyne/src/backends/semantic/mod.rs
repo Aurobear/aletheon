@@ -1,6 +1,7 @@
 //! SemanticMemory — knowledge, concepts, facts, with FTS5 keyword search
 //! and optional embedding-based vector search.
 
+use crate::memory::{CompactStrategy, MemoryBackend, MemoryEntry, MemoryQuery, MemoryType};
 mod query;
 mod schema;
 mod storage;
@@ -10,17 +11,14 @@ pub use schema::SemanticMemory;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::{
-        wall_to_datetime, CompactStrategy, EmbeddingProvider, MemoryBackend, MemoryEntry,
-        MemoryQuery, MemoryType, Subsystem, SubsystemContext,
-    };
+    use ::contracts::{wall_to_datetime, EmbeddingProvider, Subsystem, SubsystemContext};
     use schema::HashEmbeddingProvider;
     use std::sync::Arc;
     use uuid::Uuid;
 
     use schema::{cosine_similarity, hash_embedding, l2_norm, VectorIndex};
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(kernel::chronos::TestClock::default())
     }
 
@@ -46,7 +44,6 @@ mod tests {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
             config: serde_json::Value::Null,
-            bus: None,
         };
         mem.init(&ctx).await.unwrap();
     }

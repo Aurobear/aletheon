@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use fabric::{Clock, EmbeddingProvider};
+use ::contracts::{Clock, EmbeddingProvider};
 
 use super::ConsolidationRepository;
 use crate::{EmbeddedRecord, VectorIndexWriter};

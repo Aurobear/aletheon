@@ -2,10 +2,10 @@
 //!
 //! Provides helpers for genome loading, conversion, and config extraction.
 
+use crate::genome::contracts::Genome;
 use crate::genome::{CareExt, GenomeMeta, ReasoningConfig};
+use ::contracts::Clock;
 use anyhow::Result;
-use fabric::genome::Genome;
-use fabric::Clock;
 use std::path::Path;
 use std::sync::Arc;
 

@@ -1,4 +1,4 @@
-use fabric::{
+use ::contracts::{
     AgentId, AgentProfileId, CancelReason, NamespaceId, OperationKind, OperationRequest,
     OperationState, ProcessId, ProcessSignal, SpawnSpec,
 };
@@ -14,7 +14,7 @@ fn child_spec(parent: ProcessId) -> SpawnSpec {
         namespace: NamespaceId("test".into()),
         initial_operation: None,
         deadline: None,
-        ownership: fabric::ProcessOwnership::Unowned,
+        ownership: ::contracts::ProcessOwnership::Unowned,
     }
 }
 
@@ -53,7 +53,7 @@ async fn operation_parent_must_exist_be_live_and_share_owner() {
         deadline: None,
     };
     assert!(runtime
-        .submit_operation(request(Some(fabric::OperationId::new())))
+        .submit_operation(request(Some(::contracts::OperationId::new())))
         .await
         .is_err());
     let parent = runtime.submit_operation(request(None)).await.unwrap();

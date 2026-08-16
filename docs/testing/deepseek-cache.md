@@ -22,7 +22,7 @@ Provider cache usage 只能来自 wire usage 字段和 effective `CacheReporting
 
 ## Prompt partition and stable prefix
 
-`PromptRegion`（`crates/executive/src/application/prompt_partition.rs`）把请求分成稳定身份/协议、稳定工具、会话历史、动态上下文和当前输入。稳定区不能包含时间、UUID、operation ID、预算、设备状态、per-turn recall 或 attempt number。
+`PromptRegion`（`crates/runtime/src/prompt_partition.rs`）把请求分成稳定身份/协议、稳定工具、会话历史、动态上下文和当前输入。稳定区不能包含时间、UUID、operation ID、预算、设备状态、per-turn recall 或 attempt number。
 
 分区与 `InferencePrefixShape` 只提供诊断身份和构造成本观测，不改变发送给 provider 的内容，也不作为本地命中判定。生产请求保持稳定前缀字节序；动态 memory、goal、plan 和当前输入位于其后。
 

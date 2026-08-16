@@ -7,7 +7,9 @@ license.workspace = true
 description = "Aletheon Meta runtime - self-update and morphological evolution"
 
 [dependencies]
-fabric = { path = "../fabric" }
+dasein = { path = "../dasein" }
+cognit = { path = "../cognit" }
+contracts = { path = "../contracts" }
 kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }

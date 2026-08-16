@@ -2,9 +2,9 @@ use super::{ReActLoop, TurnMetrics};
 
 use crate::adapters::inference::provider::{LlmProvider, LlmResponse, LlmStream, StreamChunk};
 use crate::harness::event_sink::{Event, EventSink};
+use ::contracts::message::{ContentBlock, Message};
+use ::contracts::ToolDefinition;
 use async_trait::async_trait;
-use fabric::message::{ContentBlock, Message};
-use fabric::ToolDefinition;
 use std::future::Future;
 use std::sync::Mutex;
 
@@ -138,7 +138,7 @@ impl ReActLoop {
                 anyhow::bail!("collecting adapter observed inconsistent terminal output")
             }
             Some(Err(error))
-                if outcome.1.stop == fabric::TurnStop::Blocked && error == outcome.0 =>
+                if outcome.1.stop == ::contracts::TurnStop::Blocked && error == outcome.0 =>
             {
                 Ok(outcome)
             }

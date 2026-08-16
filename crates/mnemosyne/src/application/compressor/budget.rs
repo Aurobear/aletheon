@@ -4,7 +4,7 @@
 //! accidentally compare conversation tokens with the model's whole context
 //! window.
 
-use fabric::{
+use ::contracts::{
     ContextCostTokens, HistoryBudgetTokens, HistoryTokens, ModelContextWindowTokens,
     ProfileInputLimitTokens,
 };

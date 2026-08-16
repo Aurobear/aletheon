@@ -7,7 +7,8 @@ license.workspace = true
 description = "Aletheon Self-evolution - reflection, behavior evolution, and genome generation"
 
 [dependencies]
-fabric = { path = "../fabric" }
+runtime = { path = "../runtime" }
+contracts = { path = "../contracts" }
 kernel = { path = "../kernel" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
@@ -15,6 +16,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 async-trait = "0.1"
+thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"

@@ -1,11 +1,11 @@
 use crate::application::learning::{
-    LearnRule, OutcomeContext, OutcomeRecord, OutcomeRecorder, PatternExtractor, RuleStore,
+    LearnRule, OutcomeContext, OutcomeRecord, OutcomeRecorder, OutcomeStore, PatternExtractor,
+    RuleStore,
 };
+use crate::domain::{Experience, LearnedRule};
+use ::contracts::body::{Action, ActionResult};
+use ::contracts::Clock;
 use anyhow::Result;
-use fabric::body::{Action, ActionResult};
-use fabric::cognit::{Experience, LearnedRule};
-use fabric::Clock;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 /// Bridges learning pipeline into CognitCore
@@ -17,9 +17,9 @@ pub struct LearningBridge {
 }
 
 impl LearningBridge {
-    pub fn new(db_path: PathBuf, max_rules: usize, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(store: Arc<dyn OutcomeStore>, max_rules: usize, clock: Arc<dyn Clock>) -> Self {
         Self {
-            outcome_recorder: OutcomeRecorder::new(db_path, clock.clone()),
+            outcome_recorder: OutcomeRecorder::new(store),
             pattern_extractor: PatternExtractor::new(3, 0.7, clock.clone()),
             rule_store: Arc::new(Mutex::new(RuleStore::new(max_rules))),
             clock,
@@ -42,7 +42,7 @@ impl LearningBridge {
             result_summary: result.output.chars().take(200).collect(),
             is_error: !result.success,
             user_feedback: None,
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: ::contracts::wall_to_datetime(self.clock.wall_now()),
             context: OutcomeContext::default(),
         };
         self.outcome_recorder.record(&outcome)
@@ -86,7 +86,7 @@ impl LearningBridge {
             result_summary: experience.result.output.chars().take(200).collect(),
             is_error: !experience.result.success,
             user_feedback: None,
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: ::contracts::wall_to_datetime(self.clock.wall_now()),
             context: OutcomeContext::default(),
         }
     }

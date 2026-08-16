@@ -1,30 +1,32 @@
 //! Bounded RobotHarness — Observe, Plan, Authorize, Execute, Verify, Retry, Replan, Recover, Settle, SafeStop.
 //! Cognit owns the state machine; it does NOT depend on Executive or Hardware.
 
+pub mod perception;
 pub mod proposal_validator;
 pub mod session;
 pub mod state;
+pub use perception::PerceptionObservation;
 
 use crate::harness::robot::proposal_validator::validate_proposal;
 use crate::harness::robot::state::{
     AttemptSummary, ReplanContext, RobotHarnessConfig, RobotState, VerificationSignal,
 };
 use crate::ports::policy_provider::PolicyProviderPort;
-use async_trait::async_trait;
-use fabric::types::embodiment::{
+use ::contracts::types::embodiment::{
     DeviceId, SkillDescriptor, SkillOutcome, SkillRequest, SkillResult,
 };
-use fabric::types::episode_report::{
+pub use ::contracts::types::episode_report::EpisodePromotionPort;
+use ::contracts::types::episode_report::{
     EpisodeSettlement, SafeStopOutcome, SafeStopReceipt, SettledEpisodeReport,
 };
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::frame::FrameRef;
-use fabric::types::outcome_verification::VerificationReport;
-use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::robot_failure::{RobotFailure, RobotFailureClass};
-use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort, ANY_SCHEMA};
-use fabric::OperationId;
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::types::frame::FrameRef;
+use ::contracts::types::outcome_verification::VerificationReport;
+use ::contracts::types::robot_failure::{RobotFailure, RobotFailureClass};
+use ::contracts::types::skill_proposal::{PolicyProvenance, SkillProposal};
+use ::contracts::types::world_state::{WorldSnapshot, WorldStatePort, ANY_SCHEMA};
+use ::contracts::OperationId;
+use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -137,7 +139,7 @@ pub trait EpisodeSink: Send + Sync {
     async fn load_attempts(
         &self,
         episode_id: &str,
-    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String>;
+    ) -> Result<Vec<::contracts::types::episode_report::AttemptRecord>, String>;
     /// Atomically publish the final immutable report receipt. Implementations
     /// that cannot persist reports must remain explicit no-ops; production uses
     /// the SQLite sink below this port.
@@ -150,13 +152,6 @@ pub trait EpisodeSink: Send + Sync {
     ) -> Result<Option<SettledEpisodeReport>, String> {
         Ok(None)
     }
-}
-
-/// Port for distilling a settled, matched robot episode into long-term memory.
-/// The immutable receipt is verified again by the production adapter.
-#[async_trait]
-pub trait EpisodePromotionPort: Send + Sync {
-    async fn promote(&self, report: &SettledEpisodeReport) -> Result<(), String>;
 }
 
 /// Governance audit boundary for the immutable episode receipt. Implementations
@@ -874,7 +869,7 @@ impl RobotHarness {
 
                 let remaining_retries = self.config.max_retries.saturating_sub(state.retries_used);
                 let remaining_replans = self.config.max_replans.saturating_sub(state.replans_used);
-                use fabric::types::outcome_verification::VerificationDecision;
+                use ::contracts::types::outcome_verification::VerificationDecision;
                 let signal = match report.decision {
                     VerificationDecision::Matched => VerificationSignal::Matched,
                     VerificationDecision::RetryableMismatch => {
@@ -1130,10 +1125,10 @@ fn validate_selected_perception(
 }
 
 fn required_perception_available(
-    skill: &fabric::types::embodiment::SkillId,
+    skill: &::contracts::types::embodiment::SkillId,
     visual: &[PerceptionObservation],
     requirements: &std::collections::BTreeMap<
-        fabric::types::embodiment::SkillId,
+        ::contracts::types::embodiment::SkillId,
         Vec<(String, u16)>,
     >,
 ) -> bool {
@@ -1203,3 +1198,11 @@ mod schema_tests {
         );
     }
 }
+
+pub mod embodied_execution_adapter;
+
+pub mod audit_chain;
+
+pub mod outcome_verifier;
+
+pub mod perception_store;

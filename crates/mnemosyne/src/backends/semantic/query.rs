@@ -3,16 +3,17 @@
 //! The MemoryBackend trait impl (recall, list, stats, store, forget, compact)
 //! lives in `storage.rs` to avoid conflicting impl blocks.
 
+use crate::memory::{MemoryEntry, MemoryType};
 use std::sync::Arc;
 
+use ::contracts::wall_to_datetime;
 use chrono::{DateTime, Utc};
-use fabric::{wall_to_datetime, MemoryEntry, MemoryType};
 use uuid::Uuid;
 
 /// Convert a rusqlite Row into a MemoryEntry.
 pub(super) fn row_to_entry(
     row: &rusqlite::Row,
-    clock: &Arc<dyn fabric::Clock>,
+    clock: &Arc<dyn ::contracts::Clock>,
 ) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;

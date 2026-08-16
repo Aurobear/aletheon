@@ -1,7 +1,10 @@
 //! CandidateBridge — converts between CandidateGenerator outputs and ABI types.
 
+use crate::genome::contracts::Genome;
+use crate::governance::contracts::RuntimeCandidate;
+use ::contracts::Clock;
 use anyhow::Result;
-use fabric::{Clock, Genome, MutationIntent, RuntimeCandidate};
+use dasein::MutationIntent;
 use std::sync::Arc;
 
 use crate::evolution::candidate::CandidateGenerator;

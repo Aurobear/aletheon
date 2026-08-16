@@ -26,7 +26,9 @@ pub mod output;
 pub(crate) mod overview_guard;
 pub mod process_list;
 pub mod registry;
+mod registry_error;
 pub mod repo_inspect;
+pub(crate) mod repository;
 pub mod robot;
 mod scoped_filesystem;
 pub mod script_tool;
@@ -42,9 +44,9 @@ pub mod web_search;
 pub(crate) mod workspace_version;
 
 // Re-export types from fabric (the canonical definitions)
-pub use fabric::tool::{ConcurrencyClass, ToolExposure};
-pub use fabric::tool::{
+pub use ::contracts::tool::{ConcurrencyClass, ToolExposure};
+pub use ::contracts::tool::{
     PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
 };
-pub use registry::ToolRegistry;
+pub use registry::{RegistrationId, Registry, ToolRegistry};
 pub use toolset::ToolsetRegistry;

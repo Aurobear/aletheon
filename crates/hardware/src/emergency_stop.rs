@@ -2,7 +2,7 @@
 //! E-stop is NOT Cancel/SafeStop — it is a separate high-priority local path.
 //! Once latched, only a local trusted adapter may reset.
 
-use fabric::types::emergency_stop::{EStopEvent, EStopState};
+use crate::{EStopEvent, EStopState};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Mutex;
 

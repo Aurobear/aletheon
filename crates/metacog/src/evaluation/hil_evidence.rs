@@ -1,7 +1,7 @@
 //! Verifier for signed HIL gate evidence.
 //! Only allowlisted public keys may produce valid evidence.
 
-use fabric::types::hil_evidence::{HILEvidence, HILResult};
+use super::hil_evidence_contract::{HILEvidence, HILResult};
 use std::collections::HashSet;
 
 pub struct HILEvidenceVerifier {

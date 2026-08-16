@@ -1,6 +1,6 @@
 use super::DaseinModule;
 use crate::core::store::SelfFieldStore;
-use fabric::dasein::{ExperienceSource, InterpretedExperience, Stimmung};
+use ::contracts::dasein::{ExperienceSource, InterpretedExperience, Stimmung};
 use rusqlite::{params, OptionalExtension};
 
 pub fn save_dasein_state(dasein: &DaseinModule, _store: &SelfFieldStore) -> anyhow::Result<()> {

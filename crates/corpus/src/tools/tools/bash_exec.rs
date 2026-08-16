@@ -1,5 +1,5 @@
+use ::contracts::Timer;
 use async_trait::async_trait;
-use fabric::Timer;
 use serde_json::json;
 use tokio::process::Command;
 
@@ -126,7 +126,7 @@ impl Tool for BashExecTool {
         &self,
         input: serde_json::Value,
         ctx: &ToolContext,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) {
         let command_text = input["command"].as_str().unwrap_or("");
         let timeout_secs = input["timeout_seconds"].as_u64().unwrap_or(10);
@@ -140,7 +140,7 @@ impl Tool for BashExecTool {
             command,
             std::time::Duration::from_secs(timeout_secs),
             "bash_exec",
-            fabric::IsolationLevel::None,
+            ::contracts::IsolationLevel::None,
             ctx.clock.clone(),
             sink,
         )
@@ -196,7 +196,7 @@ impl Tool for BashExecTool {
 #[cfg(test)]
 mod streaming_tests {
     use super::*;
-    use fabric::{tool_event_channel, ToolExecutionEvent, ToolProgress};
+    use ::contracts::{tool_event_channel, ToolExecutionEvent, ToolProgress};
     use std::sync::Arc;
 
     #[tokio::test]

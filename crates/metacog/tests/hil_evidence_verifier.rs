@@ -1,7 +1,7 @@
 //! Integration tests for the HILEvidenceVerifier public API.
 
-use fabric::types::hil_evidence::{HILEvidence, HILResult};
 use metacog::evaluation::hil_evidence::HILEvidenceVerifier;
+use metacog::evaluation::hil_evidence_contract::{HILEvidence, HILResult};
 
 fn valid_evidence() -> HILEvidence {
     HILEvidence {

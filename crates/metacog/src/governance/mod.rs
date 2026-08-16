@@ -1,3 +1,4 @@
+pub mod contracts;
 pub(crate) mod editor;
 pub(crate) mod runtime;
 pub(crate) mod self_reader;

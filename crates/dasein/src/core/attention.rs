@@ -25,11 +25,11 @@ pub struct AttentionLayer {
     focus: RwLock<Vec<FocusTopic>>,
     /// Priority decays by this amount per second of inactivity.
     decay_rate: f64,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl AttentionLayer {
-    pub fn new(decay_rate: f64, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(decay_rate: f64, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             focus: RwLock::new(Vec::new()),
             decay_rate,
@@ -42,20 +42,20 @@ impl AttentionLayer {
         let mut focus = self.focus.write();
         if let Some(existing) = focus.iter_mut().find(|f| f.topic == topic) {
             existing.priority = priority;
-            existing.last_updated = fabric::wall_to_datetime(self.clock.wall_now());
+            existing.last_updated = ::contracts::wall_to_datetime(self.clock.wall_now());
         } else {
             focus.push(FocusTopic {
                 topic: topic.to_string(),
                 priority,
-                started_at: fabric::wall_to_datetime(self.clock.wall_now()),
-                last_updated: fabric::wall_to_datetime(self.clock.wall_now()),
+                started_at: ::contracts::wall_to_datetime(self.clock.wall_now()),
+                last_updated: ::contracts::wall_to_datetime(self.clock.wall_now()),
             });
         }
     }
 
     /// Apply decay to all focus topics. Removes topics with priority <= 0.
     pub fn decay(&self) {
-        let now = fabric::wall_to_datetime(self.clock.wall_now());
+        let now = ::contracts::wall_to_datetime(self.clock.wall_now());
         let mut focus = self.focus.write();
         for topic in focus.iter_mut() {
             let elapsed = (now - topic.last_updated).num_seconds() as f64;
@@ -137,10 +137,10 @@ impl AttentionLayer {
                     priority: row.get(1)?,
                     started_at: DateTime::parse_from_rfc3339(&started_str)
                         .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
+                        .unwrap_or_else(|_| ::contracts::wall_to_datetime(self.clock.wall_now())),
                     last_updated: DateTime::parse_from_rfc3339(&updated_str)
                         .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
+                        .unwrap_or_else(|_| ::contracts::wall_to_datetime(self.clock.wall_now())),
                 })
             })
             .context("Failed to query attention_topics")?;
@@ -169,7 +169,7 @@ mod tests {
     use super::*;
     use kernel::chronos::TestClock;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 

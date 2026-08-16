@@ -1,7 +1,7 @@
 //! Pure outbound-rendering helpers for the channel router.
 
-use fabric::channel::{ActionType, ConversationId, MessageContent, OutboundMessage, UserAction};
-use fabric::{ApprovalCategory, ApprovalSnapshot};
+use crate::channel::{ActionType, ConversationId, MessageContent, OutboundMessage, UserAction};
+use ::contracts::{ApprovalCategory, ApprovalSnapshot};
 
 pub fn render_approval_notification(
     conversation_id: ConversationId,

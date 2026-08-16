@@ -1,8 +1,8 @@
-use fabric::dasein::SelfVersion;
-use fabric::{
-    AgoraSpaceId, BroadcastEpoch, CandidateDisposition, ConsciousCoreSnapshot, ContentId,
-    InspectorProcessorAck, ProcessorHealth, ProcessorId, SalienceVector,
+use ::contracts::dasein::SelfVersion;
+use ::contracts::{
+    AgoraSpaceId, BroadcastEpoch, ContentId, ProcessorHealth, ProcessorId, SalienceVector,
 };
+use gateway::protocol::{CandidateDisposition, ConsciousCoreSnapshot, InspectorProcessorAck};
 
 #[test]
 fn rendering_is_sanitized_and_states_indicator_limitations_and_degradation() {

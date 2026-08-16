@@ -143,6 +143,13 @@ impl PagerOverlay {
         self.scroll_offset = self.scroll_offset.saturating_sub(n);
     }
 
+    /// Position a newly opened bounded document at its first line.  Help and
+    /// other command catalogs are read top-to-bottom rather than transcripts
+    /// whose newest content belongs at the bottom.
+    pub fn scroll_to_top(&mut self) {
+        self.scroll_offset = usize::MAX;
+    }
+
     /// Handle a key event. Returns true if the pager should close.
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         use crossterm::event::KeyCode;

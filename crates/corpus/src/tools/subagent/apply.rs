@@ -1,7 +1,7 @@
 //! Fail-closed application of a previously verified and approved git patch.
 
 use super::command::{CommandOutput, CommandRequest, CommandRunner};
-use fabric::{ApprovalId, ApprovalStatus};
+use ::contracts::{ApprovalId, ApprovalStatus};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

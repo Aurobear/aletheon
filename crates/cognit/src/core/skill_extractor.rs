@@ -9,11 +9,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use ::contracts::Clock;
 use anyhow::{Context, Result};
-use fabric::Clock;
 use std::sync::Arc;
 
-use fabric::cognit::ReflectionEntry;
+use crate::domain::ReflectionEntry;
 
 /// Category of an extracted skill.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -244,7 +244,7 @@ impl SkillExtractor {
              {}\n",
             skill.name,
             skill.category,
-            fabric::wall_to_datetime(self.clock.wall_now()).format("%Y-%m-%d %H:%M:%S UTC"),
+            ::contracts::wall_to_datetime(self.clock.wall_now()).format("%Y-%m-%d %H:%M:%S UTC"),
             skill.source_reflections.len(),
             skill.description,
             skill.content,
@@ -297,7 +297,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::cognit::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+    use crate::domain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
     use std::sync::Arc;
 
     fn make_extractor() -> SkillExtractor {
@@ -313,7 +313,9 @@ mod tests {
     ) -> ReflectionEntry {
         ReflectionEntry {
             id: id.to_string(),
-            timestamp: fabric::wall_to_datetime(kernel::chronos::TestClock::default().wall_now()),
+            timestamp: ::contracts::wall_to_datetime(
+                kernel::chronos::TestClock::default().wall_now(),
+            ),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: format!("task {id}"),
             outcome: ReflectionOutcome::Success,

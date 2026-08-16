@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use fabric::ToolContext;
+use ::contracts::ToolContext;
 use platform::{FilesystemAccess, FilesystemHost, FilesystemScope, HostPath, SymlinkPolicy};
 
 pub(crate) struct ScopedFilesystem {
@@ -110,7 +110,7 @@ fn writable_traversal_root(path: &Path) -> Result<PathBuf, String> {
 
 fn reject_sensitive_read(
     candidate: &Path,
-    protected: &fabric::ProtectedPathPolicy,
+    protected: &::contracts::ProtectedPathPolicy,
 ) -> Result<(), String> {
     if protected
         .credential_paths()
@@ -161,21 +161,21 @@ mod tests {
 
     fn context(root: &Path, allowed_paths: Vec<String>) -> ToolContext {
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots(root.to_path_buf(), vec![]).unwrap();
+            ::contracts::WorkspacePolicy::from_resolved_roots(root.to_path_buf(), vec![]).unwrap();
         ToolContext {
             agent: None,
-            approval_authority: Some(fabric::ToolApprovalAuthority {
-                principal_id: fabric::PrincipalId("test".into()),
-                connection_id: fabric::ConnectionId::new(),
-                thread_id: fabric::ThreadId("test".into()),
-                turn_id: fabric::TurnId::new(),
+            approval_authority: Some(::contracts::ToolApprovalAuthority {
+                principal_id: ::contracts::PrincipalId("test".into()),
+                connection_id: ::contracts::ConnectionId::new(),
+                thread_id: ::contracts::ThreadId("test".into()),
+                turn_id: ::contracts::TurnId::new(),
                 call_id: "call".into(),
                 workspace,
-                granted_scope: fabric::CapabilityScope {
+                granted_scope: ::contracts::CapabilityScope {
                     allowed_paths,
                     ..Default::default()
                 },
-                permission_mode: fabric::permission::HostPermissionMode::Safe,
+                permission_mode: ::contracts::permission::HostPermissionMode::Safe,
             }),
             working_dir: root.to_path_buf(),
             session_id: "test".into(),
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn generic_reads_reject_common_secret_locations() {
-        let protected = fabric::ProtectedPathPolicy::default();
+        let protected = ::contracts::ProtectedPathPolicy::default();
         for path in [
             "/home/user/.ssh/id_ed25519",
             "/etc/shadow",
@@ -263,7 +263,7 @@ mod tests {
         let sibling = workspace.path().join("sibling.txt");
         std::fs::write(&target, "original").unwrap();
         std::fs::write(&sibling, "sibling").unwrap();
-        let policy = fabric::WorkspacePolicy::from_resolved_roots(
+        let policy = ::contracts::WorkspacePolicy::from_resolved_roots(
             workspace.path().to_path_buf(),
             Vec::new(),
         )
@@ -272,18 +272,18 @@ mod tests {
         .unwrap();
         let context = ToolContext {
             agent: None,
-            approval_authority: Some(fabric::ToolApprovalAuthority {
-                principal_id: fabric::PrincipalId("test".into()),
-                connection_id: fabric::ConnectionId::new(),
-                thread_id: fabric::ThreadId("test".into()),
-                turn_id: fabric::TurnId::new(),
+            approval_authority: Some(::contracts::ToolApprovalAuthority {
+                principal_id: ::contracts::PrincipalId("test".into()),
+                connection_id: ::contracts::ConnectionId::new(),
+                thread_id: ::contracts::ThreadId("test".into()),
+                turn_id: ::contracts::TurnId::new(),
                 call_id: "call".into(),
                 workspace: policy,
-                granted_scope: fabric::CapabilityScope {
+                granted_scope: ::contracts::CapabilityScope {
                     allowed_paths: vec![target.to_string_lossy().into_owned()],
                     ..Default::default()
                 },
-                permission_mode: fabric::permission::HostPermissionMode::Safe,
+                permission_mode: ::contracts::permission::HostPermissionMode::Safe,
             }),
             working_dir: workspace.path().to_path_buf(),
             session_id: "test".into(),

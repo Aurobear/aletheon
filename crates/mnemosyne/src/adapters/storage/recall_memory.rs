@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use ::contracts::wall_to_datetime;
 use chrono::{DateTime, Utc};
-use fabric::wall_to_datetime;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -19,11 +19,14 @@ pub struct MemoryEntry {
 /// L2 Recall Memory -- SQLite-backed conversation history and tool call records.
 pub struct RecallMemory {
     db: Connection,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl RecallMemory {
-    pub fn new(db_path: &std::path::Path, clock: Arc<dyn fabric::Clock>) -> anyhow::Result<Self> {
+    pub fn new(
+        db_path: &std::path::Path,
+        clock: Arc<dyn ::contracts::Clock>,
+    ) -> anyhow::Result<Self> {
         let db = Connection::open(db_path)?;
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS recall_memory (

@@ -3,7 +3,7 @@
 //! Model-provided labels are intentionally ignored. Only commands that this
 //! module can prove read-only may bypass a repository change transaction.
 
-use fabric::security::RiskCategory;
+use super::risk_classifier::RiskCategory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandEffect {

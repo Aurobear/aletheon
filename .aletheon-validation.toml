@@ -10,8 +10,11 @@ affected_path_prefixes = [
   "config",
   "crates/cognit",
   "crates/corpus",
-  "crates/executive",
-  "crates/fabric",
+  "crates/aletheon",
+  "crates/application",
+  "crates/runtime",
+  "crates/adapters/sqlite",
+  "crates/contracts",
   "crates/gateway",
   "scripts",
 ]
@@ -40,33 +43,25 @@ lib_filters = ["security::"]
 integration_targets = ["agent_control_tools"]
 
 [[changed_validation.rust_test_groups]]
-package = "executive"
+package = "aletheon"
 source_paths = [
-  "crates/executive/src/adapters/events/agent_timeline.rs",
-  "crates/executive/src/adapters/events/mod.rs",
-  "crates/executive/src/adapters/events/session_projection.rs",
-  "crates/executive/src/adapters/events/sqlite_event_spine.rs",
-  "crates/executive/src/adapters/channel/daemon_adapter.rs",
-  "crates/executive/src/adapters/runtime/pi_rpc.rs",
-  "crates/executive/src/adapters/session/event_sourced_store.rs",
-  "crates/executive/src/application/admin_service.rs",
-  "crates/executive/src/application/daemon_turn_engine.rs",
-  "crates/executive/src/application/session_projection.rs",
-  "crates/executive/src/application/turn_coordinator.rs",
-  "crates/executive/src/application/turn_pipeline.rs",
-  "crates/executive/src/core/session_gateway/approval_flow.rs",
-  "crates/executive/src/core/session_gateway/gateway.rs",
-  "crates/executive/src/host/daemon/bootstrap/request.rs",
-  "crates/executive/src/host/daemon/handler/rpc.rs",
+  "crates/aletheon/src/wiring/adapters/channel/daemon_adapter.rs",
+  "crates/aletheon/src/wiring/adapters/runtime/pi_rpc.rs",
+  "crates/aletheon/src/wiring/adapters/session/event_sourced_store.rs",
+  "crates/aletheon/src/wiring/application/admin_service.rs",
+  "crates/aletheon/src/wiring/application/daemon_turn_engine.rs",
+  "crates/aletheon/src/wiring/application/turn_coordinator.rs",
+  "crates/aletheon/src/wiring/application/turn_pipeline.rs",
+  "crates/aletheon/src/wiring/daemon/bootstrap/request.rs",
+  "crates/aletheon/src/wiring/daemon/handler/rpc.rs",
+  "crates/aletheon/src/wiring/daemon/session_projection.rs",
 ]
 lib_filters = [
-  "adapters::events::session_projection::",
-  "adapters::runtime::pi_rpc::tests::",
-  "application::admin_service::",
-  "application::turn_coordinator::",
-  "application::turn_pipeline::",
-  "core::session_gateway::gateway::tests::",
-  "host::daemon::bootstrap::request::tests::",
+  "wiring::adapters::runtime::pi_rpc::tests::",
+  "wiring::application::admin_service::",
+  "wiring::application::turn_coordinator::",
+  "wiring::application::turn_pipeline::",
+  "wiring::daemon::bootstrap::request::tests::",
 ]
 integration_targets = [
   "admin_service",
@@ -76,14 +71,14 @@ integration_targets = [
 ]
 
 [[changed_validation.rust_test_groups]]
-package = "fabric"
+package = "contracts"
 source_paths = [
-  "crates/fabric/src/contract/command.rs",
-  "crates/fabric/src/ipc/stream.rs",
-  "crates/fabric/src/protocol/client.rs",
-  "crates/fabric/src/types/agent_control.rs",
-  "crates/fabric/src/types/session.rs",
-  "crates/fabric/src/types/tool.rs",
+  "crates/contracts/src/contract/command.rs",
+  "crates/contracts/src/ipc/stream.rs",
+  "crates/contracts/src/protocol/client.rs",
+  "crates/contracts/src/types/agent_control.rs",
+  "crates/contracts/src/types/session.rs",
+  "crates/contracts/src/types/tool.rs",
 ]
 lib_filters = [
   "contract::command::tests::",

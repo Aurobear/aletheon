@@ -1,4 +1,4 @@
-use fabric::WallTime;
+use ::contracts::WallTime;
 use serde::{Deserialize, Serialize};
 
 /// Unique event identifier.
@@ -139,7 +139,7 @@ pub enum EventData {
     // Visual perception event — frame reference + compact metadata only,
     // NO image bytes are carried.
     Visual {
-        frame: fabric::types::frame::FrameRef,
+        frame: ::contracts::types::frame::FrameRef,
         /// Compact labels (max 16).
         labels: Vec<String>,
         /// One-line summary (max 256 chars).

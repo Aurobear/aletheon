@@ -30,10 +30,10 @@
 ### 当前进展
 
 - **权限分级已实现**（L0-L3，见 `../corpus/security.md`）— 定义了"自动执行 / 通知 / 确认 / 禁止"四级，对应自主权边界
-- **LoopDetector 已实现**（`crates/fabric/src/security/loop_detector.rs`）— 停滞检测 + 连续失败检测，自动阻断循环，对应"停下来"的触发条件
+- **LoopDetector 已实现**（现行路径 `crates/corpus/src/security/loop_detector.rs`；旧 `crates/corpus/src/security/loop_detector.rs` 已退役）— 停滞检测 + 连续失败检测，自动阻断循环，对应"停下来"的触发条件
 - **L2 确认流程的设计**在 `../corpus/security.md` §2.1 完成，但确认流程的用户界面（TUI 确认对话框）未实现
 - **上下文压缩已实现**（`crates/mnemosyne/src/application/compressor/`）— LLM 摘要压缩，消息数超阈值自动触发；但压缩时的"信息优先级"选择（哪些该保留、哪些该丢弃）仍依赖 LLM 判断，无显式策略
-- **输出护栏 OutputGuardrail** (`crates/fabric/src/security/`) 已实现 — 对过度自信的模型输出进行验证
+- **输出护栏 OutputGuardrail**（现行路径 `crates/corpus/src/security/output_guardrail.rs`；Fabric crate 已退役）已实现 — 对过度自信的模型输出进行验证
 
 ### 待研究
 

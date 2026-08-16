@@ -1,7 +1,7 @@
+use ::contracts::Clock;
+use ::contracts::Timer;
 use anyhow::Result;
 use async_trait::async_trait;
-use fabric::Clock;
-use fabric::Timer;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{path::Path, path::PathBuf};
@@ -164,8 +164,8 @@ impl BubblewrapBackend {
 /// are rebound read-only on top, matching the workspace-driven convention.
 fn push_policy_fs_mounts(
     args: &mut Vec<String>,
-    policy: &fabric::ResolvedSandboxPolicy,
-    workspace: &fabric::WorkspacePolicy,
+    policy: &::contracts::ResolvedSandboxPolicy,
+    workspace: &::contracts::WorkspacePolicy,
 ) {
     let workspace_writable: std::collections::HashSet<PathBuf> =
         workspace.writable_roots().iter().cloned().collect();
@@ -225,7 +225,7 @@ fn push_policy_fs_mounts(
 /// get an empty `--tmpfs` overlay so their real contents are hidden. Paths that
 /// do not exist need no masking. `deny_globs` are left to the assembly layer,
 /// which expands them fail-closed before execution (T13).
-fn push_policy_denies(args: &mut Vec<String>, policy: &fabric::ResolvedSandboxPolicy) {
+fn push_policy_denies(args: &mut Vec<String>, policy: &::contracts::ResolvedSandboxPolicy) {
     for path in &policy.deny_exact {
         match std::fs::symlink_metadata(path) {
             Ok(meta) if meta.is_dir() => {
@@ -339,7 +339,7 @@ impl SandboxBackend for BubblewrapBackend {
         cmd: &str,
         config: &SandboxConfig,
         timeout: Duration,
-        sink: &fabric::ToolEventSink,
+        sink: &::contracts::ToolEventSink,
     ) -> Result<SandboxResult> {
         let mut command = tokio::process::Command::new(&self.bwrap_path);
         command
@@ -372,7 +372,7 @@ mod tests {
             clock: Arc::new(TestClock::default()),
         };
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
                 "/managed/job-1".into(),
                 vec![],
             )
@@ -418,7 +418,7 @@ mod tests {
         };
         let secret = "credential-must-not-enter-argv";
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
                 "/managed/job-1".into(),
                 vec![],
             )
@@ -461,7 +461,8 @@ mod tests {
             clock: Arc::new(TestClock::default()),
         };
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(work.clone(), vec![]).unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(work.clone(), vec![])
+                .unwrap(),
             environment: Default::default(),
             policy: None,
         };
@@ -479,8 +480,8 @@ mod tests {
         assert!(protected > writable);
     }
 
-    fn resolved_policy(deny_exact: Vec<PathBuf>) -> fabric::ResolvedSandboxPolicy {
-        fabric::ResolvedSandboxPolicy {
+    fn resolved_policy(deny_exact: Vec<PathBuf>) -> ::contracts::ResolvedSandboxPolicy {
+        ::contracts::ResolvedSandboxPolicy {
             name: "test".into(),
             read_only_roots: vec![PathBuf::from("/")],
             read_write_roots: vec![],
@@ -500,7 +501,7 @@ mod tests {
             clock: Arc::new(TestClock::default()),
         };
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
                 temp.path().to_path_buf(),
                 vec![],
             )
@@ -527,7 +528,8 @@ mod tests {
             clock: Arc::new(TestClock::default()),
         };
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(work.clone(), vec![]).unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(work.clone(), vec![])
+                .unwrap(),
             environment: Default::default(),
             policy: Some(resolved_policy(Vec::new())),
         };
@@ -551,7 +553,7 @@ mod tests {
             clock: Arc::new(TestClock::default()),
         };
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
                 temp.path().to_path_buf(),
                 vec![],
             )
@@ -575,8 +577,11 @@ mod tests {
             clock: Arc::new(TestClock::default()),
         };
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
-                .unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
+                "/tmp/work".into(),
+                vec![],
+            )
+            .unwrap(),
             environment: Default::default(),
             policy: None,
         };
@@ -605,7 +610,7 @@ mod tests {
         std::fs::write(&denied, "DENIED_SECRET").unwrap();
         std::fs::write(&permitted, "PERMITTED_VALUE").unwrap();
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
                 temp.path().to_path_buf(),
                 vec![],
             )
@@ -692,7 +697,7 @@ mod tests {
         let mut policy = resolved_policy(Vec::new());
         policy.read_write_roots.push(scratch.path().to_path_buf());
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
                 workspace.path().to_path_buf(),
                 vec![],
             )

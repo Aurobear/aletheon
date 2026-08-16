@@ -4,7 +4,8 @@
 //! that can be injected into the system prompt, giving the LLM awareness
 //! of the existential substrate's current state.
 
-use fabric::dasein::*;
+use crate::dasein::context::*;
+use ::contracts::dasein::Stimmung;
 
 /// Format DaseinContext for LLM prompt injection.
 pub fn format_dasein_context(ctx: &DaseinContext) -> String {
@@ -136,6 +137,7 @@ fn format_stimmung(mood: &Stimmung) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::contracts::dasein::{AffectTone, AngstSource, ReadinessState};
 
     #[test]
     fn test_format_context_basic() {

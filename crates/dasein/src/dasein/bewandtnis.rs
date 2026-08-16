@@ -1,7 +1,6 @@
 use super::types::*;
-use fabric::dasein::{
-    BewandtnisSnapshot, EntitySnapshot, ReadinessState as AbiReadinessState, Stimmung,
-};
+use crate::dasein::context::{BewandtnisSnapshot, EntitySnapshot};
+use ::contracts::dasein::{ReadinessState as AbiReadinessState, Stimmung};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -171,7 +170,7 @@ impl Bewandtnisganzheit {
 
         if broken_count >= 3 {
             return Some(Stimmung::Angst {
-                facing: fabric::dasein::AngstSource::Nothingness,
+                facing: ::contracts::dasein::AngstSource::Nothingness,
             });
         }
 
@@ -434,7 +433,7 @@ mod tests {
 
         // Angst makes everything present-at-hand
         world.adjust_for_mood(&Stimmung::Angst {
-            facing: fabric::dasein::AngstSource::Nothingness,
+            facing: ::contracts::dasein::AngstSource::Nothingness,
         });
 
         let ready = world.entities_by_readiness(&ReadinessState::ReadyToHand);

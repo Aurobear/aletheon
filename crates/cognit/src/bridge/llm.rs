@@ -1,6 +1,6 @@
 use crate::adapters::inference::{LlmProvider, LlmResponse, LlmStream, ToolDefinition};
+use ::contracts::{ContentBlock, Message, Role};
 use anyhow::Result;
-use fabric::{ContentBlock, Message, Role};
 use std::sync::Arc;
 
 /// Wraps LlmProvider for use by CognitCore.

@@ -1,6 +1,7 @@
-use fabric::dasein::{BoredomDepth, DaseinContext, DaseinEvent, Stimmung};
-use fabric::self_field::MutationIntent;
-use fabric::{wall_to_datetime, Clock};
+use ::contracts::dasein::{BoredomDepth, DaseinEvent, Stimmung};
+use ::contracts::{wall_to_datetime, Clock};
+use dasein::DaseinContext;
+use dasein::MutationIntent;
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 

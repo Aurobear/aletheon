@@ -1,4 +1,4 @@
-use fabric::{ExitReason, ProcessId};
+use ::contracts::{ExitReason, ProcessId};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------

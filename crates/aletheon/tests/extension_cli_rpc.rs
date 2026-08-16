@@ -27,24 +27,40 @@ async fn enable_cli_uses_official_socket_not_direct_store() {
         let mut lines = BufReader::new(reader).lines();
         let line = lines.next_line().await.unwrap().unwrap();
         let request: Value = serde_json::from_str(&line).unwrap();
+        // The typed protocol carries the extension operation inside the
+        // Command::ManageExtension envelope. Assert the CLI sent the Enable
+        // mutation for the requested package id.
         method_tx
-            .send(request["method"].as_str().unwrap().to_owned())
+            .send(format!(
+                "enable:{}",
+                request["body"]["Command"]["ManageExtension"]["Enable"]["id"]
+                    .as_str()
+                    .unwrap()
+            ))
             .unwrap();
+        // The CLI speaks the typed Gateway protocol (WireRequest/WireResponse),
+        // not legacy JSON-RPC. The daemon responds with a typed Command outcome.
         let response = json!({
-            "jsonrpc":"2.0",
-            "id":request["id"],
-            "result": {
-                "schema_version":1,
-                "operation":"enable",
-                "actor":"local:1000",
-                "package_id":"aurb.core",
-                "package_version":"1.0.0",
-                "package_hash":"aa",
-                "previous_snapshot_digest":"old",
-                "snapshot_digest":"new",
-                "permission_approved":true,
-                "health":"healthy",
-                "evidence_references":[]
+            "version": 1,
+            "request_id": request["request_id"],
+            "body": {
+                "Command": {
+                    "ExtensionResult": {
+                        "result": {
+                            "schema_version":1,
+                            "operation":"enable",
+                            "actor":"local:1000",
+                            "package_id":"aurb.core",
+                            "package_version":"1.0.0",
+                            "package_hash":"aa",
+                            "previous_snapshot_digest":"old",
+                            "snapshot_digest":"new",
+                            "permission_approved":true,
+                            "health":"healthy",
+                            "evidence_references":[]
+                        }
+                    }
+                }
             }
         });
         writer
@@ -71,7 +87,7 @@ async fn enable_cli_uses_official_socket_not_direct_store() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(method_rx.await.unwrap(), "extension.enable");
+    assert_eq!(method_rx.await.unwrap(), "enable:aurb.core");
     assert!(String::from_utf8_lossy(&output.stdout).contains("local:1000"));
     server.await.unwrap();
 }

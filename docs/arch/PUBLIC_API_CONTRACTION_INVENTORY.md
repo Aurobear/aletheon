@@ -1,5 +1,7 @@
 # Phase 9 Public API Contraction Inventory
 
+> Historical snapshot: this inventory preserves the Phase 9 names, paths, counts, and validation commands. The physical `fabric` and `executive` crates are now retired; current shared contracts live in `crates/contracts/`, tool/security implementations in `crates/corpus/`, and host composition in `crates/aletheon/`.
+
 ## Purpose and decision basis
 
 This inventory is the evidence artifact for Phase 9. The governing rule is that a crate facade may expose domain values, contracts/errors/capabilities, required host composition handles, and explicit test support; implementation containers, provider wire models, repositories, and parsers are not stable API (`CORE_ARCHITECTURE_DECOUPLING_REFACTOR_PLAN.md:508-531`). The removal order is facade first, downstream migration second, visibility contraction third, and physical cleanup last (`CORE_ARCHITECTURE_DECOUPLING_REFACTOR_PLAN.md:924-938`).

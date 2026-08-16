@@ -2,8 +2,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
+use ::contracts::Clock;
 use anyhow::{Context, Result};
-use fabric::Clock;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
@@ -17,7 +17,7 @@ use crate::tools::google::oauth::{AsyncOAuthClient, OAuthClientConfig};
 /// this grant contains no secret material.
 #[derive(Clone)]
 pub struct McpEndpointCredentialGrant {
-    pub principal: fabric::PrincipalId,
+    pub principal: ::contracts::PrincipalId,
     pub approved_base_url: String,
     pub server_id: String,
     pub expiry_unix: u64,
@@ -45,7 +45,7 @@ impl McpEndpointCredentialGrant {
         rotation_generation: u32,
     ) -> Self {
         Self {
-            principal: fabric::PrincipalId(principal.into()),
+            principal: ::contracts::PrincipalId(principal.into()),
             approved_base_url: normalize_endpoint(approved_base_url),
             server_id: server_id.into(),
             expiry_unix,

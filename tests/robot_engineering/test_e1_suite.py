@@ -126,7 +126,7 @@ def _fake_exec_terminal_json(*, status="completed", operation_id="op-test-001",
                              activity_id=None):
     """Build a fake Exec terminal JSON object for fake-executable tests.
 
-    Emits a complete ExecEventEnvelope matching crates/fabric/src/types/exec.rs.
+    Emits a complete ExecEventEnvelope matching crates/contracts/src/types/exec.rs.
     """
     if metrics is None:
         metrics = {

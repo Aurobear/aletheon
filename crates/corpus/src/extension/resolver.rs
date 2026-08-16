@@ -2,9 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::extension::asset::AssetKind;
+use crate::extension::package::AssetRef;
 use anyhow::{Context, Result};
-use fabric::types::extension_asset::AssetKind;
-use fabric::types::extension_package::AssetRef;
 
 use super::store::{ActivationRecord, InstalledPackageRecord, PackageStore};
 

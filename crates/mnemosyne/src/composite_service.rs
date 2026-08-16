@@ -81,14 +81,14 @@ impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService
 pub struct CompositeMemoryService {
     local: Arc<dyn MemoryService>,
     supplemental: Option<Arc<dyn SupplementalMemoryService>>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
     local_budget: Duration,
     supplemental_budget: Duration,
     health: Arc<Mutex<CompositeMemoryHealth>>,
 }
 
 impl CompositeMemoryService {
-    pub fn local_only(local: Arc<dyn MemoryService>, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn local_only(local: Arc<dyn MemoryService>, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self::new(
             local,
             None,
@@ -101,7 +101,7 @@ impl CompositeMemoryService {
     pub fn new(
         local: Arc<dyn MemoryService>,
         supplemental: Option<Arc<dyn SupplementalMemoryService>>,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
         local_budget: Duration,
         supplemental_budget: Duration,
     ) -> Self {

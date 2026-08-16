@@ -1,7 +1,7 @@
-use fabric::body::{Action, ActionResult};
-use fabric::capability::{Capability, CapabilityLevel as AbiPermissionLevel};
-use fabric::context::Context;
-use fabric::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
+use ::contracts::body::{Action, ActionResult};
+use ::contracts::capability::{Capability, CapabilityLevel as AbiPermissionLevel};
+use ::contracts::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
+use ::contracts::Context;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,12 +22,11 @@ pub fn tool_result_to_action_result(result: &ToolResult) -> ActionResult {
         },
         elapsed_ms: result.metadata.execution_time_ms,
         truncated: result.metadata.truncated,
-        side_effects: Vec::new(), // ToolResult doesn't track side effects
     }
 }
 
 /// Convert Context to ToolContext
-pub fn context_to_tool_context(ctx: &Context, clock: Arc<dyn fabric::Clock>) -> ToolContext {
+pub fn context_to_tool_context(ctx: &Context, clock: Arc<dyn ::contracts::Clock>) -> ToolContext {
     ToolContext {
         approval_authority: None,
         agent: None,
@@ -65,7 +64,7 @@ pub fn elapsed_to_duration(ms: u64) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::tool::ToolResultMeta;
+    use ::contracts::tool::ToolResultMeta;
 
     #[test]
     fn test_action_roundtrip() {

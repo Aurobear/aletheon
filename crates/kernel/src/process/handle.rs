@@ -1,3 +1,3 @@
 //! Process handle façade shared with fabric.
 
-pub use fabric::ProcessHandle;
+pub use crate::lifecycle::ProcessHandle;

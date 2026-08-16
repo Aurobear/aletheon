@@ -1,19 +1,20 @@
-use async_trait::async_trait;
-use fabric::{
-    Clock, ExitReason, ExitStatus, MailboxId, ProcessHandle, ProcessId, ProcessManager,
-    ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState, SpaceId, SpaceManager, SpawnSpec,
+use ::contracts::{
+    Clock, ExitReason, ExitStatus, MailboxId, ProcessId, ProcessRecord, ProcessSignal,
+    ProcessSnapshot, ProcessState, SpaceId, SpawnSpec,
 };
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 
 use crate::space::InMemorySpaceManager;
+use crate::{ProcessHandle, ProcessManager};
 
 #[derive(Debug)]
 struct ProcessRuntime {
     record: ProcessRecord,
     notify: Arc<Notify>,
-    active_operation: Option<fabric::OperationId>,
+    active_operation: Option<::contracts::OperationId>,
 }
 
 /// Authoritative lifecycle table for agent process instances.
@@ -32,7 +33,7 @@ impl std::fmt::Debug for ProcessTable {
 impl ProcessTable {
     pub async fn connection_foreground_ids(
         &self,
-        connection_id: &fabric::ConnectionId,
+        connection_id: &::contracts::ConnectionId,
     ) -> Vec<ProcessId> {
         self.records
             .lock()
@@ -41,7 +42,7 @@ impl ProcessTable {
             .filter_map(|(id, runtime)| {
                 matches!(
                     &runtime.record.ownership,
-                    fabric::ProcessOwnership::ConnectionForeground { connection_id: owner }
+                    ::contracts::ProcessOwnership::ConnectionForeground { connection_id: owner }
                         if owner == connection_id
                 )
                 .then_some(*id)
@@ -87,7 +88,7 @@ impl ProcessTable {
     pub async fn set_active_operation(
         &self,
         id: ProcessId,
-        operation: Option<fabric::OperationId>,
+        operation: Option<::contracts::OperationId>,
     ) -> anyhow::Result<()> {
         let mut records = self.records.lock().await;
         let runtime = records
@@ -293,7 +294,7 @@ impl Default for ProcessTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::types::process::SpawnSpec;
+    use ::contracts::types::process::SpawnSpec;
 
     #[tokio::test]
     async fn snapshot_exposes_process_space() {
@@ -310,7 +311,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_forks_child_space_from_parent() {
         use crate::chronos::SystemClock;
-        use fabric::types::space::{ContextBinding, SessionId};
+        use ::contracts::types::space::{ContextBinding, SessionId};
         let sm = std::sync::Arc::new(InMemorySpaceManager::new());
         let table =
             ProcessTable::with_space_manager(std::sync::Arc::new(SystemClock::new()), sm.clone());
@@ -336,7 +337,7 @@ mod tests {
     #[tokio::test]
     async fn table_terminal_transition_defers_cross_resource_cleanup_to_runtime() {
         use crate::chronos::SystemClock;
-        use fabric::types::space::{ContextBinding, SessionId};
+        use ::contracts::types::space::{ContextBinding, SessionId};
         let sm = std::sync::Arc::new(InMemorySpaceManager::new());
         let table =
             ProcessTable::with_space_manager(std::sync::Arc::new(SystemClock::new()), sm.clone());
@@ -345,7 +346,7 @@ mod tests {
         sm.upsert_binding(space, ContextBinding::Session(SessionId("s".into())));
         assert_eq!(sm.space_count(), 1);
         table
-            .signal(h.id, fabric::types::process::ProcessSignal::Terminate)
+            .signal(h.id, ::contracts::types::process::ProcessSignal::Terminate)
             .await
             .unwrap();
         assert!(

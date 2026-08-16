@@ -18,10 +18,8 @@
     deprecated
 )]
 
-pub mod acix;
 pub mod acp;
 pub mod host;
-mod intent;
 pub mod memory_client;
 mod single_message;
 pub mod tui;

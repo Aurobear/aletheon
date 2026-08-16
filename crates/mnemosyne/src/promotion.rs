@@ -1,6 +1,6 @@
 //! Durable, reviewed promotion of child-scoped memory.
 
-use fabric::{BroadcastEpoch, ContentId, PrincipalId};
+use ::contracts::{BroadcastEpoch, ContentId, PrincipalId};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

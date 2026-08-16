@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::event::{PerceptionEvent, Priority};
-use fabric::Message;
+use ::contracts::Message;
 
 /// Bridges perception events into the engine as system messages.
 pub struct PerceptionBridge {
@@ -16,7 +16,7 @@ pub struct PerceptionBridge {
     /// Held for future timestamp-coordination features;
     /// currently set at construction but unused in the bridge loop.
     #[allow(dead_code)]
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 /// Injection type for the engine.
@@ -32,7 +32,7 @@ impl PerceptionBridge {
     pub fn new(
         event_rx: mpsc::Receiver<PerceptionEvent>,
         engine_tx: mpsc::Sender<PerceptionInjection>,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
     ) -> Self {
         Self {
             event_rx,
@@ -117,13 +117,13 @@ fn event_to_message(event: &PerceptionEvent) -> Message {
 mod tests {
     use super::super::event::*;
     use super::*;
-    use fabric::ContentBlock;
+    use ::contracts::ContentBlock;
     use kernel::chronos::TestClock;
 
     fn make_event(
         priority: Priority,
         summary_data: EventData,
-        clock: &dyn fabric::Clock,
+        clock: &dyn ::contracts::Clock,
     ) -> PerceptionEvent {
         PerceptionEvent {
             id: 1,
@@ -135,7 +135,7 @@ mod tests {
         }
     }
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 

@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tracing::debug;
 
-use fabric::Clock;
+use ::contracts::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;

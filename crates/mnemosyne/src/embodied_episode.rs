@@ -6,12 +6,12 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 
-use fabric::types::embodied_episode::{EmbodiedEpisode, EpisodeAttempt};
-use fabric::types::embodiment::{DeviceId, SkillId, SkillResult};
-use fabric::types::expected_outcome::ExpectedOutcome;
-use fabric::types::outcome_verification::VerificationReport;
-use fabric::types::world_state::WorldSnapshot;
-use fabric::OperationId;
+use crate::embodied_episode_contract::{EmbodiedEpisode, EpisodeAttempt};
+use ::contracts::types::embodiment::{DeviceId, SkillId, SkillResult};
+use ::contracts::types::expected_outcome::ExpectedOutcome;
+use ::contracts::types::outcome_verification::VerificationReport;
+use ::contracts::types::world_state::WorldSnapshot;
+use ::contracts::OperationId;
 use uuid::Uuid;
 
 /// An idempotent, append-only repository for embodied execution episodes.
@@ -247,7 +247,7 @@ impl EmbodiedEpisodeRepository {
                 skill: SkillId(skill_str),
                 expected_outcome: serde_json::from_str(&expected_json).unwrap_or_else(|_| {
                     ExpectedOutcome {
-                        predicate: fabric::types::expected_outcome::OutcomePredicate::Equals {
+                        predicate: ::contracts::types::expected_outcome::OutcomePredicate::Equals {
                             path: "x".into(),
                             value: serde_json::json!(0),
                         },

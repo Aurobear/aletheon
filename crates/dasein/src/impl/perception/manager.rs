@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use fabric::Clock;
+use ::contracts::Clock;
 
 use super::aggregator::EventAggregator;
 use super::event::*;

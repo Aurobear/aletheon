@@ -56,11 +56,12 @@ use crate::core::{
 };
 use crate::harness::config::HarnessConfig;
 use crate::harness::interrupt::InterruptFlag;
-use fabric::body::Action;
-use fabric::message::Message;
-use fabric::policy::verifier::Verifier;
-use fabric::self_field::{Intent, IntentSource};
-use fabric::{Clock, CompactionStrategy, ToolDefinition};
+use crate::ports::verifier::Verifier;
+use ::contracts::body::Action;
+use ::contracts::compaction::CompactionStrategy;
+use ::contracts::message::Message;
+use ::contracts::{Clock, ToolDefinition};
+use dasein::core::contracts::{Intent, IntentSource};
 use std::sync::Arc;
 
 /// Thin wrapper to allow passing `&dyn LlmProvider` to generic functions
@@ -95,7 +96,7 @@ impl LlmProvider for DynLlmRef<'_> {
 /// Re-exported from `fabric`, the shared compaction interface, so both
 /// `cognit` and concrete compaction strategies (e.g. `mnemosyne`) depend
 /// on the same abstract contract without depending on each other.
-pub use fabric::CompactorTrait;
+pub use ::contracts::compaction::CompactorTrait;
 
 /// Async trait for planning capability batch execution order.
 ///
@@ -106,8 +107,8 @@ pub use fabric::CompactorTrait;
 pub trait BatchPlanner: Send + Sync {
     async fn plan(
         &self,
-        calls: Vec<fabric::CapabilityCall>,
-    ) -> anyhow::Result<fabric::CapabilityBatchPlan>;
+        calls: Vec<::contracts::CapabilityCall>,
+    ) -> anyhow::Result<::contracts::CapabilityBatchPlan>;
 }
 
 /// Marker injected into user messages when plan mode is active.
@@ -321,14 +322,14 @@ impl ReActLoop {
 
     fn observe_compaction_outcome(
         &self,
-        outcome: &fabric::CompactionOutcome,
+        outcome: &::contracts::compaction::CompactionOutcome,
         event_sink: Option<&dyn crate::harness::event_sink::EventSink>,
     ) {
         match outcome.failure.as_ref() {
-            Some(fabric::CompactionFailure::DegenerateSummary { .. }) => {
+            Some(::contracts::compaction::CompactionFailure::DegenerateSummary { .. }) => {
                 record_degenerate();
             }
-            Some(fabric::CompactionFailure::SamplerError { .. }) => {
+            Some(::contracts::compaction::CompactionFailure::SamplerError { .. }) => {
                 record_sampler_error();
             }
             _ => {}

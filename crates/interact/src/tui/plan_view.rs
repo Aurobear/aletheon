@@ -4,7 +4,7 @@
 //! Shows plan versions, critiques, and approval status.
 
 use super::term_compat::TermCaps;
-use fabric::cognit::{CriticismSeverity, Critique, Plan};
+use cognit::domain::{CriticismSeverity, Critique, Plan};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 

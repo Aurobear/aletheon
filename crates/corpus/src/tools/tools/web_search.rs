@@ -8,7 +8,7 @@ use serde_json::json;
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct WebSearchTool {
-    network_policy: Arc<fabric::network_policy::NetworkPolicy>,
+    network_policy: Arc<crate::security::network_policy::NetworkPolicy>,
     config: Option<WebSearchConfig>,
 }
 
@@ -37,12 +37,15 @@ impl std::fmt::Debug for WebSearchConfig {
 impl WebSearchTool {
     pub fn new() -> Self {
         Self {
-            network_policy: Arc::new(fabric::network_policy::NetworkPolicy::default()),
+            network_policy: Arc::new(crate::security::network_policy::NetworkPolicy::default()),
             config: None,
         }
     }
 
-    pub fn with_network_policy(mut self, policy: fabric::network_policy::NetworkPolicy) -> Self {
+    pub fn with_network_policy(
+        mut self,
+        policy: crate::security::network_policy::NetworkPolicy,
+    ) -> Self {
         self.network_policy = Arc::new(policy);
         self
     }
@@ -208,7 +211,7 @@ impl Tool for WebSearchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::network_policy::NetworkPolicy;
+    use crate::security::network_policy::NetworkPolicy;
 
     #[test]
     fn test_tool_metadata() {
@@ -257,7 +260,7 @@ mod tests {
     #[tokio::test]
     async fn test_disabled_without_host_config() {
         let tool = WebSearchTool::new().with_network_policy(NetworkPolicy {
-            default_action: fabric::network_policy::NetworkDefaultAction::Allow,
+            default_action: crate::security::network_policy::NetworkDefaultAction::Allow,
             allow_dns: true,
             ..Default::default()
         });

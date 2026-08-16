@@ -1,7 +1,8 @@
 //! Shared bounded Google REST client.
 
+use ::contracts::PrincipalId;
+use application::{ExternalCapabilityId, ExternalIdentityId};
 use async_trait::async_trait;
-use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
 use std::fmt;

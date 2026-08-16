@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use fabric::protocol::memory::{
+use ::contracts::protocol::memory::{
     MemoryIntakeStatusV1, MemoryLifecycleReceiptV1, MemoryLifecycleStateV1,
     MemoryObservationKindV1, MemoryObservationReceiptV1, MemoryProjectionStateV1,
     MemoryProtocolValidationError, MemoryScorecardV1, MemorySensitivityV1, MemoryWorkspaceStateV1,
@@ -37,7 +37,7 @@ impl MemoryIntakeLimits {
     fn validate(self) -> Result<Self, MemoryProtocolValidationError> {
         if self.max_rows == 0
             || self.max_rows > 100_000
-            || self.max_payload_bytes < fabric::protocol::memory::MAX_MEMORY_CONTENT_BYTES
+            || self.max_payload_bytes < ::contracts::protocol::memory::MAX_MEMORY_CONTENT_BYTES
             || self.max_payload_bytes > 2 * 1024 * 1024 * 1024
         {
             return Err(MemoryProtocolValidationError(
@@ -155,7 +155,7 @@ impl GovernedMemoryObservation {
             ));
         }
         if self.content.trim().is_empty()
-            || self.content.len() > fabric::protocol::memory::MAX_MEMORY_CONTENT_BYTES
+            || self.content.len() > ::contracts::protocol::memory::MAX_MEMORY_CONTENT_BYTES
         {
             return Err(MemoryProtocolValidationError(
                 "content is empty or exceeds byte limit".into(),
@@ -167,7 +167,8 @@ impl GovernedMemoryObservation {
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
             || self.scrub_policy_version == 0
-            || self.scrub_redactions as usize > fabric::protocol::memory::MAX_MEMORY_CONTENT_BYTES
+            || self.scrub_redactions as usize
+                > ::contracts::protocol::memory::MAX_MEMORY_CONTENT_BYTES
         {
             return Err(MemoryProtocolValidationError(
                 "memory scrub evidence is invalid".into(),
@@ -476,9 +477,10 @@ impl MemoryIntakeLedger {
         validate_authority_key("principal_id", principal_id)?;
         WorkspaceMemoryKey::from_verified(workspace_key.to_owned())
             .map_err(|error| MemoryProtocolValidationError(error.to_string()))?;
-        if record_ids.len() > fabric::protocol::memory::MAX_MEMORY_RECALL_ITEMS
+        if record_ids.len() > ::contracts::protocol::memory::MAX_MEMORY_RECALL_ITEMS
             || record_ids.iter().any(|id| {
-                id.trim().is_empty() || id.len() > fabric::protocol::memory::MAX_MEMORY_ID_BYTES
+                id.trim().is_empty()
+                    || id.len() > ::contracts::protocol::memory::MAX_MEMORY_ID_BYTES
             })
             || seen_at_ms < 0
         {

@@ -80,9 +80,9 @@ impl CandidateExtractor {
     }
 }
 fn redact(value: &str) -> String {
-    fabric::types::data_governance::scrub_for_projection(
+    ::contracts::data_governance::scrub_for_projection(
         value,
-        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+        ::contracts::data_governance::ContentTrust::ExternalUntrusted,
     )
     .content
 }

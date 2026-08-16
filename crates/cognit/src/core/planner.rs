@@ -3,11 +3,11 @@
 //! The Planner takes an intent + reasoning chain and produces a Plan
 //! containing PlanSteps with rollback actions and cost estimates.
 
-use fabric::body::Action;
-use fabric::cognit::{CostEstimate, Plan, PlanStep};
-use fabric::context::Context;
-use fabric::dasein::Stimmung;
-use fabric::self_field::{AwarenessRiskLevel, Intent};
+use crate::domain::{CostEstimate, Plan, PlanStep};
+use ::contracts::body::Action;
+use ::contracts::dasein::Stimmung;
+use ::contracts::Context;
+use dasein::core::contracts::{AwarenessRiskLevel, Intent};
 use uuid::Uuid;
 
 /// The planner component.
@@ -295,7 +295,7 @@ impl Default for Planner {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use fabric::IntentSource;
+    use dasein::IntentSource;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -451,7 +451,7 @@ mod tests {
         let planner = Planner::new();
         let intent = make_intent("file.read", "read file");
         let mood = Stimmung::Angst {
-            facing: fabric::dasein::AngstSource::Finitude,
+            facing: ::contracts::dasein::AngstSource::Finitude,
         };
         let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
         // file.read is normally Low; Angst should bump it to Medium

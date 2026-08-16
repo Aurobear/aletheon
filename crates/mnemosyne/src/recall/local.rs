@@ -1,5 +1,5 @@
+use ::contracts::reflection::ReflectionEntry;
 use chrono::{DateTime, Utc};
-use fabric::ReflectionEntry;
 
 use crate::adapters::storage::fact_store::FactRow;
 use crate::adapters::storage::recall_memory::MemoryEntry as RecallEntry;

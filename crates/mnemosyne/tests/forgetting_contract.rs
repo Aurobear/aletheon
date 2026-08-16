@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use ::contracts::{Subsystem, SubsystemContext};
 use chrono::{DateTime, Utc};
-use fabric::{Subsystem, SubsystemContext};
 use mnemosyne::runtime::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
 use mnemosyne::{
     DefaultMemoryService, ExperienceEvent, ForgetAuthority, ForgetPolicy, ForgetSelector,
@@ -12,7 +12,7 @@ use mnemosyne::{
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-fn clock() -> Arc<dyn fabric::Clock> {
+fn clock() -> Arc<dyn ::contracts::Clock> {
     Arc::new(kernel::chronos::TestClock::default())
 }
 
@@ -29,7 +29,6 @@ async fn service(root: &Path) -> DefaultMemoryService {
             name: "forgetting-contract".into(),
             working_dir: root.into(),
             config: Value::Null,
-            bus: None,
         })
         .await
         .unwrap();

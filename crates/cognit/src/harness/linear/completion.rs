@@ -1,7 +1,7 @@
 use std::future::Future;
 
-use fabric::message::Message;
-use fabric::policy::verifier::Verdict;
+use crate::ports::verifier::Verdict;
+use ::contracts::message::Message;
 use tracing::warn;
 
 use crate::core::{
@@ -105,7 +105,7 @@ impl ReActLoop {
 
     async fn publish_grounded_outcomes(
         &mut self,
-        outcomes: Vec<fabric::cognitive_workflow::GroundedCognitiveOutcome>,
+        outcomes: Vec<::contracts::cognitive_workflow::GroundedCognitiveOutcome>,
     ) -> anyhow::Result<()> {
         let Some(sink) = &self.grounded_outcome_sink else {
             return Ok(());

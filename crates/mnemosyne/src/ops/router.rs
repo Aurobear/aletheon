@@ -1,15 +1,16 @@
 //! MemoryRouter — dispatches to the correct backend by MemoryType.
 
+use crate::memory::{
+    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
+    MemoryQuery, MemoryStats, MemoryType,
+};
+use cognit::domain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use ::contracts::{Subsystem, SubsystemContext, SubsystemHealth, Version};
 use anyhow::Result;
 use async_trait::async_trait;
-use fabric::{
-    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
-    MemoryQuery, MemoryStats, MemoryType, ReflectionEntry, Subsystem, SubsystemContext,
-    SubsystemHealth, Version,
-};
 
 use crate::backends::episodic::EpisodicMemory;
 use crate::backends::procedural::ProceduralMemory;
@@ -102,14 +103,14 @@ impl MemoryContext {
 /// Routes memory operations to dynamically registered backends.
 pub struct MemoryRouter {
     backends: Vec<(MemoryType, Box<dyn MemoryBackend + Send + Sync>)>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl MemoryRouter {
     /// Create a new router with DB files in the given directory.
     ///
     /// Registers the 4 default backends (episodic, semantic, procedural, self).
-    pub fn new(db_dir: &std::path::Path, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(db_dir: &std::path::Path, clock: Arc<dyn ::contracts::Clock>) -> Self {
         let mut router = Self {
             backends: Vec::new(),
             clock,
@@ -421,10 +422,10 @@ impl MemoryBackend for MemoryRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::{wall_to_datetime, MemoryEntry};
+    use ::contracts::wall_to_datetime;
     use uuid::Uuid;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(kernel::chronos::TestClock::default())
     }
 
@@ -435,7 +436,6 @@ mod tests {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
             config: serde_json::Value::Null,
-            bus: None,
         };
         router.init(&ctx).await.unwrap();
         (dir, router)
@@ -665,7 +665,6 @@ mod tests {
         // For recall_for_prompt, we go through the generic MemoryBackend::recall()
         // which reads from memory table, so content is the serialized bytes.
         // We store a ReflectionEntry as JSON bytes.
-        use fabric::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
         let clock = test_clock();
         let reflection = ReflectionEntry {
@@ -737,7 +736,6 @@ mod tests {
         let (_dir, router) = setup_router().await;
 
         // Store one of each type
-        use fabric::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 
         let clock = test_clock();
         let reflection = ReflectionEntry {

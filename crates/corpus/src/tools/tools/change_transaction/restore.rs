@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use fabric::change_transaction::{ChangeTransactionSnapshot, WorkspaceVersion};
+use ::contracts::change_transaction::{ChangeTransactionSnapshot, WorkspaceVersion};
 
 #[derive(Clone)]
 pub(super) struct BaselineRestore {
-    basis: fabric::change_transaction::WorkspaceVersionBasis,
+    basis: ::contracts::change_transaction::WorkspaceVersionBasis,
     nodes: HashMap<String, RestoreNode>,
 }
 
@@ -21,10 +21,10 @@ enum RestoreNode {
 impl BaselineRestore {
     pub(super) fn capture(root: &Path, baseline: &WorkspaceVersion) -> anyhow::Result<Self> {
         let paths = match baseline.basis {
-            fabric::change_transaction::WorkspaceVersionBasis::GitWorktree => {
+            ::contracts::change_transaction::WorkspaceVersionBasis::GitWorktree => {
                 baseline.changed_paths.clone()
             }
-            fabric::change_transaction::WorkspaceVersionBasis::BoundedTree => {
+            ::contracts::change_transaction::WorkspaceVersionBasis::BoundedTree => {
                 baseline.changed_paths.clone()
             }
         };
@@ -51,7 +51,9 @@ impl BaselineRestore {
             ensure_relative_workspace_path(&relative)?;
             let node = if let Some(node) = self.nodes.get(&relative) {
                 node.clone()
-            } else if self.basis == fabric::change_transaction::WorkspaceVersionBasis::GitWorktree {
+            } else if self.basis
+                == ::contracts::change_transaction::WorkspaceVersionBasis::GitWorktree
+            {
                 git_head_node(root, &relative)?
             } else {
                 RestoreNode::Missing

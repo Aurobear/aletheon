@@ -73,6 +73,7 @@ impl HelpOverlay {
             ("Ctrl+O", "Toggle thinking display"),
             ("Alt+Up/Down", "Select previous/next projected activity"),
             ("Ctrl+B", "Toggle projected activity detail"),
+            ("Ctrl+G", "Open live child Agent inspector"),
             ("Ctrl+A", "Cursor to line start"),
             ("Ctrl+E", "Cursor to line end"),
             ("Ctrl+W", "Delete word backward"),
@@ -119,7 +120,7 @@ impl HelpOverlay {
             ("/mode <name>", "Switch collaboration mode"),
             ("/plan", "Enter plan mode"),
             ("/approve", "Approve current plan"),
-            ("/agents", "List active sub-agents"),
+            ("/agents", "Inspect recent child Agent sessions"),
             (
                 "/runtime <id|auto>",
                 "Select Agent runtime for the next turn",

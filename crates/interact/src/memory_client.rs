@@ -2,27 +2,24 @@
 
 use std::path::PathBuf;
 
-use fabric::protocol::client::{
-    ClientCapabilities, ClientEvent, ClientMessage, ClientRequest, InitializeParams,
-    CLIENT_PROTOCOL_VERSION,
+use ::contracts::protocol::client::{
+    ClientCapabilities, ClientEvent, ClientRequest, CLIENT_PROTOCOL_VERSION,
 };
-use fabric::protocol::memory::{
+use ::contracts::protocol::memory::{
     MemoryFeedbackReceiptV1, MemoryFeedbackRequestV1, MemoryLifecycleReceiptV1,
     MemoryObservationReceiptV1, MemoryObservationRequestV1, MemoryRecallRequestV1,
     MemoryRecallResultV1, MemoryReceiptGetRequestV1, MemoryWorkspaceBindRequestV1,
     MemoryWorkspaceBindingPreviewV1, MemoryWorkspaceBindingViewV1,
     MemoryWorkspacePreviewBindRequestV1, MemoryWorkspaceUnbindRequestV1,
 };
-use fabric::protocol::memory_maintenance::{
+use ::contracts::protocol::memory_maintenance::{
     MemoryMaintenancePhaseV1, MemoryMaintenanceRunReceiptV1, MemoryMaintenanceRunRequestV1,
     MemoryMaintenanceStatusRequestV1, MemoryMaintenanceStatusV1,
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufStream};
-use tokio::net::UnixStream;
+use gateway::client::LegacyProtocolClient;
 
 pub struct MemoryClient {
-    stream: BufStream<UnixStream>,
-    next_id: u64,
+    transport: LegacyProtocolClient,
 }
 
 pub type MemoryAgentClient = MemoryClient;
@@ -47,13 +44,10 @@ impl MemoryClient {
         memory_admin_v1: bool,
     ) -> anyhow::Result<Self> {
         let socket = crate::host::resolve_user_socket(explicit_socket)?;
-        let stream = UnixStream::connect(&socket)
+        let transport = LegacyProtocolClient::connect(&socket)
             .await
             .map_err(|error| anyhow::anyhow!("connecting {}: {error}", socket.display()))?;
-        let mut client = Self {
-            stream: BufStream::new(stream),
-            next_id: 1,
-        };
+        let mut client = Self { transport };
         client
             .initialize(memory_gateway_v1, memory_maintenance_v1, memory_admin_v1)
             .await?;
@@ -187,23 +181,19 @@ impl MemoryClient {
         memory_maintenance_v1: bool,
         memory_admin_v1: bool,
     ) -> anyhow::Result<()> {
-        let event = self
-            .request(ClientRequest::Initialize(InitializeParams {
-                client_version: env!("CARGO_PKG_VERSION").into(),
-                protocol_versions: vec![CLIENT_PROTOCOL_VERSION],
-                capabilities: ClientCapabilities {
+        let initialized = self
+            .transport
+            .initialize(
+                env!("CARGO_PKG_VERSION").into(),
+                ClientCapabilities {
                     item_events: false,
                     cursors: false,
                     memory_gateway_v1,
                     memory_maintenance_v1,
                     memory_admin_v1,
                 },
-            }))
+            )
             .await?;
-        let initialized = match event {
-            ClientEvent::InitializeResponse(initialized) => initialized,
-            other => anyhow::bail!("unexpected initialize response: {other:?}"),
-        };
         anyhow::ensure!(
             initialized.protocol_version == CLIENT_PROTOCOL_VERSION
                 && (!memory_gateway_v1 || initialized.server_capabilities.memory_gateway_v1)
@@ -212,67 +202,13 @@ impl MemoryClient {
                 && (!memory_admin_v1 || initialized.server_capabilities.memory_admin_v1),
             "daemon did not negotiate requested memory capability"
         );
-        let request_id = self.allocate_id();
-        let value = ClientRequest::Initialized.to_json_rpc(request_id)?;
-        self.write(&value).await?;
-        let response = self.read_response(request_id).await?;
-        anyhow::ensure!(
-            response["result"]["status"] == "ready",
-            "daemon did not acknowledge initialized"
-        );
         Ok(())
     }
 
     async fn request(&mut self, request: ClientRequest) -> anyhow::Result<ClientEvent> {
-        let request_id = self.allocate_id();
-        let value = request.to_json_rpc(request_id)?;
-        self.write(&value).await?;
-        let response = self.read_response(request_id).await?;
-        let result = response
-            .get("result")
-            .cloned()
-            .ok_or_else(|| response_error(&response))?;
-        let message: ClientMessage<ClientEvent> = serde_json::from_value(result)?;
-        Ok(message.into_v1()?)
+        self.transport
+            .request(request)
+            .await
+            .map_err(|error| anyhow::anyhow!("Memory Agent request failed: {error}"))
     }
-
-    async fn write(&mut self, value: &serde_json::Value) -> anyhow::Result<()> {
-        self.stream.write_all(value.to_string().as_bytes()).await?;
-        self.stream.write_all(b"\n").await?;
-        self.stream.flush().await?;
-        Ok(())
-    }
-
-    async fn read_response(&mut self, request_id: u64) -> anyhow::Result<serde_json::Value> {
-        for _ in 0..32 {
-            let mut line = String::new();
-            anyhow::ensure!(
-                self.stream.read_line(&mut line).await? > 0,
-                "daemon closed the Memory Agent connection"
-            );
-            let value: serde_json::Value = serde_json::from_str(line.trim())?;
-            if value.get("id").and_then(serde_json::Value::as_u64) == Some(request_id) {
-                return Ok(value);
-            }
-            // The maintenance connection never subscribes. Ignore bounded
-            // unrelated notifications rather than interpreting them as a
-            // terminal response for this request.
-        }
-        anyhow::bail!("too many unrelated daemon messages on Memory Agent connection")
-    }
-
-    fn allocate_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
-        id
-    }
-}
-
-fn response_error(response: &serde_json::Value) -> anyhow::Error {
-    anyhow::anyhow!(
-        "daemon request failed: {}",
-        response["error"]["message"]
-            .as_str()
-            .unwrap_or("missing result")
-    )
 }

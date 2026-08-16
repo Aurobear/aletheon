@@ -1,4 +1,4 @@
-use fabric::{AgentId, AgentTaskId, BroadcastEpoch, ContentId, PrincipalId, ProcessId};
+use ::contracts::{AgentId, AgentTaskId, BroadcastEpoch, ContentId, PrincipalId, ProcessId};
 use mnemosyne::{
     AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft, MemoryAuthority, MemoryKind,
     MemoryPromotionRequest, MemoryScope,

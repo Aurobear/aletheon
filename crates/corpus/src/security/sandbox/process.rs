@@ -1,7 +1,7 @@
+use ::contracts::Clock;
+use ::contracts::Timer;
 use anyhow::Result;
 use async_trait::async_trait;
-use fabric::Clock;
-use fabric::Timer;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -98,7 +98,7 @@ impl SandboxBackend for ProcessBackend {
         cmd: &str,
         config: &SandboxConfig,
         timeout: Duration,
-        sink: &fabric::ToolEventSink,
+        sink: &::contracts::ToolEventSink,
     ) -> Result<SandboxResult> {
         let mut command = tokio::process::Command::new("bash");
         command
@@ -127,7 +127,7 @@ mod tests {
     async fn emits_stdout_lines_before_process_terminal() {
         let temp = tempfile::tempdir().unwrap();
         let config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
                 temp.path().canonicalize().unwrap(),
                 vec![],
             )
@@ -135,7 +135,7 @@ mod tests {
             environment: Default::default(),
             policy: None,
         };
-        let (sink, mut rx) = fabric::tool_event_channel();
+        let (sink, mut rx) = ::contracts::tool_event_channel();
         let task = tokio::spawn(async move {
             let backend = ProcessBackend {
                 clock: Arc::new(SystemClock::new()),
@@ -155,8 +155,8 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(100), rx.recv())
                 .await
                 .unwrap(),
-            Some(fabric::ToolExecutionEvent::Progress(
-                fabric::ToolProgress::Text(line)
+            Some(::contracts::ToolExecutionEvent::Progress(
+                ::contracts::ToolProgress::Text(line)
             )) if line == "first"
         ));
         assert!(
@@ -167,8 +167,8 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(1), rx.recv())
                 .await
                 .unwrap(),
-            Some(fabric::ToolExecutionEvent::Progress(
-                fabric::ToolProgress::Text(line)
+            Some(::contracts::ToolExecutionEvent::Progress(
+                ::contracts::ToolProgress::Text(line)
             )) if line == "second"
         ));
         let result = task.await.unwrap();

@@ -33,7 +33,7 @@ mnemosyne/src/
 
 ## Architecture Note
 
-This crate provides the **backend storage** layer. The **executive-level memory** (CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline, scope) lives in `crates/executive/src/host/daemon/bootstrap/memory.rs`. The ABI trait definitions (`MemoryBackend`, `MemoryEntry`, etc.) live in `crates/fabric/src/include/memory.rs`.
+This crate provides the **backend storage** layer. The **executive-level memory** (CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline, scope) lives in `crates/aletheon/src/wiring/daemon/bootstrap/memory.rs`. The ABI trait definitions (`MemoryBackend`, `MemoryEntry`, etc.) live in `crates/mnemosyne/src/domain/memory.rs`.
 
 ## Related Docs
 

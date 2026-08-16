@@ -90,7 +90,7 @@ mod tests {
     use crate::adapters::inference::{
         InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition,
     };
-    use fabric::message::{ContentBlock, Message};
+    use ::contracts::message::{ContentBlock, Message};
 
     /// Minimal stub provider for unit tests.
     struct StubProvider {

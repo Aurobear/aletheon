@@ -3,21 +3,21 @@
 use crate::admission::budget::InMemoryBudgetController;
 use crate::admission::lease::InMemoryResourceLeaseManager;
 use crate::admission::ProductionAdmissionController;
+use crate::admission::{AdmissionController, BudgetController, LeaseManager};
 use crate::chronos::SystemClock;
 use crate::operation::OperationTable;
 use crate::process::ProcessTable;
 use crate::space::InMemorySpaceManager;
 use crate::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
-use fabric::ipc::envelope_v2::Target;
-use fabric::ipc::mailbox::{InProcessMailboxService, Mailbox, MailboxService};
-use fabric::{
-    AdmissionController, AdmissionError, AgentId, BudgetController, BudgetRequest,
-    BudgetReservationReceipt, BudgetScopeId, BudgetScopeKind, CancelReason, Clock, ContextBinding,
-    ContextSpace, ExitReason, ExitStatus, LeaseManager, OperationHandle, OperationId,
-    OperationManager, OperationRecord, OperationRequest, OperationResult, OsProcessId, PermitId,
-    ProcessHandle, ProcessId, ProcessIdentity, ProcessManager, ProcessSignal, ProcessSnapshot,
-    SpaceId, SpawnSpec,
+use crate::{OperationHandle, OperationManager, ProcessHandle, ProcessManager};
+use ::contracts::ipc::envelope_v2::Target;
+use ::contracts::{
+    AdmissionError, AgentId, BudgetRequest, BudgetReservationReceipt, BudgetScopeId,
+    BudgetScopeKind, CancelReason, Clock, ContextBinding, ContextSpace, ExitReason, ExitStatus,
+    OperationId, OperationRecord, OperationRequest, OperationResult, OsProcessId, PermitId,
+    ProcessId, ProcessIdentity, ProcessSignal, ProcessSnapshot, SpaceId, SpawnSpec,
 };
+use runtime::mailbox::{InProcessMailboxService, Mailbox, MailboxService};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -683,7 +683,7 @@ impl KernelRuntime {
             .await
     }
 
-    pub async fn reap_process(&self, id: ProcessId) -> anyhow::Result<fabric::ProcessRecord> {
+    pub async fn reap_process(&self, id: ProcessId) -> anyhow::Result<::contracts::ProcessRecord> {
         let record = self.processes.reap(id).await?;
         self.spawn_specs.lock().await.remove(&id);
         self.terminal_progress.lock().await.remove(&id);
@@ -708,7 +708,7 @@ impl KernelRuntime {
     /// transport connection. Thread-owned background processes are untouched.
     pub async fn cleanup_disconnected_connection(
         &self,
-        connection_id: &fabric::ConnectionId,
+        connection_id: &::contracts::ConnectionId,
     ) -> anyhow::Result<Vec<ProcessId>> {
         let ids = self
             .processes
@@ -994,10 +994,10 @@ mod connection_cleanup_tests {
     #[tokio::test]
     async fn disconnect_reaps_only_connection_foreground_processes() {
         let runtime = KernelRuntime::new();
-        let connection = fabric::ConnectionId::new();
+        let connection = ::contracts::ConnectionId::new();
         let foreground = runtime
             .spawn_process(SpawnSpec {
-                ownership: fabric::ProcessOwnership::ConnectionForeground {
+                ownership: ::contracts::ProcessOwnership::ConnectionForeground {
                     connection_id: connection.clone(),
                 },
                 ..SpawnSpec::default()
@@ -1006,8 +1006,8 @@ mod connection_cleanup_tests {
             .unwrap();
         let background = runtime
             .spawn_process(SpawnSpec {
-                ownership: fabric::ProcessOwnership::ThreadBackground {
-                    thread_id: fabric::ThreadId("durable-thread".into()),
+                ownership: ::contracts::ProcessOwnership::ThreadBackground {
+                    thread_id: ::contracts::ThreadId("durable-thread".into()),
                 },
                 ..SpawnSpec::default()
             })
@@ -1032,7 +1032,7 @@ mod connection_cleanup_tests {
         assert!(runtime.inspect_process(foreground.id).await.is_err());
         assert_eq!(
             runtime.inspect_process(background.id).await.unwrap().state,
-            fabric::ProcessState::Running
+            ::contracts::ProcessState::Running
         );
     }
 }

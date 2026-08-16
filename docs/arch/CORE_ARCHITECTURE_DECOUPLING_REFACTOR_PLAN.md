@@ -38,11 +38,11 @@ Fabric 自身将其定义为子系统之间的共享契约层，见 `crates/fabr
 
 外部平台细节已经进入共享契约：
 
-- `IdentityProvider::Google` 位于 `crates/fabric/src/types/external_identity.rs:47-57`；
-- Gmail、Calendar、Drive OAuth scope 位于 `crates/fabric/src/types/external_identity.rs:61-104`；
-- 共享层直接返回 Google OAuth URL，见 `crates/fabric/src/types/external_identity.rs:74-85`；
-- `ExternalEvent` 直接导入 Google 类型，见 `crates/fabric/src/types/external_event.rs:3-7`；
-- `MailChange` 直接持有 `GmailMessageSummary`，见 `crates/fabric/src/types/external_event.rs:71-75`；
+- `IdentityProvider::Google` 位于 `crates/application/src/external_identity.rs:47-57`；
+- Gmail、Calendar、Drive OAuth scope 位于 `crates/application/src/external_identity.rs:61-104`；
+- 共享层直接返回 Google OAuth URL，见 `crates/application/src/external_identity.rs:74-85`；
+- `ExternalEvent` 直接导入 Google 类型，见 `crates/corpus/src/tools/google/event.rs:3-7`；
+- `MailChange` 直接持有 `GmailMessageSummary`，见 `crates/corpus/src/tools/google/event.rs:71-75`；
 - Fabric 公开 `types::google`，见 `crates/fabric/src/lib.rs:67-72`。
 
 这使新增外部身份或信息源时必须修改共享层，违反开放扩展边界。
@@ -177,7 +177,7 @@ Google OAuth scope、history ID、etag、API endpoint 只由 Google adapter 解�
 
 ### 3.5 Telegram 与渠道职责
 
-现有通用渠道 DTO 边界基本正确：`InboundMessage` 和 `OutboundMessage` 位于 `crates/fabric/src/types/channel.rs:38-57`。问题是渠道专属配置位于 Cognit，且具体 transport 被 Gateway 公开，见 `crates/gateway/src/lib.rs:1-18`。
+现有通用渠道 DTO 边界基本正确：`InboundMessage` 和 `OutboundMessage` 位于 `crates/gateway/src/channel/mod.rs:38-57`。问题是渠道专属配置位于 Cognit，且具体 transport 被 Gateway 公开，见 `crates/gateway/src/lib.rs:1-18`。
 
 目标是 Cognit 完全不知道渠道；Gateway application 只认识 `ChannelTransport`，Telegram polling、bot token 和 callback payload 位于 adapter。
 
@@ -259,7 +259,7 @@ adapters -------┘
 
 | 边界 | 参与方 | 协议 owner / 版本依据 | 变更纪律 |
 |---|---|---|---|
-| 客户端协议 | `aletheon`/`interact` ↔ Executive daemon | `crates/fabric/src/protocol/client.rs` 的 `CLIENT_PROTOCOL_VERSION` | 修改该协议暴露类型时 bump 客户端协议版本，并兼容或明确拒绝旧版本 |
+| 客户端协议 | `aletheon`/`interact` ↔ Executive daemon | `crates/contracts/src/protocol/client.rs` 的 `CLIENT_PROTOCOL_VERSION` | 修改该协议暴露类型时 bump 客户端协议版本，并兼容或明确拒绝旧版本 |
 | 执行进程协议 | Executive/host ↔ `execd` | `crates/execd/src/protocol.rs` | 由 execd 协议 owner 定义兼容和版本策略，不复用客户端协议版本 |
 | Embodiment 协议 | Hardware provider ↔ 外部 bridge | Hardware protobuf/gRPC contract | 按 protobuf service/message 兼容规则演进 |
 | MCP 协议 | Corpus ↔ MCP server | MCP 标准协议及本项目工具 schema | 标准协议版本与工具 schema 分别治理 |
@@ -623,7 +623,7 @@ agent_control/
 灰色（需登记理由）：tracing（允许 span/event，但不得据字段分派）、async-trait、futures
 ```
 
-> 现状警示：`crates/fabric/Cargo.toml` 目前依赖 `tokio(full)`、`nix`、`libc`、`toml`、`png`、`base64`、`bincode`、`dashmap`，**Fabric 现在并不是纯契约 crate**。这些超标依赖必须在 Phase 1/2 登记为待清理项：运行时/OS 相关下沉到 host/platform，config 解析下沉到 composition，编解码下沉到 adapter。清理前它们进入依赖基线并只减不增。
+> 现状警示：`crates/contracts/Cargo.toml` 目前依赖 `tokio(full)`、`nix`、`libc`、`toml`、`png`、`base64`、`bincode`、`dashmap`，**Fabric 现在并不是纯契约 crate**。这些超标依赖必须在 Phase 1/2 登记为待清理项：运行时/OS 相关下沉到 host/platform，config 解析下沉到 composition，编解码下沉到 adapter。清理前它们进入依赖基线并只减不增。
 
 **"新增依赖边"判定（消除歧义）：** "只减不增"针对的是**违规边**（domain/application → 基础设施或 adapter crate）。合法方向的新边——如新增 `adapters/<x>` 依赖 reqwest、composition 依赖具体 crate——允许，但必须在审查基线登记，且不得反向让 domain/application 因此获得对基础设施的传递依赖。
 
@@ -807,9 +807,9 @@ Phase 8 不是一个整体节点，应拆成独立子任务：Phase 2、3 → 8a
 5. 保留旧序列化格式的显式兼容转换；
 6. 禁止新代码导入 `fabric::google`。
 
-**持久化前置：** `ExternalEvent` 当前带 `EXTERNAL_EVENT_SCHEMA_VERSION` 且内嵌 `GmailMessageSummary`（见 `crates/fabric/src/types/external_event.rs`），已落盘的事件/spool 会被本阶段打穿。开工前必须完成 §19 持久化面清单中受本阶段影响的条目，并实现双读或版本化迁移。
+**持久化前置：** `ExternalEvent` 当前带 `EXTERNAL_EVENT_SCHEMA_VERSION` 且内嵌 `GmailMessageSummary`（见 `crates/corpus/src/tools/google/event.rs`），已落盘的事件/spool 会被本阶段打穿。开工前必须完成 §19 持久化面清单中受本阶段影响的条目，并实现双读或版本化迁移。
 
-**安全前置：** `ExternalScope` 内嵌 `is_write()` / `is_m6_allowed()` 安全语义（`crates/fabric/src/types/external_identity.rs`）。scope 迁入 adapter 时，写权限门控与 M6 白名单必须一并迁移且行为不变，需配套 scope 门控回归测试。本阶段结束前需一次安全评审 checkpoint。
+**安全前置：** `ExternalScope` 内嵌 `is_write()` / `is_m6_allowed()` 安全语义（`crates/application/src/external_identity.rs`）。scope 迁入 adapter 时，写权限门控与 M6 白名单必须一并迁移且行为不变，需配套 scope 门控回归测试。本阶段结束前需一次安全评审 checkpoint。
 
 验收：新增第二个同类 provider 不需要修改 Fabric enum；Fabric contract test 不引用 Google fixture；scope 门控回归测试通过；受影响持久化格式的迁移测试通过。
 
@@ -1110,7 +1110,7 @@ Phase 0 的机器可读冻结产物位于 `config/architecture/`：
 
 | 持久化面 | 位置/证据 | 版本机制 | 受影响阶段 | 策略 |
 |---|---|---|---|---|
-| 外部事件 | `crates/fabric/src/types/external_event.rs`（`EXTERNAL_EVENT_SCHEMA_VERSION`，内嵌 `GmailMessageSummary`） | 有 schema version | 1 | 双读 + 版本化迁移 |
+| 外部事件 | `crates/corpus/src/tools/google/event.rs`（`EXTERNAL_EVENT_SCHEMA_VERSION`，内嵌 `GmailMessageSummary`） | 有 schema version | 1 | 双读 + 版本化迁移 |
 | gbrain spool | 配置：`crates/cognit/src/config/mod.rs`；schema owner：`crates/mnemosyne/src/backends/gbrain/migrations.rs:92` | 已有 SQLite migration；完整版本路径由 Phase 0 清点 | 5 | compatibility 读旧、写新，并验证现有 migration 幂等性 |
 | agent run repo | `crates/executive/src/service/agent_control/sqlite_repository.rs:31` | Phase 0 检查 schema/migration 机制并记录结果 | 2、3 | 先冻结现有 schema；只有 DTO 落盘形态变化时增加版本化 migration |
 | OAuth token store | Corpus credential/token store 与 Executive external composition | Phase 0 追踪实际表/文件 owner，不凭配置推断 | 6 | 加密、文件权限和 fail-closed 行为不变，增加迁移与泄漏回归测试 |

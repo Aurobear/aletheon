@@ -1,6 +1,6 @@
 use super::config::{OutputConfig, TurnBudgetConfig};
 use super::persistence::{process_result, ProcessedOutput};
-use fabric::Clock;
+use ::contracts::Clock;
 
 pub async fn enforce_turn_budget(
     results: &mut [(String, ProcessedOutput)],

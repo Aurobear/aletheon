@@ -1,12 +1,13 @@
 //! Bounded Google Calendar incremental synchronization.
 
 use super::{GoogleApiError, GoogleCalendarAdapter};
-use chrono::DateTime;
-use fabric::{
-    CalendarEntry, ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
-    ExternalIdentityId, ExternalObjectRef, ExternalProviderId, ExternalRecordRef, OpaqueCursor,
-    OpaqueProviderObjectId, PrincipalId,
+use crate::tools::google::{
+    CalendarEntry, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope, ExternalObjectRef,
+    ExternalRecordRef, OpaqueCursor, OpaqueProviderObjectId,
 };
+use ::contracts::PrincipalId;
+use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
+use chrono::DateTime;
 use serde::Deserialize;
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;

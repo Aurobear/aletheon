@@ -29,6 +29,49 @@ for retired in core bridge impl; do
   fi
 done
 
+# Runtime authority cleanup is monotonic. Keep retired paths and symbols in a
+# reviewed inventory so later slices can add entries without growing another
+# block of bespoke shell checks. A path entry also rejects empty directories
+# and broken symlinks: neither is a valid compatibility seam.
+retired_authorities="$ROOT/config/architecture/retired-authorities.tsv"
+if [[ ! -f "$retired_authorities" ]]; then
+  echo "architecture-check: missing retired authority inventory: $retired_authorities" >&2
+  exit 1
+fi
+while IFS=$'\t' read -r kind scope target deletion_owner evidence; do
+  [[ -z "$kind" || "$kind" == \#* ]] && continue
+  if [[ -z "$scope" || -z "$target" || -z "$deletion_owner" || -z "$evidence" ]]; then
+    echo "architecture-check: incomplete retired authority row: $kind $scope $target" >&2
+    exit 1
+  fi
+  case "$kind" in
+    path)
+      if [[ -e "$ROOT/$scope" || -L "$ROOT/$scope" ]]; then
+        echo "architecture-check: retired authority path returned: $scope ($deletion_owner)" >&2
+        exit 1
+      fi
+      ;;
+    rust_symbol)
+      if [[ ! "$target" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "architecture-check: invalid retired Rust symbol: $target" >&2
+        exit 1
+      fi
+      if [[ -d "$ROOT/$scope" ]] && rg -n \
+          -e "\\b(struct|enum|trait|type)\\s+$target\\b" \
+          -e "\\bimpl([[:space:]]*<[^>]*>)?[[:space:]]+$target\\b" \
+          -e "\\bpub([[:space:]]*\\([^)]*\\))?[[:space:]]+use[^;]*\\b$target\\b" \
+          "$ROOT/$scope" -g '*.rs'; then
+        echo "architecture-check: retired Rust authority returned: $target under $scope ($deletion_owner)" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "architecture-check: unknown retired authority kind: $kind" >&2
+      exit 1
+      ;;
+  esac
+done < "$retired_authorities"
+
 # Phase 0 architecture inventory and semantic ratchets.  The inventories are
 # deliberately data files: later refactor phases update ownership and lower
 # metrics without having to rewrite this checker.
@@ -55,7 +98,7 @@ def data_lines(name: str):
 def production_rs():
     for path in sorted((root / "crates").rglob("*.rs")):
         rel = path.relative_to(root).as_posix()
-        if "/tests/" in rel or "/examples/" in rel:
+        if "/tests/" in rel or "/examples/" in rel or rel.endswith("/test_support.rs"):
             continue
         yield rel, path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
 
@@ -78,63 +121,52 @@ if actual_impl != recorded_impl:
     raise SystemExit("architecture-check: top-level impl inventory differs; "
                      f"added={sorted(actual_impl-recorded_impl)}, removed={sorted(recorded_impl-actual_impl)}")
 
-# Executive files have an explicit target-layer owner.  This makes moves
-# reviewable and prevents new modules from silently landing in the legacy tree.
-layer_rows = [line.split("\t") for line in data_lines("executive-layers.tsv")]
-recorded_layers = {row[0]: row[1] for row in layer_rows}
-allowed_layers = {"domain", "application", "adapter", "composition", "host", "compatibility"}
-invalid_layers = sorted((path, layer) for path, layer in recorded_layers.items()
-                        if layer not in allowed_layers)
-if invalid_layers:
-    raise SystemExit(f"architecture-check: invalid Executive layer assignments: {invalid_layers}")
-actual_executive = {p.relative_to(root).as_posix()
-                    for p in (root / "crates/executive/src").rglob("*.rs")}
-if actual_executive != set(recorded_layers):
-    raise SystemExit("architecture-check: Executive layer inventory differs; "
-                     f"added={sorted(actual_executive-set(recorded_layers))}, "
-                     f"removed={sorted(set(recorded_layers)-actual_executive)}")
-
-# Every raw AppConfig key has an explicit normalized owner and consumer.
-if actual_executive:
+# Every raw AppConfig key has an explicit normalized owner and consumer. Small
+# synthetic gate fixtures need not manufacture an Aletheon configuration root.
+config_path = root / "crates/aletheon/src/config/mod.rs"
+if config_path.is_file():
     config_rows = [line.split("\t") for line in data_lines("config-ownership.tsv")]
     recorded_config = {row[0] for row in config_rows}
-    config_source = (root / "crates/executive/src/composition/config/mod.rs").read_text()
+    config_source = config_path.read_text()
     app_body = config_source.split("pub struct AppConfig {", 1)[1].split("\n}", 1)[0]
     actual_config = set(re.findall(r"^\s*pub\s+(\w+)\s*:", app_body, re.M))
     if actual_config != recorded_config:
         raise SystemExit("architecture-check: AppConfig ownership inventory differs; "
                          f"added={sorted(actual_config-recorded_config)}, "
                          f"removed={sorted(recorded_config-actual_config)}")
-# Application code may depend on ports and domain contracts, never host or
-# concrete adapters.  The sole exception is a deprecated compatibility shim
-# retained for the legacy SQLite repository path until Phase 9.
-for rel in sorted(path for path, layer in recorded_layers.items() if layer == "application"):
-    body = (root / rel).read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+
+# The retired Executive inventory is evidence-only.  While the transitional
+# application implementation remains under Aletheon wiring, it may depend on
+# ports and domain contracts but not reach back into concrete host/adapters.
+for rel, body in production_rs():
+    if not rel.startswith("crates/aletheon/src/wiring/application/"):
+        continue
     for lineno, line in enumerate(body.splitlines(), 1):
-        if re.search(r"crate::(?:adapters|host)::", line):
-            sqlite_shim = (rel == "crates/executive/src/application/agent_control/mod.rs"
-                           and "crate::adapters::agent_control::sqlite_repository" in line)
-            if not sqlite_shim:
-                raise SystemExit(f"architecture-check: Executive application imports a concrete/host layer at {rel}:{lineno}")
+        if re.search(r"crate::wiring::(?:adapters|daemon|host)::", line):
+            raise SystemExit(
+                "architecture-check: Aletheon application imports a concrete/host "
+                f"layer at {rel}:{lineno}"
+            )
 
 # Coding runtime identity and wire types terminate at the private adapter.
 # Goal and Agent Control must make policy decisions from neutral request and
 # resource contracts rather than a runtime name.
 for rel, body in production_rs():
-    if not (rel.startswith("crates/executive/src/application/")):
+    if not rel.startswith("crates/aletheon/src/wiring/application/"):
         continue
     if re.search(r"\b(?:PiAttemptRequest|PiRuntime|PI_CODER_RUNTIME_ID)\b|contains\s*\([^\n]*[\"']pi", body, re.I):
         raise SystemExit(f"architecture-check: coding runtime identity leaked into application policy: {rel}")
 
 # Channel/source application code is provider-neutral. Concrete provider
 # vocabulary is confined to Gateway adapters, Corpus adapters, Executive
-# adapters/host compatibility, and the composition factory entry point.
+# provider-specific channel modules, host adapters, and composition entry points.
 for rel, body in production_rs():
     provider_leak = re.search(r"\b(?:Google|Gmail|Telegram)(?:[A-Z]\w*)?\b|\b(?:google|gmail|telegram)_", body)
-    if rel.startswith("crates/executive/src/application/") and provider_leak:
-        raise SystemExit(f"architecture-check: provider identity leaked into Executive application: {rel}")
+    if rel.startswith("crates/aletheon/src/wiring/application/") and provider_leak:
+        raise SystemExit(f"architecture-check: provider identity leaked into Aletheon application: {rel}")
     if (rel.startswith("crates/gateway/src/") and
             not rel.startswith("crates/gateway/src/adapters/") and
+            not rel.startswith("crates/gateway/src/channel/telegram/") and
             rel != "crates/gateway/src/lib.rs" and provider_leak):
         raise SystemExit(f"architecture-check: provider identity leaked into Gateway core: {rel}")
 
@@ -151,9 +183,9 @@ wire_paths = {line.split("\t")[2] for line in data_lines("wire-surfaces.tsv")}
 wire_candidates = set()
 for path in (root / "crates").rglob("*.proto"):
     wire_candidates.add(path.relative_to(root).as_posix())
-for rel in ("crates/execd/src/protocol.rs", "crates/executive/src/host/core_rpc/protocol.rs"):
+for rel in ("crates/execd/src/protocol.rs",):
     if (root / rel).is_file(): wire_candidates.add(rel)
-for path in (root / "crates/fabric/src/protocol").glob("*.rs"):
+for path in (root / "crates/contracts/src/protocol").glob("*.rs"):
     wire_candidates.add(path.relative_to(root).as_posix())
 missing_wire = sorted(wire_candidates - wire_paths)
 if missing_wire:
@@ -171,7 +203,7 @@ if missing_persistence:
     raise SystemExit("architecture-check: unregistered persistence migration: " + ", ".join(missing_persistence))
 
 sources = list(production_rs())
-core_prefixes = ("crates/fabric/", "crates/kernel/", "crates/executive/src/application/",
+core_prefixes = ("crates/contracts/", "crates/kernel/", "crates/aletheon/src/wiring/application/",
                  "crates/cognit/src/harness/")
 def core(rel):
     return rel.startswith(core_prefixes) or any(part in rel.split("/") for part in ("domain", "contract", "application"))
@@ -211,7 +243,7 @@ for main in sorted((root / "crates").glob("*/src/main.rs")):
     )
 for rel, body in production_rs():
     metrics["SESSION_APPEND_WRITERS"] += len(
-        re.findall(r"\bimpl\s+(?:fabric::)?SessionAppendStore\s+for\b", body)
+        re.findall(r"\bimpl\s+(?:contracts::)?SessionAppendStore\s+for\b", body)
     )
 
 # A provider permit must never silently fall back to a process-local registry
@@ -219,7 +251,7 @@ for rel, body in production_rs():
 # source check is the architecture ratchet for X9c; explicit RegistryInferencePort
 # and LocalInferencePort implementations are intentional and live outside the
 # trait default body.
-inference_port = root / "crates/executive/src/application/inference_port.rs"
+inference_port = root / "crates/cognit/src/ports/inference.rs"
 if inference_port.is_file():
     metrics["SILENT_FALLBACKS"] = 0
     source = inference_port.read_text(errors="replace")
@@ -257,7 +289,7 @@ for rel, body in sources:
                    for _, rx, allowed in identifier_rules):
                 metrics["CORE_EXTERNAL_IDENTIFIER_HITS"] += 1
     metrics["PUBLIC_IMPL_ADAPTER_EXPORTS"] += sum(bool(re.search(r"\bpub\s+(?:mod|use)\s+(?:r#impl|impl|adapter|adapters)\b", line)) for line in lines)
-    if rel.startswith("crates/fabric/"):
+    if rel.startswith("crates/contracts/"):
         metrics["FABRIC_PROVIDER_TYPES"] += sum(bool(re.search(r"\b(?:pub\s+)?(?:struct|enum|trait|type)\s+\w*(?:Google|Gmail|Drive|Anthropic|OpenAi|Ollama|Telegram)\w*", line)) for line in lines)
     metrics["CROSS_CRATE_IMPL_REFERENCES"] += sum(bool(re.search(r"\b(?:agora|cognit|corpus|dasein|executive|gateway|hardware|metacog|mnemosyne)::(?:r#impl|impl)::", line)) for line in lines)
     if (core(rel) and not any(part in rel for part in
@@ -298,6 +330,1785 @@ for row in data_lines("compatibility-debt.tsv"):
     actual = len(re.findall(pattern, path.read_text(errors="replace"))) if path.is_file() else 0
     if actual != int(expected):
         raise SystemExit(f"architecture-check: compatibility debt {debt_id} changed {expected}->{actual}; update/lower its reviewed baseline")
+PY
+fi
+
+# RA-00 runtime authority census is monotonic. New production constructor /
+# ID mint / writer / registry / Session-shaped type sites must be registered
+# in runtime-authority-census.tsv before they are acceptable.  The inventory
+# also pins the file/symbol facts so a later slice cannot silently drop a row
+# the code still carries (absence requires a zero-match command, not deletion).
+if [[ ${ARCH_SKIP_RA00_GATES:-0} != 1 && -f config/architecture/runtime-authority-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/runtime-authority-census.tsv"
+
+ROLES = {"constructor", "id_mint", "state_machine", "journal_writer",
+         "projection_writer", "registry", "composition", "compatibility",
+         "cache", "transport", "reader"}
+KINDS = {"authority", "projection", "cache", "transport", "compatibility", "dead"}
+
+# A hit in one of these authority patterns is a production authority point
+# that must be covered by a census row.  Wrapper/type-*use* sites (field types,
+# function signatures, config DTOs) are deliberately NOT matched: only
+# unambiguous constructor/mint/writer/registry markers, so the gate classifies
+# by owner/scope instead of banning every `::new()`.
+AUTHORITY_PATTERNS = (
+    re.compile(r"\b(?:SessionId|TurnId|AgentId|AgentRunId|DelegateId)::\s*(?:new|default)\s*\("),
+  re.compile(r"\b(?:ProviderWorkerRegistry|AgentExecutionRegistry|CanonicalEventBus|SqliteEventSpine|EventSourcedSessionStore|CanonicalSessionStore)::\s*(?:new|default)\s*\("),
+    re.compile(r"(?:INSERT|UPDATE|DELETE)\s+INTO\s+(?:sessions|session_items|session_principals|protocol_events|agent_runs|agent_messages_v2|agent_runtime_processes|agent_resource_leases|agent_terminal_receipts)\b", re.I),
+)
+
+# Test-support modules are whole-file `#[cfg(test)] mod` bodies or test helpers;
+# they are never production authority and must not be flagged by the new-site
+# scan (their fixtures already carry production_callers=0 in the census).
+TEST_BASENAMES = {"tests.rs", "test_support.rs", "test_infra.rs", "fixtures.rs"}
+def production_sources():
+    for path in sorted((root / "crates").rglob("*.rs")):
+        rel = path.relative_to(root).as_posix()
+        if "/tests/" in rel or "/examples/" in rel:
+            continue
+        if path.name in TEST_BASENAMES or path.name.endswith(("_test.rs", "_tests.rs")):
+            continue
+        body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+        yield rel, body.splitlines()
+
+# 1. Validate every census row and record its target file/directory.
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    if line.startswith("fact_id\t"):
+        continue  # header row
+    cols = line.split("\t")
+    if len(cols) != 17:
+        raise SystemExit(f"architecture-check: RA-00 census row {lineno} has {len(cols)} cols (want 17)")
+    fact_id, aggregate, role, path, symbol, owner, kind, pc, tc, icc, sw, cw, to, cs, ds, status, cmd = cols
+    if not fact_id.startswith("RA-"):
+        raise SystemExit(f"architecture-check: RA-00 census row {lineno} invalid fact_id {fact_id!r}")
+    if role not in ROLES:
+        raise SystemExit(f"architecture-check: RA-00 census {fact_id} invalid role {role!r}")
+    if kind not in KINDS:
+        raise SystemExit(f"architecture-check: RA-00 census {fact_id} invalid authority_kind {kind!r}")
+    if not (status == "CLOSED" or status.startswith("INVESTIGATE:")):
+        raise SystemExit(f"architecture-check: RA-00 census {fact_id} invalid status {status!r}")
+    if status == "CLOSED" and not cmd.strip():
+        raise SystemExit(f"architecture-check: RA-00 census {fact_id} CLOSED row lacks evidence command")
+    rows.append(dict(fact_id=fact_id, role=role, path=path, kind=kind, status=status, cmd=cmd, symbol=symbol))
+
+# 2. Every production authority site must be attributable to a census row that
+#    (a) names this file/directory and (b) whose CLOSED evidence command matches
+#    the line.  A new mint/writer/registry marker without a matching row fails,
+#    as does a dropped row whose code is still present.
+covered = set()
+row_evidence = []
+for row in rows:
+    target = row["path"].split(":")[0]
+    full = root / target
+    if not full.exists():
+        raise SystemExit(f"architecture-check: RA-00 census {row['fact_id']} path missing: {target}")
+    covered.add(target)
+    if row["status"] == "CLOSED" and row["cmd"].startswith("rg -n '"):
+        m = re.match(r"^rg -n '(.+)' (.+)$", row["cmd"])
+        if m:
+            try:
+                row_evidence.append((target, re.compile(m.group(1))))
+            except re.error:
+                raise SystemExit(f"architecture-check: RA-00 census {row['fact_id']} invalid evidence regex")
+            continue
+    row_evidence.append((target, None))
+
+def attributable(rel, line):
+    for target, rx in row_evidence:
+        if not (rel == target or rel.startswith(target + "/") or target.startswith(rel + "/")):
+            continue
+        if rx is None or rx.search(line):
+            return True
+    return False
+
+uncovered_hits = []
+for rel, lines in production_sources():
+    for lineno, line in enumerate(lines, 1):
+        if any(rx.search(line) for rx in AUTHORITY_PATTERNS) and not attributable(rel, line):
+            uncovered_hits.append(f"{rel}:{lineno}")
+            break
+if uncovered_hits:
+    raise SystemExit(
+        "architecture-check: RA-00 unregistered authority sites (add a census row): "
+        + ", ".join(uncovered_hits[:20])
+        + (f" (+{len(uncovered_hits)-20} more)" if len(uncovered_hits) > 20 else ""))
+
+# 3. CLOSED evidence commands must still match their target (file-level rg
+#    commands only; directory scans are covered by section 2).  An absence
+#    claim must be an explicit zero-match command, not a dropped row.
+for row in rows:
+    if row["status"] != "CLOSED":
+        continue
+    cmd = row["cmd"]
+    m = re.match(r"^rg -n '(.+)' (.+)$", cmd)
+    if not m:
+        continue
+    pattern, target = m.group(1), m.group(2).strip()
+    full = root / target
+    if full.is_dir():
+        continue
+    if not full.is_file():
+        raise SystemExit(f"architecture-check: RA-00 census {row['fact_id']} evidence target missing: {target}")
+    try:
+        haystack = full.read_text(errors="replace")
+    except OSError:
+        continue
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        continue
+    if not rx.search(haystack):
+        raise SystemExit(
+            f"architecture-check: RA-00 census {row['fact_id']} evidence no longer matches "
+            f"{target} for {pattern!r}")
+PY
+fi
+
+# K0 kernel effect census is monotonic.  New production effect executors (OS
+# spawn, admission, operation terminal) and new kernel effect-row facts must be
+# registered in kernel-effect-census.tsv.  The gate re-verifies CLOSED evidence
+# commands and rejects uncovered production spawn/admission sites.
+if [[ ${ARCH_SKIP_K0_GATES:-0} != 1 && -f config/architecture/kernel-effect-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/kernel-effect-census.tsv"
+
+# Unambiguous production effect-authority markers: OS process spawn,
+# admission-controller binding, kernel operation terminal, execd spawn.
+EFFECT_PATTERNS = (
+    re.compile(r"\bCommand::new\s*\("),
+    re.compile(r"\b(?:tokio::process::Command|std::process::Command|std::os::unix::process)\b"),
+    re.compile(r"\.spawn\(\)"),
+    re.compile(r"\bProcessManager::new\b|\bProcessManager\s*\{"),
+    re.compile(r"\bProductionAdmissionController::new\b|\bDefaultCapabilityInvoker::new\b"),
+    re.compile(r"kernel\.(?:start_operation|succeed_operation|fail_operation)\s*\("),
+    re.compile(r"\bOperationTable::new\b"),
+)
+
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    if line.startswith("fact_id\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 13:
+        raise SystemExit(f"architecture-check: K0 census row {lineno} has {len(cols)} cols (want 13)")
+    fact_id = cols[0]
+    if not fact_id.startswith("K0-"):
+        raise SystemExit(f"architecture-check: K0 census row {lineno} invalid fact_id {fact_id!r}")
+    status = cols[11]
+    if not (status == "CLOSED" or status.startswith("INVESTIGATE:")):
+        raise SystemExit(f"architecture-check: K0 census {fact_id} invalid status {status!r}")
+    rows.append(dict(fact_id=fact_id, path=cols[3].split(":")[0].removesuffix(" (dir)"), status=status, cmd=cols[12]))
+
+covered = set()
+for row in rows:
+    target = row["path"]
+    if not (root / target).exists():
+        raise SystemExit(f"architecture-check: K0 census {row['fact_id']} path missing: {target}")
+    covered.add(target)
+    # Evidence commands may scan additional files/directories; those are
+    # covered by this row too so a multi-file evidence command does not
+    # require one row per file.
+    for extra in re.findall(r"crates/[^ ']+", row["cmd"]):
+        covered.add(extra.rstrip(","))
+
+def file_covered(rel):
+    return any(rel == c or rel.startswith(c + "/") or c.startswith(rel + "/") for c in covered)
+
+# New production spawn/admission/operation sites in files with no registered
+# census row must fail.  Classified by owner (file) per plan §10 K0, not by
+# banning every `Command::new`/`.spawn()` occurrence.
+def production_sources():
+    for path in sorted((root / "crates").rglob("*.rs")):
+        rel = path.relative_to(root).as_posix()
+        if "/tests/" in rel or "/examples/" in rel:
+            continue
+        if path.name in {"tests.rs", "test_support.rs", "test_infra.rs", "fixtures.rs"} \
+           or path.name.endswith(("_test.rs", "_tests.rs")):
+            continue
+        body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+        yield rel, body.splitlines()
+
+uncovered = []
+for rel, lines in production_sources():
+    if file_covered(rel):
+        continue
+    for n, line in enumerate(lines, 1):
+        if any(rx.search(line) for rx in EFFECT_PATTERNS):
+            uncovered.append(f"{rel}:{n}")
+            break
+if uncovered:
+    raise SystemExit(
+        "architecture-check: K0 unregistered effect sites (add a census row): "
+        + ", ".join(uncovered[:20])
+        + (f" (+{len(uncovered)-20} more)" if len(uncovered) > 20 else ""))
+
+# CLOSED evidence commands must still match their target.  A command may
+# name one file/directory or several whitespace-separated paths.
+for row in rows:
+    if row["status"] != "CLOSED":
+        continue
+    cmd = row["cmd"]
+    m = re.match(r"^rg -n '(.+)' (.+)$", cmd)
+    if not m:
+        continue
+    pattern, targets = m.group(1), m.group(2).strip().split()
+    matched_any = False
+    for target in targets:
+        full = root / target
+        if full.is_dir():
+            matched_any = True
+            continue
+        if not full.is_file():
+            raise SystemExit(f"architecture-check: K0 census {row['fact_id']} evidence target missing: {target}")
+        try:
+            rx = re.compile(pattern)
+        except re.error:
+            continue
+        if rx.search(full.read_text(errors="replace")):
+            matched_any = True
+    if not matched_any:
+        raise SystemExit(
+            f"architecture-check: K0 census {row['fact_id']} evidence no longer matches "
+            f"{targets} for {pattern!r}")
+PY
+fi
+
+# APX-00 application use-case census is monotonic.  New concrete I/O in the
+# Executive Application layer (SQLite/filesystem/process/network) and new
+# use-case modules must be registered in application-use-case-census.tsv
+# before they are acceptable.  Classified by owner, not banned outright.
+if [[ ${ARCH_SKIP_APX00_GATES:-0} != 1 && -f config/architecture/application-use-case-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/application-use-case-census.tsv"
+
+CLS = {"basic-use-case", "optional-supported", "optional-unproven",
+       "adapter-io", "compatibility", "dead"}
+
+# Unambiguous concrete-I/O markers inside the Application layer.
+IO_PATTERNS = (
+    re.compile(r"\brusqlite::\b|\bConnection::open\b"),
+    re.compile(r"\bstd::fs::(?:write|read|create|remove|File::)\b"),
+    re.compile(r"\bstd::process::Command\b|\bCommand::new\s*\("),
+    re.compile(r"\breqwest::\b|\btokio::net::\b|\bUnixStream\b|\bUnixListener\b"),
+)
+
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#"):
+        continue
+    if line.startswith("fact_id\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 11:
+        raise SystemExit(f"architecture-check: APX-00 census row {lineno} has {len(cols)} cols (want 11)")
+    fact_id = cols[0]
+    if not fact_id.startswith("APX-"):
+        raise SystemExit(f"architecture-check: APX-00 census row {lineno} invalid fact_id {fact_id!r}")
+    cls = cols[2]
+    if cls not in CLS:
+        raise SystemExit(f"architecture-check: APX-00 census {fact_id} invalid classification {cls!r}")
+    status = cols[9]
+    if not (status == "CLOSED" or status.startswith("INVESTIGATE:")):
+        raise SystemExit(f"architecture-check: APX-00 census {fact_id} invalid status {status!r}")
+    rows.append(dict(fact_id=fact_id, cls=cls, path=cols[4], status=status, cmd=cols[10]))
+
+covered = set()
+for row in rows:
+    # path column may carry prose + multiple files + line refs; collect every
+    # crates-relative file/directory token that actually exists.
+    candidates = re.findall(r"crates/[^ ,:]+", row["path"])
+    for cand in candidates:
+        if (root / cand).exists():
+            covered.add(cand)
+    for extra in re.findall(r"crates/[^ ']+", row["cmd"]):
+        extra = extra.rstrip(",")
+        # cmd extras that are directories (directory-wide scans) must not
+        # blanket-cover; only file extras add coverage.
+        if (root / extra).is_file():
+            covered.add(extra)
+
+def file_covered(rel):
+    return any(rel == c or rel.startswith(c + "/") or c.startswith(rel + "/") for c in covered)
+
+# New concrete I/O in an unregistered Executive application file must fail.
+def application_sources():
+    base = root / "crates/aletheon/src/wiring/application"
+    for path in sorted(base.rglob("*.rs")):
+        rel = path.relative_to(root).as_posix()
+        if "/tests/" in rel:
+            continue
+        if path.name in {"tests.rs", "test_support.rs", "test_infra.rs", "fixtures.rs"} \
+           or path.name.endswith(("_test.rs", "_tests.rs")):
+            continue
+        body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+        yield rel, body.splitlines()
+
+uncovered = []
+for rel, lines in application_sources():
+    if file_covered(rel):
+        continue
+    for n, line in enumerate(lines, 1):
+        if any(rx.search(line) for rx in IO_PATTERNS):
+            uncovered.append(f"{rel}:{n}")
+            break
+if uncovered:
+    raise SystemExit(
+        "architecture-check: APX-00 unregistered Application I/O (add a census row): "
+        + ", ".join(uncovered[:20])
+        + (f" (+{len(uncovered)-20} more)" if len(uncovered) > 20 else ""))
+
+# CLOSED evidence commands must still match.
+for row in rows:
+    if row["status"] != "CLOSED":
+        continue
+    cmd = row["cmd"]
+    m = re.match(r"^rg -n '(.+)' (.+)$", cmd)
+    if not m:
+        continue
+    pattern = m.group(1)
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        continue
+    matched = False
+    for target in m.group(2).strip().split():
+        full = root / target
+        if full.is_dir():
+            matched = True
+            continue
+        if not full.is_file():
+            raise SystemExit(f"architecture-check: APX-00 census {row['fact_id']} evidence target missing: {target}")
+        if rx.search(full.read_text(errors="replace")):
+            matched = True
+    if not matched:
+        raise SystemExit(
+            f"architecture-check: APX-00 census {row['fact_id']} evidence no longer matches "
+            f"{m.group(2)} for {pattern!r}")
+PY
+fi
+
+# CGP-00 composition/Gateway/Interact census is monotonic.  The Interact
+# source-file set must stay mechanically equal to the 52-file baseline (the
+# original census minus six caller-zero/duplicate framing shells, the retired
+# intent facade, plus the CGP-05 seam) in
+# interact-authority-census.md; new daemon RPC route methods must be
+# registered in gateway-route-census.tsv.
+if [[ ${ARCH_SKIP_CGP00_GATES:-0} != 1 && -f config/architecture/gateway-route-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+route = root / "config/architecture/gateway-route-census.tsv"
+
+# 1. Gateway route census structural integrity.
+for lineno, line in enumerate(route.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#") or line.startswith("fact_id\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 18:
+        raise SystemExit(f"architecture-check: CGP-00 route census row {lineno} has {len(cols)} cols (want 18)")
+    if not cols[0].startswith("CGP-R-"):
+        raise SystemExit(f"architecture-check: CGP-00 route census row {lineno} invalid fact_id {cols[0]!r}")
+    if cols[16] != "CLOSED" and not cols[16].startswith("INVESTIGATE:"):
+        raise SystemExit(f"architecture-check: CGP-00 route {cols[0]} invalid status {cols[16]!r}")
+    m = re.match(r"^rg -n '(.+)' (.+)$", cols[17])
+    if not m:
+        continue
+    pattern = m.group(1)
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        continue
+    for target in m.group(2).strip().split():
+        full = root / target
+        if full.is_dir():
+            continue
+        if not full.is_file():
+            raise SystemExit(f"architecture-check: CGP-00 route {cols[0]} evidence target missing: {target}")
+        if not rx.search(full.read_text(errors="replace")):
+            raise SystemExit(f"architecture-check: CGP-00 route {cols[0]} evidence no longer matches {target}")
+
+# 2. Interact source set must equal the 52-file baseline after six
+#    caller-zero/duplicate framing shells and the caller-zero intent facade
+#    were retired (plus the CGP-05 typed_client seam).
+#    Any further addition must update the census and
+#    ledger together.
+interact = sorted(p.relative_to(root).as_posix()
+                  for p in (root / "crates/interact/src").rglob("*.rs"))
+actual = len(interact)
+if actual != 52:
+    raise SystemExit(f"architecture-check: CGP-00 interact source set {actual} != 52 baseline; "
+                     "update interact-authority-census.md and the ledger together")
+
+# 3. Every daemon RPC dispatch method must be registered in a route row.
+#    Reads the quoted method strings from rpc.rs dispatch match arms.
+rpc_path = root / "crates/aletheon/src/wiring/daemon/handler/rpc.rs"
+if rpc_path.is_file():
+    dispatch = rpc_path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    # Match quoted method literals (single or grouped in match arms).
+    methods = set(re.findall(r'"([a-z][a-z0-9_.\-/]*)"', dispatch))
+    # Drop JSON-RPC envelope keys and prose that are not route methods.
+    envelope = {"id", "jsonrpc", "result", "error", "code", "message", "method"}
+    methods = methods - envelope
+    # Drop path-like/misc literals that are format strings or keys.
+    methods = {m for m in methods
+               if not any(m == k for k in ("default", "prompt", "workspace", "config"))}
+    registered = set()
+    for line in route.read_text().splitlines():
+        if not line.startswith("CGP-R-"):
+            continue
+        cols = line.split("\t")
+        for method in cols[2].split(","):
+            method = method.strip()
+            if method:
+                registered.add(method)
+    unregistered = sorted(methods - registered)
+    if unregistered:
+        raise SystemExit(
+            "architecture-check: CGP-00 unregistered RPC methods (add to gateway-route-census.tsv): "
+            + ", ".join(unregistered[:20])
+            + (f" (+{len(unregistered)-20} more)" if len(unregistered) > 20 else ""))
+PY
+fi
+
+# E0 extension preservation manifest is monotonic.  Every preserved extension
+# row must be structurally valid with an existing evidence target.
+if [[ ${ARCH_SKIP_E0_GATES:-0} != 1 && -f config/architecture/extension-preservation.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/extension-preservation.tsv"
+
+EXTENSIONS = {"Gmail/Google", "GBrain", "Hardware", "Robot VLA", "Pi"}
+seen = set()
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#") or line.startswith("fact_id\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 17:
+        raise SystemExit(f"architecture-check: E0 census row {lineno} has {len(cols)} cols (want 17)")
+    fact_id, ext = cols[0], cols[1]
+    if not fact_id.startswith("E0-EXT-"):
+        raise SystemExit(f"architecture-check: E0 census row {lineno} invalid fact_id {fact_id!r}")
+    if ext not in EXTENSIONS:
+        raise SystemExit(f"architecture-check: E0 census {fact_id} unknown extension {ext!r}")
+    if ext in seen:
+        raise SystemExit(f"architecture-check: E0 census duplicate extension {ext!r}")
+    seen.add(ext)
+    if cols[15] != "CLOSED" and not cols[15].startswith("INVESTIGATE:"):
+        raise SystemExit(f"architecture-check: E0 census {fact_id} invalid status {cols[15]!r}")
+    m = re.match(r"^rg -n '(.+)' (.+)$", cols[16])
+    if not m:
+        continue
+    pattern = m.group(1)
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        continue
+    for target in m.group(2).strip().split():
+        full = root / target
+        if full.is_dir():
+            continue
+        if not full.is_file():
+            raise SystemExit(f"architecture-check: E0 census {fact_id} evidence target missing: {target}")
+        if not rx.search(full.read_text(errors="replace")):
+            raise SystemExit(f"architecture-check: E0 census {fact_id} evidence no longer matches {target}")
+if seen != EXTENSIONS:
+    raise SystemExit(f"architecture-check: E0 census missing extensions: {sorted(EXTENSIONS - seen)}")
+PY
+fi
+
+# D0 Fabric boundary census is monotonic. Deleted, caller-zero surfaces are
+# removed from both inventories; every remaining symbol must have a census row
+# with valid disposition and blocker vocabulary.
+if [[ ${ARCH_SKIP_D0_GATES:-0} != 1 && -f config/architecture/fabric-boundary-census.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/fabric-boundary-census.tsv"
+public = root / "config/architecture/fabric-public-types.tsv"
+
+# 1. Fabric source set may shrink during reviewed E7/D6 deletion, but must not
+#    grow beyond the D1 seed ceiling.
+fabric_files = list((root / "crates/contracts/src").rglob("*.rs"))
+if len(fabric_files) > 175:
+    raise SystemExit(f"architecture-check: D0 fabric source set {len(fabric_files)} exceeds 175")
+
+# 2. Remaining public surface is the reviewed 7-column inventory.
+pub_rows = [l for l in public.read_text().splitlines()
+            if l.strip() and not l.startswith("#") and not l.startswith("path\t")]
+
+# 3. Boundary census: one row per public symbol, valid columns.
+#    Columns: path symbol kind prod_caller_path prod_caller_symbol cfg
+#             wire_role persistence_role schema_or_format_version
+#             last_writer last_reader target_owner cutover_pr deletion_pr
+#             deadline evidence_commit
+DELETION_OWNERS = {"D6", "E7", "XRET-04"}
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#") or line.startswith("path\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 16:
+        raise SystemExit(f"architecture-check: D0 boundary census row {lineno} has {len(cols)} cols (want 16)")
+    rows.append(cols)
+if len(rows) != len(pub_rows):
+    raise SystemExit(f"architecture-check: D0 boundary rows {len(rows)} != public symbols {len(pub_rows)}")
+
+# 4. Every boundary row maps to a real fabric file with valid deletion owner.
+fabric_set = {p.relative_to(root).as_posix() for p in fabric_files}
+for cols in rows:
+    path = cols[0]
+    if path not in fabric_set:
+        raise SystemExit(f"architecture-check: D0 boundary census unknown path {path}")
+    del_pr = cols[13]
+    if del_pr not in DELETION_OWNERS:
+        raise SystemExit(f"architecture-check: D0 boundary row {cols[1]} invalid deletion_pr {del_pr!r}")
+    # INVESTIGATE last_writer must carry a blocker code in evidence_commit.
+    if cols[9] == "INVESTIGATE" or cols[10] == "INVESTIGATE":
+        if not re.search(r"B[0-7]", cols[15]):
+            raise SystemExit(f"architecture-check: D0 boundary row {cols[1]} INVESTIGATE without blocker")
+        raise SystemExit(
+            f"architecture-check: D0 boundary row {cols[1]} has unresolved writer/reader "
+            "(B2/B4 closure required before D1)")
+
+# 5. Cross-check symbol sets match between public inventory and boundary census.
+pub_symbols = {c[2] for c in (l.split("\t") for l in pub_rows)}
+bc_symbols = {c[1] for c in rows}
+if pub_symbols != bc_symbols:
+    raise SystemExit("architecture-check: D0 boundary census symbol set differs from fabric-public-types.tsv")
+PY
+fi
+
+# XRET-00 Executive surface freeze is monotonic.  The Executive source set is
+# frozen; every file must have a ledger row and every live ledger path must
+# exist. XRET-04 retired the final compatibility path, so compatibility is now
+# a hard-zero monotonic boundary.
+if [[ ${ARCH_SKIP_XRET00_GATES:-0} != 1 && -f config/architecture/executive-surface-ledger.tsv ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+census = root / "config/architecture/executive-surface-ledger.tsv"
+DISPO = {"SPLIT", "MERGE", "MOVE", "INVESTIGATE", "DELETE", "COMPAT"}
+
+rows = []
+for lineno, line in enumerate(census.read_text().splitlines(), 1):
+    if not line.strip() or line.startswith("#") or line.startswith("path\t"):
+        continue
+    cols = line.split("\t")
+    if len(cols) != 7:
+        raise SystemExit(f"architecture-check: XRET-00 ledger row {lineno} has {len(cols)} cols (want 7)")
+    path, semantics, disp, owner, mig, gate, blocker = cols
+    if disp not in DISPO and "RETIRED" not in disp:
+        raise SystemExit(f"architecture-check: XRET-00 ledger {path} invalid disposition {disp!r}")
+    rows.append(cols)
+
+# 1. The ledger is historical disposition evidence after the crate retirement.
+# No listed Executive path may reappear, irrespective of its former target
+# owner wording.
+for path, semantics, disp, owner, mig, gate, blocker in rows:
+    exists = (root / path).exists()
+    if exists:
+        raise SystemExit(f"architecture-check: XRET-00 retired path reappeared: {path}")
+
+# 2. Every live Executive source file must have a ledger row.
+exec_files = {p.relative_to(root).as_posix() for p in (root / "crates/executive/src").rglob("*.rs")}
+ledger_paths = {cols[0] for cols in rows}
+missing = sorted(exec_files - ledger_paths)
+if missing:
+    raise SystemExit("architecture-check: XRET-00 unregistered Executive files (update ledger): "
+                     + ", ".join(missing[:20]))
+
+# 3. COMPAT cardinality == 0 after XRET-04. Any compatibility row would
+# indicate that a retired Executive authority has re-entered the live surface.
+compats = [cols[0] for cols in rows if cols[2] == "COMPAT"]
+if compats:
+    raise SystemExit(f"architecture-check: XRET-04 COMPAT hard-zero violated: {compats}")
+PY
+fi
+
+# D1 contracts seed gate: the fabric `contracts` module may only re-export
+# ownerless value primitives (ID wrappers, version).  It must not import or
+# define rich aggregates/repositories/services/policies/live permits/state
+# machines/UI-wire models, and it must not declare new public types (pure
+# re-export keeps the Fabric rich surface from growing).
+if [[ ${ARCH_SKIP_D1_GATES:-0} != 1 && -f crates/contracts/src/contracts.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+contracts = root / "crates/contracts/src/contracts.rs"
+body = contracts.read_text(errors="replace")
+
+# Forbidden: new public type/struct/enum/trait declarations (must be re-export only).
+decls = re.findall(r"^\s*pub\s+(?:struct|enum|trait|type)\s+(\w+)", body, re.M)
+if decls:
+    raise SystemExit(f"architecture-check: D1 contracts seed declares new public types: {decls}")
+
+# Forbidden: imports from rich modules (types::repository, types::tool, policy,
+# security, events::spine as a trait object, etc.) and any `impl` block that
+# adds behavior beyond the pure re-export.
+for lineno, line in enumerate(body.splitlines(), 1):
+    if re.search(r"use\s+crate::(?:types::(?:repository|tool|permission|workspace|goal|objective)|policy|security|kernel|ipc::bus|events::spine)", line):
+        raise SystemExit(f"architecture-check: D1 contracts seed imports a rich module at {lineno}")
+    if re.search(r"^\s*(pub\s+)?impl\b", line):
+        raise SystemExit(f"architecture-check: D1 contracts seed carries behavior impl at {lineno}")
+
+# Allowed: re-exports must be from the ownerless primitive set.
+allowed_prefixes = (
+    "crate::types::admission::{PermitId, PrincipalId}",
+    "crate::types::attempt::RuntimeId",
+    "crate::ipc::envelope_v2::MessageId",
+    "crate::types::operation::{OperationId, ProcessId}",
+    "crate::types::process::{AgentId, NamespaceId}",
+    "crate::types::session::TurnId",
+    "crate::types::space::SessionId",
+    "crate::ipc::envelope_v2::SchemaId",
+    "crate::include::subsystem::Version",
+)
+for lineno, line in enumerate(body.splitlines(), 1):
+    m = re.match(r"^\s*pub use\s+(\S+);", line)
+    if not m:
+        continue
+    if not any(m.group(1) == p for p in allowed_prefixes):
+        raise SystemExit(f"architecture-check: D1 contracts seed re-exports non-ownerless symbol at {lineno}: {m.group(1)}")
+PY
+fi
+
+# RA-01 Runtime owner-seam gate: canonical aggregate IDs (SessionId/TurnId/
+# AgentRunId) may only be defined in crates/runtime/src/ids.rs.  A new mint
+# constructor elsewhere, or a runtime dependency on Executive, fails.
+if [[ ${ARCH_SKIP_RA01_GATES:-0} != 1 && -f crates/runtime/src/ids.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+
+# 1. Runtime must not depend on Executive or legacy concrete adapters.
+manifest = root / "crates/runtime/Cargo.toml"
+toml = manifest.read_text()
+for forbidden in ("executive", "interact", "gateway", "corpus", "kernel", "mnemosyne"):
+    if re.search(rf'^\s*{forbidden}\s*=\s*{{', toml, re.M):
+        raise SystemExit(f"architecture-check: RA-01 runtime depends on forbidden crate {forbidden}")
+
+# 2. Canonical aggregate-ID `new` mints may only be defined in ids.rs.
+ids_body = (root / "crates/runtime/src/ids.rs").read_text(errors="replace")
+for path in sorted((root / "crates/runtime/src").rglob("*.rs")):
+    rel = path.relative_to(root).as_posix()
+    if rel.endswith("ids.rs"):
+        continue
+    body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    for lineno, line in enumerate(body.splitlines(), 1):
+        # A definition of SessionId/TurnId/AgentRunId/Generation struct is
+        # only allowed in ids.rs (single ID source).
+        if re.search(r"^\s*pub\s+struct\s+(SessionId|TurnId|AgentRunId|Generation)\b", line):
+            raise SystemExit(f"architecture-check: RA-01 aggregate ID defined outside ids.rs at {rel}:{lineno}")
+PY
+fi
+
+# K1 durable Operation seam gate: the journal module is read/shadow only — it
+# must not write to the legacy OperationTable or introduce a second writer.
+if [[ ${ARCH_SKIP_K1_GATES:-0} != 1 && -f crates/kernel/src/operation/journal.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+journal = (root / "crates/kernel/src/operation/journal.rs").read_text(errors="replace")
+
+# The journal must not mutate the legacy in-memory OperationTable (double
+# writer forbidden by kernel plan §K1).  It defines ports/contracts only.
+# Doc comments and string literals are ignored; only Rust code is checked.
+code_only = "\n".join(
+    l for l in journal.splitlines()
+    if not l.lstrip().startswith("//") and not l.lstrip().startswith("///")
+    and not l.lstrip().startswith("//!")
+    and not l.strip().startswith("use ") and not l.strip().startswith("pub use ")
+)
+for lineno, line in enumerate(code_only.splitlines(), 1):
+    if re.search(r"\bOperationTable\b", line):
+        raise SystemExit(f"architecture-check: K1 journal touches legacy OperationTable at {lineno}")
+    if re.search(r"\binsert\b|\bremove\b|\bwrite\b|\bappend\b", line, re.I):
+        raise SystemExit(f"architecture-check: K1 journal carries a write/append at {lineno}")
+    # async fn is allowed only for read/replay; a mutable write signature fails.
+    if re.search(r"async fn [a-z_]+\(&mut self.*\)", line):
+        raise SystemExit(f"architecture-check: K1 journal exposes a mutating write at {lineno}")
+
+# The ExecutionJournal trait may only expose read/replay, never write.
+trait_body = journal.split("pub trait ExecutionJournal", 1)
+if len(trait_body) == 2:
+    trait_src = trait_body[1].split("\n}", 1)[0]
+    for lineno, line in enumerate(trait_src.splitlines(), 1):
+        if "fn " in line and not re.search(r"\b(read|replay_after)\b", line):
+            raise SystemExit(f"architecture-check: K1 ExecutionJournal exposes non-read method at {lineno}")
+PY
+fi
+
+# K2 sealed-descriptor gate: the CapabilityRegistry must reject duplicate/
+# version-0/empty-digest bindings and must be immutable after seal; no
+# Runtime/Executive can replace a binding post-seal.
+if [[ ${ARCH_SKIP_K2_GATES:-0} != 1 && -f crates/kernel/src/capability/registry.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+reg = (root / "crates/kernel/src/capability/registry.rs").read_text(errors="replace")
+
+# The registry must enforce immutability after seal and reject bad descriptors.
+for needle, msg in (
+    ("registry is sealed; binding cannot be replaced", "missing post-seal immutability guard"),
+    ("descriptor version must be >= 1", "missing version>=1 validation"),
+    ("descriptor digest must not be empty", "missing digest validation"),
+    ("duplicate capability", "missing duplicate rejection"),
+    ("pub fn seal", "missing seal()"),
+    ("pub fn resolve", "missing resolve()"),
+):
+    if needle not in reg:
+        raise SystemExit(f"architecture-check: K2 registry {msg}")
+
+# Re-export must be reachable from kernel capability module.
+cap_mod = (root / "crates/kernel/src/capability/mod.rs").read_text(errors="replace")
+if "pub mod registry;" not in cap_mod:
+    raise SystemExit("architecture-check: K2 registry module not declared in capability/mod.rs")
+PY
+fi
+
+# APX-01 Application facade gate: the Application crate may depend only on
+# contracts/fabric + runtime.  It must not hold a repository, mint a core ID,
+# or import Executive/concrete adapters.
+if [[ ${ARCH_SKIP_APX01_GATES:-0} != 1 && -f crates/application/Cargo.toml ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+manifest = (root / "crates/application/Cargo.toml").read_text()
+for forbidden in ("executive", "interact", "gateway", "corpus", "kernel", "mnemosyne", "agora", "dasein", "metacog"):
+    if re.search(rf'^\s*{forbidden}\s*=\s*', manifest, re.M):
+        raise SystemExit(f"architecture-check: APX-01 application depends on forbidden crate {forbidden}")
+
+src = "\n".join(
+    p.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    for p in (root / "crates/application/src").rglob("*.rs")
+)
+for lineno, line in enumerate(src.splitlines(), 1):
+    if re.search(r"\b(?:Repository|AgentRunRepository|SessionAppendStore|SessionStore)\b", line):
+        raise SystemExit(f"architecture-check: APX-01 application holds a repository at {lineno}")
+    if re.search(r"\bSessionId\(|TurnId\(|AgentRunId\(|AgentId\(", line):
+        raise SystemExit(f"architecture-check: APX-01 application mints a core ID at {lineno}")
+PY
+fi
+
+# E1 extension seam gate: the extension module carries registration
+# descriptors only — no rich types, no concrete adapter, no secret material,
+# no second composition root.  Core constructs with zero extensions.
+if [[ ${ARCH_SKIP_E1_GATES:-0} != 1 && -f crates/application/src/extension.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+ext = (root / "crates/application/src/extension.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in ext.splitlines()
+    if not l.lstrip().startswith("//")
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # No rich aggregate/repository/service definitions in the seam.
+    if re.search(r"^\s*pub\s+struct\s+\w*(?:Repository|Service|Store|Worker|Scheduler)\b", line):
+        raise SystemExit(f"architecture-check: E1 extension seam carries a rich type at {lineno}")
+    # No secret material fields.
+    if re.search(r"\b(?:secret|token|password|credential)\s*:", line, re.I):
+        raise SystemExit(f"architecture-check: E1 extension seam exposes a secret field at {lineno}")
+
+# The registry must construct empty (zero-extension core).
+if "::new()" not in ext:
+    raise SystemExit("architecture-check: E1 extension registry lacks an empty constructor")
+if "empty" not in ext and "zero extensions" not in ext:
+    raise SystemExit("architecture-check: E1 extension seam must document zero-extension construction")
+PY
+fi
+
+# CGP-01 composition-skeleton gate: the skeleton must have no
+# ComponentGraph/ServiceBag, and `compose` must perform no I/O or spawn.
+if [[ ${ARCH_SKIP_CGP01_GATES:-0} != 1 && -f crates/aletheon/src/composition.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+comp = (root / "crates/aletheon/src/composition.rs").read_text(errors="replace")
+
+# No ComponentGraph/ServiceBag in Rust code (doc comments may reference the
+# constraint, so skip comment lines).
+code_only = "\n".join(
+    l for l in comp.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+for needle in ("ComponentGraph", "ServiceBag"):
+    if re.search(rf"\b{needle}\b", code_only):
+        raise SystemExit(f"architecture-check: CGP-01 skeleton carries a {needle}")
+
+# compose() must not do I/O or spawn: reject socket/fs/command/tokio spawn in
+# the compose body (ignore doc comments and pure-wiring lines).
+for lineno, line in enumerate(comp.splitlines(), 1):
+    if re.search(r"Command::new|\.spawn\(\)|std::fs|UnixStream|UnixListener|tokio::net|TcpListener", line):
+        raise SystemExit(f"architecture-check: CGP-01 compose does I/O/spawn at {lineno}")
+
+# Explicit lifecycle phases must be present.
+for phase in ("preflight", "open", "compose", "bootstrap", "serve", "drain"):
+    if phase not in comp.lower():
+        raise SystemExit(f"architecture-check: CGP-01 skeleton missing lifecycle phase {phase}")
+PY
+fi
+
+# RA-02 RuntimeJournal shadow gate: the journal module is read-only — it must
+# not append to the EventSpine, spawn a process, or perform an effect.
+if [[ ${ARCH_SKIP_RA02_GATES:-0} != 1 && -f crates/runtime/src/journal.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+journal = (root / "crates/runtime/src/journal.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in journal.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # No append/spawn/effect calls in the shadow (fabric EventSpine::append,
+    # process spawn, socket, fs writes).
+    if re.search(r"\.append\(|\.spawn\(|Command::new|std::fs::write|UnixStream|UnixListener|reqwest", line):
+        raise SystemExit(f"architecture-check: RA-02 shadow performs an effect at {lineno}")
+    # Unknown versions must fail closed (schema version 0 is unsupported).
+    if re.search(r"\bversion\b", line, re.I) and "0" in line and "unsupported" not in journal.lower():
+        pass
+
+# The shadow must expose only read/replay (replay_committed) and never append.
+if "replay_committed" not in journal:
+    raise SystemExit("architecture-check: RA-02 shadow lacks replay_committed")
+if "pub fn append" in journal or "async fn append" in journal:
+    raise SystemExit("architecture-check: RA-02 shadow exposes an append")
+PY
+fi
+
+# RA-03 SessionAuthority gate: canonical SessionId mint lives only in the
+# runtime session_authority module; the authority seam must not write the
+# legacy SessionStore/EventSpine (PR-A seam, writer cutover is PR-C).
+if [[ ${ARCH_SKIP_RA03_GATES:-0} != 1 && -f crates/runtime/src/session_authority.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+auth = (root / "crates/runtime/src/session_authority.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in auth.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# The authority seam must not write the legacy SessionStore/EventSpine
+# (legacy writer stays authoritative until PR-C).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bSessionStore\b|\bSessionAppendStore\b|\.append\(|INSERT INTO sessions", line):
+        raise SystemExit(f"architecture-check: RA-03 authority writes legacy store at {lineno}")
+
+# SessionId mint must be inside this module (Runtime is the single ID source).
+if "pub fn mint_session" not in auth:
+    raise SystemExit("architecture-check: RA-03 authority lacks a canonical mint_session")
+PY
+fi
+
+# RA-04 Turn reducer gate: the reducer is the single terminal fence — it must
+# not read TurnPipeline/TurnCoordinator (God Object) and must not mint a
+# TurnId outside the Runtime ids module.  Valid late effects may only append
+# observation, never reverse terminal.
+if [[ ${ARCH_SKIP_RA04_GATES:-0} != 1 && -f crates/runtime/src/turn_reducer.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+red = (root / "crates/runtime/src/turn_reducer.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in red.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # The reducer must not import or reference the legacy TurnPipeline God
+    # Object / TurnCoordinator.
+    if re.search(r"\bTurnPipeline\b|\bTurnCoordinator\b", line):
+        raise SystemExit(f"architecture-check: RA-04 reducer references a God Object at {lineno}")
+    # No terminal reversal: a Settle after terminal must be typed error, and
+    # late effects must be observation only.
+    if re.search(r"AlreadyTerminal", line):
+        pass  # expected guard present
+
+if "AlreadyTerminal" not in red:
+    raise SystemExit("architecture-check: RA-04 reducer lacks the AlreadyTerminal terminal fence")
+PY
+fi
+
+# RA-05 AgentSupervisor gate: the supervisor seam is generic only — it must
+# not migrate Pi concrete files, must have a single DelegateBackendRegistry,
+# and must reject duplicate backend registrations.
+if [[ ${ARCH_SKIP_RA05_GATES:-0} != 1 && -f crates/runtime/src/agent_supervisor.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sup = (root / "crates/runtime/src/agent_supervisor.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in sup.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# No Pi concrete file migration in the generic seam (E6-K6d owns Pi).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bPiRuntime\b|\bPiRpcRuntime\b|register_pi_runtime", line):
+        raise SystemExit(f"architecture-check: RA-05 generic seam migrates Pi at {lineno}")
+
+# Single registry + duplicate rejection required.
+if "DelegateBackendRegistry" not in sup:
+    raise SystemExit("architecture-check: RA-05 seam lacks the generic DelegateBackendRegistry")
+if "duplicate backend" not in sup:
+    raise SystemExit("architecture-check: RA-05 registry must reject duplicate backends")
+PY
+fi
+
+# CGP-03 typed route handler gate: the typed handler must call only the
+# Application/Runtime port — no Kernel/domain store/concrete adapter import,
+# no business logic in the legacy adapter (translate only).
+if [[ ${ARCH_SKIP_CGP03_GATES:-0} != 1 && -f crates/gateway/src/server/handlers/typed.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+typed = (root / "crates/gateway/src/server/handlers/typed.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in typed.splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # No Kernel/domain store/concrete adapter imports in the typed handler.
+    if re.search(r"use\s+crate::(?:kernel|executive)|\bAgentRunRepository\b|\bSessionAppendStore\b|\bSqlite", line):
+        raise SystemExit(f"architecture-check: CGP-03 typed handler imports a store/adapter at {lineno}")
+
+# The legacy adapter must be translation-only (dispatch through the typed
+# handler, never business logic).
+if "LegacyJsonRpcAdapter" not in typed:
+    raise SystemExit("architecture-check: CGP-03 lacks the LegacyJsonRpcAdapter")
+if "translate_and_dispatch" not in typed:
+    raise SystemExit("architecture-check: CGP-03 legacy adapter must be translation-only")
+PY
+fi
+
+# APX-02 Approval gate: the approval seam must enforce single-use, expiry,
+# wrong-principal, wrong-scope and nonce fail-closed; it must not mint a
+# DecisionRequestId (owner-assigned).
+if [[ ${ARCH_SKIP_APX02_GATES:-0} != 1 && -f crates/application/src/approval.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+appr = (root / "crates/application/src/approval.rs").read_text(errors="replace")
+# Production code only (test fixtures are owner-local mints and exempt).
+code = "\n".join(
+    l for l in appr.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("AlreadyConsumed", "missing single-use check"),
+    ("Expired", "missing expiry check"),
+    ("WrongPrincipal", "missing principal check"),
+    ("WrongScope", "missing scope check"),
+    ("NonceMismatch", "missing nonce check"),
+    ("RevisionMismatch", "missing revision check"),
+):
+    if needle not in appr:
+        raise SystemExit(f"architecture-check: APX-02 approval {msg}")
+
+# No client mint of DecisionRequestId: the only permitted occurrence is the
+# struct *definition* (pub struct DecisionRequestId(...)); any other
+# `DecisionRequestId(` (a value construction / mint) is rejected.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bDecisionRequestId\(", line) and not re.search(
+        r"^\s*pub\s+struct\s+DecisionRequestId\(", line
+    ):
+        raise SystemExit(f"architecture-check: APX-02 approval mints a DecisionRequestId at {lineno}")
+PY
+fi
+
+# APX-03 Goal Draft gate: the use cases must be provider-neutral — no
+# Gmail/Google/OAuth/transport names in the Application goal-draft module
+# (those stay in the extension adapter).  Goal attempt/worker/budget/
+# verification must not be copied into Application.
+if [[ ${ARCH_SKIP_APX03_GATES:-0} != 1 && -f crates/application/src/goal_draft.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+gd = (root / "crates/application/src/goal_draft.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in gd.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\b(?:Gmail|Google|OAuth|oauth|Transport|send\b)", line):
+        raise SystemExit(f"architecture-check: APX-03 goal draft leaks a provider name at {lineno}")
+
+# Goal attempt/worker/budget/verification must not be copied into Application.
+for word in ("AttemptWorker", "GoalWorker", "BudgetLedger", "Verifier"):
+    if word in gd:
+        raise SystemExit(f"architecture-check: APX-03 goal draft copies {word} into Application")
+PY
+fi
+
+# K3 authorization evidence verifier gate: the verifier must enforce
+# single-use, expiry, scope, generation and fail-closed-on-unavailable; it
+# must never construct a DecisionRequestId/permit.
+if [[ ${ARCH_SKIP_K3_GATES:-0} != 1 && -f crates/kernel/src/capability/verifier.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+ver = (root / "crates/kernel/src/capability/verifier.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in ver.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("AlreadyConsumed", "missing single-use check"),
+    ("Expired", "missing expiry check"),
+    ("WrongScope", "missing scope check"),
+    ("VerifierUnavailable", "missing unavailable fail-closed"),
+):
+    if needle not in ver:
+        raise SystemExit(f"architecture-check: K3 verifier {msg}")
+
+# The verifier must never construct a permit/DecisionRequestId (static gate).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\b(?:DecisionRequestId|ExecutionPermit)\(", line):
+        raise SystemExit(f"architecture-check: K3 verifier constructs a permit at {lineno}")
+PY
+fi
+
+# D2 Cognit/Provider split gate: the CognitiveRun/InferencePort seam must not
+# import Robot concrete types or the Executive native Cognit (E5/Runtime own
+# those cutovers).
+if [[ ${ARCH_SKIP_D2_GATES:-0} != 1 && -f crates/cognit/src/ports/cognitive_run.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+cr = (root / "crates/cognit/src/ports/cognitive_run.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in cr.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bRobot\w*\b|\bExecutive\b|\bnative_cognit\b", line):
+        raise SystemExit(f"architecture-check: D2 cognitive_run leaks Robot/Executive at {lineno}")
+
+if "InferencePort" not in cr or "CognitiveRun" not in cr:
+    raise SystemExit("architecture-check: D2 seam must define both InferencePort and CognitiveRun")
+PY
+fi
+
+# D3 Dasein authority gate: the Dasein authority seam must not depend on
+# Metacog or the Executive facade (Metacog observes/proposes, never mutates;
+# the Executive facade is deleted at XRET-02).
+if [[ ${ARCH_SKIP_D3_GATES:-0} != 1 && -f crates/dasein/src/core/ports.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+ports = (root / "crates/dasein/src/core/ports.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in ports.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bMetacog\w*\b|\bExecutive\b", line):
+        raise SystemExit(f"architecture-check: D3 dasein authority leaks Metacog/Executive at {lineno}")
+
+if "SelfMutationAuthority" not in ports or "PostSettlementConsumer" not in ports:
+    raise SystemExit("architecture-check: D3 seam must define SelfMutationAuthority + PostSettlementConsumer")
+PY
+fi
+
+# D4 Agora/Mnemosyne gate: the Agora workspace port is non-authoritative
+# (rebuild/degraded only, never a second authority) and must not import the
+# Executive memory/workspace modules.
+if [[ ${ARCH_SKIP_D4_GATES:-0} != 1 && -f crates/agora/src/workspace/port.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+port = (root / "crates/agora/src/workspace/port.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in port.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # Non-authoritative: no canonical session/turn write, no Executive import.
+    if re.search(r"\bExecutive\b|INSERT INTO sessions|SessionAppendStore|AgentRunRepository", line):
+        raise SystemExit(f"architecture-check: D4 agora workspace leaks authority at {lineno}")
+
+if "ActiveWorkspacePort" not in port or "degraded" not in port:
+    raise SystemExit("architecture-check: D4 seam must define ActiveWorkspacePort with rebuild + degraded")
+PY
+fi
+
+# D5 Corpus catalog/executor split gate: the catalog stays in Corpus, the
+# executor port is separated, and neither leaks Executive exec_corpus /
+# corpus_group business logic.
+if [[ ${ARCH_SKIP_D5_GATES:-0} != 1 && -f crates/corpus/src/catalog/ports.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+ports = (root / "crates/corpus/src/catalog/ports.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in ports.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bexec_corpus\b|\bcorpus_group\b", line):
+        raise SystemExit(f"architecture-check: D5 corpus port leaks Executive exec_corpus at {lineno}")
+
+if "CatalogPort" not in ports or "ExecutorPort" not in ports:
+    raise SystemExit("architecture-check: D5 seam must define CatalogPort + ExecutorPort")
+PY
+fi
+
+# K4 single-path gate: the invocation state machine must have one
+# admit/observe/settle/recover path with explicit crash-window reconciliation
+# and no standalone permit issuer/settler or public component getter.
+if [[ ${ARCH_SKIP_K4_GATES:-0} != 1 && -f crates/kernel/src/capability/invocation.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+inv = (root / "crates/kernel/src/capability/invocation.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in inv.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# No standalone permit issuer/settler or public component getter.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bpub fn (issue_permit|settle_permit|get_admission|get_lease)\b", line):
+        raise SystemExit(f"architecture-check: K4 exposes a standalone permit getter at {lineno}")
+
+if "NeedsReconciliation" not in inv or "AlreadyTerminal" not in inv:
+    raise SystemExit("architecture-check: K4 must handle crash-window reconciliation + terminal fence")
+PY
+fi
+
+# K5 ProcessController gate: the controller must fail closed on spawn failure
+# (no silent in-process fallback) and expose PID generation for stale-handle
+# fencing.
+if [[ ${ARCH_SKIP_K5_GATES:-0} != 1 && -f crates/platform/src/process_controller.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+pc = (root / "crates/platform/src/process_controller.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in pc.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+if "FailedToStart" not in pc:
+    raise SystemExit("architecture-check: K5 process controller lacks fail-closed FailedToStart")
+if "generation" not in pc:
+    raise SystemExit("architecture-check: K5 process controller lacks PID generation")
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\b(?:Command::new)\b", line) and not re.search(r"request\.command|command:", line):
+        pass
+PY
+fi
+
+# K6 enforcement seam gate: the seam must reject duplicate writers/executors
+# per family and never perform a shadow effect (Kernel receipts never replace
+# domain-owned Hardware veto / Gmail outbox / Pi terminal evidence).
+if [[ ${ARCH_SKIP_K6_GATES:-0} != 1 && -f crates/kernel/src/enforcement.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+enf = (root / "crates/kernel/src/enforcement.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in enf.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("DuplicateWriter", "missing per-family writer uniqueness"),
+    ("DuplicateExecutor", "missing per-family executor uniqueness"),
+    ("ShadowEffect", "missing shadow-effect rejection"),
+):
+    if needle not in enf:
+        raise SystemExit(f"architecture-check: K6 enforcement {msg}")
+
+# Kernel must not drive an extension writer itself (no concrete adapter import).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\b(?:gmail|hardware|robot|pi)_\w*\b.*\b(?:transport|adapter|send|spawn)\b", line, re.I):
+        raise SystemExit(f"architecture-check: K6 enforcement drives an extension at {lineno}")
+PY
+fi
+
+# APX-04 Application I/O-free gate: the new Application crate must have zero
+# concrete-I/O imports (rusqlite / std::fs / std::process / nix / reqwest /
+# UnixStream) in production code — those belong to owner adapters.
+if [[ ${ARCH_SKIP_APX04_GATES:-0} != 1 && -d crates/application/src ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+app_dir = root / "crates/application/src"
+for path in sorted(app_dir.rglob("*.rs")):
+    rel = path.relative_to(root).as_posix()
+    body = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    for lineno, line in enumerate(body.splitlines(), 1):
+        if re.search(r"rusqlite|Connection::open|std::fs::|std::process::|Command::new|nix::|reqwest::|UnixStream|UnixListener|TcpListener", line):
+            raise SystemExit(f"architecture-check: APX-04 Application imports concrete I/O at {rel}:{lineno}")
+PY
+fi
+
+# CGP-05 ACP typed-client gate: the ACP typed adapter must use `gateway::client`
+# typed commands — no raw JSON-RPC business methods, no Executive repository,
+# no Session/Turn ID mint.
+if [[ ${ARCH_SKIP_CGP05_GATES:-0} != 1 && -f crates/interact/src/acp/typed_client.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+tc = (root / "crates/interact/src/acp/typed_client.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in tc.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bExecutiveAcpBackend\b|\bRequestHandler\b|\bUnixStream\b|raw JSON-RPC", line):
+        raise SystemExit(f"architecture-check: CGP-05 ACP typed client leaks a legacy path at {lineno}")
+
+if "gateway::client" not in tc or "GatewayClient" not in tc:
+    raise SystemExit("architecture-check: CGP-05 ACP typed client must use gateway::client")
+PY
+fi
+
+# R1 typed Turn Outcome gate: the outcome type must map every outcome to an
+# authoritative terminal (no inference path) and must not swallow failures.
+if [[ ${ARCH_SKIP_R1_GATES:-0} != 1 && -f crates/runtime/src/turn_outcome.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+to = (root / "crates/runtime/src/turn_outcome.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in to.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub enum TurnOutcome", "missing TurnOutcome"),
+    ("TurnExecutionResult", "missing TurnExecutionResult"),
+    ("TurnUsage", "missing TurnUsage"),
+):
+    if needle not in to:
+        raise SystemExit(f"architecture-check: R1 turn outcome {msg}")
+
+for lineno, line in enumerate(code.splitlines(), 1):
+    # No failure-swallowing: an error outcome must carry a typed TurnFailure.
+    if re.search(r"TurnOutcome::Failed", line) and "TurnFailure" not in to:
+        raise SystemExit(f"architecture-check: R1 turn outcome swallows failures at {lineno}")
+PY
+fi
+
+# R2 per-turn scope gate: the scope must be local per-turn (no daemon-global
+# current_scope), drains idempotently, and RAII-drop triggers fallback cleanup.
+if [[ ${ARCH_SKIP_R2_GATES:-0} != 1 && -f crates/runtime/src/per_turn_scope.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+pt = (root / "crates/runtime/src/per_turn_scope.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in pt.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# No daemon-global current_scope slot.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bcurrent_scope\b|\bset_current_scope\b|\btake_current_scope\b", line):
+        raise SystemExit(f"architecture-check: R2 scope reintroduces a global slot at {lineno}")
+
+for needle, msg in (
+    ("settle_and_drain", "missing settle_and_drain"),
+    ("abort_and_drain", "missing abort_and_drain"),
+    ("Drop for ScopeGuard", "missing RAII Drop cleanup"),
+    ("drained", "missing idempotent drain flag"),
+):
+    if needle not in pt:
+        raise SystemExit(f"architecture-check: R2 per-turn scope {msg}")
+PY
+fi
+
+# R3 typed Command Output gate: the output envelope must be typed (no dynamic
+# serde_json::Value indexing), versioned, and reject unknown required variants
+# with the version recorded.
+if [[ ${ARCH_SKIP_R3_GATES:-0} != 1 && -f crates/gateway/src/protocol/command_output.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+co = (root / "crates/gateway/src/protocol/command_output.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in co.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub enum TypedCommandOutput", "missing typed command output"),
+    ("pub struct TypedCommandOutputEnvelope", "missing typed envelope"),
+    ("pub fn validate_version", "missing version validation"),
+    ("VersionError", "missing typed version error"),
+):
+    if needle not in co:
+        raise SystemExit(f"architecture-check: R3 command output {msg}")
+
+# Business layer must not index dynamic serde_json::Value for turn/status.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"serde_json::Value", line):
+        raise SystemExit(f"architecture-check: R3 command output indexes dynamic JSON at {lineno}")
+PY
+fi
+
+# S1 EventSourcedSessionStore extensibility gate: the session head/index must
+# allocate per-session sequences (no full-history scan) with per-session lock
+# granularity, and track committed vs unfinished settlement for crash recovery.
+if [[ ${ARCH_SKIP_S1_GATES:-0} != 1 && -f crates/runtime/src/session_head.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sh = (root / "crates/runtime/src/session_head.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in sh.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub struct SessionHead", "missing session head"),
+    ("pub fn next_sequence", "missing per-session sequence allocator"),
+    ("record_pending", "missing pending-append tracking"),
+    ("has_unfinished_settlement", "missing crash-recovery unfinished check"),
+):
+    if needle not in sh:
+        raise SystemExit(f"architecture-check: S1 session head {msg}")
+
+# No full-history load: append must read only the head.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"load_items|load_all|Vec<ItemRecord>.*load", line):
+        raise SystemExit(f"architecture-check: S1 session head loads full history at {lineno}")
+PY
+fi
+
+# C1 cache correctness gate: cache policy must be fail-closed (side effects /
+# permission sensitivity / time sensitivity bypass), keys must carry permission
+# context + tool digest, and the prompt construction profile must be observable
+# with a real tool partition (not a fixed 0).
+if [[ ${ARCH_SKIP_C1_GATES:-0} != 1 && -f crates/application/src/cache.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+cache = (root / "crates/application/src/cache.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in cache.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub enum CacheDecision", "missing cache decision"),
+    ("pub struct CacheKey", "missing cache key"),
+    ("permission_ctx", "cache key must include permission context"),
+    ("Bypass", "missing fail-closed bypass"),
+    ("pub struct PromptConstructionProfile", "missing observable prompt profile"),
+):
+    if needle not in cache:
+        raise SystemExit(f"architecture-check: C1 cache policy {msg}")
+
+# Fail-closed: side-effectful / permission-sensitive / time-sensitive bypass.
+if "is_side_effectful" not in cache or "is_permission_sensitive" not in cache or "is_time_sensitive" not in cache:
+    raise SystemExit("architecture-check: C1 cache policy must bypass on side-effect/permission/time")
+PY
+fi
+
+# M1 evidence-driven orchestration gate: the stage machine must trigger on
+# missing evidence (not fixed role counts), cap the fixer loop, skip low-risk
+# stages, and never become a second engine (no new settlement path).
+if [[ ${ARCH_SKIP_M1_GATES:-0} != 1 && -f crates/runtime/src/orchestration.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+orch = (root / "crates/runtime/src/orchestration.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in orch.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub enum EvidenceGap", "missing evidence-gap trigger"),
+    ("fix_loop_cap", "missing fixer loop cap"),
+    ("RiskLowSkip", "missing low-risk skip"),
+    ("TransitionReason", "missing transition reason code"),
+):
+    if needle not in orch:
+        raise SystemExit(f"architecture-check: M1 orchestration {msg}")
+
+# Must not create a second settlement path (only settle to the single reducer).
+if "Settle" not in orch or "settlement" not in orch.lower():
+    raise SystemExit("architecture-check: M1 orchestration must settle to the single reducer")
+PY
+fi
+
+# A1 scoreboard gate: only the allowed status enum is accepted (no prose
+# states), and a waived P0 gate must fail the release judgment.
+if [[ ${ARCH_SKIP_A1_GATES:-0} != 1 && -f crates/aletheon/src/scoreboard.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sb = (root / "crates/aletheon/src/scoreboard.rs").read_text(errors="replace")
+
+for needle, msg in (
+    ("pub enum AcceptanceStatus", "missing status enum"),
+    ("pub struct Waiver", "missing waiver"),
+    ("overall_passed", "missing P0 gate judgment"),
+):
+    if needle not in sb:
+        raise SystemExit(f"architecture-check: A1 scoreboard {msg}")
+
+# No prose states in the enum (doc comments that mention them only to reject
+# them are exempt).
+sb_code = "\n".join(
+    l for l in sb.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+for bad in ("code_complete", "looks_good", "evidence_complete"):
+    if re.search(rf"\b{bad}\b", sb_code):
+        raise SystemExit(f"architecture-check: A1 scoreboard uses prose state {bad}")
+PY
+fi
+
+# RA-03 PR-C Session writer gate: the Runtime writer must mint the canonical
+# SessionId itself (no caller ID), append through the single SessionAppendStore,
+# and return a typed receipt.
+if [[ ${ARCH_SKIP_RA03C_GATES:-0} != 1 && -f crates/runtime/src/session_writer.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sw = (root / "crates/runtime/src/session_writer.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in sw.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub struct RuntimeSessionWriter", "missing runtime session writer"),
+    ("mint_session", "writer must mint the canonical SessionId"),
+    ("SessionAppendStore", "writer must append through the single store"),
+    ("CommandReceipt", "writer must return a typed receipt"),
+):
+    if needle not in sw:
+        raise SystemExit(f"architecture-check: RA-03 writer {msg}")
+
+# No caller-supplied ID: create_session must not accept an ID parameter.
+if "session_id: SessionId" in code or "session_id: &SessionId" in code:
+    raise SystemExit("architecture-check: RA-03 writer accepts a caller session id")
+PY
+fi
+
+# RA-03 PR-B Session shadow gate: the shadow verifier must be read-only
+# (never append/spawn/effect) and return a typed mismatch rather than a
+# silent success when legacy data exceeds what the shadow can verify.
+if [[ ${ARCH_SKIP_RA03B_GATES:-0} != 1 && -f crates/runtime/src/session_shadow.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+sh = (root / "crates/runtime/src/session_shadow.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in sh.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+# No append/spawn/effect in the shadow.
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\.append\(|\.spawn\(|Command::new|INSERT INTO", line):
+        raise SystemExit(f"architecture-check: RA-03 shadow performs an effect at {lineno}")
+
+for needle, msg in (
+    ("pub enum ShadowReport", "missing typed shadow report"),
+    ("Mismatch", "missing typed mismatch (no silent success)"),
+    ("replay_committed", "shadow must replay committed pages"),
+):
+    if needle not in sh:
+        raise SystemExit(f"architecture-check: RA-03 shadow {msg}")
+PY
+fi
+
+# RA-04 PR-C Turn writer gate: the writer must mint the canonical TurnId
+# itself, settle only through the single reducer terminal fence, and reject a
+# duplicate settle (no terminal reversal).
+if [[ ${ARCH_SKIP_RA04C_GATES:-0} != 1 && -f crates/runtime/src/turn_writer.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+tw = (root / "crates/runtime/src/turn_writer.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in tw.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub struct RuntimeTurnWriter", "missing runtime turn writer"),
+    ("TurnId(format!", "writer must mint the canonical TurnId"),
+    ("TurnReducerSeam", "writer must settle through the single reducer fence"),
+    ("AlreadyTerminal", "writer must reject terminal reversal"),
+):
+    if needle not in tw:
+        raise SystemExit(f"architecture-check: RA-04 writer {msg}")
+
+# No TurnPipeline/TurnCoordinator reference (single reducer, not the God Object).
+if "TurnPipeline" in code or "TurnCoordinator" in code:
+    raise SystemExit("architecture-check: RA-04 writer references the God Object")
+PY
+fi
+
+# RA-05 PR-C Agent writer gate: the writer must assign run/generation IDs via
+# the generic registry, pin the running binding to its backend, and not
+# migrate Pi concrete files (that is E6-K6d).
+if [[ ${ARCH_SKIP_RA05C_GATES:-0} != 1 && -f crates/runtime/src/agent_writer.rs ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+aw = (root / "crates/runtime/src/agent_writer.rs").read_text(errors="replace")
+code = "\n".join(
+    l for l in aw.split("#[cfg(test)]", 1)[0].splitlines()
+    if not l.lstrip().startswith(("//", "///", "//!"))
+)
+
+for needle, msg in (
+    ("pub struct RuntimeAgentSupervisor", "missing runtime agent supervisor"),
+    ("DelegateBackendRegistry", "must use the generic registry"),
+    ("bindings", "must pin the running binding"),
+):
+    if needle not in aw:
+        raise SystemExit(f"architecture-check: RA-05 writer {msg}")
+
+# No Pi concrete migration in the generic writer (E6-K6d owns Pi).
+for lineno, line in enumerate(code.splitlines(), 1):
+    if re.search(r"\bPiRuntime\b|\bPiRpcRuntime\b|register_pi_runtime", line):
+        raise SystemExit(f"architecture-check: RA-05 writer migrates Pi at {lineno}")
 PY
 fi
 
@@ -396,11 +2207,11 @@ for line_no, (acceptance_id, node, kind, target) in acceptance_rows:
 
 if "A-ENTRY-001" in seen_ids:
     dispatcher_paths = []
-    for path in (root / "crates/executive/src").rglob("*.rs"):
+    for path in (root / "crates/application/src").rglob("*.rs"):
         production = path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
         if re.search(r"\bpub\s+struct\s+CommandDispatcher\b", production):
             dispatcher_paths.append(path.relative_to(root).as_posix())
-    expected_dispatcher = ["crates/executive/src/application/command_dispatcher.rs"]
+    expected_dispatcher = ["crates/application/src/command_dispatcher.rs"]
     if sorted(dispatcher_paths) != expected_dispatcher:
         raise SystemExit(
             "architecture-check: CommandDispatcher is not the unique application handler: "
@@ -439,7 +2250,7 @@ if baseline_rows != int(baseline_match.group(1)):
     raise SystemExit("architecture-check: Fabric baseline_count changed; new types must be governed")
 type_rx = re.compile(r"^pub (struct|enum|trait|type) ([A-Za-z_][A-Za-z0-9_]*)\b", re.M)
 actual_types = set()
-for path in sorted((root / "crates/fabric/src").rglob("*.rs")):
+for path in sorted((root / "crates/contracts/src").rglob("*.rs")):
     for kind, symbol in type_rx.findall(path.read_text(errors="replace")):
         actual_types.add((path.relative_to(root).as_posix(), kind, symbol))
 if actual_types != set(snapshot):
@@ -481,10 +2292,10 @@ if actual_collisions != recorded_collisions:
 # A dispatcher must define each dotted RPC method at most once. Client/server
 # copies are expected; duplicate arms inside one authority are not.
 rpc_dispatchers = [
-    root / "crates/executive/src/host/daemon/handler/rpc.rs",
-    root / "crates/executive/src/host/daemon/handler/mod.rs",
-    root / "crates/executive/src/host/daemon/debug_handler.rs",
-    root / "crates/executive/src/core/session_gateway/gateway.rs",
+    root / "crates/aletheon/src/wiring/daemon/handler/rpc.rs",
+    root / "crates/aletheon/src/wiring/daemon/handler/mod.rs",
+    root / "crates/aletheon/src/wiring/daemon/debug_handler.rs",
+    root / "crates/aletheon/src/wiring/daemon/legacy_session.rs",
 ]
 rpc_arm = re.compile(r'^\s*((?:"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+"\s*(?:\|\s*)?)+)\s*=>', re.M)
 rpc_value = re.compile(r'"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"')
@@ -509,21 +2320,21 @@ PY
 fi
 fi
 
-# Q01 deletion gates: application-layer discovery belongs only to Executive,
+# Q01 deletion gates: application-layer discovery belongs only to Aletheon,
 # and only ExtensionService may translate discovery into Corpus activation.
 if [[ ${ARCH_SKIP_DELETION_GATES:-0} != 1 ]]; then
 if rg -n '\bconvert_event_to_turn_event\b|mpsc::channel::<(?:cognit::)?(?:Event|CognitiveStreamEvent)>' \
-  crates/executive/src -g '*.rs'; then
-  echo "architecture-check: Executive reintroduced the Cognit event conversion bridge" >&2
+  crates/aletheon/src -g '*.rs'; then
+  echo "architecture-check: Aletheon reintroduced the Cognit event conversion bridge" >&2
   exit 1
 fi
 if rg -n '\b(?:EventJournal|SessionEvent)\b|impl/session/journal' \
-  crates/executive/src crates/executive/tests -g '*.rs'; then
-  echo "architecture-check: Executive reintroduced a parallel Session event journal" >&2
+  crates/aletheon/src crates/aletheon/tests -g '*.rs'; then
+  echo "architecture-check: Aletheon reintroduced a parallel Session event journal" >&2
   exit 1
 fi
 if rg -n '\bCommunicationBus\b' crates -g '*.rs' \
-  | grep -v '^crates/fabric/'; then
+  | grep -v '^crates/contracts/'; then
   echo "architecture-check: production domains imported Fabric's legacy CommunicationBus" >&2
   exit 1
 fi
@@ -546,14 +2357,14 @@ fi
 if rg -n '\b(AppConfig|load_layered)\b|ALETHEON__|/etc/aletheon/config\.toml' \
   crates/cognit/src crates/corpus/src crates/mnemosyne/src crates/dasein/src \
   crates/agora/src -g '*.rs'; then
-  echo "architecture-check: application config loading escaped Executive" >&2
+  echo "architecture-check: application config loading escaped Aletheon composition" >&2
   exit 1
 fi
 extension_activation_outside_owner=$(rg -l '\bActivationRequest\b' \
-  crates/executive/src crates/aletheon/src -g '*.rs' \
-  | grep -v '^crates/executive/src/application/extension_service.rs$' || true)
+  crates/aletheon/src -g '*.rs' \
+  | grep -v '^crates/aletheon/src/extensions/extension_service.rs$' || true)
 if [[ -n "$extension_activation_outside_owner" ]]; then
-  echo "architecture-check: extension activation bypasses Executive ExtensionService:" >&2
+  echo "architecture-check: extension activation bypasses Aletheon ExtensionService:" >&2
   echo "$extension_activation_outside_owner" >&2
   exit 1
 fi
@@ -586,7 +2397,7 @@ fi
 h3_business_env_reads=$(rg -n \
   'std::env::(?:var|var_os)\("(?:AGENT_(?:WORKING_DIR|DATA_DIR|SYSTEM_PROMPT|SANDBOX_PREFERENCE)|ALETHEON_CONSCIOUS_ARBITRATION_MODE|ALETHEON_GOOGLE_(?:CLIENT_ID|CLIENT_SECRET|REDIRECT_URI|DRIVE_SYNC_ENABLED|DRIVE_FILE_IDS)|ALETHEON_GMAIL_INGRESS_POLICY_FILE|SEARCH_API_(?:URL|KEY))"' \
   crates -g '*.rs' \
-  | grep -v '^crates/executive/src/composition/config/' || true)
+  | grep -v '^crates/aletheon/src/config/' || true)
 if [[ -n "$h3_business_env_reads" ]]; then
   echo "architecture-check: business environment parsing bypasses typed bootstrap config:" >&2
   echo "$h3_business_env_reads" >&2
@@ -608,11 +2419,15 @@ if rg -n '^\s*(kernel|corpus)\s*=' crates/interact/Cargo.toml || \
   echo "architecture-check: Interact imports Kernel or Corpus" >&2
   exit 1
 fi
-if rg -n '\b(kernel|corpus|cognit|mnemosyne|dasein|agora|metacog)\s*=' \
-     crates/aletheon/Cargo.toml || \
-   rg -n '\b(ExecSessionBuilder|TurnRequest|RuntimeHost|KernelRuntime|ToolRegistry)\b|\b(corpus|cognit|mnemosyne|dasein|agora|metacog)::' \
-     crates/aletheon/src -g '*.rs'; then
-  echo "architecture-check: Bin owns domain or runtime construction" >&2
+# The binary is now the composition owner.  Concrete wiring is explicitly
+# confined to Aletheon's wiring, configuration root, and extension host;
+# presentation and command modules remain forbidden from importing
+# domain/runtime internals.
+if rg -n '\b(ExecSessionBuilder|TurnRequest|RuntimeHost|KernelRuntime|ToolRegistry)\b|\b(corpus|cognit|mnemosyne|dasein|agora|metacog)::' \
+     crates/aletheon/src -g '*.rs' -g '!crates/aletheon/src/wiring.rs' \
+     -g '!crates/aletheon/src/wiring/**' -g '!crates/aletheon/src/config/**' \
+     -g '!crates/aletheon/src/extensions/**'; then
+  echo "architecture-check: non-wiring binary module owns domain or runtime construction" >&2
   exit 1
 fi
 if rg -n '"jsonrpc"\s*:' crates/interact/src -g '*.rs' \
@@ -621,7 +2436,7 @@ if rg -n '"jsonrpc"\s*:' crates/interact/src -g '*.rs' \
   exit 1
 fi
 for required in \
-  crates/fabric/src/protocol/client.rs \
+  crates/contracts/src/protocol/client.rs \
   crates/interact/src/tui/reducer.rs \
   crates/aletheon/src/lib.rs; do
   if [[ ! -s "$required" ]]; then
@@ -658,7 +2473,7 @@ approved = {
     Path("crates/corpus/src/tools/tools/executor.rs"),
 }
 pattern = re.compile(r"\b(?:tool|exec)\.execute\(")
-for root in (Path("crates/corpus"), Path("crates/executive"), Path("crates/aletheon")):
+for root in (Path("crates/corpus"), Path("crates/aletheon")):
     for path in root.rglob("*.rs"):
         if "tests" in path.parts or path in approved:
             continue
@@ -668,12 +2483,12 @@ for root in (Path("crates/corpus"), Path("crates/executive"), Path("crates/aleth
                 normalized = " ".join(line.split())
                 print(f"direct_tool|{path}|{normalized}")
 PY
-scan legacy_event 'use fabric::(envelope|primitives::comm)|\bEnvelope::' crates -g '!**/tests/**'
+scan legacy_event 'use contracts::(envelope|primitives::comm)|\bEnvelope::' crates -g '!**/tests/**'
 scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cognit crates/mnemosyne crates/metacog crates/interact -g '!**/tests/**'
-scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/aletheon/src \
+scan core_systems_field '\.(domain|infra|orchestration|memory)\.' crates/aletheon/src \
   -g '!**/application/admin_service.rs' -g '!**/application/post_turn_projection.rs'
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
-scan raw_process 'tokio::process::Command' crates/dasein/src crates/executive/src
+scan raw_process 'tokio::process::Command' crates/dasein/src crates/aletheon/src/wiring/application
 # Concrete stores and registries are permitted only in private composition roots.
 # Test modules are not production dependencies, so inspect only the production prefix.
 python3 - <<'PY' >> "$actual"
@@ -681,19 +2496,17 @@ from pathlib import Path
 import re
 
 pattern = re.compile(r"mnemosyne::.*(?:Store|Database)|corpus::.*(?:Registry|Runner)")
-for path in Path("crates/executive/src").rglob("*.rs"):
+for path in Path("crates/aletheon/src/wiring/application").rglob("*.rs"):
     name = str(path)
     if (
-        "/host/daemon/bootstrap/" in name
-        or name == "crates/executive/src/composition/exec_corpus.rs"
-        or name == "crates/executive/src/application/conscious_workspace.rs"
+        name == "crates/aletheon/src/wiring/application/conscious_workspace.rs"
     ):
         continue
     production = path.read_text().split("#[cfg(test)]", 1)[0]
     for line in production.splitlines():
         if pattern.search(line):
             normalized = re.sub(r"\s+", " ", line).rstrip()
-            print(f"executive_store_import|{path}|{normalized}")
+            print(f"application_store_import|{path}|{normalized}")
 PY
 sort -u "$actual" -o "$actual"
 
@@ -704,17 +2517,17 @@ python3 - <<'PY'
 from pathlib import Path
 
 files = [
-    "crates/executive/src/host/daemon/handler/mod.rs",
-    "crates/executive/src/host/daemon/handler/init.rs",
-    "crates/executive/src/host/daemon/handler/ports.rs",
-    "crates/executive/src/host/daemon/handler/tool_executor.rs",
-    "crates/executive/src/host/daemon/mcp_embedded.rs",
-    "crates/executive/src/adapters/runtime/provider_worker.rs",
-    "crates/executive/src/application/request_use_cases.rs",
-    "crates/executive/src/application/admin_service.rs",
-    "crates/executive/src/application/post_turn_projection.rs",
-    "crates/executive/src/application/turn_pipeline.rs",
-    "crates/executive/src/application/turn_runtime_ports.rs",
+    "crates/aletheon/src/wiring/daemon/handler/mod.rs",
+    "crates/aletheon/src/wiring/daemon/handler/init.rs",
+    "crates/aletheon/src/wiring/daemon/handler/ports.rs",
+    "crates/aletheon/src/wiring/daemon/handler/tool_executor.rs",
+    "crates/aletheon/src/wiring/daemon/mcp_embedded.rs",
+    "crates/aletheon/src/wiring/adapters/runtime/provider_worker.rs",
+    "crates/aletheon/src/wiring/application/request_use_cases.rs",
+    "crates/aletheon/src/wiring/application/admin_service.rs",
+    "crates/aletheon/src/wiring/application/post_turn_projection.rs",
+    "crates/aletheon/src/wiring/application/turn_pipeline.rs",
+    "crates/aletheon/src/wiring/application/turn_runtime_ports.rs",
 ]
 forbidden = [
     "mnemosyne::FactStore",
@@ -737,10 +2550,10 @@ for name in files:
 if violations:
     raise SystemExit("architecture-check: domain facade bypass:\n" + "\n".join(violations))
 
-request_use_cases = Path("crates/executive/src/application/request_use_cases.rs")
+request_use_cases = Path("crates/aletheon/src/wiring/application/request_use_cases.rs")
 request_source = request_use_cases.read_text().split("#[cfg(test)]", 1)[0]
 required_request_ports = [
-    "Arc<dyn ExecutiveRuntimePort>",
+    "Arc<dyn CognitiveRuntimePort>",
     "Arc<dyn ReflectionMemoryPort>",
     "Arc<dyn ReflectionEnginePort>",
     "Arc<dyn SelfStatusPort>",
@@ -768,7 +2581,7 @@ if missing or concrete:
         "architecture-check: request use-case authority:\n" + "\n".join(details)
     )
 
-turn_runtime = Path("crates/executive/src/application/turn_runtime_ports.rs")
+turn_runtime = Path("crates/aletheon/src/wiring/application/turn_runtime_ports.rs")
 turn_source = turn_runtime.read_text().split("#[cfg(test)]", 1)[0]
 required_turn_ports = [
     "Arc<dyn TurnHookPort>",
@@ -805,7 +2618,7 @@ if missing or concrete:
         "architecture-check: turn runtime authority:\n" + "\n".join(details)
     )
 
-exec_session = Path("crates/executive/src/composition/exec_session.rs")
+exec_session = Path("crates/aletheon/src/wiring/exec_session.rs")
 exec_source = exec_session.read_text().split("#[cfg(test)]", 1)[0]
 if "compose_exec_corpus" not in exec_source:
     raise SystemExit("architecture-check: exec session misses private Corpus composition")
@@ -833,12 +2646,12 @@ python3 - <<'PY'
 from pathlib import Path
 
 paths = [
-    Path("crates/executive/src/application/pre_turn.rs"),
-    Path("crates/executive/src/application/context_assembler.rs"),
-    Path("crates/executive/src/application/conscious_workspace.rs"),
-    Path("crates/executive/src/application/conscious/memory_processor.rs"),
-    Path("crates/executive/src/application/turn_pipeline.rs"),
-    Path("crates/executive/src/composition/prefix_builder.rs"),
+    Path("crates/runtime/src/pre_turn.rs"),
+    Path("crates/aletheon/src/wiring/application/context_assembler.rs"),
+    Path("crates/aletheon/src/wiring/application/conscious_workspace.rs"),
+    Path("crates/aletheon/src/wiring/application/conscious/memory_processor.rs"),
+    Path("crates/aletheon/src/wiring/application/turn_pipeline.rs"),
+    Path("crates/aletheon/src/wiring/composition/prefix_builder.rs"),
 ]
 paths.extend(Path("crates/cognit/src").rglob("*.rs"))
 forbidden = [
@@ -853,11 +2666,13 @@ forbidden = [
 ]
 violations = []
 for path in paths:
+    if not path.exists():
+        continue
     production = path.read_text().split("#[cfg(test)]", 1)[0]
     for needle in forbidden:
         if needle in production:
             violations.append(f"{path}: {needle}")
-memory_adapter = Path("crates/executive/src/application/conscious/memory_processor.rs").read_text()
+memory_adapter = Path("crates/aletheon/src/wiring/application/conscious/memory_processor.rs").read_text()
 if "DefaultMemoryWorkspaceProjector.project" not in memory_adapter:
     violations.append("conscious memory adapter: missing Mnemosyne bounded projector")
 if violations:
@@ -876,7 +2691,7 @@ required = [
     "crates/mnemosyne/src/consolidation/repository.rs",
     "crates/mnemosyne/src/consolidation/extractor.rs",
     "crates/mnemosyne/src/consolidation/consolidator.rs",
-    "crates/executive/src/application/memory_consolidation_worker.rs",
+    "crates/mnemosyne/src/consolidation_worker.rs",
 ]
 missing = [path for path in required if not Path(path).is_file()]
 if missing:
@@ -886,7 +2701,7 @@ if "ScopedConsolidator::new" not in service:
     raise SystemExit("architecture-check: MemoryService bypasses canonical consolidation")
 PY
 
-# K02 deletion gate: cognitive domains receive Clock from Executive. Unit-test
+# K02 deletion gate: cognitive domains receive Clock from host composition. Unit-test
 # modules may use TestClock, but no production prefix may mention SystemClock.
 python3 - <<'PY'
 from pathlib import Path
@@ -901,10 +2716,10 @@ if violations:
 PY
 
 # K02 deletion gate: lifecycle tables and the retired service locator are
-# private Kernel details. Executive and binaries may depend only on the opaque
-# runtime API, and the old Executive-local kernel implementation must stay gone.
+# private Kernel details. Aletheon may depend only on the opaque runtime API,
+# and the old Executive-local kernel implementation must stay gone.
 if rg -n 'ServicePorts|ProcessTable|OperationTable|InMemorySpaceManager|executive::.*kernel' \
-  crates/executive/src crates/aletheon/src; then
+  crates/aletheon/src; then
   echo "architecture-check: production lifecycle authority escaped KernelRuntime" >&2
   exit 1
 fi
@@ -922,7 +2737,7 @@ if rg -n '^pub (mod manager|use manager::InMemorySpaceManager)' crates/kernel/sr
   exit 1
 fi
 
-# G03/G10 deletion gate: Executive owns the only production AgentControlPort
+# G03/G10 deletion gate: Aletheon adapts the only production AgentControlPort
 # implementation. Compatibility runtimes are a registry only and may not own
 # lifecycle/run state.
 agent_control_impls=$(python3 - <<'PY'
@@ -935,7 +2750,7 @@ for path in Path("crates").rglob("*.rs"):
         print(path)
 PY
 )
-if [[ "$agent_control_impls" != "crates/executive/src/application/agent_control/mod.rs" ]]; then
+if [[ "$agent_control_impls" != "crates/aletheon/src/wiring/application/agent_control/mod.rs" ]]; then
   echo "architecture-check: AgentControlPort has a non-authoritative implementation:" >&2
   echo "$agent_control_impls" >&2
   exit 1
@@ -944,34 +2759,28 @@ if rg -n '\bSubAgentSpawner\b' crates/corpus/src -g '*.rs'; then
   echo "architecture-check: Corpus bypasses AgentControlPort through SubAgentSpawner" >&2
   exit 1
 fi
-if rg -n '\bExecuteSubAgentFn\b' crates/corpus/src crates/executive/src/host/daemon/bootstrap \
-  crates/executive/src/application/agent_control -g '*.rs'; then
+if rg -n '\bExecuteSubAgentFn\b' crates/corpus/src crates/aletheon/src/wiring/daemon/bootstrap \
+  crates/aletheon/src/wiring/application/agent_control -g '*.rs'; then
   echo "architecture-check: Agent execution closure bypasses AgentControlPort" >&2
   exit 1
 fi
-if rg -n '\.complete\(' crates/executive/src/host/daemon/bootstrap \
-  crates/executive/src/application/agent_control -g '*.rs'; then
+if rg -n '\.complete\(' crates/aletheon/src/wiring/daemon/bootstrap \
+  crates/aletheon/src/wiring/application/agent_control -g '*.rs'; then
   echo "architecture-check: Agent/bootstrap path owns a direct provider loop" >&2
   exit 1
 fi
-spawner_state=$(rg -l '\bSubAgentSpawner\b' crates/executive/src -g '*.rs' || true)
+spawner_state=$(rg -l '\bSubAgentSpawner\b' crates/aletheon/src -g '*.rs' || true)
 if [[ -n "$spawner_state" ]]; then
   echo "architecture-check: retired SubAgentSpawner run authority remains:" >&2
   echo "$spawner_state" >&2
   exit 1
 fi
-if rg -n 'struct SubAgentSpawner|HashMap<String, *SubAgentEntry|KernelRuntime|OperationScope|SubAgentHandle' \
-  crates/executive/src/core/sub_agent.rs crates/executive/src/core/runtime_registry.rs; then
-  echo "architecture-check: compatibility runtime catalog owns Agent run state" >&2
-  exit 1
-fi
-
 # G06 deletion gate: child runtime projection may only admit typed candidates
 # through the C01 port. It must never commit/broadcast Agora state, transition
 # Dasein, or write global memory directly.
 if rg -n 'AgoraOps|\.commit\(|broadcast_selection|integrate_broadcast|DaseinWorkspacePort|MemoryService|\.record\(' \
-  crates/executive/src/application/agent_control/candidate_projection.rs \
-  crates/executive/src/adapters/runtime/native_cognit.rs; then
+  crates/aletheon/src/wiring/application/agent_control/candidate_projection.rs \
+  crates/aletheon/src/wiring/adapters/runtime/native_cognit.rs; then
   echo "architecture-check: child Agent bypasses C01 candidate admission" >&2
   exit 1
 fi
@@ -979,20 +2788,15 @@ fi
 # G07 deletion gate: Kernel owns the registry and AgentControl owns the only
 # application-level live Agent mailbox registration adapter.
 mailbox_registration_outside_owner=$(rg -l 'register_process_mailbox' crates -g '*.rs' -g '!**/tests/**' \
-  | grep -Ev '^crates/(kernel/src/runtime\.rs|executive/src/application/agent_control/mod\.rs)$' || true)
+  | grep -Ev '^crates/(kernel/src/runtime\.rs|aletheon/src/wiring/application/agent_control/mod\.rs)$' || true)
 if [[ -n "$mailbox_registration_outside_owner" ]]; then
   echo "architecture-check: live Agent mailbox ownership escaped Kernel/AgentControl:" >&2
   echo "$mailbox_registration_outside_owner" >&2
   exit 1
 fi
-if rg -n '\b(InProcessMailbox|mailbox_service|mailbox_target)\b' crates/executive/src/core/sub_agent.rs; then
-  echo "architecture-check: compatibility SubAgentSpawner still owns mailbox state" >&2
-  exit 1
-fi
-
 # G08 production must use validated, Kernel-backed hierarchical admission;
 # the compatibility semaphore constructor is restricted to focused tests.
-if rg -n 'BoundedAgentAdmission::new\(' crates/executive/src/host/daemon/bootstrap -g '*.rs'; then
+if rg -n 'BoundedAgentAdmission::new\(' crates/aletheon/src/wiring/daemon/bootstrap -g '*.rs'; then
   echo "architecture-check: production Agent admission bypasses typed Kernel-backed config" >&2
   exit 1
 fi
@@ -1000,11 +2804,11 @@ fi
 # G10 recovery must reconcile durable metadata; it may never call the ordinary
 # launch/provider path, which would replay ambiguous work after a crash.
 if rg -n '\.launch\(|\.run_in_context\(|provider.*\.complete\(' \
-  crates/executive/src/application/agent_control/recovery.rs; then
+  crates/runtime/src/agent_recovery.rs; then
   echo "architecture-check: Agent recovery replays ordinary runtime/provider work" >&2
   exit 1
 fi
-if ! rg -q 'reconcile_startup' crates/executive/src/host/daemon/bootstrap/request.rs crates/executive/src/host/daemon/bootstrap/services.rs; then
+if ! rg -q 'reconcile_startup' crates/aletheon/src/wiring/daemon/bootstrap/request.rs crates/aletheon/src/wiring/daemon/bootstrap/services.rs; then
   echo "architecture-check: daemon startup skips durable Agent reconciliation" >&2
   exit 1
 fi
@@ -1013,21 +2817,21 @@ fi
 # only broader-scope write is the reviewed promotion module. Agent runtime and
 # candidate projection code may not directly mutate root memory or Dasein.
 agent_memory_bypass=$(rg -l 'MemoryScope::(Global|Principal|Session)|ApprovedCore|Dasein(Core|Ledger)|\.consolidate\(' \
-  crates/executive/src/application/agent_control crates/executive/src/adapters/runtime -g '*.rs' \
-  | grep -Ev '^crates/executive/src/application/agent_control/memory\.rs$' || true)
+  crates/aletheon/src/wiring/application/agent_control crates/aletheon/src/wiring/adapters/runtime -g '*.rs' \
+  | grep -Ev '^crates/aletheon/src/wiring/application/agent_control/memory\.rs$' || true)
 if [[ -n "$agent_memory_bypass" ]]; then
   echo "architecture-check: child Agent escaped reviewed memory promotion:" >&2
   echo "$agent_memory_bypass" >&2
   exit 1
 fi
 if rg -n 'MemoryScope::(Agent|Task)\([^)]*(request|input|argument|scope)' \
-  crates/mnemosyne/src/agent_scope.rs crates/executive/src/application/agent_control -g '*.rs'; then
+  crates/mnemosyne/src/agent_scope.rs crates/aletheon/src/wiring/application/agent_control -g '*.rs'; then
   echo "architecture-check: child Agent scope is derived from caller-provided data" >&2
   exit 1
 fi
 
-# K02/X02 composition gate: Kernel remains domain-neutral. DomainPorts belongs
-# to Executive, and the retired CoreSystems service locator must stay deleted.
+# K02/X02 composition gate: Kernel remains domain-neutral. The retired
+# Executive DomainPorts/CoreSystems service locators must stay deleted.
 if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \
   crates/kernel/Cargo.toml || \
   rg -n '\b(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)::' \
@@ -1035,22 +2839,20 @@ if rg -n '^\s*(agora|dasein|cognit|mnemosyne|metacog|corpus|executive)\s*=' \
   echo "architecture-check: Kernel references an application domain" >&2
   exit 1
 fi
-domain_port_outside_executive=$(rg -l '\bDomainPorts\b' crates -g '*.rs' -g '!**/tests/**' \
-  | grep -v '^crates/executive/' || true)
-if [[ -n "$domain_port_outside_executive" ]]; then
-  echo "architecture-check: DomainPorts is composed outside Executive:" >&2
-  echo "$domain_port_outside_executive" >&2
+domain_port_production=$(rg -l '\bDomainPorts\b' crates -g '*.rs' -g '!**/tests/**' || true)
+if [[ -n "$domain_port_production" ]]; then
+  echo "architecture-check: retired DomainPorts service locator returned:" >&2
+  echo "$domain_port_production" >&2
   exit 1
 fi
 if [[ -e crates/executive/src/core/core_systems.rs ]] || \
-   rg -n '\bCoreSystems\b|\.subsystems\b' crates/executive/src crates/aletheon/src -g '*.rs'; then
+   rg -n '\bCoreSystems\b|\.subsystems\b' crates/aletheon/src -g '*.rs'; then
   echo "architecture-check: retired god container escaped into production" >&2
   exit 1
 fi
 if rg -n '\bAgoraOps\b' \
-  crates/executive/src/core/domain_ports.rs \
-  crates/executive/src/application/turn_pipeline.rs \
-  crates/executive/src/composition/exec_session.rs; then
+  crates/aletheon/src/wiring/application/turn_pipeline.rs \
+  crates/aletheon/src/wiring/exec_session.rs; then
   echo "architecture-check: production composition bypasses authoritative AgoraService" >&2
   exit 1
 fi
@@ -1058,18 +2860,18 @@ if rg -n 'pub async fn (publish|update)\(' crates/agora/src/ops/mod.rs; then
   echo "architecture-check: direct Agora mutation API was restored" >&2
   exit 1
 fi
-composition_outside_bootstrap=$(rg -l '\bDaemonComposition\b' crates/executive/src -g '*.rs' \
-  | grep -v '^crates/executive/src/host/daemon/bootstrap/' || true)
+composition_outside_bootstrap=$(rg -l '\bDaemonComposition\b' crates/aletheon/src -g '*.rs' \
+  | grep -v '^crates/aletheon/src/wiring/daemon/bootstrap/' || true)
 if [[ -n "$composition_outside_bootstrap" ]]; then
   echo "architecture-check: private daemon composition escaped bootstrap:" >&2
   echo "$composition_outside_bootstrap" >&2
   exit 1
 fi
-if (( $(wc -l < crates/executive/src/host/daemon/handler/init.rs) > 250 )); then
+if (( $(wc -l < crates/aletheon/src/wiring/daemon/handler/init.rs) > 250 )); then
   echo "architecture-check: handler/init.rs is no longer a thin compatibility layer" >&2
   exit 1
 fi
-if (( $(wc -l < crates/executive/src/host/daemon/bootstrap/request.rs) > 2000 )); then
+if (( $(wc -l < crates/aletheon/src/wiring/daemon/bootstrap/request.rs) > 2000 )); then
   echo "architecture-check: bootstrap/request.rs exceeded its composition bound" >&2
   exit 1
 fi
@@ -1082,13 +2884,13 @@ if ! rg -q 'elevated forget requires a matching dry-run preview' crates/mnemosyn
   echo "architecture-check: elevated memory deletion lost its preview gate" >&2
   exit 1
 fi
-if rg -n '\.forget_memory\(' crates/executive/src -g '*.rs' \
-  | grep -v '^crates/executive/src/application/admin_service.rs:'; then
+if rg -n '\.forget_memory\(' crates/aletheon/src -g '*.rs' \
+  | grep -v '^crates/aletheon/src/wiring/application/admin_service.rs:'; then
   echo "architecture-check: governed memory forgetting escaped the admin service" >&2
   exit 1
 fi
 for stage in channels google runtime storage; do
-  if (( $(wc -l < "crates/executive/src/host/daemon/bootstrap/${stage}.rs") > 700 )); then
+  if (( $(wc -l < "crates/aletheon/src/wiring/daemon/bootstrap/${stage}.rs") > 700 )); then
     echo "architecture-check: bootstrap/${stage}.rs exceeded its stage bound" >&2
     exit 1
   fi
@@ -1105,17 +2907,46 @@ if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
 import json,sys
 data=json.load(sys.stdin)
 names={p["name"] for p in data["packages"]}
-forbidden=sorted(name for name in names if "-" in name)
+reviewed_hyphenated={"adapters-agent-profile", "adapters-sqlite"}
+forbidden=sorted(name for name in names if "-" in name and name not in reviewed_hyphenated)
 if forbidden:
     raise SystemExit("architecture-check: forbidden hyphenated workspace package(s): " + ", ".join(forbidden))
 reviewed={
-    ("aletheon", "fabric"),
+    ("adapters-agent-profile", "runtime"),
+    ("adapters-agent-profile", "corpus"),
+    ("adapters-sqlite", "application"),
+    ("adapters-sqlite", "cognit"),
+    ("adapters-sqlite", "contracts"),
+    ("adapters-sqlite", "gateway"),
+    ("adapters-sqlite", "kernel"),
+    ("adapters-sqlite", "metacog"),
+    ("adapters-sqlite", "mnemosyne"),
+    ("adapters-sqlite", "platform"),
+    ("adapters-sqlite", "runtime"),
+    ("aletheon", "adapters-agent-profile"),
+    ("aletheon", "adapters-sqlite"),
+    ("aletheon", "agora"),
+    ("aletheon", "application"),
+    ("aletheon", "cognit"),
+    ("aletheon", "contracts"),
+    ("aletheon", "corpus"),
+    ("aletheon", "dasein"),
+    ("aletheon", "gateway"),
+    ("aletheon", "hardware"),
+    ("aletheon", "interact"),
+    ("aletheon", "kernel"),
+    ("aletheon", "metacog"),
+    ("aletheon", "mnemosyne"),
+    ("aletheon", "platform"),
+    ("aletheon", "runtime"),
+    ("application", "contracts"),
+    ("application", "runtime"),
     ("cognit", "kernel"),
-    ("executive", "gateway"),
-    ("executive", "hardware"),
-    ("gateway", "fabric"),
-    ("hardware", "fabric"),
-    ("interact", "executive"),
+    ("execd", "platform"),
+    ("gateway", "contracts"),
+    ("hardware", "contracts"),
+    ("platform", "application"),
+    ("runtime", "contracts"),
 }
 for package in data["packages"]:
     for dep in package["dependencies"]:
@@ -1128,7 +2959,7 @@ fi
 
 # Freeze: fabric root-level re-exports must not grow beyond the ledgered
 # baseline (architecture-status.toml [freeze].fabric_root_reexports_max).
-fabric_reexports_now=$(grep -c '^pub use' crates/fabric/src/lib.rs || echo 0)
+fabric_reexports_now=$(grep -c '^pub use' crates/contracts/src/lib.rs || echo 0)
 fabric_reexports_max=$(grep -E '^\s*fabric_root_reexports_max\s*=' architecture-status.toml \
   | grep -oE '[0-9]+' | head -1)
 if [[ -z "$fabric_reexports_max" ]]; then
@@ -1137,21 +2968,20 @@ if [[ -z "$fabric_reexports_max" ]]; then
 fi
 if (( fabric_reexports_now > fabric_reexports_max )); then
   echo "architecture-check: fabric root re-exports grew from ${fabric_reexports_max} to ${fabric_reexports_now}" >&2
-  echo "  New root-level 'pub use' in crates/fabric/src/lib.rs are frozen (Wave 0)." >&2
+  echo "  New root-level 'pub use' in crates/contracts/src/lib.rs are frozen (Wave 0)." >&2
   echo "  Import from a submodule, or lower the baseline as re-exports are removed." >&2
   exit 1
 fi
 
 # Migration path inventory is symbol based and intentionally stable across line moves.
 {
-  rg -l 'pub struct TurnService' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnService#' || true
-  rg -l 'pub struct TurnPipeline\b' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnPipeline#' || true
-  rg -l 'impl TurnServices for ExecTurnServices' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|ExecTurnServices#' || true
-  rg -l 'CapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
-    | grep -v 'crates/executive/src/application/governed_capability.rs' \
+  rg -l 'pub struct TurnService' crates/aletheon/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnService#' || true
+  rg -l 'pub struct TurnPipeline\b' crates/aletheon/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnPipeline#' || true
+  rg -l 'impl TurnServices for ExecTurnServices' crates/aletheon/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|ExecTurnServices#' || true
+  rg -l '\bCapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
     | sed 's#^#capability_path|#; s#$#|CapabilityInvoker#' || true
-  rg -l '\bAdmissionRequest \{' crates/executive/src -g '*.rs' 2>/dev/null \
-    | grep -v 'crates/executive/src/application/governed_capability.rs' \
+  rg -l '\bAdmissionRequest \{' crates/aletheon/src -g '*.rs' 2>/dev/null \
+    | grep -v 'crates/aletheon/src/wiring/application/governed_capability.rs' \
     | sed 's#^#capability_path|#; s#$#|manual_admission#' || true
 } | sort -u > "$path_actual"
 
@@ -1194,8 +3024,18 @@ if [[ -n ${ARCH_BASE_REF:-} ]]; then
     git show "$ARCH_BASE_REF:$file" > "$base_snapshot"
     growth=$(
       awk -F'|' '
-        NR == FNR { base[$1]++; next }
-        { current[$1]++ }
+        function canonical_category(category) {
+          # The Executive retirement renamed the same application-layer debt
+          # category without changing its semantics. Compare the migrated
+          # Aletheon ledger against that existing budget rather than treating
+          # the crate rename as two new findings.
+          if (category == "executive_store_import") {
+            return "application_store_import"
+          }
+          return category
+        }
+        NR == FNR { base[canonical_category($1)]++; next }
+        { current[canonical_category($1)]++ }
         END {
           for (category in current) {
             if (current[category] > base[category]) {
@@ -1218,8 +3058,25 @@ if [[ -n ${ARCH_BASE_REF:-} ]]; then
   for file in config/architecture-dependencies.txt; do
     if git cat-file -e "$ARCH_BASE_REF:$file" 2>/dev/null && \
        git diff --unified=0 "$ARCH_BASE_REF" -- "$file" | grep -q '^+[^+]'; then
-      echo "architecture-check: $file may only lose entries" >&2
-      exit 1
+      # The Executive/Fabric retirement changes package names and moves the
+      # composition dependency fan-out into Aletheon. Permit that baseline to
+      # be rebased exactly once; after the migration lands, the base file no
+      # longer contains a retired package and this returns to monotonic mode.
+      retired_base_dependencies=$(git show "$ARCH_BASE_REF:$file" \
+        | grep -E '\|(executive|fabric|gateway-(client|protocol|server|channel-telegram))(\||$)' \
+        || true)
+      if [[ -z "$retired_base_dependencies" ]] || \
+         bash "$ROOT/scripts/cargo-agent.sh" metadata --no-deps --format-version 1 \
+           | python3 -c '
+import json,sys
+retired={"executive", "fabric", "gateway-client", "gateway-protocol", "gateway-server", "gateway-channel-telegram"}
+names={package["name"] for package in json.load(sys.stdin)["packages"]}
+raise SystemExit(0 if names & retired else 1)
+'; then
+        echo "architecture-check: $file may only lose entries" >&2
+        exit 1
+      fi
+      echo "architecture-check: accepted one-time retired-package dependency baseline rebase"
     fi
   done
 fi

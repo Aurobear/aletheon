@@ -12,14 +12,21 @@ mod backends;
 pub mod binding;
 pub mod composite_service;
 pub mod consolidation;
+pub mod consolidation_worker;
+pub mod context_compactor;
 pub mod credential;
 mod domain;
 pub mod embodied_episode;
+pub mod embodied_episode_contract;
 pub mod fact_service;
 mod host;
 pub mod intake;
 pub mod knowledge_graph;
 pub mod lifecycle;
+pub mod memory_gateway;
+pub mod memory_job_projection;
+pub mod memory_policy;
+pub use memory_policy::MemoryPolicyConfig;
 pub mod model;
 pub mod observability;
 pub mod ops;
@@ -29,6 +36,7 @@ mod recall;
 pub mod recall_cache;
 pub mod retention;
 pub mod service;
+pub mod supplemental_memory;
 pub mod workspace;
 
 pub mod embedding {
@@ -54,6 +62,9 @@ pub use intake::{
     GovernedMemoryObservation, MemoryIntakeError, MemoryIntakeLedger, MemoryIntakeLimits,
     MemoryLifecycleUpdate, MemoryMaintenanceClaim, MemoryMaintenanceLease, MemoryMaintenancePhase,
     MemoryMaintenanceStatus,
+};
+pub use memory_gateway::{
+    MemoryGatewayService, SupplementalBindingNegotiator, SupplementalBindingRecallPort,
 };
 pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 
@@ -170,3 +181,16 @@ pub mod memory_tools {
 
 #[cfg(test)]
 pub mod testing;
+
+/// Mnemosyne-owned memory backend domain contracts.
+pub mod memory {
+    pub use crate::domain::memory::*;
+}
+pub use memory::{
+    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
+    MemoryQuery, MemoryStats, MemoryType,
+};
+
+pub mod episode_promotion;
+
+pub mod memory_maintenance;

@@ -131,7 +131,7 @@
         },
         "compaction_threshold": {
           "default": 80,
-          "description": "Percent of the context window (e.g. `80` = 80%) at which automatic\ncompaction triggers. Carried through to the compressor threshold via\n`ExecutiveConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.",
+          "description": "Percent of the context window (e.g. `80` = 80%) at which automatic\ncompaction triggers. Carried through to the compressor threshold via\n`CognitiveRuntimeConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -1118,7 +1118,7 @@
       "type": "object"
     },
     "HarnessKind": {
-      "description": "Selects which concrete harness implementation `build_harness` constructs.\n\nPhase 2 fallback (see RFC-018): `ReActLoop::run` is generic over\n`<L: LlmProvider, F: Fn(...) -> Fut, Fut: Future>`, which is not\nobject-safe (generic methods cannot be part of a `dyn Trait`). Rather than\nforce an incompatible trait-object seam, this factory keeps `ReActLoop` as\na concrete return type and provides the config-selected construction seam:\nadding a new harness kind means adding a variant here and a construction\narm in `build_harness`, without touching `executive`'s call sites beyond\nthe `HarnessKind` selection itself.\n\nSelectable from TOML via `harness_kind = \"linear\"` (see\n`executive::composition::config::ExecutiveConfig::harness_kind`).",
+      "description": "Stable identity for a configured cognitive harness capability.\n\nConstruction goes through [`CognitiveSessionFactory`], which is object-safe\nfor both Linear and Robot sessions. `HarnessKind` is selection metadata; it\ndoes not construct an incomplete concrete loop without its required ports.",
       "oneOf": [
         {
           "enum": [
@@ -2718,6 +2718,11 @@
             "null"
           ]
         },
+        "session_writer": {
+          "$ref": "#/$defs/SessionWriterMode",
+          "default": "runtime",
+          "description": "RA-03 writer cutover mode. Runtime is the production authority; Legacy\nremains only as a one-way rollback writer during the observation window."
+        },
         "working_dir": {
           "default": null,
           "type": [
@@ -2848,6 +2853,14 @@
         "env"
       ],
       "type": "object"
+    },
+    "SessionWriterMode": {
+      "description": "Typed RA-03 Session writer cutover mode.\n\nSerde rejects unknown values while loading the configuration layer, so an\noperator typo cannot silently reopen the legacy writer.",
+      "enum": [
+        "runtime",
+        "legacy"
+      ],
+      "type": "string"
     },
     "SupplementalDestinationAttestationConfig": {
       "additionalProperties": false,
@@ -3093,6 +3106,7 @@
         "conscious_arbitration_mode": null,
         "data_dir": null,
         "sandbox_preference": null,
+        "session_writer": "runtime",
         "working_dir": null
       },
       "description": "Host/bootstrap values that are passed into the daemon as typed inputs."

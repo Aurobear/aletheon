@@ -71,7 +71,7 @@ impl DriverFactory {
     /// Try to create a real clipboard driver (X11 clipboard).
     #[cfg(feature = "display")]
     pub fn try_clipboard(
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
     ) -> Option<Box<dyn crate::drivers::display::ClipboardDriver>> {
         if std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok() {
             return Some(Box::new(crate::drivers::display::X11ClipboardDriver::new(
