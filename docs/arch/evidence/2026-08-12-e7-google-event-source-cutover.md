@@ -8,10 +8,10 @@
 
 ## Cutover
 
-- Source DTO authority moved from `crates/fabric/src/types/external_source.rs` to `crates/corpus/src/tools/google/source.rs`.
-- Normalized Google event authority moved from `crates/fabric/src/types/external_event.rs` to `crates/corpus/src/tools/google/event.rs`.
+- Source DTO authority moved from `crates/corpus/src/tools/google/source.rs` to `crates/corpus/src/tools/google/source.rs`.
+- Normalized Google event authority moved from `crates/corpus/src/tools/google/event.rs` to `crates/corpus/src/tools/google/event.rs`.
 - Application's provider-neutral `ExternalStimulus` remains at `crates/application/src/goal_draft.rs:13-42`; the rich Google envelope was not copied into Application.
-- Gateway's provider-specific event registry was removed. The concrete capability seam is now `GoogleEventCapabilityHandler` beside the Google event router in `crates/executive/src/adapters/google/event_dispatcher.rs`.
+- Gateway's provider-specific event registry was removed. The concrete capability seam is now `GoogleEventCapabilityHandler` beside the Google event router in `crates/aletheon/src/wiring/adapters/google/event_dispatcher.rs`.
 - Fabric module declarations, root exports, source/event files, and all production/test callers were removed. No compatibility re-export was added.
 - Persisted v1 read/v2 write compatibility moved intact with the event owner; the Google event store remains the single persistence writer.
 

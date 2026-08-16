@@ -17,7 +17,7 @@ After:  Gateway / Telegram / SQLite / daemon -> gateway::channel DTOs
 
 The neutral channel DTOs now live at `crates/gateway/src/channel.rs:1-104` and
 are exported by `crates/gateway/src/lib.rs:10-18`. All Rust callers use the
-Gateway owner path. `crates/fabric/src/types/channel.rs`, its `types/mod.rs`
+Gateway owner path. `crates/gateway/src/channel/mod.rs`, its `types/mod.rs`
 declaration, and both Fabric root re-export blocks were removed. The unrelated
 IPC V2 UUID `MessageId` remains the ownerless contract exported by
 `crates/fabric/src/contracts.rs:19`; it is not the removed channel string ID.

@@ -33,16 +33,16 @@ SessionAppendStore -> EventSourcedSessionStore -> EventSpine durable commit
 ```
 
 1. `SessionAppendStore` remains the application mutation port
-   (`crates/fabric/src/types/session.rs:319-358`). Its production implementation
-   is `EventSourcedSessionStore` (`crates/executive/src/adapters/session/event_sourced_store.rs:70-94,229-377`),
+   (`crates/contracts/src/types/session.rs:319-358`). Its production implementation
+   is `EventSourcedSessionStore` (`crates/adapters/sqlite/src/session/event_sourced_store.rs:70-94,229-377`),
    composed over EventSpine and a private projection store
-   (`crates/executive/src/composition/turn_coordinator.rs:41-56`).
+   (`crates/aletheon/src/wiring/adapters/session/test_composition.rs:41-56`).
 2. The durable, ordered EventSpine append is the authority commit. Session,
    Task, Activity, principal, and recovery materializers are deterministic read
    projections; projection state is not a second business commit
-   (`crates/executive/src/adapters/events/session_projection.rs:166-220`).
+   (`crates/runtime/src/public_session_projection.rs:166-220`).
 3. Turn lifecycle and settlement remain Host-owned
-   (`crates/executive/src/application/turn_lifecycle.rs:99-129`). Model text,
+   (`crates/runtime/src/turn_pipeline_lifecycle.rs:99-129`). Model text,
    child self-reporting, presentation state, and monitor summaries cannot write
    authoritative terminal settlement.
 4. Active plans remain `agora::TaskGraph`
@@ -58,11 +58,11 @@ SessionAppendStore -> EventSourcedSessionStore -> EventSpine durable commit
 ## Command and client entry authority
 
 1. Fabric `CommandSpec` and `ClientIntent` are the shared command contract
-   (`crates/fabric/src/contract/command.rs:112-188,201-311`). CLI, TUI, Gateway,
+   (`crates/contracts/src/contract/command.rs:112-188,201-311`). CLI, TUI, Gateway,
    and other input surfaces translate into this contract instead of defining
    independent command semantics.
 2. Executive `CommandDispatcher` is the sole application handler for
-   `ClientIntent` (`crates/executive/src/application/command_dispatcher.rs:60-85`).
+   `ClientIntent` (`crates/application/src/command_dispatcher.rs:60-85`).
 3. Help, completion, visibility, availability, and execution policy derive from
    the same command specifications. A compatibility parser or presentation
    handler must not become a second production command authority.
@@ -71,13 +71,13 @@ SessionAppendStore -> EventSourcedSessionStore -> EventSpine durable commit
 
 1. Run/exec uses the versioned client protocol and typed terminal envelopes;
    `ExecEvent`, `ExecTerminalKind`, and `ExecEventEnvelope` are distinct from
-   Session/Turn schemas (`crates/fabric/src/types/exec.rs:11-72`).
+   Session/Turn schemas (`crates/gateway/src/protocol/exec.rs:11-72`).
 2. Session protocol snapshots and tails are versioned and principal-scoped
-   (`crates/fabric/src/protocol/client.rs:989-1180`;
-   `crates/fabric/src/types/session.rs:262-358`).
+   (`crates/contracts/src/protocol/client.rs:989-1180`;
+   `crates/contracts/src/types/session.rs:262-358`).
 3. Task, Activity, checkpoint, rewind, findings, review, and settlement are Host
    facts projected through the client protocol
-   (`crates/fabric/src/protocol/client.rs:187-329,1182-1434`). The TUI displays
+   (`crates/contracts/src/protocol/client.rs:187-329,1182-1434`). The TUI displays
    these facts but does not own their state machine.
 4. Safety denial is a typed blocked settlement, not a generic tool error. Large
    artifacts remain content-addressed references instead of inline Session
@@ -86,17 +86,17 @@ SessionAppendStore -> EventSourcedSessionStore -> EventSpine durable commit
 ## Capability receipts and identifiers
 
 1. Capability execution records a typed terminal receipt
-   (`crates/fabric/src/include/turn.rs:111-217`). Async dispatch is not terminal
+   (`crates/contracts/src/include/turn.rs:111-217`). Async dispatch is not terminal
    success until the authoritative terminal snapshot or durable receipt is
    observed.
 2. Identifiers remain domain-specific: governed operation identity is
-   `fabric::OperationId` (`crates/fabric/src/types/operation.rs:9`), device-side
+   `fabric::OperationId` (`crates/contracts/src/types/operation.rs:9`), device-side
    correlation is `hardware::DeviceOperationId`
    (`crates/hardware/src/device.rs:4-8`), runtime process identity is
-   `fabric::RuntimeProcessId` (`crates/fabric/src/types/process.rs:37-47`), and
+   `fabric::RuntimeProcessId` (`crates/contracts/src/types/process.rs:37-47`), and
    change/checkpoint identities retain their own types
-   (`crates/fabric/src/types/change_transaction.rs:9-24`;
-   `crates/fabric/src/types/workspace_checkpoint.rs:22-35`).
+   (`crates/contracts/src/types/change_transaction.rs:9-24`;
+   `crates/application/src/workspace_checkpoint.rs:22-35`).
 3. Hardware reuses `fabric::PrincipalId`; it does not define a parallel
    principal wrapper (`crates/hardware/src/device.rs:4`). New generic ID or
    receipt wrappers require demonstrated shared semantics and registry review.
@@ -110,14 +110,14 @@ SessionAppendStore -> EventSourcedSessionStore -> EventSpine durable commit
    retaining a domain-specific verifier and safety authority. Hardware is not a
    Bash/MCP tool.
 2. Environment and safety facts are provider-attested typed contracts
-   (`crates/fabric/src/types/embodiment.rs:35-158`). Robot failure, safe-stop,
+   (`crates/contracts/src/types/embodiment.rs:35-158`). Robot failure, safe-stop,
    attempt, artifact, and immutable settlement facts remain explicit
-   (`crates/fabric/src/types/robot_failure.rs:10-69`;
-   `crates/fabric/src/types/episode_report.rs:37-151,335-720`).
+   (`crates/contracts/src/types/robot_failure.rs:10-69`;
+   `crates/contracts/src/types/episode_report.rs:37-151,335-720`).
 3. Policy proposals must be goal-aligned and pass allowlist, schema, device,
    risk, expected-outcome, and authority validation; a `SafetyFallback` is not
    executable as a direct goal action
-   (`crates/fabric/src/types/skill_proposal.rs:16-53`).
+   (`crates/contracts/src/types/skill_proposal.rs:16-53`).
 4. WBC/MPC, drivers, monotonic watchdog, command ownership, and emergency stop
    remain in the robot/Bridge real-time stack. Cloud inference and Aletheon do
    not assume hard-real-time control.

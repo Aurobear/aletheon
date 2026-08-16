@@ -10,18 +10,16 @@
 //! the LLM reflection step will fail gracefully and the event flow is still
 //! demonstrated through the EventBus wiring.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
 use uuid::Uuid;
 
 use ::contracts::{EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, NamespaceId, SchemaId};
-use cognit::config::{ProviderConfig, ProviderTimeoutConfig, Transport};
 use cognit::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
 use cognit::evolution::*;
-use cognit::inference::scheduler::{
-    LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
-};
+use cognit::inference::scheduler::LlmScheduler;
 use runtime::event_projection::CanonicalEventBus;
 
 // ---------------------------------------------------------------------------
@@ -30,45 +28,11 @@ use runtime::event_projection::CanonicalEventBus;
 
 /// Build an LlmScheduler configured for DeepSeek (reflector).
 fn build_scheduler() -> Result<Arc<LlmScheduler>> {
-    let api_key = std::env::var("DEEPSEEK_API_KEY").unwrap_or_default();
-
-    let config = SchedulerConfig {
-        providers: vec![SchedulerProviderConfig {
-            definition: ProviderConfig {
-                name: "deepseek".to_string(),
-                base_url: "https://api.deepseek.com/v1".to_string(),
-                api_key,
-                transport: Transport::Openai,
-                models: vec!["deepseek-chat".to_string()],
-                max_context_length: None,
-                pricing: None,
-                backpressure: Default::default(),
-                cache: Default::default(),
-            },
-            model: "deepseek-chat".to_string(),
-        }],
-        routing: vec![
-            RoutingRule {
-                purpose: LlmPurpose::Reflect,
-                provider_name: "deepseek".to_string(),
-            },
-            RoutingRule {
-                purpose: LlmPurpose::ExtractRules,
-                provider_name: "deepseek".to_string(),
-            },
-            RoutingRule {
-                purpose: LlmPurpose::GenerateMutations,
-                provider_name: "deepseek".to_string(),
-            },
-        ],
-        max_tokens: 4_096,
-        provider_timeouts: ProviderTimeoutConfig::default(),
-    };
-
-    Ok(Arc::new(LlmScheduler::new(
-        &config,
+    Ok(Arc::new(LlmScheduler::from_providers(
+        HashMap::new(),
+        HashMap::new(),
         Arc::new(kernel::chronos::SystemClock::new()),
-    )?))
+    )))
 }
 
 /// Create a canonical, versioned envelope carrying a tool observation.

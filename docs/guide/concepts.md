@@ -112,7 +112,7 @@ Aletheon's memory is modeled after OS virtual memory (cache -> RAM -> disk):
 The agent manages its own memory through explicit tools (`core_memory_append`, `core_memory_replace`, `recall_search`). This is not a passive store -- the agent actively decides what to remember and what to forget.
 
 **Implementation:** `crates/mnemosyne/` with host composition under
-`crates/executive/src/host/daemon/bootstrap/memory.rs` -- see
+`crates/aletheon/src/wiring/daemon/bootstrap/memory.rs` -- see
 [Memory System](../design/mnemosyne/memory-system.md).
 
 ---

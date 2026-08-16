@@ -18,6 +18,6 @@ The authoritative execution is the green `bash scripts/cargo-agent.sh test --wor
 
 Compatibility decisions:
 
-- Persisted ExternalEvent v1 aliases remain read-only compatibility while writers emit v2 (`crates/fabric/src/types/external_event.rs:11-16`, `config/architecture/compatibility-debt.tsv:3-4`). Deleting them without evidence that supported v1 rows are gone would violate the data-preservation rule at `CORE_ARCHITECTURE_DECOUPLING_REFACTOR_PLAN.md:960-964`.
+- Persisted ExternalEvent v1 aliases remain read-only compatibility while writers emit v2 (`crates/corpus/src/tools/google/event.rs:11-16`, `config/architecture/compatibility-debt.tsv:3-4`). Deleting them without evidence that supported v1 rows are gone would violate the data-preservation rule at `CORE_ARCHITECTURE_DECOUPLING_REFACTOR_PLAN.md:960-964`.
 - Private adapter implementation names and private supplemental-memory SQLite table names are not core compatibility exceptions. Their obsolete ledger rows were removed; their placement is governed by the adapter boundary (`CORE_ARCHITECTURE_DECOUPLING_REFACTOR_PLAN.md:992-1001`).
 - Unknown/newer versions remain explicit rejection paths; no silent provider/runtime fallback is permitted (`CORE_ARCHITECTURE_DECOUPLING_REFACTOR_PLAN.md:968-975`).

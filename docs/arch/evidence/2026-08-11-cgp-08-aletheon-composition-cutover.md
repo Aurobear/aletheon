@@ -25,7 +25,7 @@ runtime, and starts the inference core. The UserRuntime composition itself is
 now owned by `crates/aletheon/src/wiring/user_runtime.rs:22-360`; it is a
 typed migration of the previous Executive composition module and retains the
 same cleanup/shutdown contracts. The old
-`crates/executive/src/host/launcher.rs` remains the rollback implementation and
+`crates/aletheon/src/wiring/exec.rs` remains the rollback implementation and
 existing Executive test seam, but it is not referenced directly by
 `aletheon/src/main.rs`. The wiring now owns the Core RPC client/protocol,
 readiness lifecycle, and Exec host path (`crates/aletheon/src/wiring/core_rpc/`,
@@ -221,7 +221,7 @@ are recorded as `SPLIT -> aletheon-extension` in
 `config/architecture/executive-surface-ledger.tsv`.
 
 The Executive admin use case now consumes the narrow
-`ExtensionSkillCatalogPort` projection (`crates/executive/src/application/admin_service.rs:483-520`)
+`ExtensionSkillCatalogPort` projection (`crates/aletheon/src/wiring/application/admin_service.rs:483-520`)
 instead of a concrete snapshot type. This keeps the application route stable
 while allowing the Aletheon-owned runtime view to be injected through
 `with_extension_catalog`.
@@ -326,7 +326,7 @@ client/Memory-Agent smoke pass.
 ### 2026-08-11 gateway server dependency convergence
 
 The retained Executive host typed route now imports the independent
-`gateway-server` owner directly (`crates/executive/src/host/daemon/server.rs:17`,
+`gateway-server` owner directly (`crates/aletheon/src/wiring/daemon/server.rs:17`,
 `crates/executive/src/host/daemon/handler/typed_gateway.rs:8`). The former
 `gateway::handlers::typed` compatibility re-export and the `gateway ->
 gateway-server` dependency were removed; `gateway` is now only the neutral
@@ -431,7 +431,7 @@ The old `dispatcher.rs`/`ChannelDispatcher` symbol was replaced by the
 `ChannelTurnApplicationPort` and `ChannelGoalApplicationPort`; the channel
 turn request is a typed `ChannelTurnRequest`, and Executive alone converts it
 to the full `ClientIntent` (`crates/gateway/src/ports.rs:87-115`,
-`crates/executive/src/adapters/channel/daemon_adapter.rs:348-376`). Goal
+`crates/aletheon/src/wiring/adapters/channel/daemon_adapter.rs:348-376`). Goal
 progress, approval resolver, and external-event capability contracts were
 moved out of the mixed registry into the ports boundary. Telegram and
 Executive/Aletheon callers no longer import `gateway::dispatcher`.
@@ -488,7 +488,7 @@ The owner-only channel no longer derives a `ThreadId` from the authenticated
 principal. `ChannelChatAdapter` deliberately leaves `session_id` unset, and
 the Executive channel Application adapter now requires either an explicit
 session or the canonical session selected by daemon composition via
-`with_default_session` (`crates/executive/src/adapters/channel/daemon_adapter.rs`).
+`with_default_session` (`crates/aletheon/src/wiring/adapters/channel/daemon_adapter.rs`).
 Both Aletheon and retained Executive bootstrap pass the Runtime-created
 initial canonical session into Telegram wiring; an unset production selection
 fails closed instead of creating a principal-named session.
@@ -527,7 +527,7 @@ and installed binaries match, both daemon units are active/running with
 ### 2026-08-11 Channel SQLite adapter extraction
 
 The concrete `ChannelStore` and channel schema implementation moved from
-`crates/gateway/src/adapters/sqlite_store.rs` to
+`crates/adapters/sqlite/src/channel.rs` to
 `crates/adapters/sqlite/src/channel.rs`. Gateway now consumes the persistence
 adapter through a compatibility re-export and no longer reaches into the
 SQLite connection directly; reject/fail/mark-outbox operations are explicit
@@ -568,7 +568,7 @@ typed seam. The Executive channel turn adapter no longer re-enters the
 presentation `CommandDispatcher`; it invokes its typed `CommandUseCases`
 implementation directly after Gateway classification
 (`crates/gateway/src/handlers/chat.rs`, `crates/gateway/src/router.rs`,
-`crates/executive/src/adapters/channel/daemon_adapter.rs`).
+`crates/aletheon/src/wiring/adapters/channel/daemon_adapter.rs`).
 
 Focused Gateway/Executive checks, Google Telegram, channel recovery, Goal,
 Approval, and Gmail tests pass; formatting, `git diff --check`, and the
@@ -824,7 +824,7 @@ legacy `from_components` constructor remains only for isolated compatibility
 fixtures. This makes the RA-04 single-writer invariant explicit at the
 production composition boundary.
 
-Anchors: `crates/executive/src/application/turn_coordinator.rs:365-431` and
+Anchors: `crates/aletheon/src/wiring/application/turn_coordinator.rs:365-431` and
 `crates/aletheon/src/wiring/daemon/bootstrap/services.rs:875-887`.
 
 Verification: Executive 751 tests, Aletheon 151 tests, focused checks,
@@ -871,7 +871,7 @@ boundary rather than crossing as a public resource bag.
 Anchors: `crates/aletheon/src/wiring/domain.rs:9-65`,
 `crates/aletheon/src/wiring/daemon/bootstrap/request.rs:863-925`,
 `crates/executive/src/core/mod.rs:1-31`, and
-`crates/executive/src/application/daemon_turn/orchestrator.rs:30-89`.
+`crates/aletheon/src/wiring/application/daemon_turn/orchestrator.rs:30-89`.
 
 The remaining Aletheon composition imports from `executive::core` now use
 Executive's narrow root exports (`AletheonExecutive`, evolution/permission

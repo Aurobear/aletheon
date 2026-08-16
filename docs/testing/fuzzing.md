@@ -1,7 +1,7 @@
 # Fuzz testing
 
 The executive fuzz package contains seven parsing and protocol targets under
-`crates/executive/fuzz/fuzz_targets`.
+`crates/corpus/tests/`.
 
 Run a short local campaign through the repository Cargo wrapper:
 

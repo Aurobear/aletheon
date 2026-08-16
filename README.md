@@ -245,10 +245,10 @@ execd     ---> platform
 | Hook system (extension-owned lifecycle hooks) | ✅ Stable | `crates/corpus/src/hook/mod.rs` | `crates/aletheon/tests/package_skill_hook_runtime.rs` | `crates/aletheon/tests/extension_restart_recovery.rs` |
 | Bubblewrap Sandbox | ✅ Stable | `crates/corpus/src/security/sandbox/bubblewrap.rs` | `crates/corpus/tests/workspace_sandbox.rs` | `crates/corpus/src/security/runner/tests.rs` |
 | Multi-agent Collaboration | ✅ Stable | `crates/aletheon/src/wiring/application/agent_control/mod.rs` | `crates/aletheon/tests/agent_control_spawn.rs` | `crates/aletheon/tests/agent_recovery.rs` |
-| io_uring IPC backend | 🔧 Experimental | `crates/contracts/src/ipc/backends/io_uring_transport.rs` | `crates/contracts/src/ipc/backends/io_uring_transport.rs` | — |
+| io_uring IPC backend | 🔧 Experimental | `crates/contracts/Cargo.toml` | `crates/contracts/Cargo.toml` | — |
 | Local/Offline Model | 🔧 Experimental | — | — | — |
 | Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/evolution_loop/` | `crates/aletheon/tests/self_evolution_loop_test.rs` | — |
-| eBPF kernel awareness | 📋 Design | `crates/contracts/src/ipc/bus/kernel_bus.rs` | — | — |
+| eBPF kernel awareness | 📋 Design | `crates/runtime/src/event_projection/bus.rs` | — | — |
 | Android / Embedded targets | 📋 Design | — | — | — |
 | Cross-platform (macOS / Windows) | 📋 Design | — | — | — |
 
@@ -284,7 +284,7 @@ per-session append path plus the required 1k/10k/100k benchmark matrix (S1).
 Those facts do not make an unreleased branch a published capability claim:
 promotion still requires the exact installed-RC scoreboard and release gates
 defined by
-`docs/plans/Aletheon_Runtime_Product_Convergence_and_Engineering_Closure_Plan_2026-08-07.md`.
+`docs/plans/2026-08-16-architecture-coupling-closeout.md`.
 
 **Robot/HIL (H1)** remains unperformed on physical hardware. Simulation
 evidence cannot be presented as physical-robot acceptance.

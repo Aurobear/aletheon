@@ -1,7 +1,7 @@
 # Fabric Crate — Shared Contracts and Communication
 
 > **Status:** Historical design. This file retains an earlier exhaustive
-> facade inventory; use `crates/fabric/README.md` and `crates/fabric/src/lib.rs`
+> facade inventory; use `crates/contracts/README.md` and `crates/fabric/src/lib.rs`
 > for the current boundary and exports.
 
 > Code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)

@@ -34,5 +34,5 @@ Caller-zero gates:
 
 ```bash
 ! rg -n 'fabric::protocol::extension|ClientRpcRequest::Extension' crates --glob '*.rs'
-! test -e crates/fabric/src/protocol/extension.rs
+! test -e crates/gateway/src/protocol/extension.rs
 ```

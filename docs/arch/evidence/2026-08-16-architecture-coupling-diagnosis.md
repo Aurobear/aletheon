@@ -203,7 +203,7 @@ that the boundary has converged.
 ```text
 crates/application                 selected pure contracts/use cases in production
                                    + unused top-level ApplicationFacade
-aletheon/wiring/application        primary orchestration + policy + remaining I/O
+crates/aletheon/src/wiring/application/        primary orchestration + policy + remaining I/O
 ```
 
 ### Why it matters
@@ -364,7 +364,7 @@ reliably describe or protect the current tree.
 
 | Ledger / doc | Still says | Code fact |
 |---|---|---|
-| `docs/design/architecture-overview.md:25-37,99-100` | Executive orchestrates; `TurnEngine` lives in `crates/executive/src/application/turn_engine.rs` | No `executive` member; `TurnEngine` is in `crates/aletheon/src/wiring/application/turn_engine.rs` |
+| `docs/design/architecture-overview.md:25-37,99-100` | Executive orchestrates; `TurnEngine` lives in `crates/aletheon/src/wiring/application/turn_engine.rs` | No `executive` member; `TurnEngine` is in `crates/aletheon/src/wiring/application/turn_engine.rs` |
 | `config/architecture/executive-layers.tsv` entire file | `crates/executive/src/...` layer map | Paths do not exist |
 | `config/architecture/persistence-surfaces.tsv:3,9,21` | owner = `executive` for google-event-store, goal-store, session-read-model | Stores live under `aletheon/wiring` and `adapters/sqlite` |
 | `config/architecture/config-ownership.tsv` | owner = `executive.composition` for all listed keys | Config lives in `crates/aletheon/src/config/` |
@@ -374,8 +374,8 @@ reliably describe or protect the current tree.
 | `docs/arch/CORE_REFACTOR_VERIFICATION_STATUS.md:9` | “retain Fabric and Executive as physical crates” | Neither crate is a workspace member |
 | `docs/arch/PUBLIC_API_CONTRACTION_INVENTORY.md:20-25,54` | Executive facade and `cargo check -p executive` | Package gone |
 | `config/architecture/hotspot-budgets.tsv` | largest listed hotspot `runner.rs` 2042 | Live largest file is `turn_pipeline.rs` 2524, not in the table |
-| `config/architecture/state-machine-inventory.tsv:3` | `largest_io_module` = `crates/executive/src/application/turn_pipeline.rs` | File is gone; live module is `crates/aletheon/src/wiring/application/turn_pipeline.rs` |
-| `docs/design/roadmap/open-questions.md:33` | `crates/fabric/src/security/loop_detector.rs` | Implementation is under `corpus` (`dasein` imports `corpus::security::loop_detector`) |
+| `config/architecture/state-machine-inventory.tsv:3` | `largest_io_module` = `crates/aletheon/src/wiring/application/turn_pipeline.rs` | File is gone; live module is `crates/aletheon/src/wiring/application/turn_pipeline.rs` |
+| `docs/design/roadmap/open-questions.md:33` | `crates/corpus/src/security/loop_detector.rs` | Implementation is under `corpus` (`dasein` imports `corpus::security::loop_detector`) |
 
 Many TSV files still carry `frozen_commit=` from the Executive-era tree.
 
@@ -546,7 +546,7 @@ does not invent features.
 2. Mark `executive-layers.tsv` as a historical retirement snapshot. Mark
    `state-machine-inventory.tsv` living/ungated and remap its stale TurnPipeline
    row; `:3` still points at deleted
-   `crates/executive/src/application/turn_pipeline.rs`.
+   `crates/aletheon/src/wiring/application/turn_pipeline.rs`.
 3. Put `turn_pipeline.rs` on `hotspot-budgets.tsv`. Freeze new responsibilities
    from entering it while it is the largest live file.
 4. Keep `TurnService → TurnEngine` as the single open converge item in
@@ -562,7 +562,7 @@ does not invent features.
      `wiring/application` into `crates/application`, leave I/O in adapters; or
    - Define `crates/application` as the narrow pure-contract/use-case owner,
      remove the unused `ApplicationFacade`, and explicitly leave host
-     orchestration in `aletheon/wiring/application`.
+     orchestration in `crates/aletheon/src/wiring/application/`.
    Do not keep two undocumented ownership stories.
 
 ### P2 — cut the three high-cost coupling groups

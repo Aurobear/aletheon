@@ -40,8 +40,8 @@ Out-of-scope files: all production behavior, all writer cutovers, RA-01+
 
 | aggregate | mint | classification |
 |---|---|---|
-| Session | `RequestHandler::new` mints `uuid::Uuid::new_v4()` at `crates/executive/src/host/daemon/bootstrap/request.rs:81` | canonical, machine daemon created (RA-S-01) |
-| Session | `SessionService::fork` mints child `SessionId(uuid::new_v4())` at `crates/executive/src/application/session_service.rs:696` | canonical child (RA-S-02) |
+| Session | `RequestHandler::new` mints `uuid::Uuid::new_v4()` at `crates/aletheon/src/wiring/daemon/bootstrap/request.rs:81` | canonical, machine daemon created (RA-S-01) |
+| Session | `SessionService::fork` mints child `SessionId(uuid::new_v4())` at `crates/runtime/src/session_service.rs:696` | canonical child (RA-S-02) |
 | Session | `interact/src/single_message.rs:243` mints `SessionId(message-{uuid})` | client-side, must become Runtime receipt (RA-S-04) |
 | Session | 17 interact/executive/aletheon reconstruction sites wrap daemon-returned strings as `SessionId` | legacy alias / wrapper, not mint (RA-S-05…RA-S-12) |
 | Turn | `TurnCoordinator` mints `TurnId::new()` at `turn_coordinator.rs:610` | canonical (RA-T-01) |

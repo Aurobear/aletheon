@@ -37,7 +37,7 @@ Remaining scope: maintenance/drain evidence, installed multi-turn and failure dr
   journal append completes (`crates/runtime/src/turn_writer.rs:21-31,113-120`).
 - The coordinator's dropped-future guard records a typed disconnect or crash
   observation before its interrupted/failed terminal
-  (`crates/executive/src/application/turn_coordinator.rs:206-262`).
+  (`crates/aletheon/src/wiring/application/turn_coordinator.rs:206-262`).
 
 ## 2. Rules honoured (RA-04 PR-C)
 

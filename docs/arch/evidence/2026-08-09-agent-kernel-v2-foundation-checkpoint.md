@@ -45,7 +45,7 @@ git grep -n -E '\b(TuiSessionManager|AgentRuntime)\b' bd1ceac2 -- 'crates/**/*.r
 # TuiSessionManager definition/re-export confined to executive core/session.rs and executive/core/mod.rs
 ```
 
-The distinct production loader remains at `crates/executive/src/composition/agent_loader/mod.rs:49` and is composed by `crates/executive/src/host/daemon/bootstrap/runtime.rs:11-120`. PR #192 removed only `composition/agents`, whose callers were its own unit tests.
+The distinct production loader remains at `crates/adapters/agent-profile/src/lib.rs:49` and is composed by `crates/aletheon/src/wiring/daemon/bootstrap/runtime.rs:11-120`. PR #192 removed only `composition/agents`, whose callers were its own unit tests.
 
 ## External public-consumer check
 

@@ -39,14 +39,14 @@ Final ratchets are authoritative at `config/architecture/metrics.env:2-10`; the 
 
 | # | Criterion | Authoritative evidence | Result / remaining risk |
 |---:|---|---|---|
-| 1 | Fabric has no provider-specific shared types/scopes/errors | `FABRIC_PROVIDER_TYPES=0` (`config/architecture/metrics.env:5`); provider identity is opaque `ExternalProviderId` (`crates/fabric/src/types/external_identity.rs:51-76`) | pass; v1 serialized aliases remain bounded compatibility |
-| 2 | Domain/application access I/O only through ports | Executive layer inventory (`config/architecture/executive-layers.tsv:62-80`); inference port (`crates/executive/src/application/inference_port.rs:29`); architecture fixtures | pass |
-| 3 | Goal and Agent Control are runtime-name neutral | Goal coordinator (`crates/executive/src/application/goal/coordinator.rs:79`), Agent Control owner (`crates/executive/src/application/agent_control/mod.rs:126`), runtime adapters under `crates/executive/src/adapters/runtime/` | pass |
+| 1 | Fabric has no provider-specific shared types/scopes/errors | `FABRIC_PROVIDER_TYPES=0` (`config/architecture/metrics.env:5`); provider identity is opaque `ExternalProviderId` (`crates/application/src/external_identity.rs:51-76`) | pass; v1 serialized aliases remain bounded compatibility |
+| 2 | Domain/application access I/O only through ports | Executive layer inventory (`config/architecture/executive-layers.tsv:62-80`); inference port (`crates/cognit/src/ports/inference.rs:29`); architecture fixtures | pass |
+| 3 | Goal and Agent Control are runtime-name neutral | Goal coordinator (`crates/aletheon/src/wiring/application/goal/coordinator.rs:79`), Agent Control owner (`crates/executive/src/application/agent_control/mod.rs:126`), runtime adapters under `crates/executive/src/adapters/runtime/` | pass |
 | 4 | Cognit is channel neutral | architecture external-name and dependency gates; channel implementations reside under Executive/Gateway adapters | pass |
 | 5 | Memory core is supplemental-product neutral | generic service port (`crates/mnemosyne/src/composite_service.rs:28`) and transport port (`crates/mnemosyne/src/backends/supplemental/backend.rs:71`) | pass |
-| 6 | Hardware core is ROS/vendor/simulator neutral | generic execution/provider traits (`crates/fabric/src/types/embodiment.rs:110`, `crates/hardware/src/skill.rs:59`); provider-specific type metric is zero | pass; concrete simulator/grpc exports remain boundary utilities, not domain branching |
-| 7 | Adding a provider does not modify a core enum | opaque provider IDs (`crates/fabric/src/types/external_identity.rs:51-76`); provider-name branch metric zero | pass |
-| 8 | Provider failures reach core as generic classes | generic `FailureClass` (`crates/fabric/src/types/attempt.rs:41-61`); provider error-text branch metric zero | pass |
+| 6 | Hardware core is ROS/vendor/simulator neutral | generic execution/provider traits (`crates/contracts/src/types/embodiment.rs:110`, `crates/hardware/src/skill.rs:59`); provider-specific type metric is zero | pass; concrete simulator/grpc exports remain boundary utilities, not domain branching |
+| 7 | Adding a provider does not modify a core enum | opaque provider IDs (`crates/application/src/external_identity.rs:51-76`); provider-name branch metric zero | pass |
+| 8 | Provider failures reach core as generic classes | generic `FailureClass` (`crates/contracts/src/types/attempt.rs:41-61`); provider error-text branch metric zero | pass |
 | 9 | Config, secret resolution, adapter construction are composition-owned | config ownership inventory (`config/architecture/config-ownership.tsv:3-24`); Executive composition tree | pass |
 | 10 | Domain/application do not own HTTP/DB/home-dir infrastructure | dependency architecture gate and layer inventory; concrete SQLite repositories are classified adapters (`config/architecture/executive-layers.tsv:3-61`) | pass |
 | 11 | Crate roots do not expose implementation/adapter trees | public impl/adapter export metric zero (`config/architecture/metrics.env:9`); cross-crate impl references zero (`:4`) | pass |

@@ -174,7 +174,7 @@ Everything flows inward through the SelfField, is interpreted, and only then rea
 - [Perception Sources](perception-sources.md) -- How external input enters the system
 - [Writable Root](writable-root.md) -- FUSE-based self-access layer
 - [Dasein Crate](../../../crates/dasein/src/lib.rs) -- SelfField implementation crate
-- [SelfFieldOps Trait](../../../crates/fabric/src/include/self_field.rs) -- Core trait definition
+- [SelfFieldOps Trait](../../../crates/dasein/src/core/contracts.rs) -- Core trait definition
 
 ---
 *Document version: 1.0.0*

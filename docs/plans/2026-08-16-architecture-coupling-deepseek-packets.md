@@ -187,7 +187,7 @@ bash scripts/aletheon.sh acceptance architecture
 
 禁止改：`.rs`、`config/architecture/*`（P0.2 已封）
 
-改动：在仍写“保留 Fabric/Executive 实体 crate”或 `crates/fabric/src/security/loop_detector.rs` 的位置加现状一句：crate 已退役，实现在 `contracts` / `corpus`。不改 Phase 10 当时的数字。
+改动：在仍写“保留 Fabric/Executive 实体 crate”或 `crates/corpus/src/security/loop_detector.rs` 的位置加现状一句：crate 已退役，实现在 `contracts` / `corpus`。不改 Phase 10 当时的数字。
 
 验证：
 
@@ -215,7 +215,7 @@ rg -n 'retain Fabric and Executive|crates/fabric/src/security/loop_detector' doc
 
 ```text
 crates/application          窄纯契约 / 已接线用例
-aletheon/wiring/application host 编排（Turn/Goal/Agent Control）
+crates/aletheon/src/wiring/application/ host 编排（Turn/Goal/Agent Control）
 ApplicationFacade           不是生产入口（下一包删除）
 ```
 

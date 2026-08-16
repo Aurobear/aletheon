@@ -23,8 +23,8 @@ No compatibility re-export or duplicate DTO remains.
 
 ```bash
 ! rg -n 'fabric::types::extension_(asset|package)|super::extension_(asset|package)' crates --glob '*.rs'
-! test -e crates/fabric/src/types/extension_asset.rs
-! test -e crates/fabric/src/types/extension_package.rs
+! test -e crates/corpus/src/extension/asset.rs
+! test -e crates/corpus/src/extension/package.rs
 ```
 
 ## Extension subprocess adapter retirement (2026-08-12)
@@ -33,7 +33,7 @@ No compatibility re-export or duplicate DTO remains.
 - Aletheon composition now constructs the provider from that owner at
   `crates/aletheon/src/wiring/daemon/bootstrap/extensions.rs:399`.
 - The retained Executive bootstrap also consumes the same owner at
-  `crates/executive/src/host/daemon/bootstrap/extensions.rs:399`; it no longer
+  `crates/aletheon/src/wiring/daemon/bootstrap/extensions.rs:399`; it no longer
   carries a second implementation.
 - `crates/executive/src/extensions` was deleted after its Rust caller count
   reached zero.

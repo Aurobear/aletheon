@@ -59,7 +59,7 @@ Production callers:
   `crates/aletheon/src/wiring/daemon/bootstrap/request.rs:1149` and
   `crates/aletheon/src/wiring/daemon/bootstrap/extensions.rs:168`;
 - Pi is a pinned host backend and keeps only a weak service reference:
-  `crates/executive/src/adapters/runtime/pi_rpc.rs:57,137`.
+  `crates/aletheon/src/wiring/adapters/runtime/pi_rpc.rs:57,137`.
 
 Test/rollback callers use `new_legacy` and supervisor-less fallbacks. They are
 not evidence that the production path has a second Runtime registry.

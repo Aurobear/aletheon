@@ -133,7 +133,7 @@ bash scripts/aletheon.sh acceptance architecture
   - `docs/arch/PUBLIC_API_CONTRACTION_INVENTORY.md`
   - `docs/design/roadmap/open-questions.md`
   - `docs/arch/README.md`
-- 改动：在仍写“保留 Fabric/Executive 实体 crate”或 `crates/fabric/src/security/loop_detector.rs` 的位置加一行现状：crate 已退役，实现分别在 `contracts` / `corpus`。不要改写 Phase 10 当时的验收数字。
+- 改动：在仍写“保留 Fabric/Executive 实体 crate”或 `crates/corpus/src/security/loop_detector.rs` 的位置加一行现状：crate 已退役，实现分别在 `contracts` / `corpus`。不要改写 Phase 10 当时的验收数字。
 - 验证：
 
 ```bash
@@ -153,7 +153,7 @@ P0 完成标准：`bash scripts/aletheon.sh acceptance architecture` 通过；�
 crates/application          窄纯契约 / 已接线用例
                             DaemonLifecycleService, TransactionReviewService,
                             SessionInputCoordinator, Approval, GoalDraft, ...
-aletheon/wiring/application host 编排：TurnPipeline, Goal coordinator,
+crates/aletheon/src/wiring/application/ host 编排：TurnPipeline, Goal coordinator,
                             Agent Control, Evaluation, Conscious
 ApplicationFacade           删除；不是生产入口
 ```

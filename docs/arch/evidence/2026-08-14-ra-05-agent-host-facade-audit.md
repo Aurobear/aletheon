@@ -10,7 +10,7 @@ The required audit categories and narrow-slice rule are defined at
 | Category | Fields / methods | Evidence |
 |---|---|---|
 | `RUNTIME_AUTHORITY` | `runtime_agent_supervisor`; generation-fenced spawn/wait/send/cancel and lifecycle receipts | `crates/executive/src/application/agent_control/mod.rs:127-130`; `crates/executive/src/application/agent_control/runtime_bridge.rs:65-95` |
-| `HOST_ADAPTER` | `kernel`, clock, SQL projection, admission lease, event spine/projections, live task/mailbox/process effects, recovery and shutdown | `crates/executive/src/application/agent_control/mod.rs:97-118`; `crates/executive/src/application/agent_control/execution_runner.rs:6-407` |
+| `HOST_ADAPTER` | `kernel`, clock, SQL projection, admission lease, event spine/projections, live task/mailbox/process effects, recovery and shutdown | `crates/executive/src/application/agent_control/mod.rs:97-118`; `crates/aletheon/src/wiring/application/agent_control/execution_runner.rs:6-407` |
 | `APPLICATION_POLICY` | cognitive admission and durable-memory projection remain host inputs; profiles, runtime requirements and historical preference now live in Runtime's effect-free selection policy | `crates/executive/src/application/agent_control/mod.rs`; `crates/runtime/src/agent_supervisor.rs` |
 | `COMPAT_TEST_ONLY` | `runtimes: CompatibilityRuntimeCatalog`, legacy constructor and direct convenience methods | `crates/executive/src/application/agent_control/mod.rs:101-104,1264-1368`; production uses `new_runtime_only` at `crates/aletheon/src/wiring/daemon/bootstrap/services.rs:502-548` |
 | `UNKNOWN` | none for this slice | Production callers were enumerated with `rg -n 'AgentHostAdapter|RuntimeAgentControlFacade|AgentHostEffects' crates --glob '*.rs'`. |

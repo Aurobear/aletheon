@@ -3,7 +3,7 @@
 ## Requirement anchor
 
 The Executive surface ledger assigns
-`crates/executive/src/application/inference_port.rs` to `cognit/ports` via D2
+`crates/cognit/src/ports/inference.rs` to `cognit/ports` via D2
 (`config/architecture/executive-surface-ledger.tsv`, inference-port row).
 XRET-05 ultimately requires all production Executive callers to be zero
 (`docs/plans/2026-08-12-migration-closeout-execution-plan.md` §12 item 5).

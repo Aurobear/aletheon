@@ -99,7 +99,7 @@ Input
 `DaemonTurnEngine` 实现该接口并调用 `TurnPipeline`
 （`crates/aletheon/src/wiring/application/daemon_turn_engine.rs:44`）；`aletheon exec`
 由 `ExecTurnEngine` 实现同一接口并复用 `TurnCoordinator` reducer
-（`crates/aletheon/src/wiring/exec_session.rs:72,224,464`）。保留的 `TurnService`
+（`crates/aletheon/src/wiring/exec_session.rs`）。保留的 `TurnService`
 只是 CLI exec 到 `TurnEngine` 的薄适配，不再拥有独立编排。`aletheon -m` 继续进入
 daemon 路径。
 
@@ -119,7 +119,7 @@ machine provider registry
 共享事实类型位于 `crates/contracts/src/types/llm_types.rs:128-185`；provider 从当前
 路由对象返回事实（`crates/aletheon/src/wiring/adapters/inference/factory.rs:203`），
 `TurnPipeline` 消费并绑定它们
-（`crates/aletheon/src/wiring/application/turn_pipeline.rs:811,1052`）。模型不得根据
+（`crates/aletheon/src/wiring/application/turn_pipeline.rs`）。模型不得根据
 训练先验猜测厂商、版本或上下文窗口。
 
 同一原则适用于 Session ID、Agent runtime、capability 与预算：authority/projection
@@ -134,7 +134,7 @@ execd     单次低层副作用的隔离执行进程，不理解 Prompt/Goal
 ```
 
 Runtime receipt 是证据，不是最终成功裁决。Admission、cancel、verification 和
-settlement 的编排当前仍由 `aletheon/wiring/application` 组合，持久化 authority
+settlement 的编排当前仍由 `crates/aletheon/src/wiring/application/` 组合，持久化 authority
 必须通过 Runtime 或明确的 durable adapter，而不能由模型输出覆盖。
 
 ## 6. 状态与恢复

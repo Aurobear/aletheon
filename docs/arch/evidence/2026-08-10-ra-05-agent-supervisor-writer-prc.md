@@ -174,7 +174,7 @@ remain open.
 `crates/kernel/src/process/controller.rs:1-117` now owns the injected
 `ProcessController` boundary. Pi RPC receives a `ManagedProcess` from that
 Kernel controller and delegates process-group termination back to it;
-`crates/executive/src/adapters/runtime/pi_rpc.rs:46-160,330-347` no longer
+`crates/aletheon/src/wiring/adapters/runtime/pi_rpc.rs:46-160,330-347` no longer
 constructs `tokio::process::Command` or signals a process group directly.
 The daemon composition root injects `LinuxProcessController` when preparing the
 resident Pi runtime (`host/daemon/bootstrap/request.rs:1046`). A focused test
@@ -238,7 +238,7 @@ iteration each, zero provider retries, and both daemons remained active with
 failure/rollback or RA-06 deletion gates.
 
 The extension catalog path now uses the same pinned-launcher adapter for newly
-registered package runtimes (`crates/executive/src/host/daemon/bootstrap/extensions.rs:55-145`).
+registered package runtimes (`crates/aletheon/src/wiring/daemon/bootstrap/extensions.rs:55-145`).
 Existing managed bindings are not replaced during reload; only future package
 admissions see the new binding. Focused extension tests passed (18 tests), and
 installed verification at SHA
@@ -251,7 +251,7 @@ rollback gates remain open.
 
 `crates/executive/src/application/goal/runtime_executor.rs:1-244` adds the
 `GoalAttemptBackend` and `RuntimeGoalAttemptExecutor`. Production Goal worker
-composition in `crates/executive/src/host/daemon/bootstrap/request.rs:1016-1176`
+composition in `crates/aletheon/src/wiring/daemon/bootstrap/request.rs:1016-1176`
 registers distinct `goal-attempt:<runtime>` DelegateBackend bindings and
 constructs `GoalWorker::new_with_executor`; the worker no longer receives a
 `ProviderWorkerRegistry` on the daemon path. The compatibility
@@ -389,10 +389,10 @@ protocol, drain/reconcile, rollback, and installed Goal gates.
 implementations were physically consolidated. `pi_rpc.rs` now defines the
 single `PiDelegateBackend`, which owns the reviewed Pi executable policy,
 process controller, RPC protocol, terminal/cancel path, and the one-time host
-service binding (`crates/executive/src/adapters/runtime/pi_rpc.rs:48-147`,
+service binding (`crates/aletheon/src/wiring/adapters/runtime/pi_rpc.rs:48-147`,
 `:242-318`). Request composition prepares that backend and the daemon service
 composition binds/registers it directly in Runtime's `DelegateBackendRegistry`
-(`crates/executive/src/host/daemon/bootstrap/request.rs:1041-1064`,
+(`crates/aletheon/src/wiring/daemon/bootstrap/request.rs:1041-1064`,
 `crates/executive/src/host/daemon/bootstrap/services.rs:526-542`). The former
 `PiRuntime` and `PiRpcRuntime` symbols are absent from production and focused
 test code; the old one-shot test surface is reduced to the canonical manifest
@@ -439,11 +439,11 @@ format, architecture, and diff checks still green.
 constructs or passes `AgentExecutionRegistry`. Native Cognit and opt-in Goal
 launchers are supplied as typed `RuntimeLauncherBinding` values and registered
 once into Runtime's `DelegateBackendRegistry`
-(`crates/executive/src/host/daemon/bootstrap/request.rs:938-1008`,
+(`crates/aletheon/src/wiring/daemon/bootstrap/request.rs:938-1008`,
 `crates/executive/src/host/daemon/bootstrap/services.rs:390-530`). Package
 executables use a scoped `PackageRuntimeStaging` only until supervisor binding;
 reloads then update the Runtime catalog while existing runs retain pinned
-backends (`crates/executive/src/host/daemon/bootstrap/extensions.rs:15-280`).
+backends (`crates/aletheon/src/wiring/daemon/bootstrap/extensions.rs:15-280`).
 The Executive registry remains available only to explicit integration fixtures
 and the legacy constructor, not installed composition; the RA-00 census was
 corrected accordingly.
@@ -698,7 +698,7 @@ remain open; this is a local writer invariant, not installed acceptance.
 machine and daemon generation fence are now physically implemented in Runtime
 (`crates/runtime/src/agent_lifecycle.rs`, `crates/runtime/src/generation_fence.rs`).
 Executive's former modules are compatibility re-exports only
-(`crates/executive/src/application/agent_control/lifecycle.rs` and
+(`crates/runtime/src/agent_lifecycle.rs` and
 `generation_fence.rs`), so SQLite projection/settlement adapters consume the
 Runtime reducer types without retaining a second state-machine implementation.
 Runtime library tests: 77 passed. This is a code-side ownership move; rich
@@ -965,7 +965,7 @@ also mints through Runtime's `mint_agent_run_uuid` (`:31-43`); production
 adapters receive the Runtime identity with `new_for_agent`.
 
 Executive keeps only the concrete policy/budget adapter and a thin forwarding
-wrapper (`crates/executive/src/application/agent_control/admission.rs:17-26`).
+wrapper (`crates/runtime/src/agent_admission_policy.rs:17-26`).
 This removes another AgentControl authority contract from Executive while
 preserving the existing budget implementation and test fixtures.
 
@@ -996,10 +996,10 @@ re-exported directly from `crates/executive/src/application/agent_control/mod.rs
 Executive. The deleted modules were:
 
 ```text
-crates/executive/src/application/agent_control/lifecycle.rs
-crates/executive/src/application/agent_control/mailbox.rs
-crates/executive/src/application/agent_control/recovery.rs
-crates/executive/src/application/agent_control/repository.rs
+crates/runtime/src/agent_lifecycle.rs
+crates/runtime/src/agent_mailbox.rs
+crates/runtime/src/agent_recovery.rs
+crates/runtime/src/agent_repository.rs
 ```
 
 This removes four Executive compatibility surfaces without moving Pi or host

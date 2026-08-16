@@ -46,7 +46,7 @@ Out-of-scope files: all production behavior, XRET-01+
 
 The two `COMPAT` exact paths each map to exactly one seam row in the disposition ledger, and the two seam rows map back to exactly one COMPAT path each — bidirectional cardinality = 1:
 
-- `crates/executive/src/compatibility/legacy_session_service.rs` → `runtime/compat` (RA-00..RA-06, B1+B7)
+- `crates/aletheon/src/wiring/daemon/legacy_session.rs` → `runtime/compat` (RA-00..RA-06, B1+B7)
 - `crates/executive/src/core/sub_agent.rs` → `runtime/compat` (RA-00..RA-06, B1+B7)
 
 No other COMPAT row exists; the gate enforces this stays exactly 2.

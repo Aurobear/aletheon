@@ -305,8 +305,8 @@ pub trait LlmProvider: Send + Sync {
 
 ### 2.4 Aletheon 对应代码
 
-- 公共类型：`crates/fabric/src/types/llm_types.rs`；
-- 消息块：`crates/fabric/src/types/message.rs`；
+- 公共类型：`crates/contracts/src/types/llm_types.rs`；
+- 消息块：`crates/contracts/src/types/message.rs`；
 - OpenAI adapter：`crates/cognit/src/adapters/inference/openai_provider.rs`；
 - Anthropic adapter：`crates/cognit/src/adapters/inference/anthropic.rs`；
 - Ollama adapter：`crates/cognit/src/adapters/inference/ollama.rs`；
@@ -392,7 +392,7 @@ network bytes
 -各 provider 的 `complete_stream`；
 - `crates/cognit/src/harness/linear/step.rs`；
 - `crates/cognit/src/harness/event_sink.rs`；
-- `crates/fabric/src/types/llm_types.rs`（`StreamChunk`）。
+- `crates/contracts/src/types/llm_types.rs`（`StreamChunk`）。
 
 当前 non-streaming `run()` 通过 adapter 复用 streaming loop，这是正确方向：一个 loop，两种消费方式。
 
@@ -518,7 +518,7 @@ enum ToolErrorClass {
 - `crates/corpus/src/tools/tools/registry.rs`；
 - `crates/cognit/src/harness/linear/`；
 - `crates/cognit/src/harness/linear/tool_exec.rs`；
-- `crates/fabric/src/types/tool.rs`。
+- `crates/contracts/src/types/tool.rs`。
 
 ---
 
@@ -584,9 +584,9 @@ camera stream lease
 
 - `crates/kernel/src/capability/mod.rs`；
 - `crates/kernel/src/admission/`；
-- `crates/fabric/src/include/capability_invoker.rs`；
-- `crates/fabric/src/types/admission.rs`；
-- `crates/executive/src/application/governed_capability.rs`。
+- `crates/kernel/src/capability/invoker.rs`；
+- `crates/contracts/src/types/admission.rs`；
+- `crates/kernel/src/capability/governed.rs`。
 
 ---
 
@@ -689,7 +689,7 @@ Prompt cache 依赖相同前缀：
 - `crates/cognit/src/harness/linear/message_compose.rs`；
 - `crates/cognit/src/harness/linear/` 的 compaction；
 - `crates/cognit/src/harness/session.rs`（`ProjectionRecordingLlm`）；
-- `crates/fabric/src/types/model_projection.rs`；
+- `crates/contracts/src/types/model_projection.rs`；
 - `docs/testing/runtime-correctness.md`。
 
 ---
@@ -844,10 +844,10 @@ outbox，避免状态已变但 event 丢失。
 
 ### 8.6 Aletheon 对应代码
 
-- `crates/executive/src/application/turn_engine.rs`；
-- `crates/executive/src/application/turn_coordinator.rs` 与 `crates/executive/src/composition/turn_coordinator.rs`；
-- `crates/executive/src/adapters/events/`；
-- `crates/executive/src/adapters/agent_control/sqlite_repository.rs`；
+- `crates/aletheon/src/wiring/application/turn_engine.rs`；
+- `crates/aletheon/src/wiring/application/turn_coordinator.rs` 与 `crates/aletheon/src/wiring/adapters/session/test_composition.rs`；
+- `crates/runtime/src/event_projection/`；
+- `crates/adapters/sqlite/src/runtime_agent/mod.rs`；
 - `crates/kernel/src/runtime.rs`。
 
 ---
@@ -1189,9 +1189,9 @@ Unknown 或 failure。
 
 ### 13.4 Aletheon 对应代码
 
-- `crates/fabric/src/types/expected_outcome.rs`；
-- `crates/fabric/src/types/outcome_verification.rs`；
-- `crates/fabric/src/policy/verifier.rs`；
+- `crates/contracts/src/types/expected_outcome.rs`；
+- `crates/contracts/src/types/outcome_verification.rs`；
+- `crates/cognit/src/ports/verifier.rs`；
 - Executive evaluation store；
 - Cognit RobotHarness verifier port。
 
@@ -1404,13 +1404,13 @@ Production eval  安装态真实依赖和 provenance
 建议按此顺序阅读：
 
 ```text
-crates/executive/src/application/turn_engine.rs
-crates/executive/src/composition/turn_service.rs
+crates/aletheon/src/wiring/application/turn_engine.rs
+crates/aletheon/tests/support/turn_service.rs
 crates/cognit/src/harness/session.rs
 crates/cognit/src/harness/linear/step.rs
 crates/cognit/src/harness/linear/tool_exec.rs
 crates/kernel/src/capability/mod.rs
-crates/executive/src/adapters/events/
+crates/runtime/src/event_projection/
 ```
 
 阅读时自己画出对象和 ID：TurnId、OperationId、ProcessId、Tool call ID、PermitId、AttemptId。
@@ -1492,13 +1492,13 @@ ROS 消息和公司专有类型留在 bridge，Fabric 只保留稳定 skill/obse
 
 ### 18.5 Aletheon 对应代码
 
-- `crates/fabric/src/types/embodiment.rs`；
+- `crates/contracts/src/types/embodiment.rs`；
 - `crates/hardware/`；
 - `crates/corpus/src/tools/tools/robot.rs`；
-- `crates/executive/src/application/embodiment_service.rs`；
+- `crates/aletheon/src/wiring/embodiment/service.rs`；
 - `crates/cognit/src/harness/robot/`；
 - `crates/cognit/src/ports/policy_provider.rs`；
-- `crates/cognit/src/harness/robot/` 与 `crates/executive/src/application/robot_harness_composition.rs`。
+- `crates/cognit/src/harness/robot/` 与 `crates/aletheon/src/wiring/composition/robot_harness.rs`。
 
 ---
 

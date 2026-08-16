@@ -117,13 +117,13 @@ session_writer = "legacy" | "runtime"
 |---|---|
 | `crates/runtime/src/session_writer.rs` | 绑定真实 store；durable head；created_at/principal/correlation；typed unsupported |
 | `crates/runtime/src/session_head.rs` | 或移除进程内 head，改为 store-backed（若契约允许） |
-| `crates/executive/src/host/daemon/bootstrap/request.rs` | 构造 RuntimeJournalResources + SessionInfrastructure（新 fn）；移除 uuid mint + legacy create；各消费点改用 minted id |
-| `crates/executive/src/host/daemon/bootstrap/sessions.rs` | 回退纯内存；接收 minted id + ContextWorkingSet |
+| `crates/aletheon/src/wiring/daemon/bootstrap/request.rs` | 构造 RuntimeJournalResources + SessionInfrastructure（新 fn）；移除 uuid mint + legacy create；各消费点改用 minted id |
+| `crates/aletheon/src/wiring/daemon/bootstrap/sessions.rs` | 回退纯内存；接收 minted id + ContextWorkingSet |
 | `crates/executive/src/host/daemon/bootstrap/services.rs` | 接收注入的 RuntimeJournalResources + SessionInfrastructure；不再自开 |
 | `crates/executive/src/host/daemon/mod.rs` + config | `[bootstrap] session_writer` typed 配置解析 |
 | `crates/aletheon-config/src/` | `session_writer` enum 解析 + diagnostics + fail-closed |
-| `crates/executive/src/adapters/session/store.rs` | legacy 停写（或保留只读） |
-| `crates/executive/src/compatibility/legacy_session_service.rs` | create/fork→command port；list/resume→query port；clear/compact→ContextWorkingSet；停写 sessions.db |
+| `crates/adapters/sqlite/src/session/store.rs` | legacy 停写（或保留只读） |
+| `crates/aletheon/src/wiring/daemon/legacy_session.rs` | create/fork→command port；list/resume→query port；clear/compact→ContextWorkingSet；停写 sessions.db |
 | 新增测试 | runtime=true、同 Session 多操作、重启恢复、旧库迁移读取、wrong schema、duplicate/wrong-generation |
 
 ## 7. 确认结论（已获人工确认，2026-08-10）
@@ -157,7 +157,7 @@ session_writer = "legacy" | "runtime"
 
 `LegacySessionService` now routes `create`, `create_and_switch`, `clear`, and
 `compact` through the injected Runtime command port
-(`crates/executive/src/compatibility/legacy_session_service.rs:203-254,487-548`).
+(`crates/aletheon/src/wiring/daemon/legacy_session.rs:203-254,487-548`).
 Historical `sessions.db` access is opened with `SessionStore::open_read_only`
 only (`:265-283`); canonical-first `resume`/`switch` and the legacy fallback do
 not mutate that file (`:392-429`). A historical fallback can seed the in-memory
@@ -183,7 +183,7 @@ in both modes. The session-infrastructure unit tests and package check pass.
 
 The facade list path now queries canonical sessions in both modes and adds only
 historical, read-only legacy rows that have not yet been imported
-(`crates/executive/src/compatibility/legacy_session_service.rs:307-390`). The
+(`crates/aletheon/src/wiring/daemon/legacy_session.rs:307-390`). The
 session use-case suite is now 6 tests and covers this restart/list invariant.
 
 ## 10. Maintenance resume fence (2026-08-11)

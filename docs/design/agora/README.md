@@ -81,7 +81,7 @@ crates/agora/src/
 
 `AgoraRegistry` (`ops.rs`) owns one `Workspace` per session id (`HashMap<String, Workspace>`
 behind a `tokio::sync::Mutex`) and implements the `AgoraOps` trait
-(`fabric::AgoraOps`, defined in `crates/fabric/src/include/agora.rs`):
+(`fabric::AgoraOps`, defined in `crates/agora/src/contract.rs`):
 
 | Method | Signature | Behavior |
 |--------|-----------|----------|

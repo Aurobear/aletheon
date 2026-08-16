@@ -29,7 +29,7 @@ Out-of-scope files: all production behavior, CGP-01+
 
 ## 1. Gateway route surface (gateway-route-census.tsv)
 
-16 route families covering ~70 JSON-RPC methods dispatched at `crates/executive/src/host/daemon/handler/rpc.rs:33-204`:
+16 route families covering ~70 JSON-RPC methods dispatched at `crates/aletheon/src/wiring/daemon/handler/rpc.rs:33-204`:
 
 | family | methods | owner | notes |
 |---|---|---|---|
