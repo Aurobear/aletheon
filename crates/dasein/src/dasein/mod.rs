@@ -7,6 +7,7 @@
 
 pub mod bewandtnis;
 pub mod care_structure;
+pub mod context;
 pub mod context_injection;
 pub mod event_bridge;
 pub mod ledger;
@@ -18,7 +19,12 @@ pub mod sorge;
 pub mod temporality;
 pub mod types;
 
-pub use fabric::dasein::*;
+use crate::dasein::context::*;
+pub use crate::DaseinOps;
+use ::contracts::dasein::{
+    DaseinEvent, ExperienceSource, InterpretedExperience, OutcomeStatus, SelfTransitionReceipt,
+    SelfTransitionRequest, SelfVersion, Stimmung,
+};
 
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -54,7 +60,7 @@ pub struct DaseinModule {
     sorge: SorgeLoop,
     event_tx: mpsc::Sender<DaseinEvent>,
     #[allow(dead_code)]
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +96,7 @@ impl DaseinRuntimeConfig {
 }
 
 impl DaseinModule {
-    pub fn new(clock: Arc<dyn fabric::Clock>) -> (Self, mpsc::Sender<DaseinEvent>) {
+    pub fn new(clock: Arc<dyn ::contracts::Clock>) -> (Self, mpsc::Sender<DaseinEvent>) {
         Self::with_runtime(
             clock,
             Arc::new(SystemSorgeTimer),
@@ -100,7 +106,7 @@ impl DaseinModule {
     }
 
     pub fn with_runtime(
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
         timer: Arc<dyn SorgeTimer>,
         config: DaseinRuntimeConfig,
     ) -> anyhow::Result<(Self, mpsc::Sender<DaseinEvent>)> {
@@ -108,7 +114,7 @@ impl DaseinModule {
     }
 
     pub fn with_runtime_and_ledger(
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
         timer: Arc<dyn SorgeTimer>,
         config: DaseinRuntimeConfig,
         ledger: Option<Arc<SelfLedger>>,
@@ -375,7 +381,7 @@ impl DaseinOps for DaseinModule {
 mod tests {
     use super::*;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(kernel::chronos::TestClock::default())
     }
 

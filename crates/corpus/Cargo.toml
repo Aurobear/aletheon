@@ -7,7 +7,10 @@ license.workspace = true
 description = "Core execution body — the minimal runtime for tool execution"
 
 [dependencies]
-fabric = { path = "../fabric" }
+agora = { path = "../agora" }
+runtime = { path = "../runtime" }
+application = { path = "../application" }
+contracts = { path = "../contracts" }
 kernel = { path = "../kernel" }
 platform = { path = "../platform" }
 anyhow = "1"
@@ -22,7 +25,7 @@ tracing = "0.1"
 thiserror = "2"
 # From drivers
 libc = "0.2"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 hostname = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"

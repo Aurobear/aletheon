@@ -28,7 +28,7 @@ const MAX_TIMEOUT_SECS: u64 = 3_600;
 pub struct ManagedCommandSessions {
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<CommandSession>>>>>,
     change_transactions: Option<ChangeTransactionRegistry>,
-    sandbox_preference: fabric::SandboxPreference,
+    sandbox_preference: ::contracts::SandboxPreference,
 }
 
 struct CommandSession {
@@ -64,13 +64,13 @@ enum CommandTerminal {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum CommandPurpose {
     Shell {
-        transaction_id: Option<fabric::change_transaction::ChangeTransactionId>,
+        transaction_id: Option<::contracts::change_transaction::ChangeTransactionId>,
         starting_workspace_version: Option<String>,
         workspace_root: String,
     },
     Validation {
         validation_kind: ValidationKind,
-        transaction_id: fabric::change_transaction::ChangeTransactionId,
+        transaction_id: ::contracts::change_transaction::ChangeTransactionId,
         workspace_version: String,
     },
 }
@@ -133,20 +133,20 @@ struct CommandSnapshot {
     artifact_truncated: bool,
     terminal: Option<CommandTerminal>,
     output_artifact_ref: Option<String>,
-    change_transaction: Option<fabric::change_transaction::ChangeTransactionSnapshot>,
+    change_transaction: Option<::contracts::change_transaction::ChangeTransactionSnapshot>,
 }
 
 impl ManagedCommandSessions {
     pub fn with_change_transactions(change_transactions: ChangeTransactionRegistry) -> Self {
         Self::with_change_transactions_and_sandbox(
             change_transactions,
-            fabric::SandboxPreference::Forbid,
+            ::contracts::SandboxPreference::Forbid,
         )
     }
 
     pub fn with_change_transactions_and_sandbox(
         change_transactions: ChangeTransactionRegistry,
-        sandbox_preference: fabric::SandboxPreference,
+        sandbox_preference: ::contracts::SandboxPreference,
     ) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -163,8 +163,8 @@ impl ManagedCommandSessions {
         cwd: String,
         purpose: CommandPurpose,
         timeout: Duration,
-        workspace: fabric::WorkspacePolicy,
-        clock: Arc<dyn fabric::Clock>,
+        workspace: ::contracts::WorkspacePolicy,
+        clock: Arc<dyn ::contracts::Clock>,
         network_enabled: bool,
     ) -> Result<String, String> {
         let (mut command, sandbox_scratch) = managed_command(
@@ -466,7 +466,7 @@ impl Default for ManagedCommandSessions {
             // Standalone unit tests and explicitly legacy callers preserve the
             // historical raw-process behavior. Production composition passes
             // its configured preference explicitly.
-            sandbox_preference: fabric::SandboxPreference::Forbid,
+            sandbox_preference: ::contracts::SandboxPreference::Forbid,
         }
     }
 }
@@ -474,12 +474,12 @@ impl Default for ManagedCommandSessions {
 fn managed_command(
     command_text: &str,
     cwd: &str,
-    workspace: fabric::WorkspacePolicy,
-    clock: Arc<dyn fabric::Clock>,
-    preference: fabric::SandboxPreference,
+    workspace: ::contracts::WorkspacePolicy,
+    clock: Arc<dyn ::contracts::Clock>,
+    preference: ::contracts::SandboxPreference,
     network_enabled: bool,
 ) -> Result<(Command, Option<tempfile::TempDir>), String> {
-    if preference == fabric::SandboxPreference::Forbid {
+    if preference == ::contracts::SandboxPreference::Forbid {
         let mut command = Command::new("bash");
         command.arg("-c").arg(command_text).current_dir(cwd);
         return Ok((command, None));
@@ -493,15 +493,15 @@ fn managed_command(
         .prefix("aletheon-command-")
         .tempdir()
         .map_err(|error| format!("could not create command sandbox scratch: {error}"))?;
-    let mut policy = fabric::resolve_profile(
-        &fabric::ProfileName::Workspace,
+    let mut policy = ::contracts::resolve_profile(
+        &::contracts::ProfileName::Workspace,
         &workspace,
-        &fabric::SandboxProfiles::default(),
+        &::contracts::SandboxProfiles::default(),
     )
     .map_err(|error| format!("could not resolve command sandbox policy: {error}"))?;
     policy.restrict_network = !network_enabled;
     policy.read_write_roots.push(scratch.path().to_path_buf());
-    let config = fabric::SandboxConfig {
+    let config = ::contracts::SandboxConfig {
         environment: crate::security::runner::sandbox_command_environment(
             workspace.cwd().to_string_lossy().into_owned(),
             Some(scratch.path()),
@@ -568,7 +568,7 @@ async fn terminate_process_group(_process_group: Option<u32>, child: &mut tokio:
 fn resolve_command_workdir(
     input: &serde_json::Value,
     ctx: &ToolContext,
-) -> Result<(PathBuf, fabric::WorkspacePolicy), String> {
+) -> Result<(PathBuf, ::contracts::WorkspacePolicy), String> {
     let workspace = ctx.effective_workspace_policy()?;
     let requested = input
         .get("workdir")
@@ -729,7 +729,7 @@ impl Tool for ExecCommandTool {
                     .get("transaction_id")
                     .and_then(|value| value.as_str())
                     .and_then(|value| uuid::Uuid::parse_str(value).ok())
-                    .map(fabric::change_transaction::ChangeTransactionId)
+                    .map(::contracts::change_transaction::ChangeTransactionId)
                 else {
                     return tool_error(
                         "mutating exec_command requires a valid transaction_id from repo_inspect in the production runtime",
@@ -869,7 +869,7 @@ impl Tool for ValidationRunTool {
             .get("transaction_id")
             .and_then(|value| value.as_str())
             .and_then(|value| uuid::Uuid::parse_str(value).ok())
-            .map(fabric::change_transaction::ChangeTransactionId)
+            .map(::contracts::change_transaction::ChangeTransactionId)
         else {
             return tool_error("validation_run requires a valid transaction_id from repo_inspect");
         };
@@ -887,7 +887,7 @@ impl Tool for ValidationRunTool {
         {
             Ok(snapshot)
                 if snapshot.phase
-                    == fabric::change_transaction::ChangeTransactionPhase::DiffReviewed =>
+                    == ::contracts::change_transaction::ChangeTransactionPhase::DiffReviewed =>
             {
                 snapshot
             }
@@ -1106,8 +1106,8 @@ fn snapshot_result(snapshot: CommandSnapshot) -> ToolResult {
         .is_some_and(|transaction| {
             matches!(
                 transaction.phase,
-                fabric::change_transaction::ChangeTransactionPhase::Repair
-                    | fabric::change_transaction::ChangeTransactionPhase::Conflicted
+                ::contracts::change_transaction::ChangeTransactionPhase::Repair
+                    | ::contracts::change_transaction::ChangeTransactionPhase::Conflicted
             )
         });
     let truncated = snapshot.truncated;
@@ -1316,7 +1316,7 @@ mod tests {
         registry
             .set_validation_plan(
                 transaction.transaction_id,
-                vec![fabric::change_transaction::ValidationPlanStep {
+                vec![::contracts::change_transaction::ValidationPlanStep {
                     id: "focused-test".into(),
                     validation_kind: "test".into(),
                     command: "printf validated".into(),
@@ -1483,7 +1483,7 @@ mod tests {
         registry
             .set_validation_plan(
                 transaction.transaction_id,
-                vec![fabric::change_transaction::ValidationPlanStep {
+                vec![::contracts::change_transaction::ValidationPlanStep {
                     id: "planned".into(),
                     validation_kind: "test".into(),
                     command: "true".into(),
@@ -1532,7 +1532,7 @@ mod tests {
         registry
             .set_validation_plan(
                 transaction.transaction_id,
-                vec![fabric::change_transaction::ValidationPlanStep {
+                vec![::contracts::change_transaction::ValidationPlanStep {
                     id: "must-not-mutate".into(),
                     validation_kind: "test".into(),
                     command: command.into(),

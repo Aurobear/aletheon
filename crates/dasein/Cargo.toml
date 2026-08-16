@@ -7,7 +7,8 @@ license.workspace = true
 description = "Aletheon Self-evolution - reflection, behavior evolution, and genome generation"
 
 [dependencies]
-fabric = { path = "../fabric" }
+runtime = { path = "../runtime" }
+contracts = { path = "../contracts" }
 kernel = { path = "../kernel" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"

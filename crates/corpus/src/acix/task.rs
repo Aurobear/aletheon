@@ -2,8 +2,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::drivers::types::{Key, ScrollDirection};
+use ::contracts::Timer;
 use async_trait::async_trait;
-use fabric::Timer;
 use serde::{Deserialize, Serialize};
 
 use super::aci::Aci;
@@ -440,11 +440,11 @@ fn parse_key(s: &str) -> Option<Key> {
 pub struct TaskWorker {
     aci: Arc<Aci>,
     #[allow(dead_code)]
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl TaskWorker {
-    pub fn new(aci: Arc<Aci>, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(aci: Arc<Aci>, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self { aci, clock }
     }
 

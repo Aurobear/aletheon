@@ -1,7 +1,7 @@
 use std::path::Path;
 
+use ::contracts::{ContentBlock, Message, Role};
 use anyhow::Result;
-use fabric::{ContentBlock, Message, Role};
 use serde::{Deserialize, Serialize};
 
 /// Embedding provider trait
@@ -203,7 +203,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::Clock;
+    use ::contracts::Clock;
 
     fn make_experience(desc: &str, embedding: Vec<f32>, success: bool) -> Experience {
         Experience {
@@ -215,7 +215,9 @@ mod tests {
             success,
             level: ExperienceLevel::Narrative,
             embedding,
-            created_at: fabric::wall_to_datetime(kernel::chronos::SystemClock::new().wall_now()),
+            created_at: ::contracts::wall_to_datetime(
+                kernel::chronos::SystemClock::new().wall_now(),
+            ),
         }
     }
 

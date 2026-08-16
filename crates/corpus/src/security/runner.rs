@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use fabric::Clock;
-use fabric::Timer;
+use ::contracts::Clock;
+use ::contracts::Timer;
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
@@ -11,17 +11,18 @@ use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, AutoDenyG
 use super::audit::{AuditLogger, AuditRecord};
 use super::command_effect::{classify_command, CommandEffect};
 use super::escape_detector::{EscapePolicy, ShellEscalationDetector};
+use super::execpolicy::{default_heuristics, Decision as ExecDecision, Policy as ExecPolicy};
 use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
+use super::sandbox_glob::expand_deny_globs;
 use crate::sandbox::executor::create_default_executor;
 use crate::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
 use crate::security::strategy::{resolve_strategy, ToolExecutionStrategy};
 use crate::security::structured_sandbox::StructuredToolSandbox;
-use fabric::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
-use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use fabric::{
+use ::contracts::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use ::contracts::{
     resolve_profile, PermissionBehavior, PermissionContext, ProfileName, ProfileResolveError,
     SandboxProfiles,
 };
@@ -146,7 +147,7 @@ impl std::fmt::Display for ToolError {
 
 pub struct GuardedToolExecution {
     pub result: std::result::Result<ToolResult, ToolError>,
-    pub audit_id: fabric::AuditEventId,
+    pub audit_id: ::contracts::AuditEventId,
 }
 
 impl std::error::Error for ToolError {}
@@ -162,7 +163,7 @@ pub struct ToolRunnerWithGuard {
     /// Defaults to AutoDenyGate (conservative: preserves prior "deny L2+" behavior).
     approval_gate: Arc<dyn ApprovalGate>,
     /// Principal/thread/tool grants approved for the rest of one thread.
-    session_approvals: std::collections::HashSet<fabric::ThreadGrantKey>,
+    session_approvals: std::collections::HashSet<::contracts::ThreadGrantKey>,
     /// Permission context for mode/rule-based pre-approval.
     permission_ctx: PermissionContext,
     /// Independent execpolicy engine. When set, takes precedence over the inline PolicyEngine.
@@ -173,7 +174,7 @@ pub struct ToolRunnerWithGuard {
     /// (flag off or not configured); legacy behavior preserved.
     sandbox_profiles: Option<SandboxProfiles>,
     /// Canonical event spine used for S1 profile and violation observability.
-    event_bus: Option<Arc<fabric::CanonicalEventBus>>,
+    event_bus: Option<Arc<runtime::event_projection::CanonicalEventBus>>,
     /// Isolated transport for structured mutations. Required when profile
     /// routing resolves such a tool to `Sandboxed`.
     structured_sandbox: Option<Arc<dyn StructuredToolSandbox>>,
@@ -244,7 +245,10 @@ impl ToolRunnerWithGuard {
         self
     }
 
-    pub fn with_event_bus(mut self, event_bus: Arc<fabric::CanonicalEventBus>) -> Self {
+    pub fn with_event_bus(
+        mut self,
+        event_bus: Arc<runtime::event_projection::CanonicalEventBus>,
+    ) -> Self {
         self.event_bus = Some(event_bus);
         self
     }
@@ -259,7 +263,11 @@ impl ToolRunnerWithGuard {
             return;
         };
         if let Err(error) = event_bus
-            .publish_event(fabric::SchemaId(schema.into()), "corpus.sandbox", payload)
+            .publish_event(
+                ::contracts::SchemaId(schema.into()),
+                "corpus.sandbox",
+                payload,
+            )
             .await
         {
             tracing::warn!(schema, error = %error, "failed to publish sandbox event");
@@ -309,7 +317,7 @@ impl ToolRunnerWithGuard {
         }
         if let Some(ref policy) = self.exec_policy {
             let cmd = Self::build_command_vec(tool_name, input);
-            let eval = policy.check(&cmd, fabric::execpolicy::default_heuristics);
+            let eval = policy.check(&cmd, default_heuristics);
             match eval.decision {
                 ExecDecision::Allow => PolicyVerdict::Allow,
                 ExecDecision::Forbidden => PolicyVerdict::Deny {
@@ -369,7 +377,7 @@ impl ToolRunnerWithGuard {
         ctx: &ToolContext,
         turn_id: &str,
     ) -> GuardedToolExecution {
-        let audit_id = fabric::AuditEventId::new();
+        let audit_id = ::contracts::AuditEventId::new();
         let result = self
             .execute_tool_inner(tool, input, ctx, turn_id, audit_id, None)
             .await;
@@ -384,9 +392,9 @@ impl ToolRunnerWithGuard {
         input: serde_json::Value,
         ctx: &ToolContext,
         turn_id: &str,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) -> GuardedToolExecution {
-        let audit_id = fabric::AuditEventId::new();
+        let audit_id = ::contracts::AuditEventId::new();
         sink.defer_terminal_delivery();
         let result = self
             .execute_tool_inner(tool, input, ctx, turn_id, audit_id, Some(sink))
@@ -401,8 +409,8 @@ impl ToolRunnerWithGuard {
         input: serde_json::Value,
         ctx: &ToolContext,
         turn_id: &str,
-        audit_id: fabric::AuditEventId,
-        mut sink: Option<&mut fabric::ToolEventSink>,
+        audit_id: ::contracts::AuditEventId,
+        mut sink: Option<&mut ::contracts::ToolEventSink>,
     ) -> std::result::Result<ToolResult, ToolError> {
         let tool_name = tool.name();
         let start = self.clock.mono_now();
@@ -484,8 +492,8 @@ impl ToolRunnerWithGuard {
                                 ),
                             });
                         };
-                        let grant_key = fabric::ThreadGrantKey {
-                            owner: fabric::ApprovalOwner::new(
+                        let grant_key = ::contracts::ThreadGrantKey {
+                            owner: ::contracts::ApprovalOwner::new(
                                 authority.principal_id.clone(),
                                 authority.thread_id.clone(),
                             ),
@@ -576,7 +584,7 @@ impl ToolRunnerWithGuard {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
             let request = ApprovalRequest {
-                owner: fabric::ApprovalOwner::new(
+                owner: ::contracts::ApprovalOwner::new(
                     authority.principal_id.clone(),
                     authority.thread_id.clone(),
                 ),
@@ -721,7 +729,7 @@ impl ToolRunnerWithGuard {
                             expansion_roots.extend(workspace.writable_roots().iter().cloned());
                             expansion_roots.sort();
                             expansion_roots.dedup();
-                            match fabric::expand_deny_globs(&p.deny_globs, &expansion_roots) {
+                            match expand_deny_globs(&p.deny_globs, &expansion_roots) {
                                 Ok(expanded) => {
                                     for path in expanded {
                                         if !p.deny_exact.contains(&path) {
@@ -733,7 +741,7 @@ impl ToolRunnerWithGuard {
                                     SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
                                     SANDBOX_GLOB_OVERFLOW_TOTAL.fetch_add(1, Ordering::Relaxed);
                                     self.publish_sandbox_event(
-                                        fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
+                                        ::contracts::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
                                         serde_json::json!({
                                             "event": "sandbox.violation",
                                             "target": name.to_string(),
@@ -766,7 +774,7 @@ impl ToolRunnerWithGuard {
                                 SANDBOX_GLOB_OVERFLOW_TOTAL.fetch_add(1, Ordering::Relaxed);
                             }
                             self.publish_sandbox_event(
-                                fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
+                                ::contracts::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
                                 serde_json::json!({
                                     "event": "sandbox.violation",
                                     "target": name.to_string(),
@@ -860,7 +868,7 @@ impl ToolRunnerWithGuard {
 
                 if let Some(policy) = &sandbox_config.policy {
                     self.publish_sandbox_event(
-                        fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1,
+                        ::contracts::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1,
                         serde_json::json!({
                             "event": "sandbox.profile.applied",
                             "profile": policy.name,
@@ -928,7 +936,7 @@ impl ToolRunnerWithGuard {
                             Err(detection) => {
                                 SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
                                 self.publish_sandbox_event(
-                                fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
+                                ::contracts::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
                                 serde_json::json!({
                                     "event": "sandbox.violation",
                                     "target": cmd,
@@ -975,7 +983,7 @@ impl ToolRunnerWithGuard {
                         if let Some(reason) = violation {
                             SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
                             self.publish_sandbox_event(
-                            fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
+                            ::contracts::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
                             serde_json::json!({
                                 "event": "sandbox.violation",
                                 "target": cmd,
@@ -1032,7 +1040,7 @@ impl ToolRunnerWithGuard {
                                 metadata: ToolResultMeta::default(),
                             },
                             None => ToolResult {
-                                content: fabric::ToolExecutionError::NoTerminal.to_string(),
+                                content: ::contracts::ToolExecutionError::NoTerminal.to_string(),
                                 is_error: true,
                                 metadata: ToolResultMeta::default(),
                             },
@@ -1130,14 +1138,14 @@ impl ToolRunnerWithGuard {
     #[allow(clippy::too_many_arguments)]
     async fn log_audit(
         &self,
-        audit_id: fabric::AuditEventId,
+        audit_id: ::contracts::AuditEventId,
         tool_name: &str,
         input: &serde_json::Value,
         level: PermissionLevel,
         turn_id: &str,
         session_id: &str,
         result: Option<&ToolResult>,
-        start: &fabric::MonoTime,
+        start: &::contracts::MonoTime,
         verdict: &str,
     ) -> anyhow::Result<()> {
         self.log_audit_with_backend(
@@ -1149,14 +1157,14 @@ impl ToolRunnerWithGuard {
     #[allow(clippy::too_many_arguments)]
     async fn log_audit_with_backend(
         &self,
-        audit_id: fabric::AuditEventId,
+        audit_id: ::contracts::AuditEventId,
         tool_name: &str,
         input: &serde_json::Value,
         level: PermissionLevel,
         turn_id: &str,
         session_id: &str,
         result: Option<&ToolResult>,
-        start: &fabric::MonoTime,
+        start: &::contracts::MonoTime,
         verdict: &str,
         sandbox_backend: Option<String>,
     ) -> anyhow::Result<()> {
@@ -1196,8 +1204,8 @@ impl ToolRunnerWithGuard {
 fn approval_scope_subject(
     tool: &dyn Tool,
     input: &serde_json::Value,
-    workspace: &fabric::WorkspacePolicy,
-) -> Option<fabric::protocol::client::TransientApprovalScopeSubject> {
+    workspace: &::contracts::WorkspacePolicy,
+) -> Option<::contracts::protocol::client::TransientApprovalScopeSubject> {
     let descriptor = tool.approval_descriptor(input, workspace).ok().flatten()?;
     if descriptor.mutation_targets.is_empty() {
         return None;
@@ -1220,12 +1228,14 @@ fn approval_scope_subject(
     }
     let version = 1u32;
     let digest_input = serde_json::to_vec(&(tool.name(), &path_candidates, version)).ok()?;
-    Some(fabric::protocol::client::TransientApprovalScopeSubject {
-        tool: tool.name().to_string(),
-        path_candidates,
-        subject_version: version,
-        subject_sha256: format!("{:x}", Sha256::digest(digest_input)),
-    })
+    Some(
+        ::contracts::protocol::client::TransientApprovalScopeSubject {
+            tool: tool.name().to_string(),
+            path_candidates,
+            subject_version: version,
+            subject_sha256: format!("{:x}", Sha256::digest(digest_input)),
+        },
+    )
 }
 
 #[cfg(test)]

@@ -1,11 +1,12 @@
 //! Bounded Gmail History API synchronization without persistence side effects.
 
 use super::{GmailCapability, GoogleApiError, GoogleGmailAdapter};
-use fabric::{
-    ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
-    ExternalIdentityId, ExternalObjectRef, ExternalProviderId, MailChange, MailQuery, OpaqueCursor,
-    OpaqueProviderObjectId, PrincipalId,
+use crate::tools::google::{
+    ExternalEvent, ExternalEventDraft, ExternalEventEnvelope, ExternalObjectRef, MailChange,
+    MailQuery, OpaqueCursor, OpaqueProviderObjectId,
 };
+use ::contracts::PrincipalId;
+use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
 use serde::Deserialize;
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
@@ -397,7 +398,7 @@ fn summary_event(
     account: ExternalIdentityId,
     version: &str,
     provider_event_id: Option<&str>,
-    summary: fabric::MailMessageSummary,
+    summary: crate::tools::google::MailMessageSummary,
     received: bool,
 ) -> Result<ExternalEventEnvelope, GoogleApiError> {
     let object = ExternalObjectRef {
@@ -450,7 +451,7 @@ fn deletion_event(
         object: object.clone(),
         observed_at_ms: now,
         source_timestamp_ms: now,
-        provenance: fabric::ExternalRecordRef {
+        provenance: crate::tools::google::ExternalRecordRef {
             account_id: account,
             provider_object_id: OpaqueProviderObjectId::new(message_id).unwrap(),
             fetched_at_ms: now,

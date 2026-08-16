@@ -1,6 +1,6 @@
 //! Bounded, deterministic competition for typed Agora candidates.
 
-use fabric::{
+use ::contracts::{
     AgoraSpaceId, CandidateScore, ContentId, MonoTime, ProcessId, SalienceVector,
     SelectionExplanation, SelectionResult, WorkspaceCandidate,
 };

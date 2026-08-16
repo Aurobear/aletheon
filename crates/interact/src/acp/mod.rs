@@ -1,8 +1,8 @@
 //! ACP (Agent Client Protocol) edge adapter.
 //!
 //! This module owns protocol translation and connection-local correlation only.
-//! Executive remains authoritative for sessions, turns, cancellation, approvals,
-//! and event history.
+//! Runtime remains authoritative for sessions, turns, cancellation, and event
+//! history; the Aletheon application boundary owns approval use cases.
 
 mod event_map;
 mod gateway;
@@ -11,7 +11,7 @@ mod typed_client;
 
 use std::{collections::VecDeque, path::PathBuf};
 
-use fabric::{
+use ::contracts::{
     protocol::client::negotiate_protocol_version, ConnectionId, LocalOsPrincipal, PrincipalContext,
     PrincipalId, ThreadId, WorkspacePolicy,
 };
@@ -23,6 +23,7 @@ pub use gateway::{
     run_transport_loop, AcpBackend, AcpEventSource, AcpServerFrame, AcpSessionEvent,
     AuthenticatedAcpConnection, CreatedAcpSession,
 };
+pub use typed_client::{GatewayAcpBackend, GatewayAcpEvents};
 // CGP-05 typed-client seam (PR-A): declared as a module; the cutover imports
 // it from `crate::acp::typed_client` when wiring.  Not re-exported yet to
 // avoid an unused-import warning on the additive seam.
@@ -205,21 +206,6 @@ impl AcpAdapter {
     }
 }
 
-impl fabric::Observable for AcpAdapter {
-    fn status(&self) -> fabric::SubsystemStatus {
-        fabric::SubsystemStatus {
-            name: "acp-adapter".into(),
-            running: true,
-            status_line: format!("{} active session(s)", self.metrics.sessions_active),
-            details: self.metrics().named().into_iter().collect(),
-        }
-    }
-
-    fn metrics(&self) -> std::collections::HashMap<String, String> {
-        self.metrics().named().into_iter().collect()
-    }
-}
-
 impl AcpMetrics {
     /// Fixed-cardinality metric export. No session, principal, method, or
     /// workspace value is admitted as a label.
@@ -249,8 +235,8 @@ pub fn establish_principal(
     connection_id: ConnectionId,
     thread_id: ThreadId,
     workspace: WorkspacePolicy,
-    permission_profile: fabric::PermissionProfileId,
-    approval_policy: fabric::ApprovalPolicy,
+    permission_profile: ::contracts::PermissionProfileId,
+    approval_policy: ::contracts::ApprovalPolicy,
 ) -> PrincipalContext {
     PrincipalContext::new(
         PrincipalId::local_uid(os_principal.uid),
@@ -307,12 +293,11 @@ impl std::error::Error for AcpError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::Observable;
 
     #[test]
     fn initialization_uses_fabric_negotiation_and_advertises_only_v1_subset() {
         let adapter = AcpAdapter::default();
-        let response = adapter.initialize(&[99, fabric::CLIENT_PROTOCOL_VERSION]);
+        let response = adapter.initialize(&[99, ::contracts::CLIENT_PROTOCOL_VERSION]);
         let AcpResponse::Initialized {
             protocol_version,
             agent_capabilities,
@@ -320,7 +305,7 @@ mod tests {
         else {
             panic!("expected initialized response")
         };
-        assert_eq!(protocol_version, fabric::CLIENT_PROTOCOL_VERSION);
+        assert_eq!(protocol_version, ::contracts::CLIENT_PROTOCOL_VERSION);
         assert_eq!(agent_capabilities["session"]["prompt"], true);
         assert_eq!(agent_capabilities["session"]["load"], false);
         assert_eq!(agent_capabilities["permissions"], false);
@@ -331,15 +316,15 @@ mod tests {
     }
 
     #[test]
-    fn observable_exports_only_the_four_bounded_named_metrics() {
+    fn exports_only_the_four_bounded_named_metrics() {
         let adapter = AcpAdapter::default();
-        let metrics = Observable::metrics(&adapter);
+        let metrics: std::collections::HashMap<_, _> =
+            adapter.metrics().named().into_iter().collect();
         assert_eq!(metrics.len(), 4);
         assert_eq!(metrics["acp_sessions_active"], "0");
         assert_eq!(metrics["acp_prompt_total"], "0");
         assert_eq!(metrics["acp_reconnect_total"], "0");
         assert_eq!(metrics["acp_map_unmapped_event_total"], "0");
-        assert_eq!(Observable::status(&adapter).details, metrics);
     }
 
     #[test]
@@ -394,8 +379,8 @@ mod tests {
             connection_id.clone(),
             ThreadId("host-minted-thread".into()),
             workspace,
-            fabric::PermissionProfileId::workspace_write(),
-            fabric::ApprovalPolicy::OnRequest,
+            ::contracts::PermissionProfileId::workspace_write(),
+            ::contracts::ApprovalPolicy::OnRequest,
         );
         assert_eq!(context.principal_id, PrincipalId::local_uid(501));
         assert_eq!(context.connection_id, connection_id);

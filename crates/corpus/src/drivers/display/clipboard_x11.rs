@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
-use fabric::Clock;
+use ::contracts::Clock;
 
 use super::clipboard::ClipboardDriver;
 

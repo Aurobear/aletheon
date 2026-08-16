@@ -1,11 +1,13 @@
 //! EpisodicMemory storage (write) operations and MemoryBackend trait impl.
 
-use anyhow::Result;
-use fabric::{
-    wall_to_datetime, CompactResult, CompactStrategy, EvolutionLogEntry, MemoryBackend,
-    MemoryEntry, MemoryFilter, MemoryHandle, MemoryQuery, MemoryStats, MemoryType, ReflectionEntry,
-    SelfAwareness, WallTime,
+use crate::memory::{
+    CompactResult, CompactStrategy, MemoryBackend, MemoryEntry, MemoryFilter, MemoryHandle,
+    MemoryQuery, MemoryStats, MemoryType,
 };
+use ::contracts::reflection::{EvolutionLogEntry, ReflectionEntry};
+use ::contracts::{wall_to_datetime, WallTime};
+use anyhow::Result;
+use dasein::SelfAwareness;
 use rusqlite::params;
 use uuid::Uuid;
 

@@ -7,9 +7,9 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use ::contracts::WallTime;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use fabric::WallTime;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -57,12 +57,12 @@ pub struct TrajectoryAnalysis {
 pub struct NarrativeLayer {
     buffer: RwLock<VecDeque<NarrativeEntry>>,
     capacity: usize,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl NarrativeLayer {
     /// Create with a given capacity (default 1000).
-    pub fn new(capacity: usize, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(capacity: usize, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             buffer: RwLock::new(VecDeque::with_capacity(capacity)),
             capacity,
@@ -280,7 +280,7 @@ impl NarrativeLayer {
                 entry.reason,
                 entry.action,
                 entry.verdict,
-                fabric::wall_to_datetime(entry.timestamp).to_rfc3339(),
+                ::contracts::wall_to_datetime(entry.timestamp).to_rfc3339(),
             ])
             .context("Failed to insert narrative entry")?;
         }
@@ -334,10 +334,10 @@ impl NarrativeLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::Verdict;
+    use crate::core::contracts::Verdict;
     use kernel::chronos::TestClock;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 

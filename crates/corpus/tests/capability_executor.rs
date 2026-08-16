@@ -3,18 +3,19 @@ use std::sync::{
     Arc,
 };
 
+use ::contracts::tool::{PermissionLevel, ToolCachePolicy};
+use ::contracts::types::admission::RiskLevel;
+use ::contracts::{
+    BudgetRequest, CapabilityAuthority, CapabilityCall, CapabilityId, CapabilityRequest,
+    CapabilityScope, ExecutionPermit, InvocationControl, MonoDeadline, MonoTime, OperationId,
+    PrincipalId, ProcessId, SandboxDecision, SandboxRequirement, Tool, ToolContext, ToolResult,
+    ToolResultMeta,
+};
 use async_trait::async_trait;
+use corpus::tools::tools::Registry;
 use corpus::{
     security::AuditLogger, CorpusToolExecutor, ToolRegistry, ToolResultCacheConfig,
     ToolRunnerWithGuard,
-};
-use fabric::tool::{PermissionLevel, ToolCachePolicy};
-use fabric::types::admission::RiskLevel;
-use fabric::{
-    BudgetRequest, CapabilityAuthority, CapabilityCall, CapabilityId, CapabilityRequest,
-    CapabilityScope, ExecutionPermit, InvocationControl, MonoDeadline, MonoTime, OperationId,
-    PrincipalId, ProcessId, Registry, SandboxDecision, SandboxRequirement, Tool, ToolContext,
-    ToolResult, ToolResultMeta,
 };
 use kernel::{capability::ToolExecutor, chronos::TestClock};
 use tokio_util::sync::CancellationToken;
@@ -79,8 +80,8 @@ impl Tool for CountingTool {
             ToolCachePolicy::Never
         }
     }
-    fn cache_dependencies(&self) -> Option<fabric::tool::ToolCacheDependencies> {
-        Some(fabric::tool::ToolCacheDependencies::ContentAddressed {
+    fn cache_dependencies(&self) -> Option<::contracts::tool::ToolCacheDependencies> {
+        Some(::contracts::tool::ToolCacheDependencies::ContentAddressed {
             argument_names: &["fixture_version"],
         })
     }
@@ -92,7 +93,7 @@ impl Tool for CountingTool {
             metadata: ToolResultMeta {
                 execution_time_ms: 7,
                 truncated: false,
-                patch_delta: self.emits_patch.then(|| fabric::PatchDelta {
+                patch_delta: self.emits_patch.then(|| ::contracts::PatchDelta {
                     applied: vec![],
                     failed: vec![],
                     files_changed: vec![],
@@ -128,14 +129,17 @@ fn request(operation_id: OperationId, process_id: ProcessId) -> CapabilityReques
             }),
             lease: None,
             sandbox: SandboxRequirement::NotRequired,
-            connection_id: fabric::ConnectionId::new(),
-            thread_id: fabric::ThreadId("session-1".into()),
-            turn_id: fabric::TurnId::new(),
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(std::env::temp_dir(), vec![])
-                .unwrap(),
+            connection_id: ::contracts::ConnectionId::new(),
+            thread_id: ::contracts::ThreadId("session-1".into()),
+            turn_id: ::contracts::TurnId::new(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
+                std::env::temp_dir(),
+                vec![],
+            )
+            .unwrap(),
             session_id: "session-1".into(),
             working_dir: std::env::temp_dir(),
-            permission_mode: fabric::permission::HostPermissionMode::Safe,
+            permission_mode: ::contracts::permission::HostPermissionMode::Safe,
         },
         control: InvocationControl {
             cancel: CancellationToken::new(),
@@ -146,7 +150,7 @@ fn request(operation_id: OperationId, process_id: ProcessId) -> CapabilityReques
 
 fn permit(operation_id: OperationId, process_id: ProcessId) -> ExecutionPermit {
     ExecutionPermit {
-        id: fabric::PermitId::new(),
+        id: ::contracts::PermitId::new(),
         operation_id,
         process_id,
         capability: CapabilityId("counting_tool".into()),
@@ -257,7 +261,7 @@ async fn guarded_tool_executes_once_with_durable_audit_identity() {
     assert_eq!(result.usage.permit_id, permit.id);
     assert_eq!(result.usage.wall_time_ms, 7);
     assert_eq!(result.usage.output_bytes, 7);
-    assert_eq!(result.patch_delta, Some(fabric::PatchDelta::default()));
+    assert_eq!(result.patch_delta, Some(::contracts::PatchDelta::default()));
     let audit_id = result.audit_id.expect("audit id");
     let line = std::fs::read_to_string(temp.path().join("audit.jsonl")).unwrap();
     let record: serde_json::Value = serde_json::from_str(line.lines().next().unwrap()).unwrap();
@@ -351,7 +355,7 @@ async fn declared_read_only_cache_reauthorizes_audits_and_matches_streaming() {
 
     let mut second_request = request.clone();
     second_request.call.call_id = "call-2".into();
-    let (mut sink, mut events) = fabric::tool_event_channel();
+    let (mut sink, mut events) = ::contracts::tool_event_channel();
     let second = executor
         .execute_streaming_with_permit(&second_request, &permit, &mut sink)
         .await;
@@ -363,7 +367,7 @@ async fn declared_read_only_cache_reauthorizes_audits_and_matches_streaming() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(matches!(
         events.try_recv().unwrap(),
-        fabric::ToolExecutionEvent::Terminal(Ok(_))
+        ::contracts::ToolExecutionEvent::Terminal(Ok(_))
     ));
 
     let audit_records = std::fs::read_to_string(temp.path().join("audit.jsonl")).unwrap();
@@ -428,7 +432,7 @@ async fn a_cap_002_cancelled_invocation_fails_closed_before_tool_lookup_and_emit
     let (executor, request, permit, calls, _temp) = fixture().await;
     request.control.cancel.cancel();
 
-    let (mut sink, mut events) = fabric::tool_event_channel();
+    let (mut sink, mut events) = ::contracts::tool_event_channel();
     let result = executor
         .execute_streaming_with_permit(&request, &permit, &mut sink)
         .await;
@@ -438,8 +442,8 @@ async fn a_cap_002_cancelled_invocation_fails_closed_before_tool_lookup_and_emit
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(matches!(
         events.recv().await,
-        Some(fabric::ToolExecutionEvent::Terminal(Err(
-            fabric::ToolExecutionError::Cancelled(message)
+        Some(::contracts::ToolExecutionEvent::Terminal(Err(
+            ::contracts::ToolExecutionError::Cancelled(message)
         ))) if message == "capability invocation cancelled before execution"
     ));
     assert!(sink.terminal_sent());
@@ -450,7 +454,7 @@ async fn streaming_rejected_permits_emit_a_failed_terminal_without_tool_executio
     let (executor, request, mut permit, calls, _temp) = fixture().await;
     permit.sandbox = SandboxDecision::Unavailable;
 
-    let (mut sink, mut events) = fabric::tool_event_channel();
+    let (mut sink, mut events) = ::contracts::tool_event_channel();
     let result = executor
         .execute_streaming_with_permit(&request, &permit, &mut sink)
         .await;
@@ -462,8 +466,8 @@ async fn streaming_rejected_permits_emit_a_failed_terminal_without_tool_executio
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(matches!(
         events.recv().await,
-        Some(fabric::ToolExecutionEvent::Terminal(Err(
-            fabric::ToolExecutionError::Failed(message)
+        Some(::contracts::ToolExecutionEvent::Terminal(Err(
+            ::contracts::ToolExecutionError::Failed(message)
         ))) if message == "permit expired or sandbox unavailable"
     ));
     assert!(sink.terminal_sent());
@@ -491,8 +495,8 @@ impl Tool for WorkspaceFileTool {
     fn cache_policy(&self) -> ToolCachePolicy {
         ToolCachePolicy::PerTurn
     }
-    fn cache_dependencies(&self) -> Option<fabric::tool::ToolCacheDependencies> {
-        Some(fabric::tool::ToolCacheDependencies::WorkspaceFiles {
+    fn cache_dependencies(&self) -> Option<::contracts::tool::ToolCacheDependencies> {
+        Some(::contracts::tool::ToolCacheDependencies::WorkspaceFiles {
             argument_names: &["path"],
             include_repo_state: false,
         })
@@ -540,7 +544,7 @@ async fn workspace_file_fixture() -> (
     );
     let operation_id = OperationId::new();
     let process_id = ProcessId::new();
-    let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+    let workspace = ::contracts::WorkspacePolicy::from_resolved_roots(
         std::fs::canonicalize(temp.path()).unwrap(),
         vec![],
     )
@@ -566,13 +570,13 @@ async fn workspace_file_fixture() -> (
             }),
             lease: None,
             sandbox: SandboxRequirement::NotRequired,
-            connection_id: fabric::ConnectionId::new(),
-            thread_id: fabric::ThreadId("session-1".into()),
-            turn_id: fabric::TurnId::new(),
+            connection_id: ::contracts::ConnectionId::new(),
+            thread_id: ::contracts::ThreadId("session-1".into()),
+            turn_id: ::contracts::TurnId::new(),
             workspace,
             session_id: "session-1".into(),
             working_dir: temp.path().to_path_buf(),
-            permission_mode: fabric::permission::HostPermissionMode::Safe,
+            permission_mode: ::contracts::permission::HostPermissionMode::Safe,
         },
         control: InvocationControl {
             cancel: CancellationToken::new(),
@@ -580,7 +584,7 @@ async fn workspace_file_fixture() -> (
         },
     };
     let permit = ExecutionPermit {
-        id: fabric::PermitId::new(),
+        id: ::contracts::PermitId::new(),
         operation_id,
         process_id,
         capability: CapabilityId("workspace_file_tool".into()),
@@ -649,7 +653,7 @@ async fn permission_isolation_prevents_cache_cross_contamination() {
     // Third call — Different permission mode, must re-execute.
     let mut third_req = request.clone();
     third_req.call.call_id = "call-3".into();
-    third_req.authority.permission_mode = fabric::permission::HostPermissionMode::Full;
+    third_req.authority.permission_mode = ::contracts::permission::HostPermissionMode::Full;
     let third = executor.execute_with_permit(&third_req, &permit).await;
     assert!(!third.is_error, "{}", third.output);
     assert!(!third.served_from_cache);
@@ -675,6 +679,6 @@ async fn mutation_delta_retains_invocation_permit_and_audit_linkage() {
         result.audit_id.is_some(),
         "mutation needs an audit identity"
     );
-    assert_eq!(result.patch_delta, Some(fabric::PatchDelta::default()));
+    assert_eq!(result.patch_delta, Some(::contracts::PatchDelta::default()));
     assert!(!result.served_from_cache);
 }

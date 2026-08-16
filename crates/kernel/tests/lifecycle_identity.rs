@@ -1,4 +1,4 @@
-use fabric::{ExitReason, OperationKind, OsProcessId, SpawnSpec};
+use ::contracts::{ExitReason, OperationKind, OsProcessId, SpawnSpec};
 use kernel::supervision::RestartPolicy;
 use kernel::KernelRuntime;
 
@@ -43,7 +43,7 @@ async fn one_agent_maps_to_one_live_process_generation_and_rejects_stale_pid_bin
 
     let encoded = serde_json::to_string(&current).unwrap();
     assert_eq!(
-        serde_json::from_str::<fabric::ProcessIdentity>(&encoded).unwrap(),
+        serde_json::from_str::<::contracts::ProcessIdentity>(&encoded).unwrap(),
         current
     );
 }

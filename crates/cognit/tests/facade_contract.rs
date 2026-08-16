@@ -2,12 +2,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-use cognit::CognitiveSessionDependencies;
-use fabric::{
+use ::contracts::{
     CapabilityCall, CapabilityResult, LlmProvider, LlmResponse, LlmStream, OperationId, ProcessId,
     ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices,
 };
+use async_trait::async_trait;
+use cognit::CognitiveSessionDependencies;
 use tokio_util::sync::CancellationToken;
 
 fn request() -> TurnRequest {
@@ -15,17 +15,17 @@ fn request() -> TurnRequest {
     TurnRequest {
         operation_id: OperationId::new(),
         process_id: ProcessId::new(),
-        context: fabric::PrincipalContext::new(
-            fabric::PrincipalId("test:facade".into()),
-            fabric::LocalOsPrincipal { uid: 0, gid: 0 },
-            fabric::ConnectionId::new(),
-            fabric::ThreadId("facade".into()),
-            fabric::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
-            fabric::PermissionProfileId::workspace_write(),
-            fabric::ApprovalPolicy::OnRequest,
+        context: ::contracts::PrincipalContext::new(
+            ::contracts::PrincipalId("test:facade".into()),
+            ::contracts::LocalOsPrincipal { uid: 0, gid: 0 },
+            ::contracts::ConnectionId::new(),
+            ::contracts::ThreadId("facade".into()),
+            ::contracts::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
+            ::contracts::PermissionProfileId::workspace_write(),
+            ::contracts::ApprovalPolicy::OnRequest,
         ),
         input: "test facade".into(),
-        execution_target: fabric::ExecutionTargetSelection::default(),
+        execution_target: ::contracts::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
@@ -62,7 +62,7 @@ struct FailingProvider(&'static str);
 impl LlmProvider for FailingProvider {
     async fn complete(
         &self,
-        _messages: &[fabric::Message],
+        _messages: &[::contracts::Message],
         _tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmResponse> {
         anyhow::bail!(self.0)
@@ -70,7 +70,7 @@ impl LlmProvider for FailingProvider {
 
     async fn complete_stream(
         &self,
-        _messages: &[fabric::Message],
+        _messages: &[::contracts::Message],
         _tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmStream> {
         anyhow::bail!(self.0)
@@ -89,16 +89,19 @@ struct Services(FailingProvider);
 
 #[async_trait]
 impl TurnServices for Services {
-    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
-        Ok(fabric::RecallSet::default())
+    async fn recall(
+        &self,
+        _req: ::contracts::RecallRequest,
+    ) -> anyhow::Result<::contracts::RecallSet> {
+        Ok(::contracts::RecallSet::default())
     }
 
-    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
-        Ok(fabric::DaseinView::default())
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<::contracts::DaseinView> {
+        Ok(::contracts::DaseinView::default())
     }
 
-    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
-        Ok(fabric::AgoraView::default())
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
+        Ok(::contracts::AgoraView::default())
     }
 
     async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
@@ -106,7 +109,7 @@ impl TurnServices for Services {
             call_id: call.call_id,
             output: "not reached".into(),
             is_error: true,
-            usage: fabric::UsageReport::default(),
+            usage: ::contracts::UsageReport::default(),
             audit_id: None,
             patch_delta: None,
             served_from_cache: false,

@@ -29,12 +29,17 @@ class FakeClient:
                 }}],
                 "activities": [], "items": [],
             }}}
-        if method == "session.perf":
+        if method == "debug.perf":
             return {"result": {"perf": {"tool_calls": {"by_tool": {}}}}}
-        if method == "session.journal":
+        if method == "session.read_events/v1":
             if isinstance(self.journal, dict) and "error" in self.journal:
                 return {"error": self.journal["error"]}
-            return {"result": self.journal}
+            events = self.journal.get("entries", self.journal.get("events", []))
+            return {"result": {"protocol_version": 1, "payload": {
+                "schema_version": 1,
+                "session_id": params["payload"]["data"]["session_id"],
+                "events": events,
+            }}}
         raise AssertionError(method)
 
 
@@ -48,9 +53,11 @@ def test_analyze_selects_unique_active_session_and_binds_journal(monkeypatch):
 
     assert result["healthy"] is True
     assert result["session_id"] == "active"
-    journal_call = next(call for call in client.calls if call[0] == "session.journal")
-    assert journal_call[1]["session_id"] == "active"
-    assert journal_call[1]["limit"] == 20
+    journal_call = next(
+        call for call in client.calls if call[0] == "session.read_events/v1"
+    )
+    assert journal_call[1]["payload"]["data"]["session_id"] == "active"
+    assert journal_call[1]["payload"]["data"]["after"] == {"sequence": 0}
     assert not any(item["type"] == "active_context_pressure" for item in result["anomalies"])
 
 

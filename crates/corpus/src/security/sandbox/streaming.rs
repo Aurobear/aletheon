@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ::contracts::{Clock, IsolationLevel, SandboxResult, ToolEventSink, ToolProgress};
 use anyhow::Result;
-use fabric::{Clock, IsolationLevel, SandboxResult, ToolEventSink, ToolProgress};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 

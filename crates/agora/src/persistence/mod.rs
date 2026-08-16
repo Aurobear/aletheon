@@ -189,10 +189,10 @@ mod tests {
     use uuid::Uuid;
 
     fn commit(id: Uuid, version: u64, key: &str, value: serde_json::Value, at: i64) -> AgoraCommit {
-        let proposal = fabric::AgoraProposal {
+        let proposal = crate::AgoraProposal {
             id,
-            space: fabric::AgoraSpaceId("s".into()),
-            author: fabric::ProcessId(uuid::Uuid::from_u128(3)),
+            space: ::contracts::AgoraSpaceId("s".into()),
+            author: ::contracts::ProcessId(uuid::Uuid::from_u128(3)),
             base_version: version - 1,
             operation: AgoraOperation::PublishFact {
                 key: key.into(),
@@ -250,10 +250,10 @@ mod tests {
     #[tokio::test]
     async fn attention_commit_payload_roundtrips_unchanged() {
         let log = InMemoryCommitLog::new();
-        let proposal = fabric::AgoraProposal {
+        let proposal = crate::AgoraProposal {
             id: Uuid::new_v4(),
-            space: fabric::AgoraSpaceId("s".into()),
-            author: fabric::ProcessId(uuid::Uuid::from_u128(3)),
+            space: ::contracts::AgoraSpaceId("s".into()),
+            author: ::contracts::ProcessId(uuid::Uuid::from_u128(3)),
             base_version: 0,
             operation: AgoraOperation::UpdateAttention {
                 focus: Some("a".into()),

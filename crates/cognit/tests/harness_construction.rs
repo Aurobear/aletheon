@@ -1,56 +1,99 @@
-use std::pin::Pin;
-use std::sync::Arc;
-
+use async_trait::async_trait;
 use cognit::harness::{
-    build_harness, CompactorTrait, HarnessBuildError, HarnessConfig, HarnessKind,
+    CognitiveSession, CognitiveSessionFactory, ExecutionTargetRoutingError, HarnessConfig,
+    RobotSessionCapability, TargetRoutedCognitiveSessionFactory,
 };
-use fabric::message::Message;
-use fabric::LlmProvider;
-use kernel::chronos::TestClock;
+use contracts::{
+    ExecutionTargetSelection, ExecutionTargetSource, SessionRecord, SESSION_SCHEMA_VERSION,
+};
+use runtime::turn_policy::TurnPolicy;
+use tokio_util::sync::CancellationToken;
 
-struct NoopCompactor;
+struct MarkerFactory(&'static str);
 
-impl CompactorTrait for NoopCompactor {
-    fn maybe_compact<'a>(
-        &'a mut self,
-        _messages: &'a mut Vec<Message>,
-        _llm: &'a dyn LlmProvider,
-    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
-        Box::pin(async { Ok(false) })
-    }
-
-    fn force_compact<'a>(
-        &'a mut self,
-        _messages: &'a mut Vec<Message>,
-        _llm: &'a dyn LlmProvider,
-    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
-        Box::pin(async { Ok(false) })
+#[async_trait]
+impl CognitiveSessionFactory for MarkerFactory {
+    async fn create(
+        &self,
+        _session: &SessionRecord,
+        _policy: &TurnPolicy,
+        _cancellation: CancellationToken,
+    ) -> anyhow::Result<Box<dyn CognitiveSession>> {
+        anyhow::bail!(self.0)
     }
 }
 
-#[test]
-fn linear_harness_constructs_through_generic_factory() {
-    let result = build_harness(
-        HarnessKind::Linear,
-        HarnessConfig::default(),
-        Box::new(NoopCompactor),
-        Arc::new(TestClock::default()),
+fn session_record() -> SessionRecord {
+    SessionRecord {
+        schema_version: SESSION_SCHEMA_VERSION,
+        id: contracts::SessionId("harness-factory".into()),
+        parent: None,
+        created_at_ms: 0,
+        status: contracts::SessionStatus::Active,
+    }
+}
+
+#[tokio::test]
+async fn one_factory_contract_routes_general_and_robot_sessions() {
+    let router = TargetRoutedCognitiveSessionFactory::new(
+        std::sync::Arc::new(MarkerFactory("linear selected")),
+        Some(RobotSessionCapability::new(
+            std::sync::Arc::new(MarkerFactory("robot selected")),
+            contracts::types::embodiment::DeviceId("robot-1".into()),
+            contracts::types::embodiment::ExecutionEnvironment::Simulation,
+        )),
     );
-    assert!(result.is_ok());
+    let session = session_record();
+
+    let general = router
+        .create_configured_for_target(
+            &session,
+            &TurnPolicy::daemon(),
+            &ExecutionTargetSelection::default(),
+            HarnessConfig::default(),
+            CancellationToken::new(),
+            None,
+        )
+        .await
+        .err()
+        .expect("marker factory must fail");
+    assert_eq!(general.to_string(), "linear selected");
+
+    let robot = ExecutionTargetSelection::robot(
+        "robot-1",
+        contracts::types::embodiment::ExecutionEnvironment::Simulation,
+        ExecutionTargetSource::UserCommand,
+    )
+    .unwrap();
+    let selected = router
+        .create_configured_for_target(
+            &session,
+            &TurnPolicy::daemon(),
+            &robot,
+            HarnessConfig::default(),
+            CancellationToken::new(),
+            None,
+        )
+        .await
+        .err()
+        .expect("marker factory must fail");
+    assert_eq!(selected.to_string(), "robot selected");
 }
 
 #[test]
-fn robot_harness_requires_executive_ports_without_panicking() {
-    let result = build_harness(
-        HarnessKind::Robot,
-        HarnessConfig::default(),
-        Box::new(NoopCompactor),
-        Arc::new(TestClock::default()),
+fn target_validation_is_typed_before_session_construction() {
+    let router = TargetRoutedCognitiveSessionFactory::new(
+        std::sync::Arc::new(MarkerFactory("linear selected")),
+        None,
     );
+    let robot = ExecutionTargetSelection::robot(
+        "robot-1",
+        contracts::types::embodiment::ExecutionEnvironment::Simulation,
+        ExecutionTargetSource::TrustedClient,
+    )
+    .unwrap();
     assert!(matches!(
-        result,
-        Err(HarnessBuildError::RequiresExecutivePorts {
-            kind: HarnessKind::Robot
-        })
+        router.validate_target(&robot),
+        Err(ExecutionTargetRoutingError::Unavailable(_))
     ));
 }

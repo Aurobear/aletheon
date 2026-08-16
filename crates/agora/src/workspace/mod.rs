@@ -12,17 +12,17 @@ use crate::attention::Attention;
 use crate::blackboard::Blackboard;
 use crate::task_graph::TaskGraph;
 use crate::trace::Trace;
-use fabric::cognitive_workflow::{
+use ::contracts::cognitive_workflow::{
     AgoraProjectionReceipt, AgoraProjectionRequest, AgoraTaskProjection, ArtifactLifecycle,
     ClarificationId, ClarificationRecord, ClarificationState, CognitiveArtifactEnvelope,
     CognitiveArtifactId, CognitiveArtifactKind, CognitiveInterruptionId,
     CognitiveInterruptionRecord, CognitiveRoleProfile, CognitiveTaskStatus,
 };
-use fabric::types::operation::ProcessId;
+use ::contracts::types::operation::ProcessId;
 
 // Re-export versioned commit types from fabric (single source of truth for
-// the trait contract), so consumers can import them from `agora::workspace`.
-pub use fabric::include::agora::{
+// the trait contract), so consumers can import them from `crate::workspace`.
+pub use crate::contract::{
     AgoraCommit, AgoraOperation, AgoraProposal, RejectReason, VersionConflict,
     WorkspaceCommitPermit,
 };
@@ -49,12 +49,12 @@ pub struct Workspace {
     /// Pending proposals awaiting commit (keyed by proposal id).
     pub proposals: HashMap<Uuid, AgoraProposal>,
     /// Shared-object claims: oid → owning process.
-    pub claims: HashMap<String, fabric::ProcessId>,
+    pub claims: HashMap<String, ::contracts::ProcessId>,
     /// Only committed, digest-validated cognitive artifacts are visible here.
     pub cognitive_artifacts: HashMap<CognitiveArtifactId, CognitiveArtifactEnvelope>,
     pub clarifications: HashMap<ClarificationId, ClarificationRecord>,
     pub interruptions: HashMap<CognitiveInterruptionId, CognitiveInterruptionRecord>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl fmt::Debug for Workspace {
@@ -75,7 +75,7 @@ impl fmt::Debug for Workspace {
 }
 
 impl Workspace {
-    pub fn new(session_id: impl Into<String>, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(session_id: impl Into<String>, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             session_id: session_id.into(),
             blackboard: Blackboard::new(),
@@ -95,8 +95,8 @@ impl Workspace {
 
     fn ensure_disjoint_active_write_scope(
         &self,
-        candidate: &fabric::cognitive_workflow::CognitiveTaskNode,
-        excluding: Option<&fabric::cognitive_workflow::CognitiveTaskNodeId>,
+        candidate: &::contracts::cognitive_workflow::CognitiveTaskNode,
+        excluding: Option<&::contracts::cognitive_workflow::CognitiveTaskNodeId>,
     ) -> anyhow::Result<()> {
         if !candidate.role.can_write_workspace()
             || !matches!(
@@ -141,7 +141,7 @@ impl Workspace {
         }
         let proposal = AgoraProposal {
             id: Uuid::new_v4(),
-            space: fabric::AgoraSpaceId(self.session_id.clone()),
+            space: ::contracts::AgoraSpaceId(self.session_id.clone()),
             author,
             base_version,
             operation,
@@ -1038,10 +1038,10 @@ fn scopes_overlap(left: &[String], right: &[String]) -> bool {
 }
 
 fn valid_cognitive_status_transition(
-    current: fabric::cognitive_workflow::CognitiveTaskStatus,
-    next: fabric::cognitive_workflow::CognitiveTaskStatus,
+    current: ::contracts::cognitive_workflow::CognitiveTaskStatus,
+    next: ::contracts::cognitive_workflow::CognitiveTaskStatus,
 ) -> bool {
-    use fabric::cognitive_workflow::CognitiveTaskStatus::*;
+    use ::contracts::cognitive_workflow::CognitiveTaskStatus::*;
     current == next
         || matches!(
             (current, next),
@@ -1077,10 +1077,10 @@ mod tests {
     fn cognitive_task(
         id: &str,
         owner: ProcessId,
-        role: fabric::cognitive_workflow::CognitiveRole,
+        role: ::contracts::cognitive_workflow::CognitiveRole,
         scope: &[&str],
-    ) -> fabric::cognitive_workflow::CognitiveTaskNode {
-        use fabric::cognitive_workflow::*;
+    ) -> ::contracts::cognitive_workflow::CognitiveTaskNode {
+        use ::contracts::cognitive_workflow::*;
         let profile = CognitiveRoleProfile::canonical(role);
         CognitiveTaskNode {
             id: CognitiveTaskNodeId(id.into()),
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn overlapping_active_write_scopes_are_rejected() {
-        use fabric::cognitive_workflow::CognitiveRole;
+        use ::contracts::cognitive_workflow::CognitiveRole;
         let mut ws = Workspace::new("s1", Arc::new(kernel::chronos::TestClock::default()));
         let first_owner = ProcessId::new();
         let first = ws
@@ -1147,7 +1147,7 @@ mod tests {
 
     #[test]
     fn ownership_handoff_binds_role_profile_budget_and_write_scope() {
-        use fabric::cognitive_workflow::*;
+        use ::contracts::cognitive_workflow::*;
         let mut ws = Workspace::new("s1", Arc::new(kernel::chronos::TestClock::default()));
         let executor = ProcessId::new();
         let reviewer = ProcessId::new();
@@ -1574,7 +1574,7 @@ mod tests {
         ] {
             ws.propose_full(AgoraProposal {
                 id,
-                space: fabric::AgoraSpaceId("s1".into()),
+                space: ::contracts::AgoraSpaceId("s1".into()),
                 author: test_author(),
                 base_version: 0,
                 operation: AgoraOperation::UpdateTask { task_patch: patch },

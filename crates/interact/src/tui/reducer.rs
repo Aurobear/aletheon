@@ -1,10 +1,10 @@
 //! Pure protocol-to-view-state reducer.
 
-use fabric::protocol::client::{
+use ::contracts::protocol::client::{
     ActivityKind, ActivitySnapshot, ActivityState, AgentEvent, ApprovalEvent, EventCursor,
     ItemEvent, ItemPhase, SessionEventPage, SessionReadSnapshot, UiSnapshot,
 };
-use fabric::{EvaluationDecision, EvaluationReceiptRef, ItemPayload, ItemRecord};
+use ::contracts::{EvaluationDecision, EvaluationReceiptRef, ItemPayload, ItemRecord};
 use serde::Serialize;
 
 use super::state::{AppState, UiItem, UiItemStatus};
@@ -58,6 +58,7 @@ pub enum LiveActivityEvent {
     ToolFinished {
         call_id: String,
         is_error: bool,
+        error: Option<String>,
         elapsed_ms: u64,
         observed_at: u64,
     },
@@ -77,7 +78,7 @@ pub struct UiError {
 pub enum UiEffect {
     Render,
     SubscribeAfter(EventCursor),
-    ReloadSnapshot(fabric::SessionId),
+    ReloadSnapshot(::contracts::SessionId),
     AnnounceError(String),
 }
 
@@ -142,7 +143,7 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
             }
             let mut effects = Vec::new();
             if let Some(session_id) = state.session_id.clone() {
-                effects.push(UiEffect::ReloadSnapshot(fabric::SessionId(session_id)));
+                effects.push(UiEffect::ReloadSnapshot(::contracts::SessionId(session_id)));
             }
             effects.push(UiEffect::SubscribeAfter(state.cursor.clone()));
             effects
@@ -167,24 +168,22 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
     }
 }
 
-/// Establish one stable identity for a live turn before applying any
+/// Establish one stable presentation key for a live turn before applying any
 /// ephemeral text or activity. Versioned events provide the authoritative
-/// identity; the V0 compatibility stream receives a reducer-local identity
+/// identity; the V0 compatibility stream receives only a local generation
 /// that is never projected as durable truth.
-pub fn begin_live_turn(state: &mut AppState, turn_id: Option<fabric::TurnId>) {
-    let current = state.active_turn_id.or(state.live_turn_id);
-    let next = turn_id.unwrap_or_else(|| {
-        if state.turn_active {
-            current.unwrap_or_default()
-        } else {
-            fabric::TurnId::new()
-        }
-    });
-    if current != Some(next) {
+pub fn begin_live_turn(state: &mut AppState, turn_id: Option<::contracts::TurnId>) {
+    let current = state.active_turn_id;
+    if current != turn_id {
         clear_ephemeral_overlays(state);
     }
     state.active_turn_id = turn_id;
-    state.live_turn_id = turn_id.is_none().then_some(next);
+    if turn_id.is_none() && !state.turn_active {
+        state.next_live_turn_key = state.next_live_turn_key.saturating_add(1);
+        state.live_turn_key = Some(state.next_live_turn_key);
+    } else if turn_id.is_some() {
+        state.live_turn_key = None;
+    }
     state.turn_active = true;
 }
 
@@ -193,7 +192,7 @@ pub fn begin_live_turn(state: &mut AppState, turn_id: Option<fabric::TurnId>) {
 /// The durable item (same stable id once committed) supersedes this overlay;
 /// until then it is the only visible representation.
 fn reduce_live_assistant_text(state: &mut AppState, text: String, sequence: u64) {
-    ensure_live_turn_id(state);
+    ensure_live_turn_key(state);
     let live_assistant_id = live_assistant_id(state);
     let live = UiItem {
         id: live_assistant_id.clone(),
@@ -231,7 +230,7 @@ fn clear_live_assistant_overlay(state: &mut AppState, record: &ItemRecord) {
 }
 
 fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> Vec<UiEffect> {
-    if snapshot.schema_version != fabric::SESSION_READ_MODEL_SCHEMA_VERSION {
+    if snapshot.schema_version != ::contracts::SESSION_READ_MODEL_SCHEMA_VERSION {
         return vec![UiEffect::AnnounceError(format!(
             "unsupported Session read-model schema {}",
             snapshot.schema_version
@@ -280,11 +279,14 @@ fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> 
 }
 
 fn live_scope(state: &AppState) -> String {
-    format!(
-        "{}:{}",
-        state.session_id.as_deref().unwrap_or("unbound-session"),
-        active_turn_id(state).0
-    )
+    let session = state.session_id.as_deref().unwrap_or("unbound-session");
+    match state.active_turn_id {
+        Some(turn_id) => format!("{session}:{}", turn_id.0),
+        None => format!(
+            "{session}:presentation-{}",
+            state.live_turn_key.unwrap_or_default()
+        ),
+    }
 }
 
 fn live_assistant_id(state: &AppState) -> String {
@@ -296,7 +298,7 @@ fn live_activity_id(state: &AppState, call_id: &str) -> String {
 }
 
 fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
-    ensure_live_turn_id(state);
+    ensure_live_turn_key(state);
     match event {
         LiveActivityEvent::InferenceStarted {
             iteration,
@@ -424,6 +426,7 @@ fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
         LiveActivityEvent::ToolFinished {
             call_id,
             is_error,
+            error,
             elapsed_ms,
             observed_at,
         } => {
@@ -449,6 +452,12 @@ fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
                     serde_json::json!(if is_error { "failed" } else { "completed" }),
                 );
                 progress.insert("elapsed_ms".into(), serde_json::json!(elapsed_ms));
+                if let Some(error) = error {
+                    progress.insert(
+                        "error".into(),
+                        serde_json::json!(bounded_summary(&error, 512)),
+                    );
+                }
                 activity.progress = Some(serde_json::Value::Object(progress));
             }
         }
@@ -488,14 +497,14 @@ fn reduce_live_activity(state: &mut AppState, event: LiveActivityEvent) {
     }
 }
 
-fn active_task(state: &AppState) -> Option<&fabric::TaskSnapshot> {
+fn active_task(state: &AppState) -> Option<&::contracts::TaskSnapshot> {
     state
         .tasks
         .iter()
         .find(|task| {
             matches!(
                 task.phase,
-                fabric::TaskPhase::Active | fabric::TaskPhase::Interrupted
+                ::contracts::TaskPhase::Active | ::contracts::TaskPhase::Interrupted
             )
         })
         .or_else(|| state.tasks.first())
@@ -507,17 +516,20 @@ fn active_task_id(state: &AppState) -> String {
         .unwrap_or_else(|| "live-turn".into())
 }
 
-fn active_turn_id(state: &AppState) -> fabric::TurnId {
+fn active_turn_id(state: &AppState) -> ::contracts::TurnId {
     state
         .active_turn_id
-        .or(state.live_turn_id)
         .or_else(|| active_task(state).and_then(|task| task.active_turn_id))
-        .expect("live reducer actions establish a stable turn identity")
+        // ActivitySnapshot is a durable-shaped display contract, but these
+        // records are ephemeral until projection reconciliation. Use a fixed
+        // sentinel rather than minting a fabricated domain TurnId locally.
+        .unwrap_or_else(|| ::contracts::TurnId(uuid::Uuid::nil()))
 }
 
-fn ensure_live_turn_id(state: &mut AppState) {
-    if state.active_turn_id.is_none() && state.live_turn_id.is_none() {
-        state.live_turn_id = Some(fabric::TurnId::new());
+fn ensure_live_turn_key(state: &mut AppState) {
+    if state.active_turn_id.is_none() && state.live_turn_key.is_none() {
+        state.next_live_turn_key = state.next_live_turn_key.saturating_add(1);
+        state.live_turn_key = Some(state.next_live_turn_key);
     }
 }
 
@@ -536,24 +548,38 @@ fn bounded_summary(summary: &str, max_chars: usize) -> String {
     }
 }
 
-fn reconcile_live_activities(state: &mut AppState, durable: Vec<ActivitySnapshot>) {
-    let mut live = state
-        .activities
-        .drain(..)
+fn reconcile_live_activities(state: &mut AppState, mut durable: Vec<ActivitySnapshot>) {
+    let previous = state.activities.drain(..).collect::<Vec<_>>();
+    let mut live = previous
+        .iter()
         .filter(|activity| state.live_activity_ids.contains(&activity.activity_id))
+        .cloned()
         .map(|activity| (activity.activity_id.clone(), activity))
         .collect::<std::collections::BTreeMap<_, _>>();
 
-    for activity in &durable {
+    for activity in &mut durable {
         if activity.kind != ActivityKind::Tool {
             continue;
         }
-        live.retain(|live_id, _| {
-            let Some((_, call_id)) = live_id.rsplit_once(":tool:") else {
-                return true;
-            };
-            !activity.activity_id.ends_with(&format!(":{call_id}"))
-        });
+        let Some(call_id) = activity_call_id(&activity.activity_id) else {
+            continue;
+        };
+        if let Some(observed_activity) = previous.iter().find(|candidate| {
+            candidate.kind == ActivityKind::Tool
+                && activity_call_id(&candidate.activity_id) == Some(call_id)
+        }) {
+            // Durable Session items are appended as a batch when a turn
+            // settles, so their timestamps describe projection time rather
+            // than the user's observed call order. Preserve the live event
+            // boundaries across every later snapshot reconciliation while
+            // retaining the durable state and receipt.
+            activity.started_at = observed_activity.started_at;
+            activity.updated_at = observed_activity.updated_at;
+            if observed_activity.progress.is_some() {
+                activity.progress = observed_activity.progress.clone();
+            }
+        }
+        live.retain(|live_id, _| activity_call_id(live_id) != Some(call_id));
     }
 
     state.activities = durable;
@@ -564,6 +590,13 @@ fn reconcile_live_activities(state: &mut AppState, durable: Vec<ActivitySnapshot
         .filter(|activity| activity.activity_id.starts_with("live:"))
         .map(|activity| activity.activity_id.clone())
         .collect();
+}
+
+fn activity_call_id(activity_id: &str) -> Option<&str> {
+    activity_id
+        .rsplit_once(":tool:")
+        .map(|(_, call_id)| call_id)
+        .or_else(|| activity_id.rsplit_once(':').map(|(_, call_id)| call_id))
 }
 
 fn project_runtime_accounting(state: &mut AppState) {
@@ -608,7 +641,7 @@ fn project_runtime_accounting(state: &mut AppState) {
 }
 
 fn reduce_event_page(state: &mut AppState, page: SessionEventPage) -> Vec<UiEffect> {
-    if page.schema_version != fabric::SESSION_READ_MODEL_SCHEMA_VERSION {
+    if page.schema_version != ::contracts::SESSION_READ_MODEL_SCHEMA_VERSION {
         return vec![UiEffect::AnnounceError(format!(
             "unsupported Session event-page schema {}",
             page.schema_version
@@ -631,16 +664,23 @@ fn reduce_event_page(state: &mut AppState, page: SessionEventPage) -> Vec<UiEffe
 
     let mut expected = page.after.sequence;
     for event in &page.events {
-        let fabric::protocol::client::ClientEvent::Item(item) = event else {
-            return vec![
-                UiEffect::AnnounceError(
-                    "Session event page contains a non-item projection event".into(),
-                ),
-                UiEffect::ReloadSnapshot(page.session_id),
-            ];
+        let cursor = match event {
+            ::contracts::protocol::client::ClientEvent::Item(item) => &item.cursor,
+            // Approval requests are durable request evidence. They advance the
+            // canonical cursor but do not mutate the ApprovalSnapshot read
+            // model; resolution remains an authenticated command.
+            ::contracts::protocol::client::ClientEvent::ApprovalRequested { cursor, .. } => cursor,
+            _ => {
+                return vec![
+                    UiEffect::AnnounceError(
+                        "Session event page contains an unsupported projection event".into(),
+                    ),
+                    UiEffect::ReloadSnapshot(page.session_id),
+                ];
+            }
         };
         expected = expected.saturating_add(1);
-        if item.cursor.sequence != expected {
+        if cursor.sequence != expected {
             return vec![
                 UiEffect::AnnounceError(
                     "Session event page contains a sequence gap; reloading snapshot".into(),
@@ -650,10 +690,13 @@ fn reduce_event_page(state: &mut AppState, page: SessionEventPage) -> Vec<UiEffe
         }
     }
     if page.next.sequence != expected
-        || page.events.last().is_some_and(|event| match event {
-            fabric::protocol::client::ClientEvent::Item(item) => item.cursor != page.next,
-            _ => true,
-        })
+        || page.events.last().and_then(|event| match event {
+            ::contracts::protocol::client::ClientEvent::Item(item) => Some(&item.cursor),
+            ::contracts::protocol::client::ClientEvent::ApprovalRequested { cursor, .. } => {
+                Some(cursor)
+            }
+            _ => None,
+        }) != Some(&page.next)
     {
         return vec![
             UiEffect::AnnounceError(
@@ -664,10 +707,13 @@ fn reduce_event_page(state: &mut AppState, page: SessionEventPage) -> Vec<UiEffe
     }
 
     for event in page.events {
-        let fabric::protocol::client::ClientEvent::Item(item) = event else {
-            unreachable!("event page was validated before mutation")
-        };
-        apply_item_event(state, item);
+        match event {
+            ::contracts::protocol::client::ClientEvent::Item(item) => apply_item_event(state, item),
+            ::contracts::protocol::client::ClientEvent::ApprovalRequested { cursor, .. } => {
+                state.cursor = cursor;
+            }
+            _ => unreachable!("event page was validated before mutation"),
+        }
     }
     vec![UiEffect::Render, UiEffect::ReloadSnapshot(page.session_id)]
 }
@@ -723,7 +769,7 @@ fn clear_ephemeral_overlays(state: &mut AppState) {
         .activities
         .retain(|activity| !state.live_activity_ids.contains(&activity.activity_id));
     state.live_activity_ids.clear();
-    state.live_turn_id = None;
+    state.live_turn_key = None;
 }
 
 /// Project the terminal status carried by the canonical client event. This is
@@ -731,17 +777,19 @@ fn clear_ephemeral_overlays(state: &mut AppState) {
 /// with the ACP projection.
 pub fn reduce_terminal(
     state: &mut AppState,
-    event: &fabric::protocol::client::ClientEvent,
+    event: &::contracts::protocol::client::ClientEvent,
 ) -> bool {
     let status = match event {
-        fabric::protocol::client::ClientEvent::TurnCompleted { status, stop, .. } => status
+        ::contracts::protocol::client::ClientEvent::TurnCompleted { status, stop, .. } => status
             .as_ref()
             .copied()
-            .unwrap_or_else(|| fabric::TurnTerminalStatus::from(stop.clone())),
-        fabric::protocol::client::ClientEvent::TurnStopped { reason, .. } => {
-            fabric::TurnTerminalStatus::from(reason.clone())
+            .unwrap_or_else(|| ::contracts::TurnTerminalStatus::from(stop.clone())),
+        ::contracts::protocol::client::ClientEvent::TurnStopped { reason, .. } => {
+            ::contracts::TurnTerminalStatus::from(reason.clone())
         }
-        fabric::protocol::client::ClientEvent::Failed { .. } => fabric::TurnTerminalStatus::Failed,
+        ::contracts::protocol::client::ClientEvent::Failed { .. } => {
+            ::contracts::TurnTerminalStatus::Failed
+        }
         _ => return false,
     };
     finish_live_turn(state, status);
@@ -752,11 +800,11 @@ pub fn reduce_terminal(
 /// terminal boundary. Durable conversation and task truth still arrive through
 /// the Session projection; this only prevents an already-finished turn from
 /// remaining visibly `running` while that projection catches up.
-pub fn finish_live_turn(state: &mut AppState, status: fabric::TurnTerminalStatus) {
+pub fn finish_live_turn(state: &mut AppState, status: ::contracts::TurnTerminalStatus) {
     let activity_state = match status {
-        fabric::TurnTerminalStatus::Completed => ActivityState::Completed,
-        fabric::TurnTerminalStatus::Interrupted => ActivityState::Cancelled,
-        fabric::TurnTerminalStatus::Failed => ActivityState::Failed,
+        ::contracts::TurnTerminalStatus::Completed => ActivityState::Completed,
+        ::contracts::TurnTerminalStatus::Interrupted => ActivityState::Cancelled,
+        ::contracts::TurnTerminalStatus::Failed => ActivityState::Failed,
     };
     for activity in &mut state.activities {
         if state.live_activity_ids.contains(&activity.activity_id)
@@ -769,7 +817,7 @@ pub fn finish_live_turn(state: &mut AppState, status: fabric::TurnTerminalStatus
     state.streaming = false;
     state.turn_active = false;
     state.active_turn_id = None;
-    state.live_turn_id = None;
+    state.live_turn_key = None;
 }
 
 fn advance(state: &mut AppState, cursor: &EventCursor) -> bool {
@@ -967,15 +1015,82 @@ mod tests {
     use super::*;
 
     #[test]
+    fn durable_tool_reconciliation_preserves_observed_order_and_error_detail() {
+        let mut state = AppState::default();
+        let turn_id = ::contracts::TurnId::new();
+        begin_live_turn(&mut state, Some(turn_id));
+        reduce_live_activity(
+            &mut state,
+            LiveActivityEvent::ToolStarted {
+                call_id: "spawn-1".into(),
+                tool: "agent_spawn".into(),
+                args: serde_json::json!({"profile": "pi"}),
+                observed_at: 10,
+            },
+        );
+        reduce_live_activity(
+            &mut state,
+            LiveActivityEvent::ToolFinished {
+                call_id: "spawn-1".into(),
+                is_error: true,
+                error: Some("capacity exceeded".into()),
+                elapsed_ms: 25,
+                observed_at: 35,
+            },
+        );
+
+        reconcile_live_activities(
+            &mut state,
+            vec![ActivitySnapshot {
+                activity_id: format!("tool:{}:spawn-1", turn_id.0),
+                task_id: "task-1".into(),
+                turn_id,
+                parent_activity_id: None,
+                kind: ActivityKind::Tool,
+                label: "agent_spawn".into(),
+                state: ActivityState::Failed,
+                started_at: 1_000,
+                updated_at: 1_001,
+                progress: None,
+                artifact_refs: Vec::new(),
+                receipt_ref: Some("item:result-1".into()),
+            }],
+        );
+
+        let activity = &state.activities[0];
+        assert_eq!(activity.started_at, 10);
+        assert_eq!(activity.updated_at, 35);
+        assert_eq!(activity.receipt_ref.as_deref(), Some("item:result-1"));
+        assert_eq!(
+            activity
+                .progress
+                .as_ref()
+                .and_then(|value| value.get("error"))
+                .and_then(serde_json::Value::as_str),
+            Some("capacity exceeded")
+        );
+
+        let durable_again = ActivitySnapshot {
+            started_at: 2_000,
+            updated_at: 2_001,
+            progress: None,
+            ..activity.clone()
+        };
+        reconcile_live_activities(&mut state, vec![durable_again]);
+        assert_eq!(state.activities[0].started_at, 10);
+        assert_eq!(state.activities[0].updated_at, 35);
+    }
+
+    #[test]
     fn runtime_projection_keeps_task_usage_separate_from_active_turn_usage() {
         let mut state = AppState::default();
         state.turn_input_tokens = 99;
         state.turn_output_tokens = 9;
-        state.tasks.push(fabric::TaskSnapshot {
+        state.tasks.push(::contracts::TaskSnapshot {
             task_id: "task-1".into(),
-            session_id: fabric::SessionId("session-1".into()),
+            session_id: ::contracts::SessionId("session-1".into()),
             goal: None,
-            phase: fabric::TaskPhase::Active,
+            phase: ::contracts::TaskPhase::Active,
             plan_revision: None,
             steps: Vec::new(),
             active_turn_id: None,
@@ -987,13 +1102,13 @@ mod tests {
             checkpoint_review: None,
             settlement: None,
             review_findings: Vec::new(),
-            runtime_facts: Some(fabric::TaskRuntimeFacts {
+            runtime_facts: Some(::contracts::TaskRuntimeFacts {
                 effective_provider: Some("deepseek".into()),
                 effective_model: Some("deepseek-v4-flash".into()),
                 context_capacity_tokens: Some(1_000_000),
                 active_context_occupancy_tokens: Some(8_000),
                 context_budget: None,
-                cumulative_usage: fabric::InferenceUsage::unsupported(Some(10_000), Some(500)),
+                cumulative_usage: ::contracts::InferenceUsage::unsupported(Some(10_000), Some(500)),
                 inference_rounds: 2,
                 provider_retries: Some(0),
                 tool_calls: 1,

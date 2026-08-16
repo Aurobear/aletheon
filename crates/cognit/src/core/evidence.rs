@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use fabric::OperationId;
+use ::contracts::OperationId;
 use serde::{Deserialize, Serialize};
 
 use super::cognitive_task::{AgentRuntimeId, EvidenceId};

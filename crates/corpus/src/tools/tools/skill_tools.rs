@@ -71,7 +71,7 @@ impl From<Arc<Vec<LoadedSkill>>> for SharedSkills {
 
 fn result(
     ctx: &ToolContext,
-    start: fabric::MonoTime,
+    start: ::contracts::MonoTime,
     content: String,
     is_error: bool,
 ) -> ToolResult {

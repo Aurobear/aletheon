@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use ::contracts::{AgentId, AgentTaskId, ProcessId};
 use chrono::Utc;
-use fabric::{AgentId, AgentTaskId, ProcessId};
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};

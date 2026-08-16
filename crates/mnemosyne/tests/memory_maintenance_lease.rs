@@ -1,4 +1,4 @@
-use fabric::protocol::memory::{
+use ::contracts::protocol::memory::{
     MemoryLifecycleStateV1, MemoryObservationKindV1, MemorySensitivityV1,
 };
 use mnemosyne::{

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
+use ::contracts::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -25,7 +25,7 @@ fn pair(
 
 #[test]
 fn typed_json_rpc_request_response_contract_snapshot() {
-    let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+    let workspace = ::contracts::WorkspacePolicy::from_resolved_roots(
         "/workspace/project".into(),
         vec!["/workspace/shared".into()],
     )

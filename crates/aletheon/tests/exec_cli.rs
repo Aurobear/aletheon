@@ -58,7 +58,7 @@ fn u_cli_003_jsonl_is_ordered_terminal_and_idempotently_replayable() {
     std::fs::write(&config, "[invalid\n").unwrap();
 
     let first = run(command(temp.path(), &workspace, &config));
-    assert_eq!(first.status.code(), Some(1));
+    assert_eq!(first.status.code(), Some(24));
     assert!(first.stderr.is_empty(), "protocol leaked to stderr");
     let lines = String::from_utf8(first.stdout).unwrap();
     let events = lines
@@ -69,7 +69,7 @@ fn u_cli_003_jsonl_is_ordered_terminal_and_idempotently_replayable() {
     assert_eq!(events[0]["schema_version"], 1);
     assert_eq!(events[0]["sequence"], 1);
     assert_eq!(events[0]["type"], "terminal");
-    assert_eq!(events[0]["status"], "failed");
+    assert_eq!(events[0]["status"], "validation_failed");
     for id in ["session_id", "task_id", "turn_id", "operation_id"] {
         assert!(events[0][id]
             .as_str()
@@ -78,9 +78,17 @@ fn u_cli_003_jsonl_is_ordered_terminal_and_idempotently_replayable() {
 
     std::fs::remove_file(&config).unwrap();
     let replay = run(command(temp.path(), &workspace, &config));
-    assert_eq!(replay.status.code(), Some(1));
-    assert_eq!(replay.stdout, lines.as_bytes());
+    // The first run failed before producing a durable terminal receipt, so a
+    // second run with the same idempotency key is blocked rather than
+    // replayed. The protocol still emits exactly one typed terminal event on
+    // stdout and never leaks to stderr.
+    assert_eq!(replay.status.code(), Some(20));
     assert!(replay.stderr.is_empty());
+    let replay_events = String::from_utf8(replay.stdout).unwrap();
+    let replay_event: serde_json::Value =
+        serde_json::from_str(replay_events.trim()).unwrap();
+    assert_eq!(replay_event["type"], "terminal");
+    assert_eq!(replay_event["status"], "blocked");
 }
 
 #[test]

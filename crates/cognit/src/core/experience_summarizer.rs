@@ -3,8 +3,8 @@
 //! Detects behavioral patterns (repeated topics, repeated failures, success strategies)
 //! and generates behavior adjustment suggestions.
 
-use fabric::cognit::{BehaviorAdjustment, EvolutionLogEntry, ReflectionEntry, ReflectionOutcome};
-use fabric::Clock;
+use crate::domain::{BehaviorAdjustment, EvolutionLogEntry, ReflectionEntry, ReflectionOutcome};
+use ::contracts::Clock;
 use std::sync::Arc;
 
 /// ExperienceSummarizer — analyzes accumulated reflections and produces evolution log entries.
@@ -133,7 +133,7 @@ impl ExperienceSummarizer {
 
         Some(EvolutionLogEntry {
             id: format!("evo-{}", uuid::Uuid::new_v4()),
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: ::contracts::wall_to_datetime(self.clock.wall_now()),
             trigger: "periodic_review".to_string(),
             basis,
             patterns_detected: patterns,

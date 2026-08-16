@@ -1,28 +1,28 @@
 # frozen_commit=790158b
 # raw_key	compatibility_aliases	normalized_owner	consumer	secret	default	validation
-agent	-	executive.composition	cognit	no	AgentConfig::default	admission bounds
-providers	-	executive.composition	cognit.inference	reference-only	empty	provider name, URL, transport
-model_aliases	-	executive.composition	cognit.inference	no	empty	model reference resolution
-model_routing	-	executive.composition	cognit.inference	no	default	alias resolution
-sandbox	-	executive.composition	corpus.security	no	default	fail-closed isolation policy
-mcp_servers	-	executive.composition	corpus.mcp	credential-reference	empty	server transport and auth
-plugins	-	executive.composition	executive.plugin	no	default	manifest policy
-memory	gbrain nested legacy shape	executive.composition	mnemosyne and supplemental adapter	credential-reference	default	bounded delivery and storage
-daemon	-	executive.composition	executive.host	no	default	socket and lifecycle bounds
-hooks	-	executive.composition	dasein hook policy	no	default	policy validation
-perception	-	executive.composition	executive application	no	default	path policy
-evolution	-	executive.composition	metacog	no	default	threshold bounds
-telegram	-	executive.composition	executive channel adapter	credential-reference	disabled	owner ID and token reference
-goal_runtime	-	executive.composition	executive goal composition	no	none	worker/reviewer routes
-pi_runtime	legacy key retained	executive.composition	executive coding adapter	process-env allowlist	disabled	executable pin, protocol, sandbox, bounds
-deployment	-	executive.composition	executive host	secret-file references	default	mode, paths, quotas
-grok_hardening	-	executive.composition	executive inference composition	no	default	policy bounds
-backpressure	-	executive.composition	executive application	no	unlimited	capacity bounds
-sandbox_profiles	-	executive.composition	fabric sandbox policy	no	default	profile resolution
-network_policy	-	executive.composition	fabric network policy	no	deny/default	host authority
-agent_profiles	-	executive.composition	executive agent composition	no	default	profile overrides
-bootstrap	-	executive.composition	executive host	credential-reference	default	typed bootstrap validation
-integrations	-	executive.composition	executive adapter factories	SecretRef only	disabled	adapter-specific fail-closed resolution
-evaluation	-	executive.composition	executive evaluation service	no	default	rubric, timeout, evidence bounds
-multi_agent	-	executive.composition	executive cognitive role workflow	no	disabled	role graph, iteration, authority bounds
-governed_review	-	executive.composition	executive governed review service	no	bounded default	model route, queue, evidence, and zero-tool bounds
+agent	-	aletheon.composition	cognit	no	AgentConfig::default	admission bounds
+providers	-	aletheon.composition	cognit.inference	reference-only	empty	provider name, URL, transport
+model_aliases	-	aletheon.composition	cognit.inference	no	empty	model reference resolution
+model_routing	-	aletheon.composition	cognit.inference	no	default	alias resolution
+sandbox	-	aletheon.composition	corpus.security	no	default	fail-closed isolation policy
+mcp_servers	-	aletheon.composition	corpus.mcp	credential-reference	empty	server transport and auth
+plugins	-	aletheon.composition	aletheon.plugin	no	default	manifest policy
+memory	gbrain nested legacy shape	aletheon.composition	mnemosyne and supplemental adapter	credential-reference	default	bounded delivery and storage
+daemon	-	aletheon.composition	aletheon.host	no	default	socket and lifecycle bounds
+hooks	-	aletheon.composition	dasein hook policy	no	default	policy validation
+perception	-	aletheon.composition	aletheon.application	no	default	path policy
+evolution	-	aletheon.composition	metacog	no	default	threshold bounds
+telegram	-	aletheon.composition	aletheon channel adapter	credential-reference	disabled	owner ID and token reference
+goal_runtime	-	aletheon.composition	aletheon goal composition	no	none	worker/reviewer routes
+pi_runtime	legacy key retained	aletheon.composition	aletheon coding adapter	process-env allowlist	disabled	executable pin, protocol, sandbox, bounds
+deployment	-	aletheon.composition	aletheon.host	secret-file references	default	mode, paths, quotas
+grok_hardening	-	aletheon.composition	aletheon inference composition	no	default	policy bounds
+backpressure	-	aletheon.composition	aletheon.application	no	unlimited	capacity bounds
+sandbox_profiles	-	aletheon.composition	contracts sandbox policy	no	default	profile resolution
+network_policy	-	aletheon.composition	corpus network policy	no	deny/default	host authority
+agent_profiles	-	aletheon.composition	aletheon agent composition	no	default	profile overrides
+bootstrap	-	aletheon.composition	aletheon.host	credential-reference	default	typed bootstrap validation
+integrations	-	aletheon.composition	aletheon adapter factories	SecretRef only	disabled	adapter-specific fail-closed resolution
+evaluation	-	aletheon.composition	aletheon evaluation service	no	default	rubric, timeout, evidence bounds
+multi_agent	-	aletheon.composition	aletheon cognitive role workflow	no	disabled	role graph, iteration, authority bounds
+governed_review	-	aletheon.composition	aletheon governed review service	no	bounded default	model route, queue, evidence, and zero-tool bounds

@@ -4,8 +4,11 @@
 //! Package inspection, validation, safe extraction, and content-addressed storage.
 //! It does NOT activate extensions — activation is handled by the executive crate.
 
+pub mod asset;
 pub mod inspector;
 pub mod manifest;
+pub mod package;
+pub mod plugin;
 pub mod resolver;
 pub mod store;
 pub mod validation;

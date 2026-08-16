@@ -99,8 +99,17 @@ async def analyze(client: AletheonClient, session_id: str = "") -> dict:
     }
     snap_resp, perf_resp, journal_resp = await asyncio.gather(
         client.rpc("session.read_snapshot/v1", snapshot_params),
-        client.rpc("session.perf"),
-        client.rpc("session.journal", {"session_id": selected, "limit": 20}),
+        client.rpc("debug.perf"),
+        client.rpc("session.read_events/v1", {
+            "protocol_version": 1,
+            "payload": {
+                "type": "read_events",
+                "data": {
+                    "session_id": selected,
+                    "after": {"sequence": 0},
+                },
+            },
+        }),
         return_exceptions=True,
     )
     snapshot_data = _unwrap(snap_resp)

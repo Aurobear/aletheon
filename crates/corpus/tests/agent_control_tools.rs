@@ -1,14 +1,14 @@
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-use corpus::tools::tools::agent_control::AgentControlTools;
-use fabric::tool::{Tool, ToolContext};
-use fabric::{
+use ::contracts::tool::{Tool, ToolContext};
+use ::contracts::{
     AgentControlError, AgentControlMessage, AgentControlPort, AgentHandle, AgentId,
     AgentListRequest, AgentProfileId, AgentResult, AgentRunStatus, AgentSendRequest, AgentSnapshot,
     AgentSpawnIntent, AgentSpawnRequest, AgentToolContext, AgentWaitRequest, AttemptUsage,
     OperationId, ProcessId, RuntimeId,
 };
+use async_trait::async_trait;
+use corpus::tools::tools::agent_control::AgentControlTools;
 
 #[derive(Default)]
 struct Calls {
@@ -112,7 +112,7 @@ impl AgentControlPort for FakeControl {
                 .unwrap_or(request.caller_root_agent_id),
             to: request.agent_id,
             kind: request.kind,
-            delivery: fabric::AgentMessageDeliveryState::Delivered,
+            delivery: ::contracts::AgentMessageDeliveryState::Delivered,
             content: request.message,
         })
     }

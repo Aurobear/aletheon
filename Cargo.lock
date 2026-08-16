@@ -3,6 +3,45 @@
 version = 4
 
 [[package]]
+name = "adapters-agent-profile"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "corpus",
+ "runtime",
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "adapters-sqlite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "application",
+ "async-trait",
+ "cognit",
+ "contracts",
+ "gateway",
+ "kernel",
+ "metacog",
+ "mnemosyne",
+ "parking_lot",
+ "platform",
+ "runtime",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -48,9 +87,13 @@ name = "agora"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "application",
  "async-trait",
- "fabric",
+ "contracts",
+ "gateway",
  "kernel",
+ "parking_lot",
+ "runtime",
  "rusqlite",
  "serde",
  "serde_json",
@@ -58,6 +101,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -86,22 +131,55 @@ dependencies = [
 name = "aletheon"
 version = "0.1.0"
 dependencies = [
+ "adapters-agent-profile",
+ "adapters-sqlite",
+ "agora",
  "anyhow",
+ "application",
  "async-trait",
+ "base64",
+ "chrono",
  "clap",
- "executive",
- "fabric",
+ "cognit",
+ "contracts",
+ "corpus",
+ "dasein",
+ "dirs",
+ "flate2",
  "futures",
+ "gateway",
+ "hardware",
+ "hmac",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "interact",
+ "kernel",
  "libc",
+ "metacog",
+ "mnemosyne",
+ "nix 0.29.0",
+ "parking_lot",
+ "platform",
+ "reqwest",
+ "runtime",
+ "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tar",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "toml",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
+ "which 6.0.3",
 ]
 
 [[package]]
@@ -179,13 +257,19 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "application"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
- "fabric",
+ "contracts",
+ "regex",
  "runtime",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -489,9 +573,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "basic_agent"
 version = "0.1.0"
 dependencies = [
+ "aletheon",
  "anyhow",
- "executive",
- "fabric",
+ "contracts",
  "serde_json",
  "tokio",
  "tracing",
@@ -728,15 +812,14 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "contracts",
+ "dasein",
  "dirs",
- "fabric",
  "futures",
  "kernel",
  "parking_lot",
  "prost",
  "prost-types",
- "reqwest",
- "rusqlite",
  "schemars",
  "serde",
  "serde_json",
@@ -783,6 +866,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "contracts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "bincode",
+ "chrono",
+ "dashmap",
+ "futures",
+ "libc",
+ "nix 0.29.0",
+ "parking_lot",
+ "png",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -813,14 +925,16 @@ name = "corpus"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "agora",
  "anyhow",
+ "application",
  "async-trait",
  "atspi",
  "base64",
  "chrono",
+ "contracts",
  "dashmap",
  "dirs",
- "fabric",
  "flate2",
  "futures",
  "glob",
@@ -836,6 +950,7 @@ dependencies = [
  "png",
  "regex",
  "reqwest",
+ "runtime",
  "rusqlite",
  "schemars",
  "serde",
@@ -982,13 +1097,14 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "contracts",
  "dirs",
- "fabric",
  "glob",
  "kernel",
  "libc",
  "parking_lot",
  "regex",
+ "runtime",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1197,13 +1313,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cognit",
+ "contracts",
  "corpus",
  "dasein",
- "executive",
- "fabric",
  "kernel",
  "metacog",
  "mnemosyne",
+ "runtime",
  "serde",
  "serde_json",
  "tokio",
@@ -1225,86 +1341,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "which 7.0.3",
-]
-
-[[package]]
-name = "executive"
-version = "0.1.0"
-dependencies = [
- "agora",
- "anyhow",
- "async-trait",
- "base64",
- "chrono",
- "cognit",
- "corpus",
- "dasein",
- "dirs",
- "fabric",
- "flate2",
- "futures",
- "gateway",
- "hardware",
- "hmac",
- "http-body-util",
- "hyper",
- "hyper-util",
- "kernel",
- "libc",
- "metacog",
- "mnemosyne",
- "nix 0.29.0",
- "parking_lot",
- "proptest",
- "regex",
- "reqwest",
- "runtime",
- "rusqlite",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tar",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-test",
- "tokio-util",
- "toml",
- "tracing",
- "urlencoding",
- "uuid",
- "which 7.0.3",
-]
-
-[[package]]
-name = "fabric"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "bincode",
- "chrono",
- "dashmap",
- "futures",
- "libc",
- "nix 0.29.0",
- "parking_lot",
- "png",
- "regex",
- "schemars",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -1521,41 +1557,17 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "fabric",
- "gateway-protocol",
+ "contracts",
+ "regex",
  "reqwest",
- "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "gateway-client"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "fabric",
- "gateway-protocol",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "gateway-protocol"
-version = "0.1.0"
-dependencies = [
- "fabric",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
 ]
 
 [[package]]
@@ -1662,10 +1674,14 @@ dependencies = [
 name = "hardware"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
- "fabric",
+ "cognit",
+ "contracts",
+ "kernel",
  "prost",
  "prost-types",
+ "runtime",
  "serde",
  "serde_json",
  "sha2",
@@ -1673,6 +1689,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-build",
+ "tracing",
 ]
 
 [[package]]
@@ -2105,17 +2122,17 @@ name = "interact"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "application",
  "async-trait",
  "atty",
  "chrono",
+ "cognit",
+ "contracts",
  "crossterm",
  "ctrlc",
  "dirs",
  "dirs-next",
- "executive",
- "fabric",
- "gateway-client",
- "gateway-protocol",
+ "gateway",
  "nix 0.29.0",
  "pulldown-cmark",
  "ratatui",
@@ -2125,7 +2142,6 @@ dependencies = [
  "syntect",
  "tempfile",
  "tokio",
- "tokio-util",
  "tracing",
  "uuid",
  "which 7.0.3",
@@ -2176,9 +2192,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "fabric",
+ "contracts",
+ "libc",
+ "runtime",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -2347,7 +2366,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "fabric",
+ "cognit",
+ "contracts",
+ "dasein",
  "kernel",
  "serde",
  "serde_json",
@@ -2401,14 +2422,19 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "cognit",
+ "contracts",
+ "dasein",
  "dirs",
- "fabric",
  "kernel",
  "parking_lot",
+ "platform",
  "proptest",
  "regex",
  "reqwest",
+ "runtime",
  "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2700,7 +2726,9 @@ name = "platform"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "application",
  "async-trait",
+ "dirs",
  "libc",
  "serde",
  "serde_json",
@@ -2708,6 +2736,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -3162,11 +3191,22 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "fabric",
+ "chrono",
+ "contracts",
+ "parking_lot",
+ "proptest",
+ "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4553,6 +4593,18 @@ dependencies = [
  "home",
  "once_cell",
  "rustix 0.38.44",
+]
+
+[[package]]
+name = "which"
+version = "6.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ee928febd44d98f2f459a4a79bd4d928591333a494a10a868418ac1b39cf1f"
+dependencies = [
+ "either",
+ "home",
+ "rustix 0.38.44",
+ "winsafe",
 ]
 
 [[package]]

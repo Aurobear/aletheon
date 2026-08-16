@@ -15,11 +15,11 @@ class FakeClient:
             return {"result": {"payload": {"sessions": [
                 {"id": "active", "status": "active"},
             ]}}}
-        if method == "session.journal":
-            return {"result": {"entries": [
+        if method == "session.read_events/v1":
+            return {"result": {"payload": {"events": [
                 {"sequence": 1, "event_type": "user_message"},
                 {"sequence": 2, "event_type": "tool_result"},
-            ]}}
+            ]}}}
         raise AssertionError(method)
 
 
@@ -35,8 +35,13 @@ def test_watch_binds_unique_active_session_and_reads_canonical_entries(monkeypat
     assert [event["data"]["event_type"] for event in result["events"]] == [
         "tool_result"
     ]
-    journal = next(call for call in client.calls if call[0] == "session.journal")
-    assert journal[1] == {"session_id": "active", "limit": 50}
+    journal = next(
+        call for call in client.calls if call[0] == "session.read_events/v1"
+    )
+    assert journal[1]["payload"]["data"] == {
+        "session_id": "active",
+        "after": {"sequence": 0},
+    }
 
 
 def test_watch_fails_closed_for_ambiguous_active_sessions():

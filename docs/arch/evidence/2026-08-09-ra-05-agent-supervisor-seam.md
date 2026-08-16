@@ -74,3 +74,13 @@ Delete `agent_supervisor.rs` + lib.rs re-export + RA-05 gate → exact baseline.
 ## 7. Next
 
 With RA-02..RA-05 PR-A seams complete, the strict main-writer chain's PR-C cutovers (each independently deployed per §14.2) are the remaining deployment work; then E6-K6d (Pi DelegateBackend) and RA-06.
+
+## 8. 2026-08-11 cleanup correction
+
+The additive `AgentSupervisorSeam` compatibility wrapper was removed after a
+caller-zero check. It had no production callers and hard-coded generation 1,
+which could be mistaken for a second Runtime authority. The sole production
+spawn/lifecycle owner is now `RuntimeAgentSupervisor` in
+`crates/runtime/src/agent_writer.rs`; `DelegateBackendRegistry` remains the
+generic backend catalog. The historical PR-A assertions above are retained as
+baseline evidence only.

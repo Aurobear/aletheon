@@ -1,20 +1,24 @@
 # Aletheon 耦合收敛实施计划
 
-目标：账本与代码同树；生产只承认一层 Application 和一条 Turn；砍掉三条最贵反向边；长期运行项只验收或证伪，不新开实现缺口。
+目标：账本与代码同树；生产只承认一层 Application 和一条 Turn；砍掉三组高成本耦合。
 
 边界：
 
-- 包含：P0 账本地图、P1 Application/Turn 收敛、P2 三条反向边、P3 验收/证伪。
-- 不包含：再拆 `aletheon` 成新的 executive 形 crate；按行数拆 `corpus`/`runtime`；安装态 deploy（P3 需要时另开验收包）；当前分支其余未提交迁移。
+- 包含：P0 账本地图、P1 Application/Turn 收敛、P2 三组反向耦合。
+- 不包含：Finding F / 原 P3（背压普查、重启语义差、安装态验收）。那些仍是诊断 §8 的证据要求，不是本包步骤。
+- 不包含：再拆 `aletheon` 成新的 executive 形 crate；按行数拆 `corpus`/`runtime`；当前分支其余未提交迁移。
 - 一次只做一个编号步骤。验证通过后停下等人审。禁止 `git add -A`。
+- 本包已获准执行 P0–P2；一次只执行一个已编号切片。Finding F 仍为 `NEEDS EVIDENCE`。
+- DeepSeek 按任务包领取，不要把本文件整份丢给模型：[`2026-08-16-architecture-coupling-deepseek-packets.md`](./2026-08-16-architecture-coupling-deepseek-packets.md)
 
 权威诊断：[`docs/arch/evidence/2026-08-16-architecture-coupling-diagnosis.md`](../arch/evidence/2026-08-16-architecture-coupling-diagnosis.md)
 
 相关但不在本包：[`2026-08-15-architecture-hardening.md`](./2026-08-15-architecture-hardening.md) 的锁 poison（hardening P0）与死代码核实（hardening P2）。本包取代 hardening P1 里“按权威整包搬回”的拆分顺序。
 
 ```text
-P0 地图      ->  P1 一条 Turn / 一层 Application  ->  P2 三条反向边  ->  P3 验收/证伪
+P0 地图      ->  P1 一条 Turn / 一层 Application  ->  P2 三组反向耦合
 可并行：无。P0 不过，禁止开 P1。
+Finding F 证据检查留在诊断 §8，不进入本序列。
 ```
 
 ---
@@ -64,11 +68,17 @@ rg -n 'TurnEngine|contracts|application' docs/design/architecture-overview.md
   - `config/architecture/fabric-public-types.tsv`
   - `config/architecture/module-boundaries.txt`
   - `config/architecture/hotspot-budgets.tsv`
+  - `config/architecture/state-machine-inventory.tsv`
+  - `config/architecture/executive-layers.tsv`
 - 改动：
   - `architecture-status.toml:63-66`：`from = "executive"` 改为现行集成测试 owner（`aletheon` 或删掉已不存在的边）。
-  - persistence / config-ownership：`executive` / `executive.composition` 改为 `aletheon` / `adapters-sqlite` / 真实 writer crate。只改 owner 列，不改 schema。
-  - `fabric-public-types.tsv`：owner `fabric` → `contracts`；consumers 去掉 `executive`，补 `aletheon`。
-  - `module-boundaries.txt`：`local_dependencies` 里的 `fabric` 改为 `contracts`，与各 crate `Cargo.toml` 一致。
+  - `persistence-surfaces.tsv`：把仍指向 `executive` 的 owner、schema path、reader 和 writer 单元格改为当前代码事实；保留现有 schema/version/migration 语义，不得只改 owner 后留下幽灵路径。
+  - `config-ownership.tsv`：`executive.composition` 改为当前 owner/consumer；只刷新所有权事实，不改 `AppConfig` 字段集合或配置 schema。
+  - `fabric-public-types.tsv`：owner `fabric` → `contracts`；移除 `executive` consumer，并按当前生产引用保留/补充真实 workspace consumer，不做无证据的全表 `executive → aletheon` 替换。
+  - `module-boundaries.txt`：从 `bash scripts/cargo-agent.sh metadata --no-deps --format-version 1` 重建每个 workspace package 的 `local_dependencies`；该列记录完整 workspace-local 依赖，不能用只保存未审边的 `architecture-dependencies.txt` 代替。其余列仍按当前目录事实刷新。
+  - `state-machine-inventory.tsv` 是 living、但未被 checker 消费的账本：header 标明 `living / ungated`；`:3` 的 `largest_io_module` 改为 `crates/aletheon/src/wiring/application/turn_pipeline.rs`，`largest_io_loc` 更新为当前行数。
+  - `executive-layers.tsv` 是已退役 Executive 的历史快照：header 标明 `historical / retired`，不要把整份旧路径映射成新的现行 owner 图。
+  - `scripts/libexec/aletheon/architecture-check.sh` **不读**上述两份 TSV；不得把 architecture acceptance 的通过当作它们已同步的证据，也不要在本切片扩大 scope 修改 checker。
   - `hotspot-budgets.tsv` 增加一行，冻结现状，禁止再涨：
 
 ```text
@@ -79,10 +89,38 @@ crates/aletheon/src/wiring/application/turn_pipeline.rs	2524	aletheon-turn	daemo
 - 验证：
 
 ```bash
-rg -n '\bexecutive\b|\bfabric\b' architecture-status.toml config/architecture/persistence-surfaces.tsv config/architecture/config-ownership.tsv config/architecture/module-boundaries.txt
-# 允许历史证据文件提到旧名；上列活账本在 P0.2 结束后应为 0 命中（fabric-public-types 的文件名除外）。
+! rg -n 'from = "executive"|crates/(executive|fabric)' architecture-status.toml
+! rg -n '\texecutive\t|crates/(executive|fabric)' config/architecture/persistence-surfaces.tsv
+! rg -n '\texecutive\.composition\t|crates/(executive|fabric)' config/architecture/config-ownership.tsv
+! rg -n '\|[^|]*fabric[^|]*\||crates/(executive|fabric)' config/architecture/module-boundaries.txt
+awk -F'\t' '!/^#/ && ($5 == "fabric" || $6 ~ /(^|,)executive(,|$)/) { bad=1 } END { exit bad }' config/architecture/fabric-public-types.tsv
+# architecture-status 的 legacy freeze key、历史证据文件及文件名可以保留旧词；这里只拒绝现行 owner/path/dependency 字段。
 test -f crates/aletheon/src/wiring/application/turn_pipeline.rs
 awk -F'\t' '$1=="crates/aletheon/src/wiring/application/turn_pipeline.rs"{print $2}' config/architecture/hotspot-budgets.tsv
+bash scripts/cargo-agent.sh metadata --no-deps --format-version 1 > /tmp/aletheon-architecture-metadata.json
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+metadata = json.loads(Path("/tmp/aletheon-architecture-metadata.json").read_text())
+names = {package["name"] for package in metadata["packages"]}
+expected = {
+    package["name"]: sorted({
+        dependency["name"]
+        for dependency in package["dependencies"]
+        if dependency["name"] in names
+    })
+    for package in metadata["packages"]
+}
+recorded = {}
+for line in Path("config/architecture/module-boundaries.txt").read_text().splitlines():
+    if not line or line.startswith("#") or line.startswith("ownership|"):
+        continue
+    crate, _, dependencies, *_ = line.split("|")
+    recorded[crate] = sorted(filter(None, dependencies.split(",")))
+if expected != recorded:
+    raise SystemExit("module-boundaries local_dependencies differ from cargo metadata")
+PY
 bash scripts/aletheon.sh acceptance architecture
 ```
 
@@ -206,9 +244,24 @@ bash scripts/cargo-agent.sh check -p aletheon
 - 验证：
 
 ```bash
-rg -n 'use runtime::' crates/cognit/src --glob '*.rs'
-# 生产路径应为 0。测试模块允许，但须在 #[cfg(test)]。
-rg -n 'reqwest|rusqlite' crates/cognit/Cargo.toml
+python3 - <<'PY'
+from pathlib import Path
+bad = []
+for path in Path("crates/cognit/src").rglob("*.rs"):
+    production = path.read_text().split("#[cfg(test)]", 1)[0]
+    if "use runtime::" in production:
+        bad.append(str(path))
+if bad:
+    raise SystemExit("production runtime imports remain: " + ", ".join(bad))
+PY
+python3 - <<'PY'
+import tomllib
+from pathlib import Path
+manifest = tomllib.loads(Path("crates/cognit/Cargo.toml").read_text())
+bad = sorted({"reqwest", "rusqlite"} & set(manifest.get("dependencies", {})))
+if bad:
+    raise SystemExit("production dependencies remain: " + ", ".join(bad))
+PY
 bash scripts/cargo-agent.sh test -p cognit --lib
 bash scripts/cargo-agent.sh check -p aletheon
 ```
@@ -231,34 +284,7 @@ bash scripts/cargo-agent.sh check -p aletheon
 
 P2 完成标准：`dasein` 无 `corpus` 依赖；cognit 生产源无 `use runtime::`；mnemosyne 默认图不链 `cognit`。
 
----
-
-### P3.1 背压：普查调用方，不写新调度器
-
-- 文件（只读，除非发现绕过）：
-  - `crates/contracts/src/include/memory.rs`
-  - `crates/cognit/src/adapters/inference/backpressure.rs`
-  - `crates/aletheon/src/wiring/core_rpc/client.rs`
-  - `crates/cognit/src/adapters/inference/{anthropic,openai_provider,ollama,provider,scheduler}.rs`
-- 改动：列出每个生产 LLM/embedding 调用是否 `acquire` machine permit。发现绕过则开**单独**修复 PR，不要在本步“顺手”加新策略。
-- 验证：
-
-```bash
-rg -n 'acquire_provider_permit|ProviderBackpressurePort|MachineProviderBackpressure' crates --glob '*.rs'
-# 产出：一张 caller 表（路径 + 是否 acquire）。没有表就不算完成。
-```
-
-安装态并发验收不在本包。有表且无绕过 → 关闭“实现缺失”；有绕过 → 新 PR。
-
-### P3.2 重启语义：找到一条差，或关闭假设
-
-- 对照：
-  - daemon：`TurnPipeline` + `TURN_STATE_MACHINE.md`
-  - exec：收敛后的 `TurnEngine` 路径（P1.3 之后）
-- 改动：写一段不超过 20 行的证据（事件 / receipt / checkpoint 字段）。有差 → 记入诊断 Finding F 并另开修复；无差 → 在诊断里把“行为分叉”标 `CLOSED`，保留“两条编排器”的结构项（P1.3 后应为一条）。
-- 验证：证据段落必须引用具体 `path:line` 或测试名。禁止用“owner 不同所以语义不同”。
-
-P3 完成标准：caller 表存在；重启假设被证实或关闭。不要求 `sudo deploy`。
+Finding F（背压调用方、重启语义差、安装态）不在本包。证据要求见诊断 §8。
 
 ---
 
@@ -277,9 +303,6 @@ P3 完成标准：caller 表存在；重启假设被证实或关闭。不要求 
 
 ---
 
-## 给执行者的第一句话
+## 给 DeepSeek 的第一句话
 
-```text
-只读并执行 docs/plans/2026-08-16-architecture-coupling-closeout.md 的前置条件 + P0.1。
-完成后停下等人审。禁止 git add -A，禁止开始 P1。
-```
+见 [`2026-08-16-architecture-coupling-deepseek-packets.md`](./2026-08-16-architecture-coupling-deepseek-packets.md) §0。不要把 closeout 全文或诊断全文一次丢进去。

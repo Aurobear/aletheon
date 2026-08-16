@@ -1,5 +1,5 @@
+use ::contracts::Clock;
 use anyhow::Result;
-use fabric::Clock;
 use std::path::PathBuf;
 use tracing::debug;
 
@@ -101,7 +101,7 @@ pub async fn process_result(
 
 pub async fn cleanup_overflow_dir(config: &OutputConfig, clock: &dyn Clock) -> Result<usize> {
     let mut removed = 0;
-    let cutoff = fabric::wall_to_datetime(clock.wall_now())
+    let cutoff = ::contracts::wall_to_datetime(clock.wall_now())
         - chrono::Duration::days(config.retention_days as i64);
 
     let mut entries = match tokio::fs::read_dir(&config.overflow_dir).await {

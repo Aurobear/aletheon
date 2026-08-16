@@ -5,10 +5,10 @@
 //! Not clock time, but lived time.
 
 use super::types::*;
-use fabric::dasein::{
-    AffectTone, AngstSource, BoredomDepth, PresentSnapshot, ProtentionSnapshot, RentionalSnapshot,
-    Stimmung, TemporalStreamSnapshot,
+use crate::dasein::context::{
+    PresentSnapshot, ProtentionSnapshot, RentionalSnapshot, TemporalStreamSnapshot,
 };
+use ::contracts::dasein::{AffectTone, AngstSource, BoredomDepth, Stimmung};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};

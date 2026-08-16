@@ -270,7 +270,7 @@ physical/local estop -----------------------------> direct stop callback
   `crates/hardware/src/grpc/provider.rs:504-568`）；
 - HIL/real profile 必须 pin device serial、canonical safety manifest digest 与 driver limits digest；real
   还要求未过期 evidence 和非 loopback TLS endpoint。live snapshot 在 provider 注册前逐项比较
-  （`crates/executive/src/composition/config/robot.rs:438-632`、
+  （`crates/aletheon-config/src/robot.rs:438-632`、
   `crates/executive/src/host/daemon/bootstrap/embodiment.rs:85-237`）；
 - high-risk skill 只接受与 principal/device/skill/完整参数 digest/expiry 绑定的 operator receipt，默认 adapter
   拒绝；approval schema 不含 VLA confidence（`crates/executive/src/application/embodiment_approval.rs:10-85`）；

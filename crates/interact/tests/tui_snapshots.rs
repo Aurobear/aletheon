@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use fabric::protocol::client::{ApprovalEvent, EventCursor, ItemEvent, ItemPhase, UiSnapshot};
-use fabric::{
+use ::contracts::protocol::client::{ApprovalEvent, EventCursor, ItemEvent, ItemPhase, UiSnapshot};
+use ::contracts::{
     ApprovalCategory, ApprovalId, ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject,
     GoalId, ItemId, ItemPayload, ItemRecord, PrincipalId, SessionId, TurnId,
     SESSION_SCHEMA_VERSION,
@@ -148,7 +148,7 @@ fn approval_lifecycle_snapshot_covers_pending_and_failure_resolution() {
         }),
     );
     let mut rejected = approval(ApprovalStatus::Rejected, 2);
-    rejected.resolution = Some(fabric::ApprovalResolution::rejected(
+    rejected.resolution = Some(::contracts::ApprovalResolution::rejected(
         PrincipalId("owner".into()),
         "tui",
         2,

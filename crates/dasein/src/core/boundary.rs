@@ -3,9 +3,9 @@
 //! Like SELinux type enforcement: rules are evaluated in order,
 //! first match wins. Uses glob patterns for action matching.
 
+use crate::core::contracts::AwarenessRiskLevel;
+use crate::core::contracts::{Intent, IntentSource, Verdict};
 use anyhow::Result;
-use fabric::self_field::AwarenessRiskLevel;
-use fabric::{Intent, IntentSource, Verdict};
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
 

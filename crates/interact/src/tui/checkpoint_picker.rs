@@ -24,14 +24,14 @@ pub enum CheckpointPickerAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckpointPicker {
-    entries: Vec<fabric::CheckpointListEntry>,
+    entries: Vec<::contracts::CheckpointListEntry>,
     selected: usize,
 }
 
 impl CheckpointPicker {
-    pub fn from_snapshot(snapshot: fabric::CheckpointListSnapshot) -> anyhow::Result<Self> {
+    pub fn from_snapshot(snapshot: ::contracts::CheckpointListSnapshot) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            snapshot.schema_version == fabric::CHECKPOINT_LIST_SCHEMA_VERSION,
+            snapshot.schema_version == ::contracts::CHECKPOINT_LIST_SCHEMA_VERSION,
             "unsupported checkpoint list schema {}",
             snapshot.schema_version
         );
@@ -160,10 +160,10 @@ mod tests {
 
     #[test]
     fn picker_returns_host_prompt_index_not_local_position() {
-        let mut picker = CheckpointPicker::from_snapshot(fabric::CheckpointListSnapshot {
-            schema_version: fabric::CHECKPOINT_LIST_SCHEMA_VERSION,
+        let mut picker = CheckpointPicker::from_snapshot(::contracts::CheckpointListSnapshot {
+            schema_version: ::contracts::CHECKPOINT_LIST_SCHEMA_VERSION,
             session_id: "session".into(),
-            checkpoints: vec![fabric::CheckpointListEntry {
+            checkpoints: vec![::contracts::CheckpointListEntry {
                 checkpoint_id: "checkpoint".into(),
                 turn_id: "turn".into(),
                 prompt_index: 42,
@@ -184,10 +184,10 @@ mod tests {
 
     #[test]
     fn picker_exposes_each_recovery_mode_without_guessing_event_sequence() {
-        let snapshot = fabric::CheckpointListSnapshot {
-            schema_version: fabric::CHECKPOINT_LIST_SCHEMA_VERSION,
+        let snapshot = ::contracts::CheckpointListSnapshot {
+            schema_version: ::contracts::CHECKPOINT_LIST_SCHEMA_VERSION,
             session_id: "session".into(),
-            checkpoints: vec![fabric::CheckpointListEntry {
+            checkpoints: vec![::contracts::CheckpointListEntry {
                 checkpoint_id: "checkpoint".into(),
                 turn_id: "turn".into(),
                 prompt_index: 42,

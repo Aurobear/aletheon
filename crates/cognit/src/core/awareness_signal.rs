@@ -9,8 +9,26 @@
 //! inherently in the act of thinking, not as a separate reflection.
 
 use chrono::{DateTime, Utc};
-use fabric::self_field::{AwarenessCore, AwarenessExtension, SelfAwareness, SelfState};
-use fabric::ui_event::AwarenessLevel;
+use dasein::core::contracts::{AwarenessCore, AwarenessExtension, SelfAwareness, SelfState};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AwarenessLevel {
+    Confident,
+    Hesitant,
+    Confused,
+    Curious,
+}
+
+impl AwarenessLevel {
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Confident => "confident",
+            Self::Hesitant => "hesitant",
+            Self::Confused => "confused",
+            Self::Curious => "curious",
+        }
+    }
+}
 
 /// Lightweight awareness signal emitted during cognitive loop.
 /// No LLM call — pure rule-based state detection.

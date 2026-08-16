@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use fabric::types::embodiment::{DeviceId, EmbodiedObservation};
-use fabric::MonoTime;
+use ::contracts::types::embodiment::{DeviceId, EmbodiedObservation};
+use ::contracts::MonoTime;
 
 #[derive(Default)]
 pub struct ObservationIngest {
@@ -42,7 +42,7 @@ pub fn is_stale(observation: &EmbodiedObservation, now: MonoTime) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::MonoDeadline;
+    use ::contracts::MonoDeadline;
 
     fn observation(source: &str, sequence: u64) -> EmbodiedObservation {
         EmbodiedObservation {

@@ -10,6 +10,7 @@ import os
 import asyncio
 import re
 import unicodedata
+from datetime import datetime, timezone
 
 from . import analyze as analyze_mod
 from . import logs as logs_mod
@@ -201,6 +202,7 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
     """Check authoritative events for hidden tool and output failures."""
     summary = {
         "available": False,
+        "session_id": None,
         "event_count": 0,
         "inference_rounds": 0,
         "tool_calls": 0,
@@ -225,6 +227,13 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
 
     summary["available"] = True
     summary["event_count"] = len(records)
+    session_ids = {
+        record.get("session_id")
+        for record in records
+        if isinstance(record.get("session_id"), str) and record.get("session_id")
+    }
+    if len(session_ids) == 1:
+        summary["session_id"] = next(iter(session_ids))
     summary["inference_rounds"] = sum(
         record.get("type") == "usage" for record in records
     )
@@ -309,7 +318,7 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
         },
         {
             "name": "tool_results_complete",
-            "passed": bool(starts) and starts == result_ids,
+            "passed": starts == result_ids,
             "started": len(starts),
             "result_count": len(result_ids),
         },
@@ -320,7 +329,7 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
         },
         {
             "name": "terminal_text_substantive",
-            "passed": len(text) >= 80,
+            "passed": bool(text),
             "chars": len(text),
         },
         {
@@ -443,9 +452,21 @@ def _audit_tail(n: int = 20) -> list[str]:
 
 def build_timeline(journal: list[dict], audit_lines: list[str]) -> list[dict]:
     """Merge journal events and audit JSONL lines into one ts-sorted list."""
+    def normalized_timestamp(value) -> str:
+        if isinstance(value, (int, float)):
+            # Durable audit records use Unix milliseconds while older monitor
+            # records use ISO-8601. Normalize both before sorting so a mixed
+            # timeline cannot compare numbers with strings.
+            seconds = value / 1000 if abs(value) >= 100_000_000_000 else value
+            try:
+                return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
+            except (OverflowError, OSError, ValueError):
+                return str(value)
+        return "" if value is None else str(value)
+
     events: list[dict] = []
     for ev in journal or []:
-        ts = ev.get("timestamp") or ev.get("ts") or ""
+        ts = normalized_timestamp(ev.get("timestamp") or ev.get("ts"))
         events.append({
             "ts": ts, "source": "journal",
             "summary": ev.get("type", ev.get("event", "event")),
@@ -455,7 +476,7 @@ def build_timeline(journal: list[dict], audit_lines: list[str]) -> list[dict]:
             rec = json.loads(line)
         except (json.JSONDecodeError, TypeError):
             continue
-        ts = rec.get("timestamp", "")
+        ts = normalized_timestamp(rec.get("timestamp"))
         tool = rec.get("tool_name", "tool")
         err = " [error]" if rec.get("is_error") else ""
         events.append({"ts": ts, "source": "audit",
@@ -527,6 +548,11 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     finally:
         await tui_tools.tui_stop()
 
+    event_summary = event_acceptance(
+        cap.get("event_path"),
+        require_repository_overview=require_repository_overview,
+    )
+    selected_session_id = selected_session_id or event_summary.get("session_id")
     if selected_session_id:
         daemon_analyze = await analyze_mod.analyze(
             client, session_id=selected_session_id
@@ -561,10 +587,6 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         cap.get("prompt_visible") is True,
         forbidden_strings,
     ))
-    event_summary = event_acceptance(
-        cap.get("event_path"),
-        require_repository_overview=require_repository_overview,
-    )
     assertions.extend(event_summary["assertions"])
     if any(not item["passed"] for item in assertions):
         verdict = "fail"

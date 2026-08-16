@@ -88,8 +88,43 @@ pub enum Key {
     Super,
 }
 
-// Re-exported from base (Tier 2c) for backward compatibility.
-pub use fabric::types::vision::{Bounds, Image};
+/// RGB image in row-major format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u8>,
+}
+
+/// Screen bounding box.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Bounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl Image {
+    pub fn to_base64_png(&self) -> anyhow::Result<(String, String)> {
+        use base64::Engine;
+        use std::io::Cursor;
+
+        let mut png_buf = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(Cursor::new(&mut png_buf), self.width, self.height);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header()?;
+            writer.write_image_data(&self.data)?;
+            writer.finish()?;
+        }
+        Ok((
+            "image/png".to_owned(),
+            base64::engine::general_purpose::STANDARD.encode(png_buf),
+        ))
+    }
+}
 
 /// UI element
 #[derive(Debug, Clone, Serialize, Deserialize)]

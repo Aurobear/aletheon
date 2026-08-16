@@ -13,14 +13,14 @@ pub mod profile;
 pub(crate) mod streaming;
 
 // Re-export key types for convenience (inlined from backend.rs)
+pub use ::contracts::sandbox::{
+    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
+    SandboxResult,
+};
 pub use bubblewrap::BubblewrapBackend;
 pub use bwrap_builder::BwrapBuilder;
 pub use env::SandboxEnvironment;
 pub use executor::{SandboxExecutor, SandboxPreference};
-pub use fabric::sandbox::{
-    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
-    SandboxResult,
-};
 pub use glob_scanner::GlobScanner;
 pub use noop::NoopBackend;
 pub use policy::{FilesystemPolicy, FsDefault, WritableRoot};

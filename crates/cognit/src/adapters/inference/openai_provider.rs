@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use super::provider::*;
 use crate::config::{CacheReportingMode, ProviderTimeoutConfig};
-use fabric::llm_types::{InferenceUsageError, ModelRuntimeFacts};
-use fabric::message::{ContentBlock, ImageSource, Message, Role};
+use ::contracts::llm_types::{InferenceUsageError, ModelRuntimeFacts};
+use ::contracts::message::{ContentBlock, ImageSource, Message, Role};
 
 /// OpenAI-compatible provider (chat/completions).
 /// Works with OpenAI, DeepSeek, Ollama, LM Studio, vLLM, Xiaomi MiMo, etc.
@@ -1050,7 +1050,7 @@ mod tests {
 
     mod usage_fixtures {
         use super::*;
-        use fabric::llm_types::CacheTelemetry;
+        use ::contracts::llm_types::CacheTelemetry;
 
         const DEEPSEEK_HIT_MISS: &str =
             include_str!("../../../tests/fixtures/usage/deepseek_hit_miss.json");

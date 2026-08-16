@@ -1,5 +1,6 @@
 //! Hybrid status bar using centralized AppState.
 
+use super::presentation::CollaborationModePresentation;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};

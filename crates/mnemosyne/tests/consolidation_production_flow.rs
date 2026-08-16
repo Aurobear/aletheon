@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use fabric::{Subsystem, SubsystemContext};
+use ::contracts::{Subsystem, SubsystemContext};
 use mnemosyne::consolidation::{ConsolidationRepository, ExtractionStatus};
 use mnemosyne::runtime::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
 use mnemosyne::{
@@ -12,7 +12,7 @@ async fn service(
     root: &std::path::Path,
     repository: Arc<ConsolidationRepository>,
 ) -> DefaultMemoryService {
-    let clock: Arc<dyn fabric::Clock> = Arc::new(kernel::chronos::TestClock::default());
+    let clock: Arc<dyn ::contracts::Clock> = Arc::new(kernel::chronos::TestClock::default());
     let recall = Arc::new(Mutex::new(
         RecallMemory::new(&root.join("recall.db"), clock.clone()).unwrap(),
     ));
@@ -24,7 +24,6 @@ async fn service(
             name: "production-consolidation".into(),
             working_dir: root.into(),
             config: serde_json::Value::Null,
-            bus: None,
         })
         .await
         .unwrap();

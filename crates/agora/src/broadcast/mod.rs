@@ -3,12 +3,12 @@ mod store;
 pub use store::{BroadcastReplay, SqliteBroadcastStore};
 
 use crate::CandidatePool;
-use async_trait::async_trait;
-use fabric::dasein::SelfVersion;
-use fabric::{
+use ::contracts::dasein::SelfVersion;
+use ::contracts::{
     BroadcastAck, BroadcastAckStatus, BroadcastDelivery, ProcessId, SelectionResult,
     VisibilityScope, WallTime, WorkspaceBroadcast, WorkspaceCandidate, WORKSPACE_SCHEMA_V1,
 };
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +17,10 @@ use tokio::task::JoinSet;
 
 #[async_trait]
 pub trait BroadcastProcessor: Send + Sync {
-    async fn receive(&self, delivery: BroadcastDelivery) -> anyhow::Result<Vec<fabric::ContentId>>;
+    async fn receive(
+        &self,
+        delivery: BroadcastDelivery,
+    ) -> anyhow::Result<Vec<::contracts::ContentId>>;
 }
 
 #[derive(Clone)]
@@ -250,8 +253,8 @@ fn limit_detail(value: &str) -> String {
     value.chars().take(1024).collect()
 }
 
-fn valid_response_ids(ids: &[fabric::ContentId]) -> bool {
-    if ids.len() > fabric::MAX_BROADCAST_RESPONSES {
+fn valid_response_ids(ids: &[::contracts::ContentId]) -> bool {
+    if ids.len() > ::contracts::MAX_BROADCAST_RESPONSES {
         return false;
     }
     let mut unique = ids.to_vec();

@@ -4,8 +4,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use ::contracts::types::embodiment::{DeviceId, RiskClass, SkillDescriptor, SkillId};
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::types::frame::FrameRef;
+use ::contracts::types::robot_failure::RobotFailureClass;
+use ::contracts::types::world_state::WorldSnapshot;
+use ::contracts::MonoTime;
 use cognit::harness::robot::proposal_validator::validate_proposal;
 use cognit::harness::robot::state::{AttemptSummary, ReplanContext};
+use cognit::harness::robot::PerceptionObservation;
 use cognit::policy::grpc_provider::{GrpcPolicyConfig, GrpcPolicyProvider};
 use cognit::policy::wire::v1::policy_gateway_server::{PolicyGateway, PolicyGatewayServer};
 use cognit::policy::wire::v1::{
@@ -13,13 +20,6 @@ use cognit::policy::wire::v1::{
     ProposeResponse, SkillProposalWire,
 };
 use cognit::ports::policy_provider::{PolicyProviderError, PolicyProviderPort};
-use fabric::types::embodiment::{DeviceId, RiskClass, SkillDescriptor, SkillId};
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::frame::FrameRef;
-use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::robot_failure::RobotFailureClass;
-use fabric::types::world_state::WorldSnapshot;
-use fabric::MonoTime;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};

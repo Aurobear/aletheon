@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::DashMap;
 #[cfg(test)]
-use fabric::Timer;
+use ::contracts::Timer;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -22,7 +22,7 @@ use super::{Tool, ToolContext, ToolResult};
 // Concurrency classification
 // ---------------------------------------------------------------------------
 
-pub use fabric::tool::ConcurrencyClass;
+pub use ::contracts::tool::ConcurrencyClass;
 
 // ---------------------------------------------------------------------------
 // Cancel mode

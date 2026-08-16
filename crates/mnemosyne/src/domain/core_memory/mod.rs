@@ -1,4 +1,4 @@
-use fabric::ReflectionEntry;
+use ::contracts::reflection::ReflectionEntry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -376,10 +376,11 @@ impl Default for CoreMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::{wall_to_datetime, ReflectionOutcome, ReflectionTrigger};
+    use ::contracts::reflection::{ReflectionOutcome, ReflectionTrigger};
+    use ::contracts::wall_to_datetime;
     use std::sync::Arc;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(kernel::chronos::TestClock::default())
     }
 

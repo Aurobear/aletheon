@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
+use ::contracts::{EmbeddingProvider, Subsystem, SubsystemContext, SubsystemHealth, Version};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use fabric::{EmbeddingProvider, Subsystem, SubsystemContext, SubsystemHealth, Version};
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -174,11 +174,11 @@ pub struct SemanticMemory {
     pub(super) conn: Mutex<Option<Connection>>,
     pub(super) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     pub(super) vector_index: VectorIndex,
-    pub(super) clock: Arc<dyn fabric::Clock>,
+    pub(super) clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl SemanticMemory {
-    pub fn new(db_path: PathBuf, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(db_path: PathBuf, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             db_path,
             conn: Mutex::new(None),
@@ -192,7 +192,7 @@ impl SemanticMemory {
     pub fn with_embedding_provider(
         db_path: PathBuf,
         provider: Arc<dyn EmbeddingProvider>,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
     ) -> Self {
         Self {
             db_path,
@@ -215,7 +215,7 @@ impl SemanticMemory {
         &self,
         query_embedding: &[f32],
         top_k: usize,
-    ) -> Result<Vec<fabric::MemoryEntry>> {
+    ) -> Result<Vec<crate::memory::MemoryEntry>> {
         let scored = self.vector_index.search(query_embedding, top_k);
         if scored.is_empty() {
             return Ok(Vec::new());

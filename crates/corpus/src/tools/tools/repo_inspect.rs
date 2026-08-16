@@ -1,10 +1,10 @@
 //! Bounded, content-backed repository overview.
 
-use async_trait::async_trait;
-use fabric::repository::{
-    InstructionSource, ManifestRef, RepositoryContext, RepositoryFileEvidence, ValidationSpec,
-    VcsSnapshot,
+use super::repository::{
+    DeploymentPolicy, InstructionSource, ManifestRef, RepositoryContext, RepositoryFileEvidence,
+    ValidationSpec, VcsSnapshot,
 };
+use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -316,9 +316,7 @@ struct InstalledRuntimePolicy {
     affected_path_prefixes: Vec<String>,
 }
 
-fn parse_deployment_policy(
-    file: &RepositoryFileEvidence,
-) -> anyhow::Result<fabric::repository::DeploymentPolicy> {
+fn parse_deployment_policy(file: &RepositoryFileEvidence) -> anyhow::Result<DeploymentPolicy> {
     if file.preview_truncated {
         anyhow::bail!("validation policy exceeds bounded typed-metadata preview");
     }
@@ -339,7 +337,7 @@ fn parse_deployment_policy(
     {
         anyhow::bail!("installed-runtime path prefixes must be safe relative prefixes");
     }
-    Ok(fabric::repository::DeploymentPolicy {
+    Ok(DeploymentPolicy {
         source_path: file.path.clone(),
         requires_installed_runtime: installed.required,
         command: Some(installed.command),

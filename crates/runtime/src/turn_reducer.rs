@@ -3,9 +3,9 @@
 //! The single Turn state machine/terminal writer contract.  This seam defines
 //! the typed transitions (start, cancel, timeout, disconnect, late receipt,
 //! crash) and the terminal fence — a valid late effect may only append
-//! observation/accounting, never reverse terminal.  Per runbook PR-A it is
-//! **not wired**: the legacy TurnCoordinator/TurnPipeline remain authoritative
-//! until the RA-04 PR-C writer cutover.
+//! observation/accounting, never reverse terminal.  The production
+//! `RuntimeTurnWriter` consumes this reducer; the legacy coordinator remains
+//! an execution facade while the cutover is completed.
 
 use crate::error::RuntimeError;
 use crate::event::TurnTerminal;
@@ -63,9 +63,8 @@ pub enum TransitionOutcome {
     },
 }
 
-/// Canonical Turn reducer seam.  The production reducer (PR-C) implements
-/// this; this seam only defines the transition contract and a pure
-/// transition table for testing.
+/// Canonical Turn reducer seam. The writer invokes this pure transition table
+/// so all terminal and late-observation decisions share one implementation.
 pub struct TurnReducerSeam;
 
 impl TurnReducerSeam {

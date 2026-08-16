@@ -15,15 +15,14 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
+use ::contracts::{EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, NamespaceId, SchemaId};
 use cognit::config::{ProviderConfig, ProviderTimeoutConfig, Transport};
 use cognit::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
+use cognit::evolution::*;
 use cognit::inference::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
-use fabric::evolution::*;
-use fabric::{
-    EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, KernelEventBus, NamespaceId, SchemaId,
-};
+use runtime::event_projection::CanonicalEventBus;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,8 +112,8 @@ async fn main() -> Result<()> {
     // -----------------------------------------------------------------------
     // 1. Create EventBus
     // -----------------------------------------------------------------------
-    let bus = Arc::new(KernelEventBus::new(10_000));
-    println!("[Init] KernelEventBus created (log_capacity=10000)");
+    let bus = Arc::new(CanonicalEventBus::new(10_000));
+    println!("[Init] CanonicalEventBus created (log_capacity=10000)");
 
     // -----------------------------------------------------------------------
     // 2. Create LLM Scheduler

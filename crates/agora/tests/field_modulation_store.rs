@@ -1,8 +1,5 @@
-use agora::SqliteBroadcastStore;
-use fabric::{
-    AgoraSpaceId, ConsciousArbitrationMode, ConsciousTraceEvent, FieldDecisionKind,
-    FieldDecisionReason,
-};
+use ::contracts::{AgoraSpaceId, ConsciousArbitrationMode, FieldDecisionKind, FieldDecisionReason};
+use agora::{ConsciousTraceEvent, SqliteBroadcastStore};
 
 fn modulation(metric_ref: &str) -> ConsciousTraceEvent {
     ConsciousTraceEvent::FieldModulation {

@@ -1,4 +1,4 @@
-use fabric::message::{ContentBlock, Message, Role};
+use ::contracts::message::{ContentBlock, Message, Role};
 
 pub struct SummaryTemplate;
 

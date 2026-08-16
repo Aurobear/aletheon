@@ -12,8 +12,8 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use fabric::evolution::*;
-use fabric::message::{ContentBlock, Message, Role};
+use crate::evolution::*;
+use ::contracts::message::{ContentBlock, Message, Role};
 
 use crate::adapters::inference::scheduler::LlmScheduler;
 
@@ -108,7 +108,16 @@ impl ToolObservationHandler {
                     EvolutionTriggeredPayload {
                         trigger_reason: reason,
                         recent_reflections: buffer.iter().map(|r| r.turn_id).collect(),
-                        current_rules_snapshot: rules,
+                        current_rules_snapshot: rules
+                            .into_iter()
+                            .map(|rule| dasein::core::evolution_input::LearnedRuleSnapshot {
+                                id: rule.id,
+                                condition: rule.condition,
+                                action: rule.action,
+                                confidence: rule.confidence,
+                                source_reflections: rule.source_reflections,
+                            })
+                            .collect(),
                     },
                 ));
             }

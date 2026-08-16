@@ -5,3 +5,6 @@
 
 pub mod cognitive_run;
 pub mod policy_provider;
+pub mod verifier;
+
+pub mod inference;

@@ -45,7 +45,7 @@ except ImportError:
 
 # ── constants ─────────────────────────────────────────────────────
 MAX_CAPTURE = 64 * 1024
-# Authoritative ExecTerminalKind variants from crates/fabric/src/types/exec.rs:7-74.
+# Authoritative ExecTerminalKind variants from crates/contracts/src/types/exec.rs:7-74.
 # provider_rejected_request is NOT an Exec terminal status; it is a separate
 # rendered error/event semantic.  provider_unavailable and provider_rejected
 # are preserved because they are legitimate ExecTerminalKind variants.
@@ -1462,7 +1462,7 @@ def _real_evaluate_one_with_binary(task: dict, run_id: str,
         if not isinstance(terminal_metrics, dict):
             terminal_metrics = {}
 
-        # Real TurnMetrics fields (crates/fabric/src/types/turn.rs:84-92):
+        # Real TurnMetrics fields (crates/contracts/src/types/turn.rs:84-92):
         # tool_calls_made, tool_errors, provider_retries, elapsed_ms,
         # iterations, completed_normally
         tool_calls_made = _integer_metric(terminal_metrics.get("tool_calls_made"))

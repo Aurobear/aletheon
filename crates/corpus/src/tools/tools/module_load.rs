@@ -1,7 +1,7 @@
 //! Tool for loading and unloading Linux kernel modules.
 
+use ::contracts::Timer;
 use async_trait::async_trait;
-use fabric::Timer;
 use serde_json::{json, Value};
 use tracing::info;
 

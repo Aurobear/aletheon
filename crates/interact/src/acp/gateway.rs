@@ -2,8 +2,8 @@
 
 use std::{io, path::Path};
 
+use ::contracts::{protocol::client::ClientEvent, PrincipalContext, ThreadId};
 use async_trait::async_trait;
-use fabric::{protocol::client::ClientEvent, PrincipalContext, ThreadId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncWrite};
@@ -77,7 +77,7 @@ pub trait AcpEventSource: Send {
     async fn recover(
         &mut self,
         _session_id: &str,
-        _cursor: &fabric::protocol::client::EventCursor,
+        _cursor: &::contracts::protocol::client::EventCursor,
     ) -> Result<Vec<AcpSessionEvent>, AcpError> {
         Ok(Vec::new())
     }
@@ -280,7 +280,7 @@ mod tests {
     use std::{collections::VecDeque, sync::Mutex};
 
     use super::*;
-    use fabric::{
+    use ::contracts::{
         protocol::client::{EventCursor, ItemEvent, ItemPhase},
         ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalId,
         WorkspacePolicy,

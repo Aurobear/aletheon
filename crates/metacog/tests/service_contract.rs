@@ -1,18 +1,21 @@
+use dasein::MutationIntent;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use ::contracts::{
+    ApprovalCategory, ApprovalId, ApprovalResolution, ApprovalRisk, ApprovalSnapshot,
+    ApprovalStatus, ApprovalSubject, CapabilityId, CapabilityScope, Clock, ExecutionPermit, GoalId,
+    MonoDeadline, MonoTime, OperationId, PermitId, PrincipalId, ProcessId, SandboxDecision,
+    Subsystem, SubsystemContext, SubsystemHealth, Version,
+};
 use async_trait::async_trait;
-use fabric::genome::{
+use metacog::genome::contracts::Genome;
+use metacog::genome::contracts::{
     BoundarySpec, CareSpec, IdentitySpec, LifecycleSpec, MemorySpec, MutationSpec, Topology,
 };
-use fabric::meta::Recommendation;
-use fabric::{
-    ApprovalCategory, ApprovalId, ApprovalResolution, ApprovalRisk, ApprovalSnapshot,
-    ApprovalStatus, ApprovalSubject, CapabilityId, CapabilityScope, Clock, Evaluation,
-    ExecutionPermit, Genome, GoalId, MetaRuntimeOps, MigrationResult, MonoDeadline, MonoTime,
-    MutationIntent, OperationId, PermitId, PrincipalId, ProcessId, RuntimeCandidate,
-    SandboxDecision, Subsystem, SubsystemContext, SubsystemHealth, TestResult, Version,
+use metacog::governance::contracts::{
+    Evaluation, MetaRuntimeOps, MigrationResult, Recommendation, RuntimeCandidate, TestResult,
 };
 use metacog::{
     ApplyMutation, DefaultMetacogService, GovernedMutationEvidence, MetacogError, MetacogService,

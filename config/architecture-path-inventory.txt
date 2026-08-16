@@ -1,4 +1,5 @@
-capability_path|crates/executive/src/composition/exec_session.rs|ExecTurnServices
+capability_path|crates/aletheon/src/wiring/exec_session.rs|ExecTurnServices
+capability_path|crates/kernel/src/capability/governed.rs|CapabilityInvoker
 capability_path|crates/kernel/src/capability/mod.rs|CapabilityInvoker
-turn_path|crates/executive/src/application/turn_pipeline.rs|TurnPipeline
-turn_path|crates/executive/src/composition/turn_service.rs|TurnService
+turn_path|crates/aletheon/src/wiring/application/turn_pipeline.rs|TurnPipeline
+turn_path|crates/aletheon/src/wiring/composition/turn_service.rs|TurnService

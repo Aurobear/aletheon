@@ -2,6 +2,7 @@
 
 #[cfg(feature = "acix")]
 pub mod acix;
+pub mod agent_lifecycle_hooks;
 pub mod catalog;
 pub mod core;
 pub mod drivers;
@@ -14,7 +15,11 @@ pub mod skill;
 pub mod tools;
 
 // Re-export main types
-pub use catalog::{discover_runtime_extensions, ExtensionCatalog};
+pub use agent_lifecycle_hooks::CorpusAgentLifecycleHookSink;
+pub use catalog::{
+    discover_runtime_extensions, ActivationConstraints, ExtensionCatalog, ExtensionContractError,
+    ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
+};
 pub use core::AletheonBodyRuntime;
 pub use service::{
     ActivatedCorpusExecutor, ActivationId, ActivationReceipt, ActivationRequest, CorpusError,
@@ -32,10 +37,6 @@ pub use hook::registry::HookRegistry;
 pub use skill::loader::SkillLoader;
 pub use skill::plugin::register_skill;
 pub use skill::router::SkillRouter;
-
-pub use fabric::{
-    ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
-};
 
 /// Compatibility export for the Corpus-owned ACIX tool adapter.
 #[cfg(feature = "acix")]

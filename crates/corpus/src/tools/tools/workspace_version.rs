@@ -1,7 +1,7 @@
 //! Deterministic version of the editable repository/workspace state.
 
+use ::contracts::change_transaction::{WorkspaceVersion, WorkspaceVersionBasis};
 use anyhow::{bail, Context, Result};
-use fabric::change_transaction::{WorkspaceVersion, WorkspaceVersionBasis};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 

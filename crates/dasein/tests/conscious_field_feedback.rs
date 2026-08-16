@@ -4,20 +4,53 @@
 //! - raises attention priority for higher-urgency broadcasts (same intent),
 //! - preserves exact fallback when the reader is absent, errors, or empty.
 
+use ::contracts::conscious_arbitration::LatestConsciousContextPort;
+use ::contracts::dasein::Stimmung;
+use ::contracts::dasein::{CareActionKind, SelfSignal, SelfVersion};
+use ::contracts::workspace::{CareConcernFrame, SelectionExplanation};
+use ::contracts::{
+    AgoraSpaceId, BroadcastEpoch, ConsciousContextProjection, ContentId, Context,
+    ContextProjectionReceipt, MonoTime, ProcessId, SalienceVector, StructuredSelfView,
+    VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance,
+};
 use async_trait::async_trait;
 use dasein::core::SelfFieldConfig;
-use fabric::conscious_arbitration::LatestConsciousContextPort;
-use fabric::dasein::Stimmung;
-use fabric::dasein::{CareActionKind, SelfSignal, SelfVersion};
-use fabric::workspace::{CareConcernFrame, SelectionExplanation};
-use fabric::{
-    AgoraSpaceId, BroadcastEpoch, ConsciousContextProjection, ContentId, Context,
-    ContextProjectionReceipt, Intent, IntentSource, MonoTime, ProcessId, SalienceVector,
-    SelfFieldOps, StructuredSelfView, Verdict, VisibilityScope, WorkspaceBroadcast,
-    WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance,
-};
+use dasein::{Intent, IntentSource, SelfFieldOps, Verdict};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+struct AllowPolicy;
+impl dasein::bridge::policy::PolicyDecisionPort for AllowPolicy {
+    fn check(
+        &self,
+        _tool_name: &str,
+        _input: &serde_json::Value,
+    ) -> dasein::bridge::policy::PolicyDecision {
+        dasein::bridge::policy::PolicyDecision::Allow
+    }
+}
+
+struct NoopLoop;
+impl dasein::bridge::loop_detector::LoopDecisionPort for NoopLoop {
+    fn on_new_turn(&self, _turn_id: &str) {}
+    fn pre_check(
+        &self,
+        _tool_name: &str,
+        _args: &serde_json::Value,
+        _turn_id: &str,
+    ) -> dasein::bridge::loop_detector::LoopDecision {
+        dasein::bridge::loop_detector::LoopDecision::Allow
+    }
+    fn post_check(
+        &self,
+        _tool_name: &str,
+        _args: &serde_json::Value,
+        _result: &::contracts::tool::ToolResult,
+        _turn_id: &str,
+    ) {
+    }
+    fn end_turn(&self, _turn_id: &str) {}
+}
 
 // ---------------------------------------------------------------------------
 // Stub port
@@ -49,7 +82,7 @@ fn make_care_decision_candidate(
     let id = ContentId::new();
     let source = ProcessId(uuid::Uuid::new_v4());
     WorkspaceCandidate {
-        schema_version: fabric::workspace::WORKSPACE_SCHEMA_V1,
+        schema_version: ::contracts::workspace::WORKSPACE_SCHEMA_V1,
         id,
         space: AgoraSpaceId("test-session".into()),
         source,
@@ -73,7 +106,7 @@ fn make_care_decision_candidate(
             producer: source,
             operation: None,
             source_refs: vec!["dasein:test".into()],
-            observed_at: fabric::WallTime(0),
+            observed_at: ::contracts::WallTime(0),
         },
         visibility: VisibilityScope::Session,
         dependencies: vec![],
@@ -86,7 +119,7 @@ fn make_care_concern_candidate(urgency: f32) -> WorkspaceCandidate {
     let id = ContentId::new();
     let source = ProcessId(uuid::Uuid::new_v4());
     WorkspaceCandidate {
-        schema_version: fabric::workspace::WORKSPACE_SCHEMA_V1,
+        schema_version: ::contracts::workspace::WORKSPACE_SCHEMA_V1,
         id,
         space: AgoraSpaceId("test-session".into()),
         source,
@@ -110,7 +143,7 @@ fn make_care_concern_candidate(urgency: f32) -> WorkspaceCandidate {
             producer: source,
             operation: None,
             source_refs: vec!["dasein:concern".into()],
-            observed_at: fabric::WallTime(0),
+            observed_at: ::contracts::WallTime(0),
         },
         visibility: VisibilityScope::Session,
         dependencies: vec![],
@@ -133,7 +166,7 @@ impl LatestConsciousContextPort for StubConsciousContextPort {
                 let concern = make_care_concern_candidate(*urgency);
                 let ids = vec![care.id, concern.id];
                 let broadcast = WorkspaceBroadcast {
-                    schema_version: fabric::workspace::WORKSPACE_SCHEMA_V1,
+                    schema_version: ::contracts::workspace::WORKSPACE_SCHEMA_V1,
                     epoch: BroadcastEpoch(1),
                     space: AgoraSpaceId("test-session".into()),
                     winner_ids: ids.clone(),
@@ -203,6 +236,8 @@ fn make_config(port_mode: Option<StubMode>) -> SelfFieldConfig {
         conscious_context: port_mode.map(|m| {
             Arc::new(StubConsciousContextPort::new(m)) as Arc<dyn LatestConsciousContextPort>
         }),
+        policy_decisions: Some(Arc::new(AllowPolicy)),
+        loop_decisions: Some(Arc::new(NoopLoop)),
         ..SelfFieldConfig::default()
     }
 }

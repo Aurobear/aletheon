@@ -15,8 +15,8 @@ pub struct WorkspaceArgs {
 }
 
 impl WorkspaceArgs {
-    pub fn executive_launch(&self) -> executive::host::launcher::WorkspaceLaunch {
-        executive::host::launcher::WorkspaceLaunch {
+    pub fn exec_launch(&self) -> crate::launcher::WorkspaceLaunch {
+        crate::launcher::WorkspaceLaunch {
             cwd: self.cwd.clone(),
             add_dirs: self.add_dirs.clone(),
         }

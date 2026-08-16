@@ -4,8 +4,9 @@
 //!
 //! Orchestrates the MetaRuntimeOps trait methods in sequence.
 
+use crate::governance::contracts::{Evaluation, MetaRuntimeOps, MigrationResult, RuntimeCandidate};
 use anyhow::Result;
-use fabric::{Evaluation, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate};
+use dasein::MutationIntent;
 
 /// Orchestrates the full morphogenesis pipeline.
 pub struct MorphogenesisPipeline<M: MetaRuntimeOps> {
@@ -19,7 +20,7 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
 
     /// Run the full pipeline: read_genome → generate_candidate → sandbox_test → evaluate → migrate.
     ///
-    /// Takes a pre-generated MutationIntent, produces a candidate, tests it,
+    /// Takes a pre-generated produces a candidate, tests it,
     /// evaluates the test results, and migrates if the evaluation recommends adoption.
     pub async fn run(&self, intent: &MutationIntent) -> Result<PipelineResult> {
         tracing::info!(
@@ -66,7 +67,7 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
 
         // Step 4: Migrate if recommended, otherwise roll back the pre-generation snapshot.
         let (migration, rolled_back) = match &evaluation.recommendation {
-            fabric::meta::Recommendation::Adopt => {
+            crate::governance::contracts::Recommendation::Adopt => {
                 let result = self.meta_runtime.migrate(&candidate).await?;
                 tracing::info!(
                     "Migration successful: {} -> {}",
@@ -75,7 +76,7 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
                 );
                 (Some(result), false)
             }
-            fabric::meta::Recommendation::PartialAdopt { changes } => {
+            crate::governance::contracts::Recommendation::PartialAdopt { changes } => {
                 tracing::info!("Partial adopt with {} changes — migrating", changes.len());
                 let result = self.meta_runtime.migrate(&candidate).await?;
                 (Some(result), false)
@@ -136,10 +137,11 @@ pub struct PipelineResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::genome::contracts::*;
+    use crate::governance::contracts::Recommendation;
+    use crate::governance::contracts::TestResult;
+    use ::contracts::{wall_to_datetime, Clock, Subsystem, SubsystemHealth, Version};
     use async_trait::async_trait;
-    use fabric::genome::*;
-    use fabric::meta::Recommendation;
-    use fabric::{wall_to_datetime, Clock, Subsystem, SubsystemHealth, TestResult, Version};
     use kernel::chronos::TestClock;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -188,7 +190,7 @@ mod tests {
         fn version(&self) -> Version {
             Version::new(0, 1, 0)
         }
-        async fn init(&mut self, _c: &fabric::SubsystemContext) -> anyhow::Result<()> {
+        async fn init(&mut self, _c: &::contracts::SubsystemContext) -> anyhow::Result<()> {
             Ok(())
         }
         async fn shutdown(&mut self) -> anyhow::Result<()> {
@@ -293,7 +295,7 @@ mod tests {
             fn version(&self) -> Version {
                 Version::new(0, 1, 0)
             }
-            async fn init(&mut self, _c: &fabric::SubsystemContext) -> anyhow::Result<()> {
+            async fn init(&mut self, _c: &::contracts::SubsystemContext) -> anyhow::Result<()> {
                 Ok(())
             }
             async fn shutdown(&mut self) -> anyhow::Result<()> {

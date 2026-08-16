@@ -1,10 +1,10 @@
 //! Proposal validator — validates SkillProposals against registered skill descriptors.
 //! Never trusts provider-supplied schema; validates against live ListSkills output.
 
-use fabric::types::embodiment::{DeviceId, SkillDescriptor};
-use fabric::types::expected_outcome::{get_path, OutcomePredicate};
-use fabric::types::skill_proposal::{GoalAlignment, SkillProposal};
-use fabric::types::world_state::WorldSnapshot;
+use ::contracts::types::embodiment::{DeviceId, SkillDescriptor};
+use ::contracts::types::expected_outcome::{get_path, OutcomePredicate};
+use ::contracts::types::skill_proposal::{GoalAlignment, SkillProposal};
+use ::contracts::types::world_state::WorldSnapshot;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
@@ -245,10 +245,10 @@ fn validate_observed_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::types::embodiment::{DeviceId, RiskClass, SkillId};
-    use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-    use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
-    use fabric::MonoTime;
+    use ::contracts::types::embodiment::{DeviceId, RiskClass, SkillId};
+    use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+    use ::contracts::types::skill_proposal::{PolicyProvenance, SkillProposal};
+    use ::contracts::MonoTime;
 
     fn allowed_skills() -> Vec<SkillDescriptor> {
         vec![SkillDescriptor {
@@ -274,7 +274,7 @@ mod tests {
             skill: SkillId("kuavo.stance".into()),
             device: DeviceId("bot".into()),
             parameters: serde_json::json!({}),
-            goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
+            goal_alignment: ::contracts::types::skill_proposal::GoalAlignment::Direct,
             expected_outcome: ExpectedOutcome {
                 predicate: OutcomePredicate::Equals {
                     path: "mode".into(),
@@ -440,7 +440,7 @@ mod tests {
     fn parameter_outside_negotiated_hard_bound_is_rejected() {
         let proposal = SkillProposal {
             parameters: serde_json::json!({"linear_x": 0.3}),
-            goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
+            goal_alignment: ::contracts::types::skill_proposal::GoalAlignment::Direct,
             ..valid_proposal()
         };
         let mut descriptors = allowed_skills();
@@ -486,9 +486,9 @@ mod tests {
         assert!(validate(&proposal).is_ok());
     }
 
-    fn sample_frame() -> fabric::types::frame::FrameRef {
+    fn sample_frame() -> ::contracts::types::frame::FrameRef {
         let digest = "a".repeat(64);
-        fabric::types::frame::FrameRef {
+        ::contracts::types::frame::FrameRef {
             uri: format!("artifact://sha256/{digest}"),
             sha256: digest,
             mime_type: "image/jpeg".into(),

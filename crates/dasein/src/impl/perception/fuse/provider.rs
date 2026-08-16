@@ -33,11 +33,11 @@ pub trait StateProvider: Send + Sync {
 /// Sensors read from `/proc`, context and logs are placeholder implementations
 /// ready to be wired to the actual agent subsystems.
 pub struct LiveStateProvider {
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl LiveStateProvider {
-    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self { clock }
     }
 }
@@ -57,7 +57,7 @@ impl StateProvider for LiveStateProvider {
                 let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
                 let info = serde_json::json!({
                     "load_avg": load.trim(),
-                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    "timestamp": ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&info)?.into_bytes())
             }
@@ -72,7 +72,7 @@ impl StateProvider for LiveStateProvider {
                     }
                 }
                 mem["timestamp"] = serde_json::Value::String(
-                    fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 );
                 Ok(serde_json::to_string_pretty(&mem)?.into_bytes())
             }
@@ -91,7 +91,7 @@ impl StateProvider for LiveStateProvider {
                 }
                 let info = serde_json::json!({
                     "disks": disks,
-                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    "timestamp": ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&info)?.into_bytes())
             }
@@ -110,7 +110,7 @@ impl StateProvider for LiveStateProvider {
                 }
                 let info = serde_json::json!({
                     "interfaces": interfaces,
-                    "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+                    "timestamp": ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
                 });
                 Ok(serde_json::to_string_pretty(&info)?.into_bytes())
             }
@@ -143,7 +143,7 @@ impl StateProvider for LiveStateProvider {
             "agent": agent_id,
             "state": "running",
             "uptime_seconds": 0,
-            "timestamp": fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+            "timestamp": ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
         });
         Ok(serde_json::to_string_pretty(&status)?.into_bytes())
     }

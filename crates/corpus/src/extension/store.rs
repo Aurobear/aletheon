@@ -1,7 +1,7 @@
 //! Durable, content-addressed extension package store.
 
+use crate::extension::package::{AssetRef, PermissionRequestSet};
 use anyhow::{bail, Context, Result};
-use fabric::types::extension_package::{AssetRef, PermissionRequestSet};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

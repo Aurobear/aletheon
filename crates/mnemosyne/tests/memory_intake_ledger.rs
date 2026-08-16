@@ -1,4 +1,4 @@
-use fabric::protocol::memory::{
+use ::contracts::protocol::memory::{
     MemoryIntakeStatusV1, MemoryLifecycleStateV1, MemoryObservationKindV1, MemorySensitivityV1,
 };
 use mnemosyne::{
@@ -207,7 +207,7 @@ fn intake_capacity_rejects_new_rows_but_preserves_idempotent_retries() {
         temp.path().join("intake.db"),
         MemoryIntakeLimits {
             max_rows: 1,
-            max_payload_bytes: fabric::protocol::memory::MAX_MEMORY_CONTENT_BYTES,
+            max_payload_bytes: ::contracts::protocol::memory::MAX_MEMORY_CONTENT_BYTES,
         },
     )
     .unwrap();

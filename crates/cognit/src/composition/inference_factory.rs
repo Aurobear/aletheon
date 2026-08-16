@@ -2,12 +2,12 @@
 
 use std::{sync::Arc, time::Instant};
 
-use anyhow::Result;
-use async_trait::async_trait;
-use fabric::{
+use ::contracts::{
     memory::DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS, InferenceCapabilities, LlmResponse, LlmStream,
     Message, ModelRuntimeFacts, ToolDefinition,
 };
+use anyhow::Result;
+use async_trait::async_trait;
 use futures::StreamExt;
 
 use crate::adapters::inference::anthropic::AnthropicProvider;
@@ -119,7 +119,7 @@ pub fn create_provider(
     Ok(Arc::new(BackpressuredProvider {
         inner: provider,
         state: backpressure::state_for(
-            &fabric::memory::provider_backpressure_key(&config.base_url, &model_spec.wire_id),
+            &::contracts::memory::provider_backpressure_key(&config.base_url, &model_spec.wire_id),
             config.backpressure,
         ),
     }))

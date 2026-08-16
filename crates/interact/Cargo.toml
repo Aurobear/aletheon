@@ -7,10 +7,10 @@ license.workspace = true
 description = "User interaction: TUI, CLI, and ACIX"
 
 [dependencies]
-fabric = { path = "../fabric" }
-executive = { path = "../executive" }
-gateway-client = { path = "../gateway-client" }
-gateway-protocol = { path = "../gateway-protocol" }
+cognit = { path = "../cognit" }
+contracts = { path = "../contracts" }
+application = { path = "../application" }
+gateway = { path = "../gateway", default-features = false, features = ["client"] }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -33,4 +33,3 @@ sha2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-tokio-util = { workspace = true }

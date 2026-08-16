@@ -4,7 +4,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use fabric::protocol::memory::{
+use ::contracts::protocol::memory::{
     MemoryObservationKindV1, MemoryObservationRequestV1, MemoryRecallRequestV1,
     MemoryReceiptGetRequestV1, MemorySensitivityV1, MemoryWorkspaceBindRequestV1,
     MemoryWorkspaceBindingSpecV1, MemoryWorkspacePreviewBindRequestV1,

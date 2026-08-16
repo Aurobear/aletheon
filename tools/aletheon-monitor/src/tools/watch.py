@@ -1,4 +1,4 @@
-"""aletheon_watch — real-time event polling via session.journal + session.perf."""
+"""aletheon_watch — real-time event polling via typed Session pages + debug perf."""
 
 import asyncio
 import time
@@ -19,7 +19,7 @@ async def watch(
 
     The daemon's session.watch is a long-lived subscription that doesn't
     match the request/response model of the MCP bridge.  Instead we poll
-    session.journal and session.perf at short intervals and return the
+    session.read_events/v1 and debug.perf at short intervals and return the
     delta (new events since the last poll).
 
     Args:
@@ -56,10 +56,20 @@ async def watch(
     while _monotonic() < deadline:
         tasks = []
         if want_perf:
-            tasks.append(client.rpc("session.perf"))
+            tasks.append(client.rpc("debug.perf"))
         if want_tools or want_session:
             tasks.append(client.rpc(
-                "session.journal", {"session_id": selected_session, "limit": 50}
+                "session.read_events/v1",
+                {
+                    "protocol_version": 1,
+                    "payload": {
+                        "type": "read_events",
+                        "data": {
+                            "session_id": selected_session,
+                            "after": {"sequence": 0},
+                        },
+                    },
+                },
             ))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -88,8 +98,10 @@ async def watch(
                 continue
 
             inner = result.get("result", result)
+            if isinstance(inner, dict) and isinstance(inner.get("payload"), dict):
+                inner = inner["payload"]
 
-            # session.perf returns { tokens_in, tokens_out, turns, ... }
+            # debug.perf returns { tokens_in, tokens_out, turns, ... }
             perf = inner.get("perf", inner)
             if "tokens_in" in perf or "turns" in perf or "tool_calls" in perf:
                 key = f"perf:{hash(str(perf))}"
@@ -97,7 +109,7 @@ async def watch(
                     seen_ids.add(key)
                     events.append({"type": "perf", "data": perf, "ts": time.time()})
 
-            # session.journal returns { events: [...], count: N }
+            # session.read_events/v1 returns one bounded typed event page.
             for ev in inner.get("entries", inner.get("events", [])):
                 ts = ev.get("ts") or ev.get("timestamp") or ""
                 event_type = ev.get("type") or ev.get("event_type") or ""

@@ -6,16 +6,25 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use ::contracts::Clock;
 use anyhow::Result;
-use fabric::Clock;
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use fabric::evolution::CognitivePulseEvent;
-use fabric::CanonicalEventBus;
-use fabric::SchemaId;
+use crate::evolution::CognitivePulseEvent;
+use ::contracts::SchemaId;
 
 use super::scheduler::LlmScheduler;
+
+#[async_trait::async_trait]
+pub trait CognitiveEventPublisher: Send + Sync {
+    async fn publish(
+        &self,
+        schema: SchemaId,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) -> Result<()>;
+}
 
 /// Configuration for LlmPulse.
 #[derive(Debug, Clone)]
@@ -38,7 +47,7 @@ impl Default for PulseConfig {
 /// The heart — periodically broadcasts cognitive energy to the event bus.
 pub struct LlmPulse {
     scheduler: Arc<LlmScheduler>,
-    bus: Arc<CanonicalEventBus>,
+    bus: Arc<dyn CognitiveEventPublisher>,
     config: PulseConfig,
     clock: Arc<dyn Clock>,
 }
@@ -46,7 +55,7 @@ pub struct LlmPulse {
 impl LlmPulse {
     pub fn new(
         scheduler: Arc<LlmScheduler>,
-        bus: Arc<CanonicalEventBus>,
+        bus: Arc<dyn CognitiveEventPublisher>,
         config: PulseConfig,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -84,7 +93,7 @@ impl LlmPulse {
 
         let event = CognitivePulseEvent {
             pulse_id: Uuid::new_v4(),
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
+            timestamp: ::contracts::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
             available_tokens: self.config.token_budget_per_pulse,
             provider_health: health,
         };
@@ -92,7 +101,7 @@ impl LlmPulse {
         let json_payload = serde_json::to_value(&event)?;
 
         self.bus
-            .publish_event(
+            .publish(
                 SchemaId(SchemaId::EVENT_COGNITIVE_PULSE_V1.into()),
                 "llm_pulse",
                 json_payload,

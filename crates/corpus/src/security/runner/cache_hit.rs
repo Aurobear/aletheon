@@ -11,13 +11,13 @@ impl ToolRunnerWithGuard {
         ctx: &ToolContext,
         turn_id: &str,
         result: &ToolResult,
-    ) -> std::result::Result<fabric::AuditEventId, ToolError> {
+    ) -> std::result::Result<::contracts::AuditEventId, ToolError> {
         if tool.permission_level() != PermissionLevel::L0 {
             return Err(ToolError::PolicyDenied {
                 reason: "only L0 tools may serve cached results".into(),
             });
         }
-        let audit_id = fabric::AuditEventId::new();
+        let audit_id = ::contracts::AuditEventId::new();
         let start = self.clock.mono_now();
         let unrestricted = ctx
             .approval_authority

@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use sha2::Digest;
 use sha2::Sha256;
 
-use fabric::types::metacognition_evidence::{
+use ::contracts::types::metacognition_evidence::{
     EvidenceId, EvidenceItem, EvidenceKind, EvidenceTrust,
 };
-use fabric::types::metacognition_experience::ExperienceId;
+use ::contracts::types::metacognition_experience::ExperienceId;
 use metacog::evidence::{AppendOutcome, EvidenceStore, JsonlEvidenceStore};
 
 fn make_item(id: &str, exp_id: &str, digest: &str) -> EvidenceItem {

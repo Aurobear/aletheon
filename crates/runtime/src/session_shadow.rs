@@ -96,14 +96,14 @@ impl SessionShadowVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::events::spine::EventSpine;
+    use crate::event_spine::EventSpine;
 
     struct EmptySpine;
     impl EventSpine for EmptySpine {
         fn append(
             &self,
-            _e: fabric::events::spine::UnsequencedEvent,
-        ) -> anyhow::Result<fabric::events::spine::SpineEvent> {
+            _e: crate::event_spine::UnsequencedEvent,
+        ) -> anyhow::Result<crate::event_spine::SpineEvent> {
             anyhow::bail!("shadow must not append")
         }
         fn read_committed_page(
@@ -111,7 +111,7 @@ mod tests {
             _a: u64,
             _t: u64,
             _l: usize,
-        ) -> anyhow::Result<Vec<(u64, fabric::events::spine::SpineEvent)>> {
+        ) -> anyhow::Result<Vec<(u64, crate::event_spine::SpineEvent)>> {
             Ok(vec![])
         }
     }

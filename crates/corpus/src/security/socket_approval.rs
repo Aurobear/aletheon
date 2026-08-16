@@ -3,13 +3,13 @@
 //! handler, which relays it to the connected CLI/TUI and feeds the user's answer
 //! back. Fail-safe: if the channel is gone or the responder is dropped → Deny.
 
+use ::contracts::Clock;
 use async_trait::async_trait;
-use fabric::Clock;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest};
-use fabric::Timer;
+use ::contracts::Timer;
 use kernel::chronos::SystemTimer;
 
 /// A pending approval forwarded to the daemon side. The runner blocks on `respond`.
@@ -76,14 +76,15 @@ mod tests {
         });
 
         let req = ApprovalRequest {
-            owner: fabric::ApprovalOwner::new(
-                fabric::PrincipalId("test".into()),
-                fabric::ThreadId("test".into()),
+            owner: ::contracts::ApprovalOwner::new(
+                ::contracts::PrincipalId("test".into()),
+                ::contracts::ThreadId("test".into()),
             ),
-            connection_id: fabric::ConnectionId::new(),
-            turn_id: fabric::TurnId::new(),
+            connection_id: ::contracts::ConnectionId::new(),
+            turn_id: ::contracts::TurnId::new(),
             call_id: "call".into(),
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                .unwrap(),
             tool: "bash_exec".into(),
             action_summary: "rm -rf /tmp/x".into(),
             risk_level: "high".into(),
@@ -103,14 +104,15 @@ mod tests {
         drop(rx);
 
         let req = ApprovalRequest {
-            owner: fabric::ApprovalOwner::new(
-                fabric::PrincipalId("test".into()),
-                fabric::ThreadId("test".into()),
+            owner: ::contracts::ApprovalOwner::new(
+                ::contracts::PrincipalId("test".into()),
+                ::contracts::ThreadId("test".into()),
             ),
-            connection_id: fabric::ConnectionId::new(),
-            turn_id: fabric::TurnId::new(),
+            connection_id: ::contracts::ConnectionId::new(),
+            turn_id: ::contracts::TurnId::new(),
             call_id: "call".into(),
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                .unwrap(),
             tool: "bash_exec".into(),
             action_summary: "ls".into(),
             risk_level: "low".into(),

@@ -55,6 +55,32 @@ class AletheonClient:
         # like session.journal with full message history
         self._reader._limit = 10 * 1024 * 1024  # 10 MB
 
+        # The monitor still consumes a mixture of legacy diagnostic RPCs and
+        # versioned, read-only Session projections. Bind the connection through
+        # the daemon's explicit legacy handshake adapter before issuing either;
+        # otherwise a fresh connection rejects a versioned read as
+        # "connection must initialize before requests". The daemon permits
+        # only the reviewed read-only versioned methods after this handshake.
+        handshake = {
+            "jsonrpc": "2.0",
+            "method": "health",
+            "params": {},
+            "id": 0,
+        }
+        self._writer.write(
+            (json.dumps(handshake, ensure_ascii=False) + "\n").encode("utf-8")
+        )
+        await asyncio.wait_for(self._writer.drain(), timeout=self.timeout)
+        line = await asyncio.wait_for(self._reader.readline(), timeout=self.timeout)
+        if not line:
+            raise ConnectionError("daemon closed during monitor handshake")
+        try:
+            response = json.loads(line.decode("utf-8"))
+        except json.JSONDecodeError as error:
+            raise ConnectionError("daemon returned an invalid monitor handshake") from error
+        if "error" in response:
+            raise ConnectionError(f"monitor handshake rejected: {response['error']}")
+
     def _next_id(self) -> int:
         self._request_id += 1
         return self._request_id

@@ -6,17 +6,20 @@
 
 pub mod budget;
 pub mod lease;
+pub mod ports;
 pub mod production;
 
+pub use ::contracts::BudgetController;
 pub use budget::{DurableBudgetController, InMemoryBudgetController};
 pub use lease::InMemoryResourceLeaseManager;
+pub use ports::{AdmissionController, LeaseManager};
 pub use production::ProductionAdmissionController;
 
-use async_trait::async_trait;
-use fabric::{
-    AdmissionController, AdmissionError, AdmissionRequest, ExecutionPermit, MonoDeadline, PermitId,
-    RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
+use ::contracts::{
+    AdmissionError, AdmissionRequest, ExecutionPermit, MonoDeadline, PermitId, RevokeReason,
+    SandboxDecision, SandboxRequirement, UsageReport,
 };
+use async_trait::async_trait;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -37,7 +40,7 @@ use tokio::sync::Mutex;
 /// it must never be wired into production. The `admit()` method logs at
 /// `warn` level on every invocation as a runtime signal.
 pub struct AllowAllAdmissionController {
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
     settled: Mutex<HashSet<PermitId>>,
 }
 
@@ -49,7 +52,7 @@ impl std::fmt::Debug for AllowAllAdmissionController {
 }
 
 impl AllowAllAdmissionController {
-    pub fn new(clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             clock,
             settled: Mutex::new(HashSet::new()),

@@ -66,5 +66,5 @@ PY
 # tests execute the declared PRAGMA integrity query against every resulting DB.
 bash "$repo_root/scripts/cargo-agent.sh" test -p mnemosyne --test gbrain_spool \
   legacy_migration_redacts_commits_then_renames_and_restarts_idempotently -- --exact
-bash "$repo_root/scripts/cargo-agent.sh" test -p executive --test agent_control_repository \
+bash "$repo_root/scripts/cargo-agent.sh" test -p aletheon --test agent_control_repository \
   repository_migrates_pre_workspace_rows_without_losing_runs -- --exact

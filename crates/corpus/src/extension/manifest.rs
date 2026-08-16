@@ -1,12 +1,12 @@
 //! Manifest parsing for extension packages.
 //!
-//! Parses extension.toml into fabric::PackageManifest and validates
+//! Parses extension.toml into ::contracts::PackageManifest and validates
 //! structure. Asset manifests (SKILL.md, hook.toml, etc.) are parsed
 //! lazily during the inspector phase.
 
+use crate::extension::asset::{CapabilityDescriptor, CapabilityKind, RuntimeClass};
+use crate::extension::package::PackageManifest;
 use anyhow::{bail, Context, Result};
-use fabric::types::extension_asset::{CapabilityDescriptor, CapabilityKind, RuntimeClass};
-use fabric::types::extension_package::PackageManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;

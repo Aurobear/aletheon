@@ -1,6 +1,7 @@
+# status=living / ungated; maintained as review evidence and not consumed by architecture-check.sh
 # package	state_owner	mutation_entry	owner_loc	largest_io_module	largest_io_loc
-agent-control	crates/executive/src/application/agent_control/lifecycle.rs	AgentRunRepository::transition	170	crates/executive/src/adapters/agent_control/sqlite_repository.rs	923
-turn-pipeline	crates/executive/src/application/turn_lifecycle.rs	TurnPipelineLifecycle::apply	215	crates/executive/src/application/turn_pipeline.rs	1448
+agent-control	crates/runtime/src/agent_lifecycle.rs	AgentRunProjection::transition	133	crates/adapters/sqlite/src/runtime_agent/mod.rs	1141
+turn-pipeline	crates/runtime/src/turn_pipeline_lifecycle.rs	TurnPipelineLifecycle::apply	215	crates/aletheon/src/wiring/application/turn_pipeline.rs	2524
 mnemosyne-service	crates/mnemosyne/src/lifecycle.rs	MemoryOperationLifecycle::apply	255	crates/mnemosyne/src/service.rs	1426
 mcp-client-auth	crates/corpus/src/tools/mcp/lifecycle.rs	apply_server_transition / McpOAuthLifecycle::apply	225	crates/corpus/src/tools/mcp/client.rs	1527
-daemon-server	crates/executive/src/host/daemon/protocol.rs	ConnectionProtocolState::apply	174	crates/executive/src/host/daemon/server.rs	1324
+daemon-server	crates/aletheon/src/wiring/daemon/protocol.rs	ConnectionProtocolState::apply	174	crates/aletheon/src/wiring/daemon/server.rs	1324

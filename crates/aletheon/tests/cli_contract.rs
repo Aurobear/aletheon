@@ -138,6 +138,6 @@ fn json_version_test() {
         obj["protocol_version"]
             .as_u64()
             .expect("protocol_version must be u64"),
-        fabric::CLIENT_PROTOCOL_VERSION as u64
+        ::contracts::CLIENT_PROTOCOL_VERSION as u64
     );
 }

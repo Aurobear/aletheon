@@ -8,7 +8,7 @@ use metacog::evolution::experiment::{
 
 fn report(weighted_total_millis: u32, eligible: bool, gates: Vec<GateResult>) -> EvaluationReport {
     EvaluationReport {
-        rubric: fabric::types::metacognition_evaluation::RubricId("experiment-test".into()),
+        rubric: ::contracts::types::metacognition_evaluation::RubricId("experiment-test".into()),
         rubric_version: 1,
         dimensions: Vec::new(),
         weighted_total_millis: Some(weighted_total_millis),
@@ -200,7 +200,7 @@ fn inconclusive_when_no_reports_at_all() {
 #[test]
 fn inconclusive_when_weighted_totals_are_none() {
     let no_score = EvaluationReport {
-        rubric: fabric::types::metacognition_evaluation::RubricId("experiment-test".into()),
+        rubric: ::contracts::types::metacognition_evaluation::RubricId("experiment-test".into()),
         rubric_version: 1,
         dimensions: Vec::new(),
         weighted_total_millis: None,

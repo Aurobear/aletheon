@@ -4,16 +4,21 @@
 //! tool invocations. The production path goes through `DefaultCapabilityInvoker`;
 //! direct tool calls that bypass this are forbidden.
 
+mod invoker;
+pub use invoker::CapabilityInvoker;
+pub mod governed;
 pub mod invocation;
 pub mod registry;
 pub mod verifier;
 
-use async_trait::async_trait;
-use fabric::{
-    AdmissionController, AdmissionRequest, AuditEventId, CapabilityInvoker, CapabilityRequest,
-    CapabilityResult, ExecutionPermit, SandboxDecision, UsageReport,
+use ::contracts::{
+    AdmissionRequest, AuditEventId, CapabilityRequest, CapabilityResult, ExecutionPermit,
+    SandboxDecision, UsageReport,
 };
+use async_trait::async_trait;
 use std::sync::Arc;
+
+use crate::admission::AdmissionController;
 
 /// Async resources cannot be released directly from `Drop`, so the guard
 /// schedules the idempotent admission revoke on the current Tokio runtime.
@@ -24,14 +29,14 @@ where
     A: AdmissionController + ?Sized + 'static,
 {
     admission: Arc<A>,
-    permit_id: Option<fabric::PermitId>,
+    permit_id: Option<::contracts::PermitId>,
 }
 
 impl<A> PermitCleanupGuard<A>
 where
     A: AdmissionController + ?Sized + 'static,
 {
-    fn new(admission: Arc<A>, permit_id: fabric::PermitId) -> Self {
+    fn new(admission: Arc<A>, permit_id: ::contracts::PermitId) -> Self {
         Self {
             admission,
             permit_id: Some(permit_id),
@@ -61,7 +66,7 @@ where
         };
         runtime.spawn(async move {
             if let Err(error) = admission
-                .revoke(permit_id, fabric::RevokeReason::OperationCancelled)
+                .revoke(permit_id, ::contracts::RevokeReason::OperationCancelled)
                 .await
             {
                 tracing::warn!(
@@ -116,13 +121,13 @@ pub trait ToolExecutor: Send + Sync {
         &self,
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) -> CapabilityResult {
         let result = self.execute_with_permit(request, permit).await;
-        sink.terminal(Ok(fabric::ToolResult {
+        sink.terminal(Ok(::contracts::ToolResult {
             content: result.output.clone(),
             is_error: result.is_error,
-            metadata: fabric::ToolResultMeta {
+            metadata: ::contracts::ToolResultMeta {
                 execution_time_ms: result.usage.wall_time_ms,
                 truncated: false,
                 patch_delta: result.patch_delta.clone(),
@@ -131,6 +136,16 @@ pub trait ToolExecutor: Send + Sync {
         .await;
         result
     }
+}
+
+/// Canonical construction point for Kernel's admit-execute-settle invoker.
+/// Domain adapters supply only the executor and cannot assemble an alternate
+/// admission lifecycle.
+pub fn canonical_capability_invoker(
+    admission: Arc<dyn AdmissionController>,
+    executor: Arc<dyn ToolExecutor>,
+) -> Arc<dyn CapabilityInvoker> {
+    Arc::new(DefaultCapabilityInvoker::new(admission, executor))
 }
 
 impl<A, E> DefaultCapabilityInvoker<A, E>
@@ -159,7 +174,7 @@ where
     async fn invoke_streaming(
         &self,
         request: CapabilityRequest,
-        sink: &mut fabric::ToolEventSink,
+        sink: &mut ::contracts::ToolEventSink,
     ) -> CapabilityResult {
         self.invoke_inner(request, Some(sink)).await
     }
@@ -173,14 +188,14 @@ where
     async fn invoke_inner(
         &self,
         request: CapabilityRequest,
-        mut sink: Option<&mut fabric::ToolEventSink>,
+        mut sink: Option<&mut ::contracts::ToolEventSink>,
     ) -> CapabilityResult {
         // 1. Build admission request.
         let admission_req = AdmissionRequest {
             operation_id: request.call.operation_id,
             process_id: request.call.process_id,
             principal: request.authority.principal.clone(),
-            capability: fabric::CapabilityId(request.call.name.clone()),
+            capability: ::contracts::CapabilityId(request.call.name.clone()),
             action: request.authority.action.clone(),
             input_summary: format!("{:?}", request.call.input)
                 .chars()
@@ -216,7 +231,7 @@ where
         if matches!(permit.sandbox, SandboxDecision::Required) {
             let _ = self
                 .admission
-                .revoke(permit.id, fabric::RevokeReason::OperationCancelled)
+                .revoke(permit.id, ::contracts::RevokeReason::OperationCancelled)
                 .await;
             permit_cleanup.disarm();
             return CapabilityResult {
@@ -252,7 +267,7 @@ where
             _ = request.control.cancel.cancelled() => {
                 let _ = self
                     .admission
-                    .revoke(permit.id, fabric::RevokeReason::OperationCancelled)
+                    .revoke(permit.id, ::contracts::RevokeReason::OperationCancelled)
                     .await;
                 permit_cleanup.disarm();
                 return CapabilityResult {
@@ -268,10 +283,10 @@ where
         };
         if let Some(sink) = sink {
             if !sink.terminal_sent() {
-                sink.terminal(Ok(fabric::ToolResult {
+                sink.terminal(Ok(::contracts::ToolResult {
                     content: result.output.clone(),
                     is_error: result.is_error,
-                    metadata: fabric::ToolResultMeta {
+                    metadata: ::contracts::ToolResultMeta {
                         execution_time_ms: result.usage.wall_time_ms,
                         truncated: false,
                         patch_delta: result.patch_delta.clone(),
@@ -292,10 +307,10 @@ where
             // AlreadySettled is itself an authoritative terminal receipt. For
             // any other controller failure, revoke defensively so a failed
             // settlement cannot retain a live budget or lease hold.
-            if !matches!(err, fabric::AdmissionError::AlreadySettled) {
+            if !matches!(err, ::contracts::AdmissionError::AlreadySettled) {
                 let _ = self
                     .admission
-                    .revoke(permit.id, fabric::RevokeReason::OperationCancelled)
+                    .revoke(permit.id, ::contracts::RevokeReason::OperationCancelled)
                     .await;
             }
             permit_cleanup.disarm();
@@ -345,5 +360,78 @@ impl ToolExecutor for StubToolExecutor {
             patch_delta: None,
             served_from_cache: false,
         }
+    }
+}
+
+/// Narrow permit lifecycle for governed system mutations.
+#[async_trait::async_trait]
+pub trait GovernedPermitIssuer: Send + Sync {
+    async fn admit_system_modify(
+        &self,
+        principal: ::contracts::PrincipalId,
+        capability: ::contracts::CapabilityId,
+        action: String,
+        input_summary: String,
+    ) -> anyhow::Result<::contracts::ExecutionPermit>;
+    async fn settle_system_modify(
+        &self,
+        permit: &::contracts::ExecutionPermit,
+        success: bool,
+    ) -> anyhow::Result<()>;
+}
+
+struct KernelPermitIssuer {
+    admission: std::sync::Arc<dyn crate::AdmissionController>,
+}
+
+pub fn canonical_permit_issuer(
+    admission: std::sync::Arc<dyn crate::AdmissionController>,
+) -> std::sync::Arc<dyn GovernedPermitIssuer> {
+    std::sync::Arc::new(KernelPermitIssuer { admission })
+}
+
+#[async_trait::async_trait]
+impl GovernedPermitIssuer for KernelPermitIssuer {
+    async fn admit_system_modify(
+        &self,
+        principal: ::contracts::PrincipalId,
+        capability: ::contracts::CapabilityId,
+        action: String,
+        input_summary: String,
+    ) -> anyhow::Result<::contracts::ExecutionPermit> {
+        self.admission
+            .admit(::contracts::AdmissionRequest {
+                operation_id: ::contracts::OperationId::new(),
+                process_id: ::contracts::ProcessId::new(),
+                principal,
+                capability,
+                action,
+                input_summary,
+                risk: ::contracts::types::admission::RiskLevel::SystemModify,
+                requested_scope: ::contracts::CapabilityScope::default(),
+                budget: None,
+                lease: None,
+                sandbox: ::contracts::SandboxRequirement::NotRequired,
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn settle_system_modify(
+        &self,
+        permit: &::contracts::ExecutionPermit,
+        success: bool,
+    ) -> anyhow::Result<()> {
+        self.admission
+            .settle(
+                permit.id,
+                ::contracts::UsageReport {
+                    permit_id: permit.id,
+                    exit_code: Some(if success { 0 } else { 1 }),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(Into::into)
     }
 }

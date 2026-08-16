@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 
-use fabric::cognit::{ReflectionEntry, ReflectionOutcome};
-use fabric::MutationIntent;
+use cognit::domain::{ReflectionEntry, ReflectionOutcome};
+use dasein::MutationIntent;
 
 /// Generate mutation intents from reflection and experience.
 #[derive(Default)]
@@ -286,9 +286,9 @@ fn success_rate(entries: &[ReflectionEntry]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::cognit::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
-    use fabric::wall_to_datetime;
-    use fabric::Clock;
+    use ::contracts::wall_to_datetime;
+    use ::contracts::Clock;
+    use cognit::domain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
     use kernel::chronos::TestClock;
 
     fn test_clock() -> TestClock {
@@ -505,7 +505,7 @@ pub trait ProposalPromoter: Send + Sync {
         &self,
         proposal: &ImprovementProposal,
         now_ms: i64,
-    ) -> Result<fabric::MutationIntent, PromotionError>;
+    ) -> Result<MutationIntent, PromotionError>;
 }
 
 /// Deterministic proposal promoter.
@@ -519,7 +519,7 @@ impl ProposalPromoter for DeterministicProposalPromoter {
         &self,
         proposal: &ImprovementProposal,
         now_ms: i64,
-    ) -> Result<fabric::MutationIntent, PromotionError> {
+    ) -> Result<MutationIntent, PromotionError> {
         // Gate 1: must be Accepted
         if proposal.state != ProposalState::Accepted {
             return Err(PromotionError::NotAccepted(
@@ -546,7 +546,7 @@ impl ProposalPromoter for DeterministicProposalPromoter {
         }
 
         // Construct a MutationIntent from the approved proposal
-        Ok(fabric::MutationIntent {
+        Ok(MutationIntent {
             target: proposal.target_capability.clone(),
             change: serde_json::json!({
                 "proposal_id": proposal.id.0,

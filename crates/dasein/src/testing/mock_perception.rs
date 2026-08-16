@@ -76,7 +76,7 @@ impl PerceptionSource for MockPerceptionSource {
 mod tests {
     use super::*;
     use crate::r#impl::perception::event::*;
-    use fabric::WallTime;
+    use ::contracts::WallTime;
 
     fn make_test_event(id: u64, msg: &str) -> PerceptionEvent {
         PerceptionEvent {

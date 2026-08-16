@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use fabric::types::embodiment::ExecutionEnvironment;
+use ::contracts::types::embodiment::ExecutionEnvironment;
 use hardware::{GrpcEmbodimentProvider, GrpcProviderConfig, ObservationSchemaRequirement};
 
 #[test]

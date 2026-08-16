@@ -9,15 +9,15 @@ pub use schema::EpisodicMemory;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::{
-        wall_to_datetime, BehaviorAdjustment, CompactStrategy, EvolutionLogEntry, MemoryBackend,
-        MemoryEntry, MemoryQuery, MemoryType, ReflectionEntry, ReflectionTrigger, Subsystem,
-        SubsystemContext,
+    use crate::memory::{CompactStrategy, MemoryBackend, MemoryEntry, MemoryQuery, MemoryType};
+    use ::contracts::reflection::{
+        BehaviorAdjustment, EvolutionLogEntry, ReflectionEntry, ReflectionTrigger,
     };
+    use ::contracts::{wall_to_datetime, Subsystem, SubsystemContext};
     use std::sync::Arc;
     use uuid::Uuid;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         use std::sync::atomic::AtomicI64;
         static COUNTER: AtomicI64 = AtomicI64::new(1);
         let wall_ms = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -35,7 +35,6 @@ mod tests {
             name: "test".into(),
             working_dir: std::env::temp_dir(),
             config: serde_json::Value::Null,
-            bus: None,
         };
         mem.init(&ctx).await.unwrap();
     }
@@ -158,7 +157,7 @@ mod tests {
 
     fn make_reflection(
         trigger: ReflectionTrigger,
-        outcome: fabric::ReflectionOutcome,
+        outcome: ::contracts::reflection::ReflectionOutcome,
         task_summary: &str,
     ) -> ReflectionEntry {
         let clock = test_clock();
@@ -183,12 +182,12 @@ mod tests {
 
         let entry1 = make_reflection(
             ReflectionTrigger::TaskComplete,
-            fabric::ReflectionOutcome::Success,
+            ::contracts::reflection::ReflectionOutcome::Success,
             "deployed feature X",
         );
         let entry2 = make_reflection(
             ReflectionTrigger::Impasse,
-            fabric::ReflectionOutcome::Failure,
+            ::contracts::reflection::ReflectionOutcome::Failure,
             "stuck on parser bug",
         );
 
@@ -199,10 +198,16 @@ mod tests {
         assert_eq!(recalled.len(), 2);
         assert_eq!(recalled[0].task_summary, "stuck on parser bug");
         assert_eq!(recalled[0].trigger, ReflectionTrigger::Impasse);
-        assert_eq!(recalled[0].outcome, fabric::ReflectionOutcome::Failure);
+        assert_eq!(
+            recalled[0].outcome,
+            ::contracts::reflection::ReflectionOutcome::Failure
+        );
         assert_eq!(recalled[1].task_summary, "deployed feature X");
         assert_eq!(recalled[1].trigger, ReflectionTrigger::TaskComplete);
-        assert_eq!(recalled[1].outcome, fabric::ReflectionOutcome::Success);
+        assert_eq!(
+            recalled[1].outcome,
+            ::contracts::reflection::ReflectionOutcome::Success
+        );
     }
 
     #[tokio::test]
@@ -213,7 +218,7 @@ mod tests {
         for i in 0..5 {
             let entry = make_reflection(
                 ReflectionTrigger::Manual,
-                fabric::ReflectionOutcome::Partial,
+                ::contracts::reflection::ReflectionOutcome::Partial,
                 &format!("task {i}"),
             );
             mem.store_reflection(&entry).unwrap();
@@ -232,7 +237,7 @@ mod tests {
 
         let entry = make_reflection(
             ReflectionTrigger::TaskComplete,
-            fabric::ReflectionOutcome::Success,
+            ::contracts::reflection::ReflectionOutcome::Success,
             "completed task",
         );
         mem.store_reflection(&entry).unwrap();
@@ -240,7 +245,7 @@ mod tests {
 
         let entry2 = make_reflection(
             ReflectionTrigger::Impasse,
-            fabric::ReflectionOutcome::Failure,
+            ::contracts::reflection::ReflectionOutcome::Failure,
             "failed task",
         );
         mem.store_reflection(&entry2).unwrap();
@@ -254,7 +259,7 @@ mod tests {
 
         let entry = make_reflection(
             ReflectionTrigger::Manual,
-            fabric::ReflectionOutcome::Partial,
+            ::contracts::reflection::ReflectionOutcome::Partial,
             "complex refactor",
         );
         let entry_id = entry.id.clone();

@@ -6,10 +6,13 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+application = { path = "../application" }
 async-trait = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+url = "2"
+dirs = "5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

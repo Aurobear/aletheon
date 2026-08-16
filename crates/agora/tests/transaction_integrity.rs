@@ -1,7 +1,8 @@
+use ::contracts::{AgoraSpaceId, ProcessId};
+use agora::contract::{AgoraService, WorkspaceCommitPermit};
 use agora::{AgoraOperation, AgoraPersistence, AgoraRegistry};
+use agora::{AgoraOps, AgoraProposal};
 use async_trait::async_trait;
-use fabric::include::agora::{AgoraService, WorkspaceCommitPermit};
-use fabric::{AgoraOps, AgoraProposal, AgoraSpaceId, ProcessId};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -135,14 +136,14 @@ struct ControlledLog {
     entered: Notify,
     release: Notify,
     block: AtomicBool,
-    commits: Mutex<Vec<(String, fabric::AgoraCommit)>>,
+    commits: Mutex<Vec<(String, agora::AgoraCommit)>>,
 }
 #[async_trait]
 impl AgoraPersistence for ControlledLog {
     async fn append_commit(
         &self,
         session: &str,
-        commit: &fabric::AgoraCommit,
+        commit: &agora::AgoraCommit,
     ) -> anyhow::Result<()> {
         self.entered.notify_one();
         if self.block.load(Ordering::SeqCst) && session == "blocked" {
@@ -157,7 +158,7 @@ impl AgoraPersistence for ControlledLog {
             .push((session.into(), commit.clone()));
         Ok(())
     }
-    async fn recover(&self, session: &str) -> anyhow::Result<Vec<fabric::AgoraCommit>> {
+    async fn recover(&self, session: &str) -> anyhow::Result<Vec<agora::AgoraCommit>> {
         Ok(self
             .commits
             .lock()
@@ -267,14 +268,14 @@ async fn durability_io_does_not_hold_workspace_state_lock() {
 }
 
 struct CorruptRecovery {
-    commit: fabric::AgoraCommit,
+    commit: agora::AgoraCommit,
 }
 #[async_trait]
 impl AgoraPersistence for CorruptRecovery {
-    async fn append_commit(&self, _: &str, _: &fabric::AgoraCommit) -> anyhow::Result<()> {
+    async fn append_commit(&self, _: &str, _: &agora::AgoraCommit) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn recover(&self, _: &str) -> anyhow::Result<Vec<fabric::AgoraCommit>> {
+    async fn recover(&self, _: &str) -> anyhow::Result<Vec<agora::AgoraCommit>> {
         Ok(vec![self.commit.clone()])
     }
 }
@@ -290,7 +291,7 @@ async fn recovery_rejects_wrong_space_or_checksum() {
         },
         author(40),
     );
-    let commit = fabric::AgoraCommit::from_proposal(&p, 1, 1, None).unwrap();
+    let commit = agora::AgoraCommit::from_proposal(&p, 1, 1, None).unwrap();
     let registry = AgoraRegistry::new_with_persistence(
         Arc::new(CorruptRecovery { commit }),
         Arc::new(kernel::chronos::TestClock::default()),

@@ -3,8 +3,8 @@
 //! This module is free of side-effects or async — easy to test in
 //! isolation from the rest of the channel stack.
 
-use fabric::channel::MessageContent;
-use fabric::contract::command::{resolve_command, CommandSurface};
+use crate::channel::MessageContent;
+use ::contracts::contract::command::{resolve_command, CommandSurface};
 
 /// Classification of an inbound message for routing purposes.
 #[derive(Debug, Clone, PartialEq, Eq)]

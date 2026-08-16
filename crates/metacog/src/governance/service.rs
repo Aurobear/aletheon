@@ -1,16 +1,19 @@
 //! Authoritative governed facade for runtime mutation.
 
+use dasein::MutationIntent;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-use fabric::meta::Recommendation;
-use fabric::{
-    ApprovalCategory, ApprovalId, ApprovalSnapshot, ApprovalStatus, Clock, Evaluation,
-    ExecutionPermit, MetaRuntimeOps, MigrationResult, MutationIntent, PermitId, RuntimeCandidate,
+use crate::governance::contracts::{
+    Evaluation, MetaRuntimeOps, MigrationResult, Recommendation, RuntimeCandidate,
 };
+use ::contracts::{
+    ApprovalCategory, ApprovalId, ApprovalSnapshot, ApprovalStatus, Clock, ExecutionPermit,
+    PermitId,
+};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -157,7 +160,7 @@ pub struct MetacogStatus {
 
 #[async_trait]
 pub trait MetacogService: Send + Sync {
-    async fn genome(&self) -> Result<fabric::Genome, MetacogError> {
+    async fn genome(&self) -> Result<crate::genome::contracts::Genome, MetacogError> {
         Err(MetacogError::InvalidRequest(
             "genome projection is unavailable".into(),
         ))
@@ -362,7 +365,7 @@ impl<M: MetaRuntimeOps> DefaultMetacogService<M> {
 
 #[async_trait]
 impl<M: MetaRuntimeOps + 'static> MetacogService for DefaultMetacogService<M> {
-    async fn genome(&self) -> Result<fabric::Genome, MetacogError> {
+    async fn genome(&self) -> Result<crate::genome::contracts::Genome, MetacogError> {
         self.runtime
             .read_genome()
             .await

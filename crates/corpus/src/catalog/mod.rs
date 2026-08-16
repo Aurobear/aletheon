@@ -1,15 +1,18 @@
 //! Corpus-owned immutable extension catalog.
 
+pub mod contracts;
+pub use self::contracts::{
+    ActivationConstraints, ExtensionContractError, ExtensionDescriptor, ExtensionId, ExtensionKind,
+    ExtensionOrigin, ExtensionSnapshot,
+};
+
 /// D5 catalog/executor split ports.
 pub mod ports;
 
 use std::collections::BTreeMap;
 
-use fabric::types::admission::RiskLevel;
-use fabric::{
-    CapabilityId, ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionOrigin,
-    ExtensionSnapshot,
-};
+use ::contracts::types::admission::RiskLevel;
+use ::contracts::CapabilityId;
 
 use crate::service::CorpusError;
 
@@ -70,10 +73,8 @@ impl ExtensionCatalog {
     pub(crate) fn into_entries(self) -> BTreeMap<ExtensionId, ExtensionDescriptor> {
         self.entries
     }
-}
 
-impl fabric::ExtensionCatalog for ExtensionCatalog {
-    fn snapshot(&self) -> ExtensionSnapshot {
+    pub fn snapshot(&self) -> ExtensionSnapshot {
         ExtensionSnapshot {
             entries: self.entries.values().cloned().collect(),
         }

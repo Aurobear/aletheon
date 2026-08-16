@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tracing::info;
 
-use fabric::Clock;
+use ::contracts::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -85,7 +85,7 @@ pub struct BottleneckReport {
     pub current_value: f64,
     pub threshold: f64,
     pub suggestion: UpgradeSuggestion,
-    pub timestamp: fabric::WallTime,
+    pub timestamp: ::contracts::WallTime,
 }
 
 /// System metrics snapshot.
@@ -106,7 +106,7 @@ struct SystemMetrics {
     /// Reserved for future network bottleneck analysis.
     #[allow(dead_code)]
     net_tx_bytes: u64,
-    timestamp: fabric::WallTime,
+    timestamp: ::contracts::WallTime,
 }
 
 /// Bottleneck detector perception source.

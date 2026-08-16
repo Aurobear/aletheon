@@ -2,7 +2,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use fabric::WorkspacePolicy;
+use ::contracts::WorkspacePolicy;
 
 pub const MAX_PASTE_BYTES: usize = 1_000_000;
 pub const MAX_ATTACHMENT_BYTES: u64 = 32 * 1024 * 1024;

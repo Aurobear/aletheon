@@ -3,7 +3,9 @@
 Date: 2026-08-10
 Baseline: `0bf690b2`
 Plan: `docs/plans/2026-08-08-composition-gateway-presentation-extraction.md` §CGP-05
-State: ACP typed-client translation seam established; legacy `ExecutiveAcpBackend` stays authoritative (no switch)
+State: **production ACP typed cutover active**; `aletheon/src/acp.rs` constructs
+`GatewayAcpBackend` over the official typed Gateway socket. No
+`ExecutiveAcpBackend` symbol remains in the production graph.
 
 ## Context receipt (runbook §3.1)
 
@@ -12,10 +14,10 @@ Slice: CGP-05 ACP typed client cutover (PR-A translation seam)
 Baseline commit: 0bf690b2
 Plan revision: CGP-05 (composition-gateway-presentation-extraction.md:340-346)
 Direct prerequisites: CGP-02 (gateway-client) + CGP-03 (typed handlers) — done
-Current authoritative writer: unchanged legacy ExecutiveAcpBackend + raw JSON-RPC alias
-Target owner/writer: interact ACP over typed GatewayClient; not yet switched
+Current authoritative writer: Runtime/Gateway behind `GatewayAcpBackend`
+Target owner/writer: interact ACP over typed GatewayClient; switched in production
 IDs minted here: none — consumes server-assigned SessionRef/TurnRef
-Production callers: none yet (seam additive; ACP still on the legacy backend)
+Production callers: `crates/aletheon/src/acp.rs:33` (`GatewayAcpBackend::connect`)
 Test-only callers: 1 typed_client test (InMemoryTransport)
 Installed/config callers: none
 Tables/files/wire schemas: none changed
@@ -53,12 +55,15 @@ bash scripts/cargo-agent.sh check -p interact      PASS
 bash scripts/cargo-agent.sh test -p interact --lib acp::typed_client  PASS (1 passed)
 bash scripts/cargo-agent.sh fmt --all -- --check   PASS
 git diff --check                                    PASS
-ARCH_SKIP_DEPENDENCIES=1 bash scripts/aletheon.sh acceptance architecture  PASS (23 findings, 0 deps; interact 57/57)
+ARCH_SKIP_DEPENDENCIES=1 bash scripts/aletheon.sh acceptance architecture  PASS (23 findings, 0 deps; interact 52/52)
 ```
 
-## 5. Remaining CGP-05 (PR-C)
+## 5. Remaining CGP-05 acceptance hardening
 
-Switch the ACP backend to the typed GatewayClient, wire reconnect/cancel concurrency during an active prompt, then delete `ExecutiveAcpBackend` + raw RPC alias + direct Session store recovery. Deployment-gated.
+The backend switch and direct-store removal are complete. Remaining evidence is
+the installed ACP-specific real request, concurrent cancel during an active
+prompt, and reconnect/cursor replay on the official socket. These are acceptance
+hardening items, not a second ACP authority path.
 
 ## 6. Rollback
 

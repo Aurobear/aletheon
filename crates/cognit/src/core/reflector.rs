@@ -6,10 +6,10 @@
 //!
 //! Also produces structured ReflectionEntry for persistent self-evolution.
 
-use fabric::cognit::{
+use crate::domain::{
     ExecutionResult, Reflection, ReflectionEntry, ReflectionOutcome, ReflectionTrigger,
 };
-use fabric::Clock;
+use ::contracts::Clock;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -190,7 +190,7 @@ impl Reflector {
         // Derive learned lessons from what_to_improve
         let learned: Vec<String> = reflection.what_to_improve.to_vec();
 
-        let now = fabric::wall_to_datetime(self.clock.wall_now());
+        let now = ::contracts::wall_to_datetime(self.clock.wall_now());
 
         ReflectionEntry {
             id: format!("reflect-{}", Uuid::new_v4()),
@@ -219,7 +219,7 @@ impl Reflector {
         learned: Vec<String>,
     ) -> ReflectionEntry {
         let confidence = if success { 0.8 } else { 0.3 };
-        let now = fabric::wall_to_datetime(self.clock.wall_now());
+        let now = ::contracts::wall_to_datetime(self.clock.wall_now());
 
         ReflectionEntry {
             id: format!("reflect-{}", Uuid::new_v4()),

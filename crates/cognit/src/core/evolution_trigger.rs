@@ -4,9 +4,9 @@
 //! periodic intervals, and confidence drops. When triggered, delegates
 //! to `ExperienceSummarizer` to produce an `EvolutionLogEntry`.
 
+use crate::domain::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+use ::contracts::Clock;
 use chrono::{DateTime, Duration, Utc};
-use fabric::cognit::{EvolutionLogEntry, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
-use fabric::Clock;
 use std::sync::Arc;
 
 /// Configuration for the evolution trigger.
@@ -99,7 +99,7 @@ impl EvolutionTrigger {
         }
 
         // Not yet — compute next check time
-        let now = fabric::wall_to_datetime(self.clock.wall_now());
+        let now = ::contracts::wall_to_datetime(self.clock.wall_now());
         let next_check = self
             .last_evolution
             .map(|t| t + Duration::hours(self.config.periodic_interval_hours as i64))
@@ -126,7 +126,7 @@ impl EvolutionTrigger {
             Some(mut entry) => {
                 // Override the trigger field with the actual reason from EvolutionTrigger
                 entry.trigger = trigger_reason;
-                self.last_evolution = Some(fabric::wall_to_datetime(self.clock.wall_now()));
+                self.last_evolution = Some(::contracts::wall_to_datetime(self.clock.wall_now()));
                 Some(entry)
             }
             None => None,
@@ -196,7 +196,7 @@ impl EvolutionTrigger {
     }
 
     fn check_periodic(&self) -> Option<String> {
-        let now = fabric::wall_to_datetime(self.clock.wall_now());
+        let now = ::contracts::wall_to_datetime(self.clock.wall_now());
         match self.last_evolution {
             Some(last) => {
                 let elapsed = now - last;
@@ -253,7 +253,7 @@ mod tests {
     ) -> ReflectionEntry {
         ReflectionEntry {
             id: format!("ref-{}", uuid::Uuid::new_v4()),
-            timestamp: fabric::wall_to_datetime(fabric::WallTime(0)),
+            timestamp: ::contracts::wall_to_datetime(::contracts::WallTime(0)),
             trigger,
             task_summary: "test task".to_string(),
             outcome,
@@ -304,7 +304,7 @@ mod tests {
     fn consecutive_failures_triggers() {
         let mut trigger = make_trigger();
         // Set last evolution to the past so periodic doesn't fire first
-        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
+        trigger.set_last_evolution(::contracts::wall_to_datetime(::contracts::WallTime(0)));
 
         let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn two_failures_not_enough() {
         let mut trigger = make_trigger();
-        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
+        trigger.set_last_evolution(::contracts::wall_to_datetime(::contracts::WallTime(0)));
 
         let reflections = vec![failure_entry(), failure_entry(), success_entry(0.9)];
 
@@ -333,8 +333,9 @@ mod tests {
     fn periodic_triggers_when_interval_exceeded() {
         let mut trigger = make_trigger();
         // Set last evolution to 7 hours ago
-        trigger
-            .set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)) - Duration::hours(7));
+        trigger.set_last_evolution(
+            ::contracts::wall_to_datetime(::contracts::WallTime(0)) - Duration::hours(7),
+        );
 
         let reflections = vec![success_entry(0.9)];
         let decision = trigger.check_should_evolve(&reflections);
@@ -349,8 +350,9 @@ mod tests {
     #[test]
     fn periodic_does_not_trigger_within_interval() {
         let mut trigger = make_trigger();
-        trigger
-            .set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)) - Duration::hours(2));
+        trigger.set_last_evolution(
+            ::contracts::wall_to_datetime(::contracts::WallTime(0)) - Duration::hours(2),
+        );
 
         let reflections = vec![success_entry(0.9)];
         let decision = trigger.check_should_evolve(&reflections);
@@ -360,7 +362,7 @@ mod tests {
     #[test]
     fn confidence_drop_triggers() {
         let mut trigger = make_trigger();
-        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
+        trigger.set_last_evolution(::contracts::wall_to_datetime(::contracts::WallTime(0)));
 
         // Older batch (high confidence) then recent batch (low confidence)
         let reflections = vec![
@@ -382,7 +384,7 @@ mod tests {
     #[test]
     fn confidence_drop_not_enough_data() {
         let mut trigger = make_trigger();
-        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
+        trigger.set_last_evolution(::contracts::wall_to_datetime(::contracts::WallTime(0)));
 
         // Only 3 entries — not enough for two batches
         let reflections = vec![success_entry(0.1), success_entry(0.9), success_entry(0.9)];
@@ -396,7 +398,7 @@ mod tests {
     fn consecutive_failures_priority_over_periodic() {
         let mut trigger = make_trigger();
         // Recently evolved, so periodic won't fire
-        trigger.set_last_evolution(fabric::wall_to_datetime(fabric::WallTime(0)));
+        trigger.set_last_evolution(::contracts::wall_to_datetime(::contracts::WallTime(0)));
 
         let reflections = vec![failure_entry(), failure_entry(), failure_entry()];
 

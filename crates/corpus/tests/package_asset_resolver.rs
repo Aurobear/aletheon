@@ -1,11 +1,11 @@
 use std::fs;
 
+use corpus::extension::asset::AssetKind;
+use corpus::extension::package::{AssetRef, PermissionRequestSet};
 use corpus::extension::resolver::PackageAssetResolver;
 use corpus::extension::store::{
     ActivationRecord, InstalledPackageRecord, PackageSourceRecord, PackageStore,
 };
-use fabric::types::extension_asset::AssetKind;
-use fabric::types::extension_package::{AssetRef, PermissionRequestSet};
 use tempfile::TempDir;
 
 const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

@@ -2,15 +2,16 @@
 
 use super::client::{GoogleAccessToken, GoogleApiError};
 use crate::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
+use ::contracts::Clock;
 use aes_gcm::aead::rand_core::RngCore;
 use aes_gcm::aead::OsRng;
 use anyhow::{Context, Result};
+use application::{
+    CapabilityGrant, ExternalCapabilityId, ExternalIdentityContractError, ExternalIdentityId,
+    ExternalProviderId, GrantState,
+};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use fabric::{
-    CapabilityGrant, Clock, ExternalCapabilityId, ExternalIdentityContractError,
-    ExternalIdentityId, ExternalProviderId, GrantState,
-};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};

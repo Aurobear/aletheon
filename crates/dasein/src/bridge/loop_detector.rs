@@ -1,64 +1,71 @@
-use fabric::security::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
-use fabric::self_field::{AwarenessRiskLevel, Verdict};
-use fabric::tool::ToolResult;
-use parking_lot::Mutex;
+use std::sync::Arc;
+
+use crate::core::contracts::{AwarenessRiskLevel, Verdict};
+use ::contracts::tool::ToolResult;
 use serde_json::Value;
 
-/// Bridges LoopDetector into SelfField's Verdict system.
-///
-/// Uses interior mutability (`parking_lot::Mutex`) because `LoopDetector` methods
-/// take `&mut self` while the bridge API exposes `&self` for consistency with
-/// other bridge modules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopDecision {
+    Allow,
+    Warn {
+        reason: String,
+    },
+    Block {
+        reason: String,
+        suggestion: String,
+    },
+    Escalate {
+        reason: String,
+    },
+    InterruptTurn {
+        reason: String,
+        consecutive_blocks: usize,
+    },
+}
+
+/// Host-supplied stateful loop detector port.
+pub trait LoopDecisionPort: Send + Sync {
+    fn on_new_turn(&self, turn_id: &str);
+    fn pre_check(&self, tool_name: &str, args: &Value, turn_id: &str) -> LoopDecision;
+    fn post_check(&self, tool_name: &str, args: &Value, result: &ToolResult, turn_id: &str);
+    fn end_turn(&self, turn_id: &str);
+}
+
+/// Maps host loop decisions into SelfField's Verdict system.
 pub struct LoopBridge {
-    detector: Mutex<LoopDetector>,
+    detector: Arc<dyn LoopDecisionPort>,
 }
 
 impl LoopBridge {
-    pub fn new() -> Self {
-        Self {
-            detector: Mutex::new(LoopDetector::new(LoopDetectorConfig::default())),
-        }
+    pub fn new(detector: Arc<dyn LoopDecisionPort>) -> Self {
+        Self { detector }
     }
 
-    /// Notify of a new turn.
     pub fn on_new_turn(&self, turn_id: &str) {
-        self.detector.lock().on_new_turn(turn_id);
+        self.detector.on_new_turn(turn_id);
     }
 
-    /// Pre-check a tool call for loops.
-    /// Maps `LoopVerdict` to `Option<Verdict>`.
     pub fn pre_check(&self, tool_name: &str, args: &Value, turn_id: &str) -> Option<Verdict> {
-        match self.detector.lock().pre_check(tool_name, args, turn_id) {
-            LoopVerdict::Allow => None,
-            LoopVerdict::Warn { .. } => None, // Warn but allow
-            LoopVerdict::Block { reason, suggestion } => Some(Verdict::Deny {
+        match self.detector.pre_check(tool_name, args, turn_id) {
+            LoopDecision::Allow | LoopDecision::Warn { .. } => None,
+            LoopDecision::Block { reason, suggestion } => Some(Verdict::Deny {
                 reason: format!("{reason}. Suggestion: {suggestion}"),
             }),
-            LoopVerdict::Escalate { reason } => Some(Verdict::RequireConfirmation {
+            LoopDecision::Escalate { reason } => Some(Verdict::RequireConfirmation {
                 reason,
                 risk_level: AwarenessRiskLevel::Critical,
             }),
-            LoopVerdict::InterruptTurn { reason, .. } => Some(Verdict::Deny {
+            LoopDecision::InterruptTurn { reason, .. } => Some(Verdict::Deny {
                 reason: format!("Turn interrupted: {reason}"),
             }),
         }
     }
 
-    /// Post-check: record a completed tool call.
     pub fn post_check(&self, tool_name: &str, args: &Value, result: &ToolResult, turn_id: &str) {
-        self.detector
-            .lock()
-            .post_check(tool_name, args, result, turn_id);
+        self.detector.post_check(tool_name, args, result, turn_id);
     }
 
-    /// End a turn.
     pub fn end_turn(&self, turn_id: &str) {
-        self.detector.lock().end_turn(turn_id);
-    }
-}
-
-impl Default for LoopBridge {
-    fn default() -> Self {
-        Self::new()
+        self.detector.end_turn(turn_id);
     }
 }

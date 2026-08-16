@@ -4,23 +4,23 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use ::contracts::types::embodiment::{
+    DeviceId, RiskClass, SkillDescriptor, SkillId, SkillOutcome, SkillRequest, SkillResult,
+};
+use ::contracts::types::episode_report::{AttemptRecord, EpisodeSettlement, SafeStopOutcome};
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::types::outcome_verification::{VerificationDecision, VerificationReport};
+use ::contracts::types::robot_failure::RobotFailureClass;
+use ::contracts::types::skill_proposal::{PolicyProvenance, SkillProposal};
+use ::contracts::types::world_state::{WorldSnapshot, WorldStatePort};
+use ::contracts::{MonoDeadline, MonoTime, OperationId};
 use async_trait::async_trait;
 use cognit::harness::robot::state::{ReplanContext, RobotHarnessConfig, RobotState};
+use cognit::harness::robot::PerceptionObservation;
 use cognit::harness::robot::{
     EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, RobotExecutionError, RobotHarness,
 };
 use cognit::ports::policy_provider::{PolicyProviderError, PolicyProviderPort};
-use fabric::types::embodiment::{
-    DeviceId, RiskClass, SkillDescriptor, SkillId, SkillOutcome, SkillRequest, SkillResult,
-};
-use fabric::types::episode_report::{AttemptRecord, EpisodeSettlement, SafeStopOutcome};
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};
-use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::robot_failure::RobotFailureClass;
-use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
-use fabric::{MonoDeadline, MonoTime, OperationId};
 
 struct TestWorld {
     sequence: AtomicU64,
@@ -301,7 +301,7 @@ fn proposal(target: &str) -> SkillProposal {
         skill: SkillId("move".into()),
         device: DeviceId("bot".into()),
         parameters: serde_json::json!({"target": target}),
-        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
+        goal_alignment: ::contracts::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "mode".into(),

@@ -1,7 +1,7 @@
 //! Keyboard-navigable projection of Aletheon-owned child Agent sessions.
 
+use ::contracts::protocol::client::AgentSessionSnapshot;
 use crossterm::event::{KeyCode, KeyEvent};
-use fabric::protocol::client::AgentSessionSnapshot;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -159,7 +159,7 @@ impl AgentInspector {
         );
         if area.height > 0 {
             Line::from(Span::styled(
-                "↑/↓ select · Enter inspect · r refresh · Esc close",
+                "↑/↓ select · Enter inspect · live auto-refresh · r refresh · Esc close",
                 Style::default().fg(Color::DarkGray),
             ))
             .render(Rect::new(area.x, area.y + footer, area.width, 1), buf);
@@ -179,12 +179,11 @@ impl AgentInspector {
             ])
             .split(area);
         let snapshot = &agent.snapshot;
-        let elapsed = snapshot.started_at_ms.map(|started| {
-            snapshot
-                .ended_at_ms
-                .unwrap_or(started)
-                .saturating_sub(started)
-        });
+        let elapsed = elapsed_ms(
+            snapshot.started_at_ms,
+            snapshot.ended_at_ms,
+            i64::try_from(crate::tui::test_infra::now_ms()).unwrap_or(i64::MAX),
+        );
         Paragraph::new(vec![
             Line::from(vec![
                 Span::styled("Agent ", Style::default().fg(Color::Cyan)),
@@ -260,11 +259,15 @@ impl AgentInspector {
             .block(Block::default().borders(Borders::TOP))
             .render(sections[1], buf);
         Line::from(Span::styled(
-            "↑/↓ scroll · h/Esc back · r refresh · q close",
+            "↑/↓ scroll · h/Esc back · live auto-refresh · r refresh · q close",
             Style::default().fg(Color::DarkGray),
         ))
         .render(sections[2], buf);
     }
+}
+
+fn elapsed_ms(started_at_ms: Option<i64>, ended_at_ms: Option<i64>, now_ms: i64) -> Option<i64> {
+    started_at_ms.map(|started| ended_at_ms.unwrap_or(now_ms).saturating_sub(started).max(0))
 }
 
 fn public_detail(value: &serde_json::Value) -> String {
@@ -336,5 +339,13 @@ mod tests {
             AgentInspectorAction::Continue
         );
         assert!(!inspector.detail);
+    }
+
+    #[test]
+    fn running_elapsed_uses_refresh_time_and_terminal_elapsed_uses_end_time() {
+        assert_eq!(elapsed_ms(Some(100), None, 350), Some(250));
+        assert_eq!(elapsed_ms(Some(100), Some(220), 350), Some(120));
+        assert_eq!(elapsed_ms(Some(400), None, 350), Some(0));
+        assert_eq!(elapsed_ms(None, None, 350), None);
     }
 }

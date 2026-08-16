@@ -2,13 +2,23 @@
 
 **Date:** 2026-08-16
 **Branch at diagnosis:** `fix/tui-live-agent-inspector`
-**Status:** accepted for execution — diagnosis only; do not implement from this file
-**Execution packet:** [`docs/plans/2026-08-16-architecture-coupling-closeout.md`](../../plans/2026-08-16-architecture-coupling-closeout.md)
-**Audience:** independent reviewer, then implementer. Re-read cited files before accepting or executing a claim.
+**Status:** accepted for execution — P0–P2 only; Finding F remains `NEEDS EVIDENCE`
+**Source closeout:** P0–P2 implemented and source-validated on 2026-08-16; installed-runtime acceptance was not run and Finding F remains out of scope
+**Execution packet:** [`docs/plans/2026-08-16-architecture-coupling-closeout.md`](../../plans/2026-08-16-architecture-coupling-closeout.md) (P0–P2 only)
+**Review outcome:** Findings A–E `AGREE`; Finding F `NEEDS EVIDENCE`; P0/P1/P2 sequence `AGREE`
+**Audience:** implementer and later reviewer. Re-read cited files before executing or revising a claim.
 **Scope:** long-running operation, coupling, and module responsibility after the Executive / Fabric retirement.
 
-This file is the reviewed diagnosis. Execute only the linked closeout plan.
-It does not add requirements beyond what the cited sources already contain.
+This file is the accepted diagnosis, not the execution packet. Execute only the
+linked P0–P2 closeout, one reviewed slice at a time. Finding F remains an
+evidence requirement and must not become an implementation phase. This file
+does not add requirements beyond the cited sources.
+
+Sections 3–10 preserve the diagnosis-time evidence snapshot and therefore still
+show the pre-closeout code facts. For the post-closeout source map, use
+`docs/design/architecture-overview.md` and the living ledgers under
+`config/architecture/`; do not reinterpret the historical locators below as
+current-code claims.
 
 ---
 
@@ -83,9 +93,10 @@ rg -n 'ApplicationFacade|DefaultApplicationFacade' crates --glob '*.rs'
 
 ### Claim
 
-`crates/executive` retirement moved a god crate; it did not decompose it.
-`crates/aletheon/src/wiring/` now holds host, application, adapters, and a
-second composition path in one binary crate.
+`crates/executive` retirement moved a god crate; it did not fully decompose it.
+Selected pure use cases now live in `crates/application` and have production
+callers, but `crates/aletheon/src/wiring/` still holds host, primary
+orchestration, adapters, I/O, and a second composition path in one binary crate.
 
 ### Evidence
 
@@ -110,7 +121,14 @@ Largest live files inside the composition root:
 | `crates/aletheon/src/wiring/daemon/bootstrap/request.rs` | 1558 |
 | `crates/aletheon/src/wiring/daemon/bootstrap/services.rs` | 1061 |
 
-Directory responsibilities, from tree inspection of `crates/aletheon/src/wiring/`:
+Already extracted, with production callers (this is why “not decomposed” is
+too strong):
+
+- `DaemonLifecycleService` — `crates/aletheon/src/wiring.rs:141`
+- `TransactionReviewService` / `SessionInputCoordinator` —
+  `crates/aletheon/src/wiring/daemon/handler/ports.rs:44-45`
+
+Directory responsibilities still inside `crates/aletheon/src/wiring/`:
 
 ```text
 wiring/application/     turn, goal, agent_control, evaluation, conscious
@@ -131,9 +149,9 @@ projection without a crate cut.
 
 - Confirm `crates/executive` is absent from `Cargo.toml` members.
 - Confirm the five files above still exist at comparable size.
-- Reject the finding only if production use cases have moved out of
-  `aletheon/src/wiring/application` into `crates/application` or another
-  I/O-free owner.
+- Reject the finding only if primary turn/goal/agent-control orchestration
+  has also left `aletheon/src/wiring/application`. Selected
+  `crates/application` callers alone are not a reject.
 
 ---
 
@@ -274,8 +292,9 @@ Reject the finding only if exec now enters `TurnEngine` / `TurnPipeline` and
 ### Claim
 
 Allowed workspace edges in `config/architecture-dependencies.txt` still encode
-domain-to-domain and domain-to-runtime implementation coupling. Three edges
-are expensive enough to name.
+domain-to-domain and domain-to-runtime implementation coupling. Three high-cost
+coupling groups are named below. One table row is an in-crate infrastructure
+dependency, not a workspace crate edge; it belongs to the cognit group.
 
 ### Allowed edges that already contradict the intended layering
 
@@ -298,14 +317,14 @@ contracts  <  kernel / runtime / cognit / dasein / corpus / mnemosyne
                    +--------- application -----------+
 ```
 
-### Concrete reverse edges
+### Three high-cost coupling groups
 
-| Edge | What crosses | Evidence |
-|---|---|---|
-| `dasein` → `corpus` | Self uses tool-security implementation | `crates/dasein/src/bridge/policy.rs:2` `use corpus::security::policy::{PolicyEngine, PolicyVerdict}`; `crates/dasein/src/bridge/loop_detector.rs:3` `use corpus::security::loop_detector::...`; `crates/dasein/Cargo.toml:12` |
-| `cognit` → `runtime` | Cognition uses lifecycle compaction / event bus | `crates/cognit/src/harness/linear/mod.rs:64,99`; `crates/cognit/src/adapters/inference/pulse.rs:16`; `crates/cognit/Cargo.toml:11` |
-| `cognit` infra deps | Domain crate owns HTTP/DB/gRPC clients | `crates/cognit/Cargo.toml:28-33` (`reqwest`, `rusqlite`, `tonic`) |
-| `mnemosyne` hub | Memory crate depends on cognition + application + kernel + runtime + platform unconditionally | `crates/mnemosyne/Cargo.toml:10-16`. Feature `cognitive-memory` is off by default (`:44-45`), but the `cognit` crate dependency is not optional. |
+| Group | Kind | What crosses | Evidence |
+|---|---|---|---|
+| `dasein` → `corpus` | workspace crate edge | Self uses tool-security implementation | `crates/dasein/src/bridge/policy.rs:2` `use corpus::security::policy::{PolicyEngine, PolicyVerdict}`; `crates/dasein/src/bridge/loop_detector.rs:3` `use corpus::security::loop_detector::...`; `crates/dasein/Cargo.toml:12` |
+| `cognit` → `runtime` | workspace crate edge | Cognition uses lifecycle compaction / event bus | `crates/cognit/src/harness/linear/mod.rs:64,99`; `crates/cognit/src/adapters/inference/pulse.rs:16`; `crates/cognit/Cargo.toml:11` |
+| `cognit` infra deps | in-crate production dependency, not a workspace edge | Domain crate owns HTTP/DB/gRPC clients | `crates/cognit/Cargo.toml:28-33` (`reqwest`, `rusqlite`, `tonic`) |
+| `mnemosyne` hub | workspace crate edges | Memory crate depends on cognition + application + kernel + runtime + platform unconditionally | `crates/mnemosyne/Cargo.toml:10-16`. Feature `cognitive-memory` is off by default (`:44-45`), but the `cognit` crate dependency is not optional. |
 
 `corpus` public surface also remains a dump:
 
@@ -336,9 +355,10 @@ required `mnemosyne` dependency today; that is not feature-gated.
 
 ### Claim
 
-Several living control-plane files still name `executive` and `fabric` as
-owners, paths, or recommended crates. Gates that grep those paths cannot
-protect the current tree.
+Several active control-plane files still name `executive` and `fabric` as
+owners or paths. Two additional TSVs mix current-looking data with an
+Executive-era snapshot and are not consumed by the gate. Together they cannot
+reliably describe or protect the current tree.
 
 ### Evidence
 
@@ -354,16 +374,25 @@ protect the current tree.
 | `docs/arch/CORE_REFACTOR_VERIFICATION_STATUS.md:9` | “retain Fabric and Executive as physical crates” | Neither crate is a workspace member |
 | `docs/arch/PUBLIC_API_CONTRACTION_INVENTORY.md:20-25,54` | Executive facade and `cargo check -p executive` | Package gone |
 | `config/architecture/hotspot-budgets.tsv` | largest listed hotspot `runner.rs` 2042 | Live largest file is `turn_pipeline.rs` 2524, not in the table |
+| `config/architecture/state-machine-inventory.tsv:3` | `largest_io_module` = `crates/executive/src/application/turn_pipeline.rs` | File is gone; live module is `crates/aletheon/src/wiring/application/turn_pipeline.rs` |
 | `docs/design/roadmap/open-questions.md:33` | `crates/fabric/src/security/loop_detector.rs` | Implementation is under `corpus` (`dasein` imports `corpus::security::loop_detector`) |
 
 Many TSV files still carry `frozen_commit=` from the Executive-era tree.
+
+`scripts/libexec/aletheon/architecture-check.sh` does **not** read
+`executive-layers.tsv` or `state-machine-inventory.tsv`. Those files are
+therefore not protected by `bash scripts/aletheon.sh acceptance architecture`.
+P0 treats `executive-layers.tsv` as a historical retirement snapshot and
+`state-machine-inventory.tsv` as a living but ungated inventory; each header
+must say so explicitly.
 
 ### Why it matters
 
 For a long-running architecture program, a false map is worse than no map.
 Reviewers and future slices will optimize a ghost crate. Architecture checks
 that still mention `executive::host` as a negative pattern cannot see
-`aletheon::wiring`.
+`aletheon::wiring`. Passing architecture acceptance does not prove these two
+inventories are current.
 
 ### Reviewer check
 
@@ -470,11 +499,13 @@ be reported as a current implementation absence when the source has changed.
 
 ### Reviewer check
 
-Mark this finding **NEEDS EVIDENCE** unless a later installed closeout proves
-all relevant production callers share the machine/provider authority and the
-monitor fixes satisfy their runtime criteria. Do not infer duplicate persistence
-writers from the number of distinct stores. Do not infer restart divergence
-from separate component ownership without a differing durable outcome.
+Mark this finding **NEEDS EVIDENCE**. Keep the checks in this section. Do not
+promote them into a P3 execution packet. A later installed closeout may close
+the finding; this diagnosis must not invent that work order.
+
+Do not infer duplicate persistence writers from the number of distinct stores.
+Do not infer restart divergence from separate component ownership without a
+differing durable outcome.
 
 Search before disagreeing:
 
@@ -510,18 +541,23 @@ does not invent features.
 ### P0 — make the map equal the territory
 
 1. Rewrite `docs/design/architecture-overview.md` and owner columns in
-   `config/architecture/*.tsv` so `executive` / `fabric` are historical only.
-2. Put `turn_pipeline.rs` on `hotspot-budgets.tsv`. Freeze new responsibilities
+   living `config/architecture/*.tsv` so `executive` / `fabric` are historical
+   only.
+2. Mark `executive-layers.tsv` as a historical retirement snapshot. Mark
+   `state-machine-inventory.tsv` living/ungated and remap its stale TurnPipeline
+   row; `:3` still points at deleted
+   `crates/executive/src/application/turn_pipeline.rs`.
+3. Put `turn_pipeline.rs` on `hotspot-budgets.tsv`. Freeze new responsibilities
    from entering it while it is the largest live file.
-3. Keep `TurnService → SessionTurnEngine` as the single open converge item in
+4. Keep `TurnService → TurnEngine` as the single open converge item in
    `architecture-status.toml`. Do not open a parallel crate-split.
 
 ### P1 — one Turn, one Application
 
-4. Production has one turn entry: `TurnEngine`. `TurnService` becomes a thin
+5. Production has one turn entry: `TurnEngine`. `TurnService` becomes a thin
    adapter or is deleted. Daemon and `aletheon exec` must share the same reducer;
    `aletheon -m` already enters the daemon path.
-5. Choose exactly one:
+6. Choose exactly one:
    - Move pure use cases (goal state, approval decision, turn policy) from
      `wiring/application` into `crates/application`, leave I/O in adapters; or
    - Define `crates/application` as the narrow pure-contract/use-case owner,
@@ -529,27 +565,17 @@ does not invent features.
      orchestration in `aletheon/wiring/application`.
    Do not keep two undocumented ownership stories.
 
-### P2 — cut the three most expensive reverse edges
+### P2 — cut the three high-cost coupling groups
 
-6. `dasein` → `corpus` becomes a `contracts` policy port.
-7. `cognit` → `runtime` compaction / event-bus becomes a port;
+7. `dasein` → `corpus` becomes a `contracts` policy port.
+8. `cognit` → `runtime` compaction / event-bus becomes a port;
    `rusqlite` / `reqwest` leave cognit production dependencies.
-8. `mnemosyne` → `cognit` / `application` becomes optional/feature or a port.
+9. `mnemosyne` → `cognit` / `application` becomes optional/feature or a port.
    Default daemon graph must not require them if the feature is off.
 
-### P3 — acceptance / falsify only
-
-These items are not new implementation gaps. Do not start code until the
-named evidence exists or the hypothesis is closed.
-
-9. Persistence owner cells that still say `executive` are Finding E; refresh
-   them in P0. Do not infer duplicate writers from the number of stores.
-10. Prove production LLM and embedding callers acquire the machine provider
-    permit, or name a bypassing caller. Session-local retry is not a substitute
-    (`AGENTS.md:68-70`).
-11. Find one differing durable restart/settlement outcome between daemon
-    `TurnPipeline` and `aletheon exec`. If none is found, close the
-    behavioral-divergence hypothesis; keep the dual-path structural finding (C).
+Finding F stays **NEEDS EVIDENCE**. Its checks (machine-permit caller census,
+one differing restart outcome, no duplicate-writer inference from store count)
+remain in §8. They are not P0–P2 work items.
 
 ### Explicitly not recommended now
 
@@ -577,7 +603,8 @@ named evidence exists or the hypothesis is closed.
 
 ## 12. Reviewer report template
 
-Please return:
+Recorded review outcome is shown in the header. Reuse this template only if
+later code changes invalidate a finding:
 
 ```text
 Verdict: AGREE | AGREE WITH FIXES | REJECT
@@ -589,8 +616,8 @@ Finding D  reverse-domain-edges               AGREE/DISAGREE/NEEDS EVIDENCE
 Finding E  ledger-drift                       AGREE/DISAGREE/NEEDS EVIDENCE
 Finding F  long-running-closeout-mixed        AGREE/DISAGREE/NEEDS EVIDENCE
 
-P0/P1/P2 sequence + P3 acceptance             AGREE/REORDER/REJECT
-If REORDER, write the new order and why.
+P0/P1/P2 sequence                             AGREE/REORDER/REJECT
+If REORDER, write the new order and why. P3 is not an execution phase.
 
 Disagreements (claim, cited path, code reality, proposed correction):
 - ...
@@ -623,6 +650,8 @@ Primary sources:
 - `config/architecture/application-use-case-census.tsv`
 - `config/architecture/persistence-surfaces.tsv`
 - `config/architecture/hotspot-budgets.tsv`
+- `config/architecture/state-machine-inventory.tsv`
+- `config/architecture/executive-layers.tsv`
 - `config/architecture/metrics.env`
 - `docs/design/architecture-overview.md`
 - `docs/arch/CORE_REFACTOR_COMPLETION_REPORT.md`

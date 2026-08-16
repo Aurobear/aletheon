@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
-use fabric::change_transaction::{
+use super::super::repository::RepositoryContext;
+use ::contracts::change_transaction::{
     ValidationImpact, ValidationPlanOmission, ValidationPlanStep, ValidationRisk,
 };
-use fabric::repository::RepositoryContext;
 
 pub(super) struct ValidationProjection {
     pub(super) steps: Vec<ValidationPlanStep>,

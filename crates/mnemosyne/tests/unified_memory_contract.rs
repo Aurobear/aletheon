@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ::contracts::{Clock, Subsystem, SubsystemContext};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use fabric::{Clock, Subsystem, SubsystemContext};
 use mnemosyne::runtime::{CoreMemory, EpisodicMemory, FactStore, MemoryBlock, RecallMemory};
 use mnemosyne::supplemental::{
     EnqueueOutcome, SupplementalErrorCategory, SupplementalMemoryError, SupplementalRecall,
@@ -40,7 +40,6 @@ impl Fixture {
                 name: "unified-memory-contract".into(),
                 working_dir: root.to_path_buf(),
                 config: Value::Null,
-                bus: None,
             })
             .await
             .unwrap();
@@ -64,7 +63,6 @@ impl Fixture {
                 name: "unified-memory-contract-reopen".into(),
                 working_dir: self.root.clone(),
                 config: Value::Null,
-                bus: None,
             })
             .await
             .unwrap();

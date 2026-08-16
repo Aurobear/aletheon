@@ -3,7 +3,7 @@
 //! All frontends observe the same event stream. Each frontend
 //! implements `EventSink` to receive events.
 
-use fabric::{ipc::TurnEventV1, tool::ToolResult, InferenceUsage};
+use ::contracts::{ipc::TurnEventV1, tool::ToolResult, InferenceUsage};
 
 /// Lifecycle events emitted by the agent.
 #[derive(Debug, Clone)]
@@ -261,11 +261,11 @@ pub struct ToolResultEvent {
     pub content: String,
     pub is_error: bool,
     pub execution_time_ms: u64,
-    pub patch_delta: Option<fabric::PatchDelta>,
+    pub patch_delta: Option<::contracts::PatchDelta>,
     /// Additional Host-authorized schemas made model-visible after this tool
     /// result. This is projection metadata only; it never grants execution
     /// authority and is intentionally omitted from public UI events.
-    pub activated_tool_definitions: Vec<fabric::ToolDefinition>,
+    pub activated_tool_definitions: Vec<::contracts::ToolDefinition>,
 }
 
 impl From<(String, bool)> for ToolResultEvent {
@@ -378,7 +378,7 @@ mod tests {
         let tr = ToolResult {
             content: "ok".into(),
             is_error: false,
-            metadata: fabric::tool::ToolResultMeta {
+            metadata: ::contracts::tool::ToolResultMeta {
                 execution_time_ms: 50,
                 truncated: false,
                 patch_delta: None,
@@ -394,7 +394,7 @@ mod tests {
         let tr = ToolResult {
             content: "error output".into(),
             is_error: true,
-            metadata: fabric::tool::ToolResultMeta {
+            metadata: ::contracts::tool::ToolResultMeta {
                 execution_time_ms: 10,
                 truncated: false,
                 patch_delta: None,

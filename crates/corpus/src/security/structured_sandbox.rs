@@ -1,8 +1,8 @@
 //! Transport port for structured tools whose strategy requires isolation.
 
+use ::contracts::tool::{ToolContext, ToolExecutionDescriptor, ToolResult};
+use ::contracts::SandboxConfig;
 use async_trait::async_trait;
-use fabric::tool::{ToolContext, ToolExecutionDescriptor, ToolResult};
-use fabric::SandboxConfig;
 
 /// Executes a structured tool through an isolated filesystem-capable owner
 /// (for example the execd). The runner deliberately has no in-process

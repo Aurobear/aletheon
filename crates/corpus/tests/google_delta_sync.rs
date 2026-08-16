@@ -1,10 +1,12 @@
+use ::contracts::PrincipalId;
+use application::{ExternalCapabilityId, ExternalIdentityId};
 use async_trait::async_trait;
+use corpus::tools::google::ExternalEvent;
 use corpus::tools::google::{
     CalendarSyncConfig, CalendarSynchronizer, DriveSyncConfig, DriveSyncHealthEvent,
     DriveSynchronizer, GoogleAccessToken, GoogleApiClient, GoogleApiEndpoints, GoogleApiError,
     GoogleCalendarAdapter, GoogleCredentialSource, GoogleDriveAdapter,
 };
-use fabric::{ExternalCapabilityId, ExternalEvent, ExternalIdentityId, PrincipalId};
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;

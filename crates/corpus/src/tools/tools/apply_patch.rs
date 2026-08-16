@@ -59,8 +59,8 @@ impl Tool for ApplyPatchTool {
     fn approval_descriptor(
         &self,
         input: &serde_json::Value,
-        workspace: &fabric::WorkspacePolicy,
-    ) -> anyhow::Result<Option<fabric::tool::ToolApprovalDescriptor>> {
+        workspace: &::contracts::WorkspacePolicy,
+    ) -> anyhow::Result<Option<::contracts::tool::ToolApprovalDescriptor>> {
         let base = input["base_dir"]
             .as_str()
             .map(std::path::PathBuf::from)
@@ -105,7 +105,7 @@ impl Tool for ApplyPatchTool {
         }
         targets.sort();
         targets.dedup();
-        Ok(Some(fabric::tool::ToolApprovalDescriptor {
+        Ok(Some(::contracts::tool::ToolApprovalDescriptor {
             mutation_targets: targets,
         }))
     }
@@ -325,7 +325,7 @@ fn operation_paths(operation: &PatchOperation) -> Vec<&str> {
     }
 }
 
-fn tool_error(message: String, start: fabric::MonoTime, ctx: &ToolContext) -> ToolResult {
+fn tool_error(message: String, start: ::contracts::MonoTime, ctx: &ToolContext) -> ToolResult {
     ToolResult {
         content: message,
         is_error: true,
@@ -340,7 +340,7 @@ fn tool_error(message: String, start: fabric::MonoTime, ctx: &ToolContext) -> To
 fn patch_delta(
     result: &super::structured_patch::StructuredPatchResult,
     diff_text: Option<&str>,
-) -> fabric::PatchDelta {
+) -> ::contracts::PatchDelta {
     const PREVIEW_BYTES: usize = 64 * 1024;
     let artifact = diff_text.and_then(|diff| {
         ArtifactStore::new(
@@ -362,11 +362,11 @@ fn patch_delta(
             (Some(diff[..end].to_string()), true)
         }
     });
-    fabric::PatchDelta {
+    ::contracts::PatchDelta {
         applied: result
             .applied
             .iter()
-            .map(|operation| fabric::PatchDeltaApplied {
+            .map(|operation| ::contracts::PatchDeltaApplied {
                 operation: operation.op_type.clone(),
                 path: operation.path.clone(),
                 hunks_applied: operation.hunks_applied,
@@ -377,7 +377,7 @@ fn patch_delta(
         failed: result
             .failed
             .iter()
-            .map(|operation| fabric::PatchDeltaFailed {
+            .map(|operation| ::contracts::PatchDeltaFailed {
                 operation: operation.op_type.clone(),
                 path: operation.path.clone(),
                 error: operation.error.clone(),
@@ -387,7 +387,7 @@ fn patch_delta(
         files_changed: result
             .files_changed
             .iter()
-            .map(|change| fabric::PatchDeltaFileChange {
+            .map(|change| ::contracts::PatchDeltaFileChange {
                 path: change.path.clone(),
                 change_type: change.change_type.clone(),
                 hunks_applied: change.hunks_applied,
@@ -397,7 +397,7 @@ fn patch_delta(
             })
             .collect(),
         diff_preview,
-        diff_artifact: artifact.map(|artifact| fabric::tool::PatchDiffArtifactRef {
+        diff_artifact: artifact.map(|artifact| ::contracts::tool::PatchDiffArtifactRef {
             sha256: artifact.sha256,
             size_bytes: artifact.size_bytes,
             mime: artifact.mime,
@@ -626,7 +626,7 @@ async fn preview_result(
     operations: &[PatchOperation],
     base_dir: &std::path::Path,
     ctx: &ToolContext,
-    start: fabric::MonoTime,
+    start: ::contracts::MonoTime,
 ) -> ToolResult {
     let (files, failed) = preview_structured_operations(operations, base_dir, ctx).await;
     let is_error = !failed.is_empty();
@@ -960,7 +960,7 @@ fn emit_patch_progress(
     let Some(sender) = &ctx.turn_event_sender else {
         return;
     };
-    if let Err(delivery_error) = sender.send(&fabric::ipc::TurnEventV1::PatchProgress {
+    if let Err(delivery_error) = sender.send(&::contracts::ipc::TurnEventV1::PatchProgress {
         status: status.into(),
         path: path.map(str::to_owned),
         operation: operation.map(str::to_owned),
@@ -1006,20 +1006,20 @@ mod tests {
 
     fn governed_context(root: &std::path::Path, allowed_paths: Vec<String>) -> ToolContext {
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots(root.to_path_buf(), vec![]).unwrap();
+            ::contracts::WorkspacePolicy::from_resolved_roots(root.to_path_buf(), vec![]).unwrap();
         ToolContext {
-            approval_authority: Some(fabric::ToolApprovalAuthority {
-                principal_id: fabric::PrincipalId("test".into()),
-                connection_id: fabric::ConnectionId::new(),
-                thread_id: fabric::ThreadId("test".into()),
-                turn_id: fabric::TurnId::new(),
+            approval_authority: Some(::contracts::ToolApprovalAuthority {
+                principal_id: ::contracts::PrincipalId("test".into()),
+                connection_id: ::contracts::ConnectionId::new(),
+                thread_id: ::contracts::ThreadId("test".into()),
+                turn_id: ::contracts::TurnId::new(),
                 call_id: "apply-patch".into(),
                 workspace,
-                granted_scope: fabric::CapabilityScope {
+                granted_scope: ::contracts::CapabilityScope {
                     allowed_paths,
                     ..Default::default()
                 },
-                permission_mode: fabric::permission::HostPermissionMode::Safe,
+                permission_mode: ::contracts::permission::HostPermissionMode::Safe,
             }),
             agent: None,
             working_dir: root.to_path_buf(),
@@ -1439,8 +1439,7 @@ mod tests {
     #[tokio::test]
     async fn tool_path_uses_streaming_applier_when_sender_is_trusted() {
         let tmp = TempDir::new().unwrap();
-        let (mut events, sender) =
-            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(8));
+        let (mut events, sender) = ::contracts::ipc::TurnEventStream::new();
         let ctx = ToolContext {
             approval_authority: None,
             agent: None,
@@ -1465,16 +1464,16 @@ mod tests {
         assert!(result.metadata.patch_delta.is_some());
         assert!(matches!(
             events.recv().await.unwrap(),
-            fabric::ipc::TurnEventV1::PatchProgress { status, .. } if status == "started"
+            ::contracts::ipc::TurnEventV1::PatchProgress { status, .. } if status == "started"
         ));
         assert!(matches!(
             events.recv().await.unwrap(),
-            fabric::ipc::TurnEventV1::PatchProgress { status, path: Some(path), .. }
+            ::contracts::ipc::TurnEventV1::PatchProgress { status, path: Some(path), .. }
                 if status == "file_changed" && path == "streamed.txt"
         ));
         assert!(matches!(
             events.recv().await.unwrap(),
-            fabric::ipc::TurnEventV1::PatchProgress { status, .. } if status == "completed"
+            ::contracts::ipc::TurnEventV1::PatchProgress { status, .. } if status == "completed"
         ));
     }
 }

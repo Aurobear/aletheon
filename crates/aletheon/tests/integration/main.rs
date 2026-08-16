@@ -12,7 +12,7 @@ pub(crate) fn installed_runtime_lock() -> MutexGuard<'static, ()> {
 }
 
 pub(crate) fn official_user_socket() -> PathBuf {
-    fabric::paths::UserRuntimePaths::resolve(&fabric::paths::ProcessRuntimeEnvironment)
+    ::contracts::paths::UserRuntimePaths::resolve(&::contracts::paths::ProcessRuntimeEnvironment)
         .expect("official user runtime paths should resolve")
         .socket_path()
 }

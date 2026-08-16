@@ -5,6 +5,9 @@
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+
+pub mod coding_runtime;
+pub use coding_runtime::CodingRuntimeConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -92,8 +95,8 @@ impl Default for DeploymentPathsConfig {
     }
 }
 
-impl From<fabric::paths::ProductionPaths> for DeploymentPathsConfig {
-    fn from(value: fabric::paths::ProductionPaths) -> Self {
+impl From<::contracts::paths::ProductionPaths> for DeploymentPathsConfig {
+    fn from(value: ::contracts::paths::ProductionPaths) -> Self {
         Self {
             state_root: value.state_root,
             config_root: value.config_root,
@@ -260,7 +263,7 @@ impl DeploymentConfig {
     pub fn production() -> Self {
         Self {
             mode: DeploymentMode::Production,
-            paths: fabric::paths::ProductionPaths::default().into(),
+            paths: ::contracts::paths::ProductionPaths::default().into(),
             ..Self::default()
         }
     }
@@ -269,7 +272,7 @@ impl DeploymentConfig {
         if self.mode != DeploymentMode::Production {
             return Ok(());
         }
-        let paths = fabric::paths::ProductionPaths {
+        let paths = ::contracts::paths::ProductionPaths {
             state_root: self.paths.state_root.clone(),
             config_root: self.paths.config_root.clone(),
             runtime_root: self.paths.runtime_root.clone(),
@@ -410,7 +413,7 @@ pub struct AgentConfig {
     pub compaction_keep_recent: usize,
     /// Percent of the context window (e.g. `80` = 80%) at which automatic
     /// compaction triggers. Carried through to the compressor threshold via
-    /// `ExecutiveConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.
+    /// `CognitiveRuntimeConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: usize,
     #[serde(default = "default_system_prompt")]

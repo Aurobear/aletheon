@@ -2,30 +2,45 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use fabric::agent_control::MAX_LIST_ITEMS;
-use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use fabric::{
+use ::contracts::agent_control::MAX_LIST_ITEMS;
+use ::contracts::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use ::contracts::{
     AgentBudget, AgentContextFork, AgentControlError, AgentControlPort, AgentId, AgentListRequest,
     AgentProfileId, AgentRuntimeCapability, AgentSendRequest, AgentSpawnIntent, AgentWaitRequest,
 };
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Clone)]
 pub struct AgentControlTools {
     control: Arc<dyn AgentControlPort>,
+    /// Runtime-resolved profile names.  The static profile definition pass
+    /// intentionally cannot know these names yet, but the executable tool
+    /// schema can: exposing the enum prevents a model from guessing a
+    /// `default`/`researcher` profile that was never loaded.
+    profile_names: Vec<String>,
 }
 
 impl AgentControlTools {
     pub fn new(control: Arc<dyn AgentControlPort>) -> Self {
-        Self { control }
+        Self {
+            control,
+            profile_names: Vec::new(),
+        }
+    }
+
+    pub fn with_profile_names(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.profile_names = names.into_iter().collect();
+        self.profile_names.sort();
+        self.profile_names.dedup();
+        self
     }
 
     /// Stable `ToolDefinition` entries for the five explicit agent control
     /// operations.  No `AgentControlPort` is needed — profiles can reference
     /// these names before the runtime is bound.
-    pub fn definitions() -> Vec<fabric::ToolDefinition> {
+    pub fn definitions() -> Vec<::contracts::ToolDefinition> {
         [
             (AgentControlOperation::Spawn, "agent_spawn"),
             (AgentControlOperation::Wait, "agent_wait"),
@@ -34,7 +49,7 @@ impl AgentControlTools {
             (AgentControlOperation::List, "agent_list"),
         ]
         .into_iter()
-        .map(|(op, name)| fabric::ToolDefinition {
+        .map(|(op, name)| ::contracts::ToolDefinition {
             name: name.into(),
             description: Self::describe(op).into(),
             input_schema: Self::schema(op),
@@ -57,12 +72,23 @@ impl AgentControlTools {
     }
 
     fn schema(operation: AgentControlOperation) -> serde_json::Value {
+        Self::schema_with_profiles(operation, &[])
+    }
+
+    fn schema_with_profiles(
+        operation: AgentControlOperation,
+        profile_names: &[String],
+    ) -> serde_json::Value {
         // Return the same schema as the Tool impl's input_schema for each op.
         match operation {
             AgentControlOperation::Spawn => json!({
                 "type":"object","additionalProperties":false,
                 "properties":{
-                    "profile":{"type":"string","minLength":1,"maxLength":512},
+                    "profile": if profile_names.is_empty() {
+                        json!({"type":"string","minLength":1,"maxLength":512})
+                    } else {
+                        json!({"type":"string","enum":profile_names})
+                    },
                     "runtime":{"type":"string","minLength":1,"maxLength":512,"description":"Optional registered runtime ID or alias override. The override must satisfy all effective requirements."},
                     "required_capabilities":{"type":"array","maxItems":10,"uniqueItems":true,"items":{"type":"string","enum":["code_read","code_search","code_edit","shell","test","git","diagnostics","browser","device_observe","device_command"]}},
                     "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Provider-neutral natural-language task for the child Agent."},
@@ -119,6 +145,7 @@ impl AgentControlTools {
             Arc::new(AgentControlTool {
                 control: self.control.clone(),
                 operation,
+                profile_names: self.profile_names.clone(),
             }) as Arc<dyn Tool>
         })
         .collect()
@@ -137,6 +164,7 @@ enum AgentControlOperation {
 struct AgentControlTool {
     control: Arc<dyn AgentControlPort>,
     operation: AgentControlOperation,
+    profile_names: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -181,7 +209,7 @@ struct AgentInput {
 #[serde(deny_unknown_fields)]
 struct ListInput {
     #[serde(default)]
-    status: Option<fabric::AgentRunStatus>,
+    status: Option<::contracts::AgentRunStatus>,
     limit: usize,
 }
 
@@ -213,30 +241,9 @@ impl Tool for AgentControlTool {
 
     fn input_schema(&self) -> Value {
         match self.operation {
-            AgentControlOperation::Spawn => json!({
-                "type":"object","additionalProperties":false,
-                "properties":{
-                    "profile":{"type":"string","minLength":1,"maxLength":512},
-                    "runtime":{"type":"string","minLength":1,"maxLength":512,"description":"Optional registered runtime ID or alias override. The override must satisfy all effective requirements."},
-                    "required_capabilities":{"type":"array","maxItems":10,"uniqueItems":true,"items":{"type":"string","enum":["code_read","code_search","code_edit","shell","test","git","diagnostics","browser","device_observe","device_command"]}},
-                    "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Provider-neutral natural-language task for the child Agent."},
-                    "context":{"type":"object"},
-                    "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512},"description":"Optional narrower callable subset. Omit to let the Host resolve the target profile, then attenuate it against the parent delegation authority."},
-                    "budget":{
-                        "type":"object","additionalProperties":false,
-                        "properties":{
-                            "max_input_tokens":{"type":"integer","minimum":1},
-                            "max_output_tokens":{"type":"integer","minimum":1},
-                            "max_tool_calls":{"type":"integer","minimum":1},
-                            "max_elapsed_ms":{"type":"integer","minimum":1},
-                            "max_cost_usd":{"type":["number","null"],"minimum":0},
-                            "max_depth":{"type":"integer","minimum":1}
-                        },
-                        "required":["max_input_tokens","max_output_tokens","max_tool_calls","max_elapsed_ms","max_depth"]
-                    }
-                },
-                "required":["profile","task","budget"]
-            }),
+            AgentControlOperation::Spawn => {
+                AgentControlTools::schema_with_profiles(self.operation, &self.profile_names)
+            }
             AgentControlOperation::Wait => json!({
                 "type":"object","additionalProperties":false,
                 "properties":{"agent_id":{"type":"string","format":"uuid"},"timeout_ms":{"type":"integer","minimum":1}},
@@ -274,7 +281,7 @@ impl Tool for AgentControlTool {
                 .map(|timeout| {
                     std::time::Duration::from_millis(
                         timeout
-                            .min(fabric::agent_control::MAX_AGENT_WAIT_MS)
+                            .min(::contracts::agent_control::MAX_AGENT_WAIT_MS)
                             .saturating_add(SETTLEMENT_GRACE_MS),
                     )
                 })
@@ -287,6 +294,7 @@ impl Tool for AgentControlTool {
         Box::new(Self {
             control: self.control.clone(),
             operation: self.operation,
+            profile_names: self.profile_names.clone(),
         })
     }
 
@@ -342,7 +350,7 @@ impl Tool for AgentControlTool {
                         caller_root_agent_id: trusted.caller_root_agent_id,
                         sender_agent_id: Some(trusted.parent_agent_id),
                         agent_id: input.agent_id,
-                        kind: fabric::AgentMessageKind::Input,
+                        kind: ::contracts::AgentMessageKind::Input,
                         delivery_id: None,
                         correlation_id: None,
                         deadline_mono_ms: None,
@@ -388,7 +396,7 @@ impl Tool for AgentControlTool {
 
 fn to_value<T: serde::Serialize>(value: T) -> Result<Value, AgentControlError> {
     serde_json::to_value(value).map_err(|_| AgentControlError {
-        kind: fabric::AgentControlErrorKind::Runtime,
+        kind: ::contracts::AgentControlErrorKind::Runtime,
         message: "Agent result serialization failed".into(),
     })
 }

@@ -3,15 +3,14 @@
 //! Reads identity, care, and boundary information from the SelfField
 //! and produces a Genome struct.
 
+use ::contracts::Version;
 use anyhow::Result;
-use fabric::{
-    genome::{
-        BoundaryRuleSpec, BoundarySpec, CarePriority, CareSpec, IdentitySpec, LifecycleSpec,
-        MemorySpec, MutationSpec, Topology,
-    },
-    SelfFieldOps, Version,
-};
+use dasein::SelfFieldOps;
 
+use crate::genome::contracts::{
+    BoundaryRuleSpec, BoundarySpec, CarePriority, CareSpec, IdentitySpec, LifecycleSpec,
+    MemorySpec, MutationSpec, Topology,
+};
 use crate::genome::model::Genome as MetaGenome;
 
 /// Reads the current genome from the runtime environment.

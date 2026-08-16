@@ -1,3 +1,8 @@
+use ::contracts::dasein::{
+    ExperienceProvenance, ExperienceSource, InterpretedExperience, SelfEventId,
+    SelfTransitionRequest, SelfVersion,
+};
+use ::contracts::{Subsystem, SubsystemContext, WallTime};
 use dasein::core::store::SelfFieldStore;
 use dasein::core::{SelfField, SelfFieldConfig};
 use dasein::dasein::ledger::SelfLedger;
@@ -7,13 +12,48 @@ use dasein::dasein::temporality::{
 };
 use dasein::dasein::types::TemporalPosition;
 use dasein::dasein::{DaseinModule, DaseinRuntimeConfig};
-use fabric::dasein::{
-    ExperienceProvenance, ExperienceSource, InterpretedExperience, SelfEventId,
-    SelfTransitionRequest, SelfVersion,
-};
-use fabric::{Subsystem, SubsystemContext, WallTime};
 use std::path::Path;
 use std::sync::Arc;
+
+struct AllowPolicy;
+impl dasein::bridge::policy::PolicyDecisionPort for AllowPolicy {
+    fn check(
+        &self,
+        _tool_name: &str,
+        _input: &serde_json::Value,
+    ) -> dasein::bridge::policy::PolicyDecision {
+        dasein::bridge::policy::PolicyDecision::Allow
+    }
+}
+
+struct NoopLoop;
+impl dasein::bridge::loop_detector::LoopDecisionPort for NoopLoop {
+    fn on_new_turn(&self, _turn_id: &str) {}
+    fn pre_check(
+        &self,
+        _tool_name: &str,
+        _args: &serde_json::Value,
+        _turn_id: &str,
+    ) -> dasein::bridge::loop_detector::LoopDecision {
+        dasein::bridge::loop_detector::LoopDecision::Allow
+    }
+    fn post_check(
+        &self,
+        _tool_name: &str,
+        _args: &serde_json::Value,
+        _result: &::contracts::tool::ToolResult,
+        _turn_id: &str,
+    ) {
+    }
+    fn end_turn(&self, _turn_id: &str) {}
+}
+
+fn security_ports() -> (
+    Arc<dyn dasein::bridge::policy::PolicyDecisionPort>,
+    Arc<dyn dasein::bridge::loop_detector::LoopDecisionPort>,
+) {
+    (Arc::new(AllowPolicy), Arc::new(NoopLoop))
+}
 
 fn open_store(path: &Path) -> Arc<SelfFieldStore> {
     Arc::new(SelfFieldStore::new(path.to_path_buf()).unwrap())
@@ -64,7 +104,7 @@ async fn seed_three_events(module: &DaseinModule) -> Vec<SelfTransitionRequest> 
                 entity_id: "compiler".into(),
                 what_it_is: "build tool".into(),
                 for_the_sake_of: Vec::new(),
-                readiness: fabric::dasein::ReadinessState::ReadyToHand,
+                readiness: ::contracts::dasein::ReadinessState::ReadyToHand,
             },
         ),
         request(
@@ -83,8 +123,8 @@ async fn seed_three_events(module: &DaseinModule) -> Vec<SelfTransitionRequest> 
             30,
             InterpretedExperience::ReadinessChanged {
                 entity_id: "compiler".into(),
-                old_state: fabric::dasein::ReadinessState::ReadyToHand,
-                new_state: fabric::dasein::ReadinessState::PresentAtHand,
+                old_state: ::contracts::dasein::ReadinessState::ReadyToHand,
+                new_state: ::contracts::dasein::ReadinessState::PresentAtHand,
             },
         ),
     ];
@@ -386,12 +426,14 @@ async fn restart_self_field_replays_before_start_and_checkpoints_after_stop() {
         name: "self-field-ledger-test".into(),
         working_dir: temp.path().to_path_buf(),
         config: serde_json::Value::Null,
-        bus: None,
     };
 
+    let (policy_decisions, loop_decisions) = security_ports();
     let mut first = SelfField::new(SelfFieldConfig {
         db_path: Some(path.clone()),
         clock: Some(Arc::new(kernel::chronos::TestClock::new(100, 0))),
+        policy_decisions: Some(policy_decisions),
+        loop_decisions: Some(loop_decisions),
         ..Default::default()
     });
     first.init(&context).await.unwrap();
@@ -400,16 +442,19 @@ async fn restart_self_field_replays_before_start_and_checkpoints_after_stop() {
         .unwrap()
         .record_outcome(
             "first installed lifecycle",
-            fabric::dasein::OutcomeStatus::Succeeded,
+            ::contracts::dasein::OutcomeStatus::Succeeded,
             "self-field-ledger-test",
         )
         .await
         .unwrap();
     first.shutdown().await.unwrap();
 
+    let (policy_decisions, loop_decisions) = security_ports();
     let mut restarted = SelfField::new(SelfFieldConfig {
         db_path: Some(path),
         clock: Some(Arc::new(kernel::chronos::TestClock::new(5_100, 0))),
+        policy_decisions: Some(policy_decisions),
+        loop_decisions: Some(loop_decisions),
         ..Default::default()
     });
     restarted.init(&context).await.unwrap();
@@ -484,7 +529,7 @@ fn optimized_synthesizer_equals_reference_after_every_step() {
             },
             vividness: 0.8,
             significance: 0.5,
-            affect: fabric::dasein::AffectTone::Neutral,
+            affect: ::contracts::dasein::AffectTone::Neutral,
             position: TemporalPosition(pos),
             bewandtnis_links: vec![],
         }

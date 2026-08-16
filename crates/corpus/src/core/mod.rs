@@ -2,13 +2,13 @@ pub mod conversions;
 
 use crate::security::{AuditLogger, ToolRunnerWithGuard};
 use crate::tools::tools::ToolRegistry;
+use ::contracts::body::{Action, ActionResult, BodyRuntime};
+use ::contracts::capability::Capability;
+use ::contracts::subsystem::{Subsystem, SubsystemContext, SubsystemHealth, Version};
+use ::contracts::Clock;
+use ::contracts::Context;
 use anyhow::Result;
 use async_trait::async_trait;
-use fabric::body::{Action, ActionResult, BodyRuntime};
-use fabric::capability::Capability;
-use fabric::context::Context;
-use fabric::subsystem::{Subsystem, SubsystemContext, SubsystemHealth, Version};
-use fabric::Clock;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -156,7 +156,6 @@ impl BodyRuntime for AletheonBodyRuntime {
                     error: Some(err_display),
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
-                    side_effects: Vec::new(),
                 })
             }
         }
@@ -178,7 +177,7 @@ impl BodyRuntime for AletheonBodyRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::context::Context;
+    use ::contracts::Context;
     use kernel::chronos::TestClock;
     use std::path::PathBuf;
 
@@ -206,7 +205,6 @@ mod tests {
             name: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
             config: serde_json::json!({}),
-            bus: None,
         };
         rt.init(&ctx).await.unwrap();
 

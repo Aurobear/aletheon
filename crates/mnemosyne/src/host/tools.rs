@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use ::contracts::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -12,7 +12,7 @@ use crate::domain::core_memory::CoreMemory;
 /// Tool: core_memory_append -- append content to a Core Memory block.
 pub struct CoreMemoryAppendTool {
     pub memory: Arc<Mutex<CoreMemory>>,
-    pub clock: Arc<dyn fabric::Clock>,
+    pub clock: Arc<dyn ::contracts::Clock>,
 }
 
 #[async_trait]
@@ -74,7 +74,7 @@ impl Tool for CoreMemoryAppendTool {
 /// Tool: core_memory_replace -- replace content in a Core Memory block.
 pub struct CoreMemoryReplaceTool {
     pub memory: Arc<Mutex<CoreMemory>>,
-    pub clock: Arc<dyn fabric::Clock>,
+    pub clock: Arc<dyn ::contracts::Clock>,
 }
 
 #[async_trait]
@@ -140,7 +140,7 @@ pub struct MemorySearchTool {
     pub recall: Arc<Mutex<RecallMemory>>,
     pub core_memory: Arc<Mutex<CoreMemory>>,
     pub fact_store: Option<Arc<Mutex<FactStore>>>,
-    pub clock: Arc<dyn fabric::Clock>,
+    pub clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl MemorySearchTool {

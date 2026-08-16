@@ -1,11 +1,11 @@
 //! PolicyProvider port — external policy model proposes skills from observations.
 
+use crate::harness::robot::PerceptionObservation;
+use ::contracts::types::embodiment::{DeviceId, SkillDescriptor};
+use ::contracts::types::robot_failure::RobotFailureClass;
+use ::contracts::types::skill_proposal::SkillProposal;
+use ::contracts::types::world_state::WorldSnapshot;
 use async_trait::async_trait;
-use fabric::types::embodiment::{DeviceId, SkillDescriptor};
-use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::robot_failure::RobotFailureClass;
-use fabric::types::skill_proposal::SkillProposal;
-use fabric::types::world_state::WorldSnapshot;
 
 use crate::harness::robot::state::ReplanContext;
 

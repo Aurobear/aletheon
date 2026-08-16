@@ -8,7 +8,7 @@
 //! contract/port only; the legacy `DefaultCapabilityInvoker` remains
 //! authoritative until K4.
 
-use fabric::CapabilityId;
+use ::contracts::CapabilityId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

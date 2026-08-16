@@ -1,4 +1,6 @@
-use fabric::{ExitReason, OperationKind, OperationRequest, ProcessId, ProcessSignal, SpawnSpec};
+use ::contracts::{
+    ExitReason, OperationKind, OperationRequest, ProcessId, ProcessSignal, SpawnSpec,
+};
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use std::sync::Arc;
@@ -40,7 +42,7 @@ async fn runtime_owns_exact_operation_lifecycle_and_typed_views() {
     runtime.start_operation(operation.id).await.unwrap();
     runtime.succeed_operation(operation.id).await.unwrap();
     let result = runtime.wait_operation(operation.id).await.unwrap();
-    assert_eq!(result.state, fabric::OperationState::Succeeded);
+    assert_eq!(result.state, ::contracts::OperationState::Succeeded);
 }
 
 #[tokio::test]

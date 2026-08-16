@@ -5,7 +5,7 @@
 //! with the version, parent version, description, and timestamp.
 //! Optionally persists to a JSONL file via `with_path()`.
 
-use fabric::{wall_to_datetime, Clock};
+use ::contracts::{wall_to_datetime, Clock};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;

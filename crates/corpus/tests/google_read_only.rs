@@ -1,12 +1,12 @@
+use ::contracts::PrincipalId;
+use application::{ExternalCapabilityId, ExternalIdentityId};
 use async_trait::async_trait;
 use corpus::tools::google::{
     is_google_write_capability, CalendarCapability, GmailCapability, GmailIngressCapability,
     GoogleAccessToken, GoogleApiClient, GoogleApiEndpoints, GoogleApiError, GoogleCalendarAdapter,
     GoogleCredentialSource, GoogleGmailAdapter,
 };
-use fabric::{
-    CalendarQuery, ExternalCapabilityId, ExternalIdentityId, MailQuery, OpaqueCursor, PrincipalId,
-};
+use corpus::tools::google::{CalendarQuery, MailQuery, OpaqueCursor};
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;

@@ -1,4 +1,4 @@
-use fabric::message::{ContentBlock, Message, Role};
+use ::contracts::message::{ContentBlock, Message, Role};
 
 #[derive(Debug, Clone)]
 pub struct TailProtectionConfig {
@@ -51,7 +51,7 @@ fn align_boundary_backward(messages: &[Message], cut: usize) -> usize {
 
     // Skip past tool messages to avoid starting the tail with an orphan
     // tool_result (which requires a preceding tool_use).
-    while aligned > 0 && fabric::message::is_tool_message(&messages[aligned]) {
+    while aligned > 0 && ::contracts::message::is_tool_message(&messages[aligned]) {
         aligned -= 1;
     }
 
@@ -60,11 +60,11 @@ fn align_boundary_backward(messages: &[Message], cut: usize) -> usize {
         // the original cut to find the last tool_use.  Starting the tail at a
         // tool_use is safe because its tool_results follow in the tail.
         for i in (1..=cut).rev() {
-            if messages[i].role == fabric::message::Role::Assistant
+            if messages[i].role == ::contracts::message::Role::Assistant
                 && messages[i]
                     .content
                     .iter()
-                    .any(|c| matches!(c, fabric::message::ContentBlock::ToolUse { .. }))
+                    .any(|c| matches!(c, ::contracts::message::ContentBlock::ToolUse { .. }))
             {
                 return i;
             }
@@ -78,15 +78,15 @@ fn align_boundary_backward(messages: &[Message], cut: usize) -> usize {
     // the old section has ToolUse blocks, its tool_results are in the tail.
     // Include the tool_use in the tail to keep the pair together.
     let prev = &messages[aligned - 1];
-    if prev.role == fabric::message::Role::Assistant
+    if prev.role == ::contracts::message::Role::Assistant
         && prev
             .content
             .iter()
-            .any(|c| matches!(c, fabric::message::ContentBlock::ToolUse { .. }))
+            .any(|c| matches!(c, ::contracts::message::ContentBlock::ToolUse { .. }))
     {
         aligned -= 1;
         // Also skip any preceding tool messages to maintain the chain.
-        while aligned > 0 && fabric::message::is_tool_message(&messages[aligned]) {
+        while aligned > 0 && ::contracts::message::is_tool_message(&messages[aligned]) {
             aligned -= 1;
         }
     }
@@ -188,6 +188,6 @@ mod tests {
         assert!(
             matches!(messages[cut].content[0], ContentBlock::Text { ref text } if text == "还是A吧")
         );
-        assert!(!fabric::message::is_tool_message(&messages[cut]));
+        assert!(!::contracts::message::is_tool_message(&messages[cut]));
     }
 }

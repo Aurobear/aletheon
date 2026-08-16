@@ -9,12 +9,12 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
-use fabric::types::metacognition_evaluation::{
+use ::contracts::types::metacognition_evaluation::{
     DimensionScore, DimensionValue, EvaluationReport, GateResult, RubricId,
 };
-use fabric::types::metacognition_evidence::{EvidenceId, EvidenceItem, EvidenceTrust};
-use fabric::types::metacognition_experience::ExperienceEnvelope;
-use fabric::EvaluationThresholds;
+use ::contracts::types::metacognition_evidence::{EvidenceId, EvidenceItem, EvidenceTrust};
+use ::contracts::types::metacognition_experience::ExperienceEnvelope;
+use ::contracts::EvaluationThresholds;
 
 use super::rubric::Rubric;
 
@@ -406,7 +406,7 @@ impl Default for DeterministicEvaluator {
 mod tests {
     use super::*;
     use crate::evaluation::rubric::{Rubric, RubricDimension, RubricGate};
-    use fabric::types::metacognition_evaluation::DimensionValue;
+    use ::contracts::types::metacognition_evaluation::DimensionValue;
 
     fn make_rubric() -> Rubric {
         Rubric {
@@ -772,10 +772,10 @@ mod tests {
         EvidenceItem {
             schema_version: 1,
             evidence_id: EvidenceId(id.into()),
-            experience_id: fabric::types::metacognition_experience::ExperienceId(
+            experience_id: ::contracts::types::metacognition_experience::ExperienceId(
                 "evaluation-test".into(),
             ),
-            kind: fabric::types::metacognition_evidence::EvidenceKind::VerificationResult,
+            kind: ::contracts::types::metacognition_evidence::EvidenceKind::VerificationResult,
             source: "test".into(),
             producer: "test".into(),
             captured_at_ms: 1,

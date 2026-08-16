@@ -7,12 +7,13 @@
 //! principal-based admission API by creating and closing a complete temporary
 //! hierarchy for each permit.
 
-use async_trait::async_trait;
-use fabric::{
-    AdmissionError, BudgetController, BudgetRequest, BudgetReservationId, BudgetReservationReceipt,
-    BudgetScope, BudgetScopeId, BudgetScopeKind, BudgetTransferReceipt, OperationId, PermitId,
-    UsageReport, BUDGET_SCOPE_SCHEMA_VERSION,
+use super::BudgetController;
+use ::contracts::{
+    AdmissionError, BudgetRequest, BudgetReservationId, BudgetReservationReceipt, BudgetScope,
+    BudgetScopeId, BudgetScopeKind, BudgetTransferReceipt, OperationId, PermitId, UsageReport,
+    BUDGET_SCOPE_SCHEMA_VERSION,
 };
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

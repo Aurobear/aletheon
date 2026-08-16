@@ -29,11 +29,11 @@ pub struct ContinuityLayer {
     records: RwLock<Vec<LineageRecord>>,
     /// Accepted for configuration compatibility; wall gaps are not identity breaks.
     _max_gap: Duration,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl ContinuityLayer {
-    pub fn new(max_gap: Duration, clock: Arc<dyn fabric::Clock>) -> Self {
+    pub fn new(max_gap: Duration, clock: Arc<dyn ::contracts::Clock>) -> Self {
         Self {
             records: RwLock::new(Vec::new()),
             _max_gap: max_gap,
@@ -115,7 +115,7 @@ impl ContinuityLayer {
         let entry = LineageRecord {
             identity_name: identity_name.to_string(),
             identity_version: identity_version.to_string(),
-            recorded_at: fabric::wall_to_datetime(self.clock.wall_now()),
+            recorded_at: ::contracts::wall_to_datetime(self.clock.wall_now()),
             event: event.to_string(),
             parent_version,
             mutation_id,
@@ -282,7 +282,7 @@ impl ContinuityLayer {
             ) = row?;
             let recorded_at = chrono::DateTime::parse_from_rfc3339(&recorded_at_str)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now()));
+                .unwrap_or_else(|_| ::contracts::wall_to_datetime(self.clock.wall_now()));
             let parent_version = if has_parent_column {
                 stored_parent
             } else {
@@ -345,7 +345,7 @@ mod tests {
     use chrono::Duration;
     use kernel::chronos::TestClock;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 
@@ -379,7 +379,7 @@ mod tests {
         let layer = test_layer(Duration::hours(1));
         layer.record("aurb", "0.1.0", "init");
         layer.record("aurb", "0.2.0", "upgrade");
-        let now = fabric::wall_to_datetime(layer.clock.wall_now());
+        let now = ::contracts::wall_to_datetime(layer.clock.wall_now());
         layer.records.write()[0].recorded_at = now - Duration::hours(48);
         assert!(layer.is_continuous());
     }

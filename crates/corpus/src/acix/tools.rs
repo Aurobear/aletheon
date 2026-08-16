@@ -6,15 +6,16 @@
 
 use std::sync::Arc;
 
+use ::contracts::Clock;
 use async_trait::async_trait;
-use fabric::Clock;
 use serde_json::json;
 
 use crate::acix::Aci;
 use crate::acix::GroundingProvider;
 use crate::drivers::types::{Key, ScrollDirection};
-use crate::tools::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use fabric::Registry;
+use crate::tools::tools::{
+    PermissionLevel, Registry, Tool, ToolContext, ToolResult, ToolResultMeta,
+};
 
 // ---------------------------------------------------------------------------
 // Shared helpers

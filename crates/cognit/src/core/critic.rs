@@ -4,7 +4,7 @@
 //! risk, efficiency, consistency, and reversibility. Produces Critique
 //! items with severity levels and actionable suggestions.
 
-use fabric::cognit::{CriticismDimension, CriticismSeverity, Critique, Plan};
+use crate::domain::{CriticismDimension, CriticismSeverity, Critique, Plan};
 
 /// The critic component.
 ///
@@ -89,7 +89,7 @@ impl Critic {
             }
         }
 
-        if plan.risk_level >= fabric::self_field::AwarenessRiskLevel::High {
+        if plan.risk_level >= dasein::AwarenessRiskLevel::High {
             critiques.push(Critique {
                 dimension: CriticismDimension::Risk,
                 severity: CriticismSeverity::Warning,
@@ -279,9 +279,9 @@ impl Default for Critic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::body::Action;
-    use fabric::cognit::{CostEstimate, PlanStep};
-    use fabric::self_field::AwarenessRiskLevel;
+    use crate::domain::{CostEstimate, PlanStep};
+    use ::contracts::body::Action;
+    use dasein::AwarenessRiskLevel;
     use uuid::Uuid;
 
     fn make_action(name: &str) -> Action {

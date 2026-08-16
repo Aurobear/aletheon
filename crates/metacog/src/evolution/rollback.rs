@@ -1,7 +1,7 @@
 //! Restart-safe genome rollback snapshots.
 
+use crate::genome::contracts::Genome;
 use anyhow::{bail, Context, Result};
-use fabric::Genome;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::OpenOptions, io::Write, path::PathBuf, sync::Mutex};

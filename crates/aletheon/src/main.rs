@@ -9,12 +9,12 @@
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
+use ::contracts::contract::command::{
+    command_specs, CommandSpec, CommandSurface, CommandVisibility, TaskKindArg,
+};
 use aletheon::workspace::WorkspaceArgs;
 use anyhow::Result;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
-use fabric::contract::command::{
-    command_specs, CommandSpec, CommandSurface, CommandVisibility, TaskKindArg,
-};
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing_subscriber::prelude::*;
@@ -119,6 +119,7 @@ enum CompletionShell {
 }
 
 impl PermissionModeArg {
+    #[cfg(test)]
     fn effective(self, full: bool) -> &'static str {
         if full {
             return "full";
@@ -127,6 +128,13 @@ impl PermissionModeArg {
             Self::Safe => "safe",
             Self::Dev => "dev",
             Self::Full => "full",
+        }
+    }
+
+    fn requested(self, full: bool) -> gateway::protocol::RequestedPermissionMode {
+        match (self, full) {
+            (Self::Full, _) | (_, true) => gateway::protocol::RequestedPermissionMode::Full,
+            (Self::Safe | Self::Dev, _) => gateway::protocol::RequestedPermissionMode::Safe,
         }
     }
 }
@@ -400,8 +408,6 @@ enum ConfigSub {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = parse_cli();
-    let permission_mode = cli.permission_mode.effective(cli.full);
-    std::env::set_var("ALETHEON_PERMISSION_MODE", permission_mode);
     #[cfg(feature = "acp")]
     if cli.acp {
         anyhow::ensure!(
@@ -409,7 +415,7 @@ async fn main() -> Result<()> {
             "--acp cannot be combined with a subcommand or --message"
         );
         init_tracing("aletheon::acp");
-        return acp::run(cli.workspace.executive_launch()).await;
+        return acp::run(cli.workspace.interact_launch()).await;
     }
     if matches!(&cli.command, Some(Commands::Core { .. }))
         && (cli.workspace.cwd.is_some() || !cli.workspace.add_dirs.is_empty())
@@ -420,7 +426,7 @@ async fn main() -> Result<()> {
         // Subcommand-driven paths
         (Some(Commands::Core { config, socket }), _) => {
             init_tracing("aletheon::core");
-            executive::host::launcher::run_core(executive::host::launcher::CoreLaunch {
+            aletheon::launcher::run_core(aletheon::launcher::CoreLaunch {
                 config: config.clone(),
                 socket: socket.clone(),
             })
@@ -439,7 +445,7 @@ async fn main() -> Result<()> {
             _,
         ) => {
             init_tracing("aletheon::daemon");
-            executive::host::launcher::run_daemon(executive::host::launcher::DaemonLaunch {
+            aletheon::launcher::run_daemon(aletheon::launcher::DaemonLaunch {
                 config: config.clone(),
                 env: env.clone(),
                 command_socket: socket.clone(),
@@ -473,37 +479,42 @@ async fn main() -> Result<()> {
                     Err(error) => emit_exec_validation_failure(*output, &error.to_string()),
                 },
             };
-            let request = executive::host::launcher::ExecLaunch {
+            let request = aletheon::launcher::ExecLaunch {
                 prompt,
                 model: model.clone(),
                 max_turns: *max_turns,
                 sandbox: sandbox.clone(),
-                workspace: cli.workspace.executive_launch(),
+                workspace: cli.workspace.exec_launch(),
                 config: config.clone(),
                 idempotency_key: idempotency_key.clone(),
                 timeout: timeout_seconds.map(Duration::from_secs),
             };
-            let outcome = match output {
-                ExecOutputArg::Jsonl => {
-                    executive::host::launcher::run_exec_streaming(
+            let outcome =
+                match output {
+                    ExecOutputArg::Jsonl => match aletheon::launcher::run_exec_streaming(
                         request,
-                        std::sync::Arc::new(
-                            executive::host::launcher::JsonlExecEventWriter::default(),
-                        ),
+                        std::sync::Arc::new(aletheon::launcher::JsonlExecEventWriter::default()),
                     )
-                    .await?
-                }
-                ExecOutputArg::Json | ExecOutputArg::Text => {
-                    executive::host::launcher::run_exec(request).await?
-                }
-            };
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            emit_exec_validation_failure(ExecOutputArg::Jsonl, &error.to_string())
+                        }
+                    },
+                    ExecOutputArg::Json | ExecOutputArg::Text => {
+                        aletheon::launcher::run_exec(request).await?
+                    }
+                };
             match output {
                 ExecOutputArg::Jsonl => {}
                 ExecOutputArg::Json => {
                     println!("{}", serde_json::to_string_pretty(&outcome.terminal)?);
                 }
                 ExecOutputArg::Text => match &outcome.terminal.event {
-                    fabric::types::exec::ExecEvent::Terminal { output, .. } => println!("{output}"),
+                    gateway::protocol::exec::ExecEvent::Terminal { output, .. } => {
+                        println!("{output}")
+                    }
                     _ => unreachable!("exec host outcome is terminal"),
                 },
             }
@@ -513,8 +524,9 @@ async fn main() -> Result<()> {
             Ok(())
         }
         (Some(Commands::Run { prompt, resume }), _) => {
-            let session_id = resume.clone().map(fabric::SessionId);
+            let session_id = resume.clone().map(::contracts::SessionId);
             if let Some(prompt) = prompt {
+                ensure_user_socket(cli.socket.clone()).await?;
                 interact::host::run_single_message(interact::host::MessageLaunch {
                     socket: cli.socket.clone(),
                     workspace: cli.workspace.interact_launch(),
@@ -522,6 +534,7 @@ async fn main() -> Result<()> {
                     required_agent_runtimes: cli.required_agent_runtimes.clone(),
                     task_kind: cli.task_kind.map(Into::into),
                     session_id,
+                    requested_permission: cli.permission_mode.requested(cli.full),
                 })
                 .await
             } else {
@@ -539,7 +552,7 @@ async fn main() -> Result<()> {
             let initial_session = session
                 .clone()
                 .map_or(interact::host::InitialSession::Pick, |session| {
-                    interact::host::InitialSession::Resume(fabric::SessionId(session))
+                    interact::host::InitialSession::Resume(::contracts::SessionId(session))
                 });
             run_interactive(&cli, initial_session).await
         }
@@ -559,7 +572,7 @@ async fn main() -> Result<()> {
                     "schema_version": 1,
                     "name": "aletheon",
                     "version": env!("CARGO_PKG_VERSION"),
-                    "protocol_version": fabric::CLIENT_PROTOCOL_VERSION,
+                    "protocol_version": ::contracts::CLIENT_PROTOCOL_VERSION,
                 });
                 println!("{output}");
             } else {
@@ -615,6 +628,7 @@ async fn main() -> Result<()> {
         }
         // -m flag: single message to daemon
         (None, Some(msg)) => {
+            ensure_user_socket(cli.socket.clone()).await?;
             interact::host::run_single_message(interact::host::MessageLaunch {
                 socket: cli.socket.clone(),
                 workspace: cli.workspace.interact_launch(),
@@ -622,6 +636,7 @@ async fn main() -> Result<()> {
                 required_agent_runtimes: cli.required_agent_runtimes.clone(),
                 task_kind: cli.task_kind.map(Into::into),
                 session_id: None,
+                requested_permission: cli.permission_mode.requested(cli.full),
             })
             .await
         }
@@ -631,7 +646,21 @@ async fn main() -> Result<()> {
     }
 }
 
+/// The executable owns daemon lifecycle/bootstrap; `interact` remains a pure
+/// presentation client and only resolves/connects to the resulting socket.
+pub(crate) async fn ensure_user_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
+    let socket = interact::host::resolve_user_socket(explicit)?;
+    aletheon::launcher::ensure_user_daemon(aletheon::launcher::EnsureUserDaemon {
+        socket: Some(socket.clone()),
+        startup_timeout: Duration::from_secs(30),
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("daemon startup failed for {}: {error}", socket.display()))?;
+    Ok(socket)
+}
+
 async fn run_interactive(cli: &Cli, initial_session: interact::host::InitialSession) -> Result<()> {
+    ensure_user_socket(cli.socket.clone()).await?;
     interact::host::run_tui(
         interact::host::TuiLaunch {
             socket: cli.socket.clone(),
@@ -639,6 +668,7 @@ async fn run_interactive(cli: &Cli, initial_session: interact::host::InitialSess
             required_agent_runtimes: cli.required_agent_runtimes.clone(),
             task_kind: cli.task_kind.map(Into::into),
             initial_session,
+            requested_permission: cli.permission_mode.requested(cli.full),
         },
         interact::tui::TestConfig {
             test_input: cli.test_input.clone(),
@@ -673,17 +703,19 @@ fn read_exec_stdin() -> Result<String> {
 }
 
 fn emit_exec_validation_failure(output: ExecOutputArg, message: &str) -> ! {
-    let terminal = fabric::types::exec::ExecEventEnvelope::v1(
+    let terminal = gateway::protocol::exec::ExecEventEnvelope::v1(
         1,
         uuid::Uuid::new_v4().to_string(),
         uuid::Uuid::new_v4().to_string(),
-        fabric::TurnId::new().0.to_string(),
+        // Validation fails before Runtime admission, so there is no canonical
+        // turn to report.  Do not mint a core TurnId on the client side.
+        "validation-failure-turn",
         None,
-        fabric::OperationId::new(),
-        fabric::types::exec::ExecEvent::Terminal {
-            status: fabric::types::exec::ExecTerminalKind::ValidationFailed,
+        ::contracts::OperationId::new(),
+        gateway::protocol::exec::ExecEvent::Terminal {
+            status: gateway::protocol::exec::ExecTerminalKind::ValidationFailed,
             output: message.to_owned(),
-            metrics: fabric::TurnMetrics::default(),
+            metrics: ::contracts::TurnMetrics::default(),
             error_code: Some("validation_failed".into()),
         },
     );
@@ -700,7 +732,7 @@ fn emit_exec_validation_failure(output: ExecOutputArg, message: &str) -> ! {
         ),
     }
     std::process::exit(i32::from(
-        fabric::types::exec::ExecTerminalKind::ValidationFailed.exit_code(),
+        gateway::protocol::exec::ExecTerminalKind::ValidationFailed.exit_code(),
     ));
 }
 
@@ -736,7 +768,7 @@ fn apply_cli_command_metadata(
 // ── Config & Doctor handlers ────────────────────────────────────────────────
 
 async fn handle_config(sub: &ConfigSub) -> Result<()> {
-    use executive::composition::config;
+    use aletheon::config;
     match sub {
         ConfigSub::Effective {
             config,
@@ -787,7 +819,7 @@ async fn handle_doctor(
     config_path: Option<&std::path::Path>,
     project_dir: Option<&std::path::Path>,
 ) -> Result<()> {
-    let output = executive::host::doctor::execute(executive::host::doctor::DoctorRequest {
+    let output = aletheon::doctor::execute(aletheon::doctor::DoctorRequest {
         json,
         config_path: config_path.map(std::path::Path::to_path_buf),
         project_dir: project_dir.map(std::path::Path::to_path_buf),

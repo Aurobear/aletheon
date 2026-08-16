@@ -36,7 +36,7 @@ Out-of-scope files: all production behavior, writer cutovers, APX-01+
 | `optional-unproven` | 3 | Evolution proposal, Orchestration multi-agent, Capability benchmark |
 | `adapter-io` | 6 | workspace trust/checkpoint, storage quota, SQLite concrete I/O, FS concrete I/O, process concrete I/O, network concrete I/O |
 | `compatibility` | 2 | V0 command dispatcher, legacy Goal CRUD/status/resume |
-| `dead` | 2 | stale interact tui goal/workflow debug shells |
+| `dead` | 2 | caller-zero stale interact shells, now retired |
 
 ### optional-unproven closure requirements (§7.2)
 
@@ -61,7 +61,7 @@ All are target owners for `APX-04` (SQLite/FS/process/host adapters out of Appli
 
 - `APX-UC-18` V0 command dispatcher (`prompt_completion_from_rpc_result`, command_dispatcher.rs:19) — pure schema conversion, `CGP-06/XRET-04` deletion after typed Application result.
 - `APX-UC-19` legacy `GoalService` — `goal_service.rs:74`, `APX-03/XRET-04`.
-- `APX-DEAD-01/02` — stale interact `tui/goal.rs`, `debug.rs`, `rpc_client.rs`, `workflow.rs` — no production caller, marked `INVESTIGATE` (`I9-OPTIONAL`) per census ledger; DELETE only with caller evidence.
+- `APX-DEAD-01/02` — caller-zero evidence was completed and `tui/goal.rs`, `debug.rs`, `rpc_client.rs`, and `workflow.rs` were deleted. The census now records these as completed DELETE slices; no production or installed caller remains.
 
 ## 4. APX-01 precondition (plan §7.3)
 

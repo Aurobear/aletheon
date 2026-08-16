@@ -1,19 +1,19 @@
-use fabric::ipc::envelope_v2::Target;
-use fabric::ipc::mailbox::InProcessMailbox;
-use fabric::types::admission::RiskLevel;
-use fabric::{
+use ::contracts::ipc::envelope_v2::Target;
+use ::contracts::types::admission::RiskLevel;
+use ::contracts::{
     AdmissionRequest, BudgetRequest, CapabilityId, CapabilityScope, ExitReason, LeaseRequest,
     OperationKind, OperationRequest, PrincipalId, ProcessSignal, SandboxRequirement, SpawnSpec,
 };
 use kernel::supervision::{RestartDecision, RestartPolicy};
 use kernel::{KernelRuntime, LifecycleFaultInjector};
+use runtime::mailbox::InProcessMailbox;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 struct FailCleanupOnce(AtomicBool);
 
 impl LifecycleFaultInjector for FailCleanupOnce {
-    fn before_process_cleanup(&self, _process: fabric::ProcessId) -> anyhow::Result<()> {
+    fn before_process_cleanup(&self, _process: ::contracts::ProcessId) -> anyhow::Result<()> {
         if self.0.swap(false, Ordering::SeqCst) {
             anyhow::bail!("injected cleanup failure");
         }
@@ -23,7 +23,7 @@ impl LifecycleFaultInjector for FailCleanupOnce {
 
 async fn running_process_with_operation(
     runtime: &KernelRuntime,
-) -> (fabric::ProcessHandle, fabric::OperationHandle) {
+) -> (kernel::ProcessHandle, kernel::OperationHandle) {
     let process = runtime.spawn_process(SpawnSpec::default()).await.unwrap();
     runtime
         .signal_process(process.id, ProcessSignal::Start)
@@ -156,7 +156,7 @@ async fn operation_terminal_cleanup_revokes_turn_permits_leases_and_budget_once(
     assert_eq!(runtime.active_permits_for_operation(operation.id).await, 1);
 
     runtime
-        .cancel_operation(operation.id, fabric::CancelReason::User)
+        .cancel_operation(operation.id, ::contracts::CancelReason::User)
         .await
         .unwrap();
     assert_eq!(runtime.active_permits_for_operation(operation.id).await, 0);
@@ -175,7 +175,7 @@ async fn operation_terminal_cleanup_revokes_turn_permits_leases_and_budget_once(
     );
 
     runtime
-        .cancel_operation(operation.id, fabric::CancelReason::User)
+        .cancel_operation(operation.id, ::contracts::CancelReason::User)
         .await
         .unwrap();
     assert_eq!(

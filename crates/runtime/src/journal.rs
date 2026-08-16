@@ -8,7 +8,7 @@
 //! per page.  No irreversible migration is performed.
 
 use crate::error::RuntimeError;
-use fabric::events::spine::EventSpine;
+use crate::event_spine::EventSpine;
 use std::sync::Arc;
 
 /// The distinct aggregate streams the Runtime journal separates.
@@ -86,7 +86,7 @@ impl RuntimeJournalShadow {
 /// Classify a SpineEvent into a stream kind + schema version.  Unknown shapes
 /// are rejected (fail closed).  This is a shadow-only classifier; the real
 /// Runtime reducer (RA-03/04) owns the authoritative streams.
-fn classify(event: &fabric::events::spine::SpineEvent) -> (StreamKind, u64) {
+fn classify(event: &crate::event_spine::SpineEvent) -> (StreamKind, u64) {
     if event.identity.agent_id.is_some() {
         (StreamKind::AgentRun, 1)
     } else if event.identity.session_id.starts_with("turn:") {
@@ -100,7 +100,7 @@ fn classify(event: &fabric::events::spine::SpineEvent) -> (StreamKind, u64) {
 }
 
 /// Stable content digest for a shadow entry (never the payload itself).
-fn digest(event: &fabric::events::spine::SpineEvent) -> String {
+fn digest(event: &crate::event_spine::SpineEvent) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     event.position.sequence.0.hash(&mut hasher);
@@ -120,8 +120,8 @@ mod tests {
     impl EventSpine for EmptySpine {
         fn append(
             &self,
-            _event: fabric::events::spine::UnsequencedEvent,
-        ) -> anyhow::Result<fabric::events::spine::SpineEvent> {
+            _event: crate::event_spine::UnsequencedEvent,
+        ) -> anyhow::Result<crate::event_spine::SpineEvent> {
             anyhow::bail!("shadow must not append")
         }
 
@@ -130,7 +130,7 @@ mod tests {
             _after: u64,
             _through: u64,
             _limit: usize,
-        ) -> anyhow::Result<Vec<(u64, fabric::events::spine::SpineEvent)>> {
+        ) -> anyhow::Result<Vec<(u64, crate::event_spine::SpineEvent)>> {
             Ok(vec![])
         }
     }

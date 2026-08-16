@@ -23,24 +23,24 @@ fn every_skill_outcome_converts() {
         (
             wire::SkillOutcome::Succeeded as i32,
             "",
-            fabric::types::embodiment::SkillOutcome::Succeeded,
+            ::contracts::types::embodiment::SkillOutcome::Succeeded,
         ),
         (
             wire::SkillOutcome::Failed as i32,
             "motor stall",
-            fabric::types::embodiment::SkillOutcome::Failed {
+            ::contracts::types::embodiment::SkillOutcome::Failed {
                 reason: "motor stall".into(),
             },
         ),
         (
             wire::SkillOutcome::Cancelled as i32,
             "",
-            fabric::types::embodiment::SkillOutcome::Cancelled,
+            ::contracts::types::embodiment::SkillOutcome::Cancelled,
         ),
         (
             wire::SkillOutcome::TimedOut as i32,
             "",
-            fabric::types::embodiment::SkillOutcome::TimedOut,
+            ::contracts::types::embodiment::SkillOutcome::TimedOut,
         ),
     ];
     for (wire_val, reason, expected) in &cases {
@@ -61,7 +61,7 @@ fn failure_reason_is_preserved_from_wire() {
     };
     let dr = convert::to_skill_result(&wr).unwrap();
     match dr.outcome {
-        fabric::types::embodiment::SkillOutcome::Failed { reason } => {
+        ::contracts::types::embodiment::SkillOutcome::Failed { reason } => {
             assert_eq!(reason, "obstacle detected");
         }
         other => panic!("expected Failed, got {other:?}"),
@@ -113,7 +113,7 @@ fn timestamp_mapping_is_non_negative() {
         valid_until_unix_ms: 1_000_500,
         ..Default::default()
     };
-    let obs = convert::to_observation(&wo, fabric::MonoTime(10_000), 1_000_000).unwrap();
+    let obs = convert::to_observation(&wo, ::contracts::MonoTime(10_000), 1_000_000).unwrap();
     assert_eq!(obs.source_time.0, 9_000);
     assert_eq!(obs.received_at.0, 9_500);
     assert_eq!(obs.valid_until.unwrap().0 .0, 10_500);
@@ -122,7 +122,7 @@ fn timestamp_mapping_is_non_negative() {
 
 #[test]
 fn provider_stale_verdict_becomes_an_expired_local_deadline() {
-    let now = fabric::MonoTime(10_000);
+    let now = ::contracts::MonoTime(10_000);
     let wo = wire::Observation {
         stale: true,
         confidence: 0.9,
@@ -139,7 +139,7 @@ fn missing_frame_ref_is_none() {
         frame_ref: String::new(),
         ..Default::default()
     };
-    let obs = convert::to_observation(&wo, fabric::MonoTime(10), 100).unwrap();
+    let obs = convert::to_observation(&wo, ::contracts::MonoTime(10), 100).unwrap();
     assert_eq!(obs.reference_frame, None);
     assert_eq!(obs.frame, None);
 }
@@ -166,7 +166,7 @@ fn visual_frame_metadata_maps_without_confusing_coordinate_frames() {
         }))),
         ..Default::default()
     };
-    let obs = convert::to_observation(&wo, fabric::MonoTime(10_000), 1_000_000).unwrap();
+    let obs = convert::to_observation(&wo, ::contracts::MonoTime(10_000), 1_000_000).unwrap();
     let frame = obs.frame.expect("typed frame");
     assert_eq!(frame.frame_id, 7);
     assert_eq!(frame.byte_len, 32_000);
@@ -176,7 +176,7 @@ fn visual_frame_metadata_maps_without_confusing_coordinate_frames() {
         frame_ref: "map".into(),
         ..Default::default()
     };
-    let obs = convert::to_observation(&coordinate, fabric::MonoTime(10), 100).unwrap();
+    let obs = convert::to_observation(&coordinate, ::contracts::MonoTime(10), 100).unwrap();
     assert_eq!(obs.reference_frame.as_deref(), Some("map"));
     assert_eq!(obs.frame, None);
 }
@@ -211,10 +211,10 @@ fn no_conversion_depends_on_display_strings() {
 
     // RiskClass: uses i32 → wire::RiskClass → domain::RiskClass mapping
     let rc = convert::to_risk_class(wire::RiskClass::High as i32).unwrap();
-    assert_eq!(rc, fabric::types::embodiment::RiskClass::High);
+    assert_eq!(rc, ::contracts::types::embodiment::RiskClass::High);
 
     // SkillOutcome: uses i32 → wire::SkillOutcome → domain::SkillOutcome
     let so =
         convert::to_skill_outcome(wire::SkillOutcome::Cancelled as i32, String::new()).unwrap();
-    assert_eq!(so, fabric::types::embodiment::SkillOutcome::Cancelled);
+    assert_eq!(so, ::contracts::types::embodiment::SkillOutcome::Cancelled);
 }

@@ -1,12 +1,12 @@
 //! Timer implementations: [`SystemTimer`] (production) and [`TestTimer`]
-//! (deterministic tests), both implementing the [`fabric::Timer`] trait.
+//! (deterministic tests), both implementing the [`::contracts::Timer`] trait.
 
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use fabric::{Clock, Timer};
+use ::contracts::{Clock, Timer};
 use tokio::sync::Notify;
 
 use crate::chronos::TestClock;
@@ -29,7 +29,7 @@ impl Timer for SystemTimer {
         &self,
         dur: Duration,
         fut: F,
-    ) -> impl Future<Output = Result<F::Output, fabric::Elapsed>> + Send
+    ) -> impl Future<Output = Result<F::Output, ::contracts::Elapsed>> + Send
     where
         F: Future + Send,
         F::Output: Send,
@@ -37,7 +37,7 @@ impl Timer for SystemTimer {
         async move {
             match tokio::time::timeout(dur, fut).await {
                 Ok(output) => Ok(output),
-                Err(_elapsed) => Err(fabric::Elapsed),
+                Err(_elapsed) => Err(::contracts::Elapsed),
             }
         }
     }
@@ -141,7 +141,7 @@ impl Timer for TestTimer {
         &self,
         dur: Duration,
         fut: F,
-    ) -> impl Future<Output = Result<F::Output, fabric::Elapsed>> + Send
+    ) -> impl Future<Output = Result<F::Output, ::contracts::Elapsed>> + Send
     where
         F: Future + Send,
         F::Output: Send,
@@ -150,7 +150,7 @@ impl Timer for TestTimer {
         async move {
             tokio::select! {
                 result = fut => Ok(result),
-                () = sleep_fut => Err(fabric::Elapsed),
+                () = sleep_fut => Err(::contracts::Elapsed),
             }
         }
     }
@@ -163,7 +163,7 @@ impl Timer for TestTimer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::{MonoDeadline, MonoTime};
+    use ::contracts::{MonoDeadline, MonoTime};
 
     #[tokio::test]
     async fn system_timer_sleep_short() {

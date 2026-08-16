@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use fabric::Clock;
+use ::contracts::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;

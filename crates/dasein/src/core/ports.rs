@@ -1,7 +1,7 @@
 //! D3 Dasein/Metacog authority convergence (Agent Kernel V2).
 //!
 //! Defines the Dasein-owned self-mutation authority and the post-settlement
-//! consumer seam.  Rich types that today live in `fabric::dasein` return to
+//! consumer seam.  Rich types that today live in `::contracts::dasein` return to
 //! this owner crate at the cutover; repository/sandbox/coding-evaluator move
 //! to adapters; the Runtime durable outbox feeds the two post-settlement
 //! consumers.  This seam is contract/port only — no writer change, no facade

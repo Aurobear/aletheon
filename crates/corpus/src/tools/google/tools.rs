@@ -1,13 +1,13 @@
 //! Principal-aware native Google tools.
 
 use super::{CalendarCapability, GmailCapability, GoogleApiError};
-use async_trait::async_trait;
-use fabric::tool::{
+use crate::tools::google::{CalendarQuery, MailQuery, OpaqueCursor};
+use ::contracts::tool::{
     ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
 };
-use fabric::{
-    CalendarQuery, ExternalIdentityId, MailQuery, OpaqueCursor, PrincipalId, LOCAL_OWNER_PRINCIPAL,
-};
+use ::contracts::PrincipalId;
+use application::{ExternalIdentityId, LOCAL_OWNER_PRINCIPAL};
+use async_trait::async_trait;
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;

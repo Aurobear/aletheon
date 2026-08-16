@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::provider::*;
 use crate::config::ProviderTimeoutConfig;
-use fabric::message::{ContentBlock, Message, Role};
+use ::contracts::message::{ContentBlock, Message, Role};
 
 pub struct AnthropicProvider {
     client: Client,
@@ -726,7 +726,7 @@ mod cache_contract_tests {
             Message::user("dynamic user"),
         ];
         let (system, dynamic) = messages_to_api(&messages);
-        let tools = fabric::canonicalize_tool_definitions(&[
+        let tools = ::contracts::canonicalize_tool_definitions(&[
             ToolDefinition {
                 name: "zeta".into(),
                 description: "z".into(),

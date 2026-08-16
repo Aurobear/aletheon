@@ -1,6 +1,6 @@
 //! Integration tests for emergency stop public API.
 
-use fabric::types::emergency_stop::EStopState;
+use hardware::EStopState;
 use hardware::EmergencyStop;
 
 #[test]

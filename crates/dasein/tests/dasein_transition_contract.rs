@@ -1,9 +1,9 @@
-use dasein::dasein::DaseinModule;
-use fabric::dasein::{
+use ::contracts::dasein::{
     CareActionKind, ExperienceProvenance, ExperienceSource, InterpretedExperience, OutcomeStatus,
     SelfEventId, SelfSignal, SelfTransitionRequest, SelfVersion, Stimmung, TemporalEventKind,
 };
-use fabric::WallTime;
+use ::contracts::WallTime;
+use dasein::dasein::DaseinModule;
 use std::sync::Arc;
 
 fn module() -> DaseinModule {
@@ -217,7 +217,7 @@ async fn reducer_readiness_change_is_compare_and_set() {
                 entity_id: "compiler".into(),
                 what_it_is: "build tool".into(),
                 for_the_sake_of: Vec::new(),
-                readiness: fabric::dasein::ReadinessState::ReadyToHand,
+                readiness: ::contracts::dasein::ReadinessState::ReadyToHand,
             },
         ))
         .await
@@ -229,8 +229,8 @@ async fn reducer_readiness_change_is_compare_and_set() {
             1,
             InterpretedExperience::ReadinessChanged {
                 entity_id: "compiler".into(),
-                old_state: fabric::dasein::ReadinessState::ReadyToHand,
-                new_state: fabric::dasein::ReadinessState::PresentAtHand,
+                old_state: ::contracts::dasein::ReadinessState::ReadyToHand,
+                new_state: ::contracts::dasein::ReadinessState::PresentAtHand,
             },
         ))
         .await
@@ -242,8 +242,8 @@ async fn reducer_readiness_change_is_compare_and_set() {
             2,
             InterpretedExperience::ReadinessChanged {
                 entity_id: "compiler".into(),
-                old_state: fabric::dasein::ReadinessState::ReadyToHand,
-                new_state: fabric::dasein::ReadinessState::Unavailable,
+                old_state: ::contracts::dasein::ReadinessState::ReadyToHand,
+                new_state: ::contracts::dasein::ReadinessState::Unavailable,
             },
         ))
         .await
@@ -258,9 +258,9 @@ async fn reducer_readiness_change_is_compare_and_set() {
 #[tokio::test]
 async fn bridge_compatibility_event_reaches_reducer() {
     let module = module();
-    let receipt = fabric::dasein::DaseinOps::handle_event(
+    let receipt = dasein::DaseinOps::handle_event(
         &module,
-        fabric::dasein::DaseinEvent::KnowledgeAsserted {
+        ::contracts::dasein::DaseinEvent::KnowledgeAsserted {
             assertions: vec!["bridge fact".into()],
             confidence: 0.7,
         },

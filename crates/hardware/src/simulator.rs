@@ -245,8 +245,9 @@ impl SimulatedEmbodiment {
 impl crate::EmbodimentProvider for SimulatedEmbodiment {
     async fn observe(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
-    ) -> Result<Vec<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
+        device: &::contracts::types::embodiment::DeviceId,
+    ) -> Result<Vec<::contracts::types::embodiment::EmbodiedObservation>, crate::ProviderError>
+    {
         Ok(vec![self
             .get_state(device)
             .await?
@@ -255,15 +256,16 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 
     async fn get_state(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
-    ) -> Result<Option<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
+        device: &::contracts::types::embodiment::DeviceId,
+    ) -> Result<Option<::contracts::types::embodiment::EmbodiedObservation>, crate::ProviderError>
+    {
         let mut guard = self.inner.lock().await;
         if guard.manifest.id != *device {
             return Err(crate::ProviderError::Rejected("device mismatch".into()));
         }
         let telemetry = guard.telemetry(None);
-        let time = fabric::MonoTime(telemetry.source_time.0);
-        Ok(Some(fabric::types::embodiment::EmbodiedObservation {
+        let time = ::contracts::MonoTime(telemetry.source_time.0);
+        Ok(Some(::contracts::types::embodiment::EmbodiedObservation {
             schema: telemetry.stream,
             schema_version: 1,
             source: format!("sim:{}", telemetry.device.0),
@@ -272,7 +274,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
             received_at: time,
             source_unix_ms: 0,
             received_unix_ms: 0,
-            valid_until: Some(fabric::MonoDeadline::after(time, 1_000)),
+            valid_until: Some(::contracts::MonoDeadline::after(time, 1_000)),
             confidence: 1.0,
             reference_frame: Some("map".into()),
             frame: None,
@@ -283,14 +285,14 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 
     async fn list_skills(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
-    ) -> Result<Vec<fabric::types::embodiment::SkillDescriptor>, crate::ProviderError> {
+        device: &::contracts::types::embodiment::DeviceId,
+    ) -> Result<Vec<::contracts::types::embodiment::SkillDescriptor>, crate::ProviderError> {
         let guard = self.inner.lock().await;
         if guard.manifest.id != *device {
             return Err(crate::ProviderError::Rejected("device mismatch".into()));
         }
-        Ok(vec![fabric::types::embodiment::SkillDescriptor {
-            skill: fabric::types::embodiment::SkillId("navigate".into()),
+        Ok(vec![::contracts::types::embodiment::SkillDescriptor {
+            skill: ::contracts::types::embodiment::SkillId("navigate".into()),
             device: device.clone(),
             summary: "navigate to a two-dimensional target".into(),
             input_schema: serde_json::json!({
@@ -299,7 +301,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
                 "required": ["x", "y"],
                 "additionalProperties": false
             }),
-            risk: fabric::types::embodiment::RiskClass::Medium,
+            risk: ::contracts::types::embodiment::RiskClass::Medium,
             timeout_ms: 30_000,
             cancellable: true,
             preconditions: vec!["active control lease".into()],
@@ -311,7 +313,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
         &self,
         command: crate::ValidatedSkillCommand<'_>,
         progress: Arc<dyn crate::SkillProgressSink>,
-    ) -> Result<fabric::types::embodiment::SkillResult, crate::ProviderError> {
+    ) -> Result<::contracts::types::embodiment::SkillResult, crate::ProviderError> {
         let request = command.request();
         if request.skill.0 != "navigate" {
             return Err(crate::ProviderError::Rejected(format!(
@@ -352,14 +354,14 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
             .map_err(crate::ProviderError::Rejected)?;
         let receipt = guard.execute(&typed, Some(command.permit()));
         let outcome = if receipt.accepted() {
-            fabric::types::embodiment::SkillOutcome::Succeeded
+            ::contracts::types::embodiment::SkillOutcome::Succeeded
         } else {
-            fabric::types::embodiment::SkillOutcome::Failed {
+            ::contracts::types::embodiment::SkillOutcome::Failed {
                 reason: format!("{:?}", receipt.decision),
             }
         };
         if !receipt.accepted() {
-            return Ok(fabric::types::embodiment::SkillResult {
+            return Ok(::contracts::types::embodiment::SkillResult {
                 operation_id,
                 skill: request.skill.clone(),
                 device: request.device.clone(),
@@ -369,15 +371,15 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
             });
         }
         progress
-            .progress(fabric::types::embodiment::SkillProgress {
+            .progress(::contracts::types::embodiment::SkillProgress {
                 operation_id,
                 skill: request.skill.clone(),
                 fraction: 1.0,
                 note: "navigate settled".into(),
-                at: fabric::MonoTime(receipt.observed_at.0),
+                at: ::contracts::MonoTime(receipt.observed_at.0),
             })
             .await;
-        Ok(fabric::types::embodiment::SkillResult {
+        Ok(::contracts::types::embodiment::SkillResult {
             operation_id,
             skill: request.skill.clone(),
             device: request.device.clone(),
@@ -389,7 +391,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 
     async fn cancel(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
+        device: &::contracts::types::embodiment::DeviceId,
         _operation: &crate::DeviceOperationId,
     ) -> Result<crate::CancelAck, crate::ProviderError> {
         let mut guard = self.inner.lock().await;
@@ -404,7 +406,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 
     async fn safe_stop(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
+        device: &::contracts::types::embodiment::DeviceId,
     ) -> Result<crate::StopReceipt, crate::ProviderError> {
         let mut guard = self.inner.lock().await;
         if guard.manifest.id != *device {
@@ -424,7 +426,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 /// monotonic sequence, so the deterministic verifier can satisfy a stability
 /// window after executing `kuavo.stance` — without needing the MuJoCo bridge.
 pub struct SimulatedKuavo {
-    id: fabric::types::embodiment::DeviceId,
+    id: ::contracts::types::embodiment::DeviceId,
     clock: Arc<dyn MonotonicClock>,
     mode: tokio::sync::Mutex<String>,
     fall_detected: AtomicU64,
@@ -434,7 +436,7 @@ pub struct SimulatedKuavo {
 impl SimulatedKuavo {
     pub fn biped(id: &str, clock: Arc<dyn MonotonicClock>) -> Self {
         Self {
-            id: fabric::types::embodiment::DeviceId(id.into()),
+            id: ::contracts::types::embodiment::DeviceId(id.into()),
             clock,
             mode: tokio::sync::Mutex::new("idle".into()),
             fall_detected: AtomicU64::new(0),
@@ -442,12 +444,12 @@ impl SimulatedKuavo {
         }
     }
 
-    async fn observation(&self) -> fabric::types::embodiment::EmbodiedObservation {
+    async fn observation(&self) -> ::contracts::types::embodiment::EmbodiedObservation {
         let mode = self.mode.lock().await.clone();
         let fall = self.fall_detected.load(Ordering::SeqCst) != 0;
         let sequence = self.sequence.fetch_add(1, Ordering::SeqCst) + 1;
-        let now = fabric::MonoTime(self.clock.now().0);
-        fabric::types::embodiment::EmbodiedObservation {
+        let now = ::contracts::MonoTime(self.clock.now().0);
+        ::contracts::types::embodiment::EmbodiedObservation {
             schema: "robot.state/v1".into(),
             schema_version: 1,
             source: format!("sim-kuavo:{}", self.id.0),
@@ -456,7 +458,7 @@ impl SimulatedKuavo {
             received_at: now,
             source_unix_ms: 0,
             received_unix_ms: 0,
-            valid_until: Some(fabric::MonoDeadline::after(now, 2_000)),
+            valid_until: Some(::contracts::MonoDeadline::after(now, 2_000)),
             confidence: 1.0,
             reference_frame: None,
             frame: None,
@@ -475,8 +477,9 @@ impl SimulatedKuavo {
 impl crate::EmbodimentProvider for SimulatedKuavo {
     async fn observe(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
-    ) -> Result<Vec<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
+        device: &::contracts::types::embodiment::DeviceId,
+    ) -> Result<Vec<::contracts::types::embodiment::EmbodiedObservation>, crate::ProviderError>
+    {
         Ok(vec![self
             .get_state(device)
             .await?
@@ -485,8 +488,9 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
 
     async fn get_state(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
-    ) -> Result<Option<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
+        device: &::contracts::types::embodiment::DeviceId,
+    ) -> Result<Option<::contracts::types::embodiment::EmbodiedObservation>, crate::ProviderError>
+    {
         if self.id != *device {
             return Err(crate::ProviderError::Rejected("device mismatch".into()));
         }
@@ -495,17 +499,17 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
 
     async fn list_skills(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
-    ) -> Result<Vec<fabric::types::embodiment::SkillDescriptor>, crate::ProviderError> {
+        device: &::contracts::types::embodiment::DeviceId,
+    ) -> Result<Vec<::contracts::types::embodiment::SkillDescriptor>, crate::ProviderError> {
         if self.id != *device {
             return Err(crate::ProviderError::Rejected("device mismatch".into()));
         }
-        Ok(vec![fabric::types::embodiment::SkillDescriptor {
-            skill: fabric::types::embodiment::SkillId("kuavo.stance".into()),
+        Ok(vec![::contracts::types::embodiment::SkillDescriptor {
+            skill: ::contracts::types::embodiment::SkillId("kuavo.stance".into()),
             device: device.clone(),
             summary: "enter and hold a stable stance".into(),
             input_schema: serde_json::json!({"type": "object", "required": []}),
-            risk: fabric::types::embodiment::RiskClass::Low,
+            risk: ::contracts::types::embodiment::RiskClass::Low,
             timeout_ms: 10_000,
             cancellable: false,
             preconditions: vec!["control mode ready".into(), "fresh state available".into()],
@@ -517,7 +521,7 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
         &self,
         command: crate::ValidatedSkillCommand<'_>,
         progress: Arc<dyn crate::SkillProgressSink>,
-    ) -> Result<fabric::types::embodiment::SkillResult, crate::ProviderError> {
+    ) -> Result<::contracts::types::embodiment::SkillResult, crate::ProviderError> {
         let request = command.request();
         if request.skill.0 != "kuavo.stance" {
             return Err(crate::ProviderError::Rejected(format!(
@@ -536,19 +540,19 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
         *self.mode.lock().await = "stance".into();
         self.fall_detected.store(0, Ordering::SeqCst);
         progress
-            .progress(fabric::types::embodiment::SkillProgress {
+            .progress(::contracts::types::embodiment::SkillProgress {
                 operation_id,
                 skill: request.skill.clone(),
                 fraction: 1.0,
                 note: "stance entered".into(),
-                at: fabric::MonoTime(self.clock.now().0),
+                at: ::contracts::MonoTime(self.clock.now().0),
             })
             .await;
-        Ok(fabric::types::embodiment::SkillResult {
+        Ok(::contracts::types::embodiment::SkillResult {
             operation_id,
             skill: request.skill.clone(),
             device: request.device.clone(),
-            outcome: fabric::types::embodiment::SkillOutcome::Succeeded,
+            outcome: ::contracts::types::embodiment::SkillOutcome::Succeeded,
             duration_ms: 0,
             evidence: vec![],
         })
@@ -556,7 +560,7 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
 
     async fn cancel(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
+        device: &::contracts::types::embodiment::DeviceId,
         _operation: &crate::DeviceOperationId,
     ) -> Result<crate::CancelAck, crate::ProviderError> {
         if self.id != *device {
@@ -570,7 +574,7 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
 
     async fn safe_stop(
         &self,
-        device: &fabric::types::embodiment::DeviceId,
+        device: &::contracts::types::embodiment::DeviceId,
     ) -> Result<crate::StopReceipt, crate::ProviderError> {
         if self.id != *device {
             return Err(crate::ProviderError::Rejected("device mismatch".into()));
@@ -586,7 +590,9 @@ impl crate::EmbodimentProvider for SimulatedKuavo {
 mod kuavo_sim_tests {
     use super::*;
     use crate::{skill::authorized_fixture, EmbodimentProvider, ManualClock, SkillProgressSink};
-    use fabric::types::embodiment::{DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest};
+    use ::contracts::types::embodiment::{
+        DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest,
+    };
 
     struct NullSink;
     #[async_trait::async_trait]
@@ -805,7 +811,9 @@ mod tests {
 mod embodiment_tests {
     use super::*;
     use crate::{skill::authorized_fixture, EmbodimentProvider, ManualClock, SkillProgressSink};
-    use fabric::types::embodiment::{DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest};
+    use ::contracts::types::embodiment::{
+        DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest,
+    };
 
     struct NullSink;
     #[async_trait::async_trait]
@@ -843,7 +851,8 @@ mod embodiment_tests {
             parameters: serde_json::json!({"x": 2.0, "y": 3.0}),
         };
         let mut authorized = authorized_fixture(request);
-        authorized.permit.operation = DeviceOperationId(fabric::OperationId::new().0.to_string());
+        authorized.permit.operation =
+            DeviceOperationId(::contracts::OperationId::new().0.to_string());
         let result = provider
             .execute_skill(
                 crate::ValidatedSkillCommand(&authorized),

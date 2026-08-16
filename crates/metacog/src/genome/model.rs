@@ -5,8 +5,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// Re-export ABI Genome types for convenience
-pub use fabric::genome::{
+// Re-export Metacog-owned Genome types for convenience.
+pub use super::contracts::{
     BoundaryRuleSpec, BoundarySpec, CarePriority, CareSpec, Genome, IdentitySpec, LifecycleSpec,
     MemorySpec, MutationSpec, SubsystemSpec, SubsystemType, Topology,
 };

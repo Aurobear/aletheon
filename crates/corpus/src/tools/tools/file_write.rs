@@ -129,8 +129,8 @@ impl Tool for FileWriteTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
-                    patch_delta: Some(fabric::PatchDelta {
-                        applied: vec![fabric::PatchDeltaApplied {
+                    patch_delta: Some(::contracts::PatchDelta {
+                        applied: vec![::contracts::PatchDeltaApplied {
                             operation: "write".into(),
                             path: evidence_path.clone(),
                             hunks_applied: Some(1),
@@ -138,7 +138,7 @@ impl Tool for FileWriteTool {
                             moved_to: None,
                         }],
                         failed: vec![],
-                        files_changed: vec![fabric::PatchDeltaFileChange {
+                        files_changed: vec![::contracts::PatchDeltaFileChange {
                             path: evidence_path,
                             change_type: change_type.into(),
                             hunks_applied: 1,

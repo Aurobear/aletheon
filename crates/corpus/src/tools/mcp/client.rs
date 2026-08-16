@@ -900,20 +900,21 @@ impl ElicitationHandler for McpElicitationHandler {
 
         let req = ApprovalRequest {
             scope_subject: None,
-            owner: fabric::ApprovalOwner::new(
-                fabric::PrincipalId("mcp".into()),
-                fabric::ThreadId("mcp".into()),
+            owner: ::contracts::ApprovalOwner::new(
+                ::contracts::PrincipalId("mcp".into()),
+                ::contracts::ThreadId("mcp".into()),
             ),
-            connection_id: fabric::ConnectionId::new(),
-            turn_id: fabric::TurnId::new(),
+            connection_id: ::contracts::ConnectionId::new(),
+            turn_id: ::contracts::TurnId::new(),
             call_id: format!(
                 "elicitation::{}::{}",
                 self.server_name,
                 uuid::Uuid::new_v4()
             ),
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/".into(), vec![])
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots("/".into(), vec![])
                 .unwrap_or_else(|_| {
-                    fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap()
+                    ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                        .unwrap()
                 }),
             tool: format!("mcp::{}", self.server_name),
             action_summary: message.to_string(),

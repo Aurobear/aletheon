@@ -1,9 +1,8 @@
 # frozen_commit=03d263d44f0277d883c24b1be0b98e3a48519291
 # symbol	paths	representations	decision	canonical_target	exit_node
-AgentId	crates/fabric/src/ipc/ipc_types.rs,crates/fabric/src/types/process.rs	u64,Uuid	retain_distinct_semantics	ipc agent handle vs governed process agent identity	n/a
 EntityId	crates/dasein/src/dasein/types.rs,crates/mnemosyne/src/knowledge_graph/entity.rs	String,String	retain_distinct_semantics	Dasein entity vs knowledge-graph entity	n/a
-EvidenceId	crates/cognit/src/core/cognitive_task.rs,crates/fabric/src/types/metacognition_evidence.rs	String,String	retain_distinct_semantics	runtime evidence vs metacognition evidence	n/a
-MessageId	crates/fabric/src/ipc/envelope_v2.rs,crates/fabric/src/types/channel.rs	Uuid,String	retain_distinct_semantics	IPC envelope message vs external channel message	n/a
-ProcessId	crates/fabric/src/types/operation.rs,crates/platform/src/process.rs	Uuid,u32	retain_distinct_semantics	governed operation process vs OS process	n/a
-SessionId	crates/fabric/src/types/space.rs,crates/runtime/src/ids.rs	String,String	retain_distinct_semantics	legacy fabric shared session id vs Runtime canonical session id	RA-03
-TurnId	crates/fabric/src/types/session.rs,crates/runtime/src/ids.rs	Uuid,String	retain_distinct_semantics	legacy fabric shared turn id vs Runtime canonical turn id	RA-04
+EvidenceId	crates/cognit/src/core/cognitive_task.rs,crates/contracts/src/types/metacognition_evidence.rs	String,String	retain_distinct_semantics	runtime evidence vs metacognition evidence	n/a
+MessageId	crates/contracts/src/ipc/envelope_v2.rs,crates/gateway/src/channel/mod.rs	Uuid,String	retain_distinct_semantics	IPC envelope message vs external channel message	n/a
+ProcessId	crates/contracts/src/types/operation.rs,crates/platform/src/process.rs	Uuid,u32	retain_distinct_semantics	governed operation process vs OS process	n/a
+SessionId	crates/contracts/src/types/space.rs,crates/runtime/src/ids.rs	String,String	retain_distinct_semantics	legacy fabric shared session id vs Runtime canonical session id	RA-03
+TurnId	crates/contracts/src/types/session.rs,crates/runtime/src/ids.rs	Uuid,String	retain_distinct_semantics	legacy fabric shared turn id vs Runtime canonical turn id	RA-04

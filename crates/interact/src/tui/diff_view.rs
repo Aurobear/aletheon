@@ -6,8 +6,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use fabric::change_transaction::MutationCoverage;
-use fabric::PatchDelta;
+use ::contracts::change_transaction::MutationCoverage;
+use ::contracts::PatchDelta;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiffFileEntry {
@@ -29,8 +29,8 @@ pub struct DiffView {
     pub conflicted: bool,
     /// Host-authored terminal/recovery decision. This is a projection only;
     /// the TUI never derives or persists settlement state.
-    pub settlement: Option<fabric::TransactionSettlementReceipt>,
-    pub findings: Vec<fabric::ReviewFinding>,
+    pub settlement: Option<::contracts::TransactionSettlementReceipt>,
+    pub findings: Vec<::contracts::ReviewFinding>,
 }
 
 impl DiffView {
@@ -106,11 +106,11 @@ impl DiffView {
         }
     }
 
-    pub fn project_settlement(&mut self, receipt: fabric::TransactionSettlementReceipt) {
+    pub fn project_settlement(&mut self, receipt: ::contracts::TransactionSettlementReceipt) {
         self.settlement = Some(receipt);
     }
 
-    pub fn project_findings(&mut self, findings: Vec<fabric::ReviewFinding>) {
+    pub fn project_findings(&mut self, findings: Vec<::contracts::ReviewFinding>) {
         self.findings = findings;
     }
 }
@@ -182,11 +182,13 @@ impl Widget for &DiffView {
                     " finding {} [{:?}/{:?}]{location}: {}",
                     finding.finding_id, finding.severity, finding.status, finding.summary
                 ),
-                Style::default().fg(if finding.status == fabric::ReviewFindingStatus::Resolved {
-                    Color::Green
-                } else {
-                    Color::Red
-                }),
+                Style::default().fg(
+                    if finding.status == ::contracts::ReviewFindingStatus::Resolved {
+                        Color::Green
+                    } else {
+                        Color::Red
+                    },
+                ),
             )));
         }
         if !self.files.is_empty() {
@@ -315,7 +317,7 @@ mod tests {
             mutation_coverage: coverage,
             applied: vec![],
             failed: if failed {
-                vec![fabric::PatchDeltaFailed {
+                vec![::contracts::PatchDeltaFailed {
                     operation: "write".into(),
                     path: "src/lib.rs".into(),
                     error: "external writer".into(),
@@ -324,7 +326,7 @@ mod tests {
             } else {
                 vec![]
             },
-            files_changed: vec![fabric::PatchDeltaFileChange {
+            files_changed: vec![::contracts::PatchDeltaFileChange {
                 path: "src/lib.rs".into(),
                 change_type: "modified".into(),
                 hunks_applied: 1,

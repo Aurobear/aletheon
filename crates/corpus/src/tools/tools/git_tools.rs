@@ -403,7 +403,7 @@ impl Tool for GitResetTool {
 
 // ── shared helpers ───────────────────────────────────────────────────────────
 
-fn refused(ctx: &ToolContext, start: fabric::MonoTime, message: &str) -> ToolResult {
+fn refused(ctx: &ToolContext, start: ::contracts::MonoTime, message: &str) -> ToolResult {
     ToolResult {
         content: message.to_string(),
         is_error: true,
@@ -420,7 +420,7 @@ fn refused(ctx: &ToolContext, start: fabric::MonoTime, message: &str) -> ToolRes
 /// spawn error.
 fn git_command_result(
     ctx: &ToolContext,
-    start: fabric::MonoTime,
+    start: ::contracts::MonoTime,
     tool_name: &str,
     output: std::io::Result<std::process::Output>,
 ) -> ToolResult {

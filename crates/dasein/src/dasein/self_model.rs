@@ -4,7 +4,7 @@
 //! of nihilating what it was, in order to become what it is not.
 
 use super::types::*;
-use fabric::dasein::{
+use crate::dasein::context::{
     AssertionSnapshot, AssertionSource as AbiAssertionSource, NegatedAssertionSnapshot,
     PossibilitySnapshot, SelfModelSnapshot,
 };

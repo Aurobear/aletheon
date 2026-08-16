@@ -10,7 +10,7 @@ fn integration_dedup_and_rate_limit() {
     });
     let mut count = 0;
     for i in 0..10 {
-        use fabric::types::frame::FrameRef;
+        use ::contracts::types::frame::FrameRef;
         let f = FrameRef {
             uri: format!("artifact://sha256/{i:064x}"),
             sha256: format!("{i:064x}"),

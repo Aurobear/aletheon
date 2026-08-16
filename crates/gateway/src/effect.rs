@@ -5,7 +5,7 @@
 //! state, so adding a new capability can never widen the dispatcher's
 //! surface.
 
-use fabric::channel::OutboundMessage;
+use crate::channel::OutboundMessage;
 
 /// Effect a [`super::registry::CapabilityHandler`] asks the dispatcher to
 /// perform after handling an inbound message.

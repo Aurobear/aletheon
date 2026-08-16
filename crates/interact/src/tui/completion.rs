@@ -97,7 +97,7 @@ impl CompletionPopup {
         self.show_candidates(input, candidates);
     }
 
-    pub fn show_attachments(&mut self, input: &str, workspace: &fabric::WorkspacePolicy) {
+    pub fn show_attachments(&mut self, input: &str, workspace: &::contracts::WorkspacePolicy) {
         let candidates = file_picker::find_files(workspace, input)
             .into_iter()
             .filter_map(|file| {

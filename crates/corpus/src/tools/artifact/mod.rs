@@ -108,6 +108,31 @@ impl ArtifactStore {
     }
 }
 
+/// Replace inline model-context fragments with durable content-addressed
+/// references. Keeping this next to `ArtifactStore` makes persistence an
+/// adapter responsibility rather than a composition-root helper.
+pub fn materialize_model_context_projection(
+    receipt: &mut ::contracts::model_projection::ModelContextProjectionReceipt,
+) {
+    let store = ArtifactStore::new(
+        crate::tools::tools::output::OutputConfig::default()
+            .overflow_dir
+            .join("artifacts"),
+    );
+    for fragment in &mut receipt.fragments {
+        let Some(content) = fragment.inline_content.take() else {
+            continue;
+        };
+        match store.store(content.as_bytes(), "application/json") {
+            Ok(artifact) => fragment.artifact_ref = Some(artifact.uri()),
+            Err(error) => {
+                tracing::warn!(%error, fragment = %fragment.fragment_id, "context projection artifact persistence failed");
+                fragment.inline_content = Some(content);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

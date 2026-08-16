@@ -1,12 +1,14 @@
 //! Bounded selected-file Google Drive changes synchronization.
 
 use super::{GoogleApiError, GoogleDriveAdapter};
-use chrono::DateTime;
-use fabric::{
+use crate::tools::google::{
     ExternalContentRef, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
-    ExternalFileMetadata, ExternalIdentityId, ExternalObjectRef, ExternalProviderId,
-    ExternalRecordRef, OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
+    ExternalFileMetadata, ExternalObjectRef, ExternalRecordRef, OpaqueCursor,
+    OpaqueProviderObjectId,
 };
+use ::contracts::PrincipalId;
+use application::{ExternalIdentityId, ExternalProviderId};
+use chrono::DateTime;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;

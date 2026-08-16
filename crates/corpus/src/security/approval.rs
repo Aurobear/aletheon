@@ -5,8 +5,8 @@
 //! gate returns the user's decision. Fail-safe: any error/timeout upstream
 //! should map to `Deny`.
 
+use ::contracts::{ApprovalOwner, ConnectionId, TurnId, WorkspacePolicy};
 use async_trait::async_trait;
-use fabric::{ApprovalOwner, ConnectionId, TurnId, WorkspacePolicy};
 
 /// A request for the user to approve a single tool action.
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub struct ApprovalRequest {
     pub risk_level: String,
     /// Optional full command / diff for the user to inspect.
     pub detail: Option<String>,
-    pub scope_subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
+    pub scope_subject: Option<::contracts::protocol::client::TransientApprovalScopeSubject>,
 }
 
 /// The user's decision on an approval request.
@@ -118,14 +118,15 @@ mod tests {
     async fn auto_deny_gate_denies() {
         let gate = AutoDenyGate;
         let req = ApprovalRequest {
-            owner: fabric::ApprovalOwner::new(
-                fabric::PrincipalId("test".into()),
-                fabric::ThreadId("test".into()),
+            owner: ::contracts::ApprovalOwner::new(
+                ::contracts::PrincipalId("test".into()),
+                ::contracts::ThreadId("test".into()),
             ),
-            connection_id: fabric::ConnectionId::new(),
-            turn_id: fabric::TurnId::new(),
+            connection_id: ::contracts::ConnectionId::new(),
+            turn_id: ::contracts::TurnId::new(),
             call_id: "call".into(),
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                .unwrap(),
             tool: "bash_exec".into(),
             action_summary: "rm -rf /tmp/x".into(),
             risk_level: "high".into(),
@@ -139,14 +140,15 @@ mod tests {
     async fn auto_approve_gate_approves() {
         let gate = AutoApproveGate;
         let req = ApprovalRequest {
-            owner: fabric::ApprovalOwner::new(
-                fabric::PrincipalId("test".into()),
-                fabric::ThreadId("test".into()),
+            owner: ::contracts::ApprovalOwner::new(
+                ::contracts::PrincipalId("test".into()),
+                ::contracts::ThreadId("test".into()),
             ),
-            connection_id: fabric::ConnectionId::new(),
-            turn_id: fabric::TurnId::new(),
+            connection_id: ::contracts::ConnectionId::new(),
+            turn_id: ::contracts::TurnId::new(),
             call_id: "call".into(),
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
+                .unwrap(),
             tool: "file_write".into(),
             action_summary: "write hello.txt".into(),
             risk_level: "low".into(),

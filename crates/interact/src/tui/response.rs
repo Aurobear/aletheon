@@ -1,97 +1,33 @@
-use std::io;
-
-use fabric::cognit::{Critique, Plan};
-use fabric::ui_event::{
-    AwarenessLevel, ClientEvent, CollaborationMode, SubAgentHandle, SubAgentStatus,
-};
+use super::presentation::{AwarenessLevel, SubAgentHandle, SubAgentStatus};
+use application::turn_control::CollaborationMode;
+use cognit::domain::{Critique, Plan};
+use gateway::protocol::legacy_progress::ClientEvent;
 
 use super::chat::Role as ChatRole;
 use super::plan_view::PlanVersion;
-use super::test_infra::EventRecorder;
-use super::App;
+#[cfg(test)]
+use super::SystemNoticeQueue;
+use super::TuiModel;
 
-/// Variant of `try_read_socket` that records events via `EventRecorder`.
-pub fn try_read_socket_with_recorder(
-    app: &mut App,
-    event_recorder: &mut Option<EventRecorder>,
-) -> bool {
-    let mut changed = false;
-    loop {
-        match app.stream.try_read(&mut app.read_buf) {
-            Ok(0) => {
-                changed = true;
-                app.streaming = false;
-                app.status.waiting = false;
-                app.app_state.streaming = false;
-                app.compat_transcript
-                    .add_text(ChatRole::System, "连接断开".to_string());
-                break;
-            }
-            Ok(n) => {
-                changed = true;
-                app.response_buf.push(&app.read_buf[..n]);
-
-                loop {
-                    let line = match app.response_buf.take_line() {
-                        Ok(Some(line)) => line.trim().to_string(),
-                        Ok(None) => break,
-                        Err(error) => {
-                            app.compat_transcript.add_text(
-                                ChatRole::System,
-                                format!("Error: daemon protocol contained invalid UTF-8: {error}"),
-                            );
-                            app.streaming = false;
-                            app.status.waiting = false;
-                            app.app_state.streaming = false;
-                            break;
-                        }
-                    };
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
-                        if msg.get("method").and_then(|v| v.as_str()) == Some("event") {
-                            if let Some(params) = msg.get("params") {
-                                // Record event before processing
-                                if let Some(ref mut recorder) = event_recorder {
-                                    recorder.write(params);
-                                }
-                                handle_event(app, params);
-                            }
-                        } else if msg.get("method").and_then(|v| v.as_str())
-                            == Some("approval_request")
-                        {
-                            handle_approval(app, &msg);
-                        } else if msg.get("result").is_some() || msg.get("error").is_some() {
-                            process_response(app, msg);
-                            // Don't break — continue processing remaining lines
-                            // in the buffer (streaming events may follow in the
-                            // same chunk as the response).
-                        }
-                    }
+pub fn handle_event(app: &mut TuiModel, params: &serde_json::Value) {
+    let event: ClientEvent = match serde_json::from_value(params.clone()) {
+        Ok(event) => event,
+        Err(direct_error) => {
+            match serde_json::from_value::<::contracts::protocol::client::ClientMessage<ClientEvent>>(
+                params.clone(),
+            )
+            .ok()
+            .and_then(|message| message.into_v1().ok())
+            {
+                Some(event) => event,
+                None => {
+                    tracing::warn!(
+                        direct = %direct_error,
+                        "Failed to deserialize ClientEvent params"
+                    );
+                    return;
                 }
             }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-            Err(_) => {
-                changed = true;
-                app.streaming = false;
-                app.status.waiting = false;
-                app.app_state.streaming = false;
-                break;
-            }
-        }
-    }
-    changed
-}
-
-pub fn handle_event(app: &mut App, params: &serde_json::Value) {
-    let event: ClientEvent = match serde_json::from_value(params.clone()) {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to deserialize ClientEvent params");
-            return;
         }
     };
 
@@ -134,20 +70,14 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::ThinkingDelta { text } => {
             app.stream_ctrl.push_thinking(&text);
-            app.compat_transcript
-                .set_assistant_stream(app.stream_ctrl.current_text());
             app.dispatch_live_assistant_text();
         }
         ClientEvent::TextDelta { text } => {
             app.stream_ctrl.push_text(&text);
-            app.compat_transcript
-                .set_assistant_stream(app.stream_ctrl.current_text());
             app.dispatch_live_assistant_text();
         }
         ClientEvent::TextSnapshot { text } => {
             app.stream_ctrl.replace_text(&text);
-            app.compat_transcript
-                .set_assistant_stream(app.stream_ctrl.current_text());
             app.dispatch_live_assistant_text();
         }
         ClientEvent::ToolCallStart {
@@ -167,10 +97,6 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     },
                 ),
             );
-            app.compat_transcript.discard_trailing_assistant_draft();
-            let args_str = serde_json::to_string(&args).unwrap_or_default();
-            app.compat_transcript
-                .add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
             app.app_state.turn_activity.tool_calls += 1;
         }
@@ -190,8 +116,6 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     },
                 ),
             );
-            let args_str = serde_json::to_string(&args).unwrap_or_default();
-            app.compat_transcript.update_exec_args(&call_id, &args_str);
         }
         ClientEvent::ToolCallResult {
             call_id,
@@ -208,6 +132,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     super::reducer::LiveActivityEvent::ToolFinished {
                         call_id: call_id.clone(),
                         is_error,
+                        error: is_error.then(|| output.clone()),
                         elapsed_ms,
                         observed_at,
                     },
@@ -222,8 +147,6 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             {
                 app.latest_diff = Some(preview);
             }
-            app.compat_transcript
-                .update_exec_with_delta(&call_id, &output, is_error, patch_delta);
             if is_error {
                 if output.starts_with("Policy denied:")
                     || output.starts_with("Policy guidance:")
@@ -251,12 +174,6 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     },
                 ),
             );
-            let progress = payload
-                .as_str()
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| payload.to_string());
-            app.compat_transcript
-                .update_exec_progress(&call_id, &progress);
         }
         ClientEvent::PatchProgress {
             status,
@@ -272,7 +189,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 (Some(applied), Some(failed)) => format!("{applied} applied, {failed} failed"),
                 _ => String::new(),
             });
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 format!("Patch {status}: {operation} {target} {detail}")
                     .trim_end()
@@ -311,28 +228,48 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::TurnDone => {
             app.stream_ctrl.commit();
-            app.compat_transcript
-                .set_assistant_stream(app.stream_ctrl.current_text());
+            if app.controller.has_typed_gateway() {
+                // A durable projection poll may settle the turn before the
+                // compatibility live-stream notification arrives.  That
+                // late notification is only a presentation hint and must not
+                // reopen a spinner after the authoritative terminal receipt
+                // has already cleared the submitted turn reference.
+                if app.active_turn_ref.is_none() || !app.turn_active {
+                    return;
+                }
+                // The compatibility stream only tells us that live deltas
+                // stopped. Terminal authority comes from the typed Session
+                // projection queried by the Gateway controller below.
+                app.streaming = true;
+                app.status.waiting = true;
+                app.app_state.streaming = true;
+                return;
+            }
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
             app.turn_active = false;
             app.app_state.turn_active = false;
             let terminal = if app.turn_cancel_requested {
-                fabric::TurnTerminalStatus::Interrupted
-            } else if app.app_state.last_terminal_status == Some(fabric::TurnTerminalStatus::Failed)
+                ::contracts::TurnTerminalStatus::Interrupted
+            } else if app.app_state.last_terminal_status
+                == Some(::contracts::TurnTerminalStatus::Failed)
             {
-                fabric::TurnTerminalStatus::Failed
+                ::contracts::TurnTerminalStatus::Failed
             } else {
-                fabric::TurnTerminalStatus::Completed
+                ::contracts::TurnTerminalStatus::Completed
             };
             super::reducer::finish_live_turn(&mut app.app_state, terminal);
             app.turn_cancel_requested = false;
             app.status.session_turns += 1;
         }
         ClientEvent::Error { message } => {
-            app.compat_transcript
-                .add_text(ChatRole::System, format!("Error: {message}"));
+            app.system_notices
+                .push(ChatRole::System, format!("Error: {message}"));
+            if app.controller.has_typed_gateway() {
+                app.app_state.last_error = Some(message);
+                return;
+            }
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
@@ -340,7 +277,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.app_state.turn_active = false;
             super::reducer::finish_live_turn(
                 &mut app.app_state,
-                fabric::TurnTerminalStatus::Failed,
+                ::contracts::TurnTerminalStatus::Failed,
             );
         }
         ClientEvent::AwarenessChanged { level, context } => {
@@ -414,16 +351,16 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.status.model_name = model;
         }
         ClientEvent::Interrupted => {
-            app.compat_transcript
-                .add_text(ChatRole::System, "Interrupted".to_string());
+            app.system_notices
+                .push(ChatRole::System, "Interrupted".to_string());
         }
         ClientEvent::BudgetExceeded { limit } => {
-            app.compat_transcript
-                .add_text(ChatRole::System, format!("Budget exceeded: {limit} tokens"));
+            app.system_notices
+                .push(ChatRole::System, format!("Budget exceeded: {limit} tokens"));
         }
         ClientEvent::CircuitBreakerTripped { reason } => {
-            app.compat_transcript
-                .add_text(ChatRole::System, format!("Circuit breaker: {reason}"));
+            app.system_notices
+                .push(ChatRole::System, format!("Circuit breaker: {reason}"));
         }
         ClientEvent::CompactionTriggered => {
             // Wait for the validated outcome; a trigger alone is not success.
@@ -439,7 +376,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             } else {
                 tokens_after as f64 / tokens_before as f64 * 100.0
             };
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 format!(
                     "自动压缩完成：{tokens_before} → {tokens_after} tokens（{ratio:.1}%），\
@@ -461,7 +398,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                         },
                     ),
                 );
-                app.compat_transcript.add_text(ChatRole::System, summary);
+                app.system_notices.push(ChatRole::System, summary);
             }
         }
         ClientEvent::GoalSet {
@@ -553,51 +490,24 @@ fn public_tool_args(value: &serde_json::Value) -> serde_json::Value {
     redact(value, 0)
 }
 
-pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
-    if let Some(params) = msg.get("params") {
-        let approval_id = params
-            .get("approval_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let tool = params
-            .get("tool")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let action_summary = params
-            .get("action_summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let risk_level = params
-            .get("risk_level")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let detail = params
-            .get("detail")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let scope_subject = params
-            .get("scope_subject")
-            .cloned()
-            .filter(|value| !value.is_null())
-            .and_then(|value| serde_json::from_value(value).ok());
-        app.pending_approval = Some(
-            super::approval_dialog::ApprovalDialog::new(
-                approval_id,
-                tool,
-                action_summary,
-                risk_level,
-            )
-            .with_detail(detail)
-            .with_scope_subject(scope_subject),
-        );
-    }
+pub(crate) fn handle_typed_approval(
+    app: &mut TuiModel,
+    approval: gateway::protocol::ApprovalRequestedEvent,
+) {
+    app.pending_approval = Some(
+        super::approval_dialog::ApprovalDialog::new(
+            approval.choice_id,
+            approval.tool,
+            approval.action_summary,
+            approval.risk_level,
+        )
+        .with_detail(approval.detail)
+        .with_scope_subject(approval.scope_subject),
+    );
 }
 
-pub fn process_response(app: &mut App, msg: serde_json::Value) {
+#[cfg(test)]
+pub fn process_response(app: &mut TuiModel, msg: serde_json::Value) {
     if let Some(request_id) = msg.get("id").and_then(serde_json::Value::as_u64) {
         if app.pending_non_turn.remove(&request_id) {
             app.streaming = false;
@@ -622,73 +532,213 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
     // BEFORE the turn_done event. Clearing streaming here causes a visible UI
     // freeze between tool calls. Let turn_done handle the state transition.
     //
-    // Also do NOT clear response_buf — streaming events may follow in the
-    // same try_read chunk.
+    // The Gateway compatibility adapter owns any partial frame buffering; the
+    // response reducer never clears transport state after a correlated result.
+}
+
+/// Apply the typed Gateway snapshot/page envelope. This keeps reconnect and
+/// terminal/status authority on the daemon projection while the legacy event
+/// notification seam is still used only for rich live presentation deltas.
+pub(crate) fn apply_typed_projection_result(
+    app: &mut TuiModel,
+    session_id: &str,
+    result: serde_json::Value,
+) {
+    let snapshot = result.get("snapshot").cloned().and_then(|value| {
+        serde_json::from_value::<::contracts::protocol::client::SessionReadSnapshot>(value).ok()
+    });
+    let Some(snapshot) = snapshot else {
+        app.projection_polling = false;
+        app.system_notices.push(
+            ChatRole::System,
+            "Typed Gateway session snapshot rejected".to_string(),
+        );
+        return;
+    };
+    if app.app_state.session_id.as_deref() != Some(session_id) {
+        app.app_state.reset_execution_target_for_session();
+    }
+    // Inspect the snapshot before reducing it into the local view.  The
+    // server-assigned turn reference is the only safe correlation between a
+    // submission and its later projection terminal; using merely the latest
+    // completed task would let a stale snapshot settle a newer turn.
+    let projected_terminal = projected_terminal_status(app, &snapshot);
+    let effects = super::reducer::reduce(
+        &mut app.app_state,
+        super::reducer::UiAction::ReadSnapshot(snapshot),
+    );
+    apply_projection_effects(app, effects);
+    if app.app_state.session_id.as_deref() == Some(session_id) {
+        app.projection_target_session_id = Some(session_id.to_owned());
+        app.projection_session_id = Some(session_id.to_owned());
+        app.projection_polling = true;
+    }
+    if let (Some(events), Some(after), Some(next)) = (
+        result.get("events").cloned(),
+        result.get("after").cloned(),
+        result.get("next").cloned(),
+    ) {
+        let page = serde_json::from_value::<::contracts::protocol::client::SessionEventPage>(
+            serde_json::json!({
+                "schema_version": ::contracts::SESSION_READ_MODEL_SCHEMA_VERSION,
+                "session_id": session_id,
+                "after": after,
+                "next": next,
+                "events": events,
+            }),
+        );
+        match page {
+            Ok(page) => {
+                let effects = super::reducer::reduce(
+                    &mut app.app_state,
+                    super::reducer::UiAction::EventPage(page),
+                );
+                apply_projection_effects(app, effects);
+            }
+            Err(error) => {
+                app.system_notices.push(
+                    ChatRole::System,
+                    format!("Typed Gateway event page rejected: {error}"),
+                );
+            }
+        }
+    }
+    if let Some(status) = projected_terminal {
+        super::reducer::finish_live_turn(&mut app.app_state, status);
+        app.streaming = false;
+        app.status.waiting = false;
+        app.app_state.streaming = false;
+        app.turn_active = false;
+        app.active_turn_ref = None;
+        app.turn_cancel_requested = false;
+        app.status.session_turns = app.status.session_turns.saturating_add(1);
+    }
+    app.projection_next_poll_at = ::contracts::MonoTime(app.clock.mono_now().0.saturating_add(200));
+}
+
+/// Return a terminal status only for the turn admitted by the current typed
+/// submission.  The projection can contain older completed turns while a new
+/// turn is still being admitted, so task-level completion without turn
+/// correlation is not sufficient in production.
+fn projected_terminal_status(
+    app: &TuiModel,
+    snapshot: &::contracts::protocol::client::SessionReadSnapshot,
+) -> Option<::contracts::TurnTerminalStatus> {
+    if let Some(expected_turn) = app.active_turn_ref.as_deref() {
+        return snapshot
+            .tasks
+            .iter()
+            .flat_map(|task| task.steps.iter())
+            .find(|step| step.turn_id.0.to_string() == expected_turn)
+            .and_then(|step| match step.phase {
+                ::contracts::TaskPhase::Completed => {
+                    Some(::contracts::TurnTerminalStatus::Completed)
+                }
+                ::contracts::TaskPhase::Interrupted => {
+                    Some(::contracts::TurnTerminalStatus::Interrupted)
+                }
+                ::contracts::TaskPhase::Blocked | ::contracts::TaskPhase::Failed => {
+                    Some(::contracts::TurnTerminalStatus::Failed)
+                }
+                ::contracts::TaskPhase::Active => None,
+            });
+    }
+
+    if !app.turn_active {
+        return None;
+    }
+
+    // Compatibility fixtures have no typed command receipt.  Keep their
+    // existing projection-only behavior under cfg(test); production typed
+    // submissions always populate `active_turn_ref` before polling.
+    #[cfg(test)]
+    {
+        return snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.active_turn_id.is_none())
+            .find_map(|task| match task.phase {
+                ::contracts::TaskPhase::Completed => {
+                    Some(::contracts::TurnTerminalStatus::Completed)
+                }
+                ::contracts::TaskPhase::Interrupted => {
+                    Some(::contracts::TurnTerminalStatus::Interrupted)
+                }
+                ::contracts::TaskPhase::Blocked | ::contracts::TaskPhase::Failed => {
+                    Some(::contracts::TurnTerminalStatus::Failed)
+                }
+                ::contracts::TaskPhase::Active => None,
+            });
+    }
+    #[cfg(not(test))]
+    None
 }
 
 /// Temporary V0 response adapter. This is the only location allowed to inspect
 /// legacy result fields; remove after the compatibility window ending 2026-12-31.
-fn set_compat_assistant(app: &mut App, text: String) {
+#[cfg(test)]
+fn set_live_assistant(app: &mut TuiModel, text: String) {
     let already_streamed = !text.is_empty() && app.stream_ctrl.current_text() == text;
-    app.compat_transcript.set_assistant_stream(text.clone());
     if !already_streamed {
         app.replace_transient_assistant(text);
     }
 }
 
-fn add_compat_notice(app: &mut App, text: String) {
-    app.compat_transcript.add_text(ChatRole::System, text);
-    app.sync_compat_notices();
+#[cfg(test)]
+fn add_system_notice(app: &mut TuiModel, text: String) {
+    app.system_notices.push(ChatRole::System, text);
+    app.sync_system_notices();
 }
 
-fn apply_legacy_v0_response(app: &mut App, msg: &serde_json::Value) -> bool {
+#[cfg(test)]
+fn apply_legacy_v0_response(app: &mut TuiModel, msg: &serde_json::Value) -> bool {
     if let Some(result) = msg.get("result") {
         if let Some(text) = result.get("response").and_then(|v| v.as_str()) {
             // Standard chat response - deduplicate consecutive identical text
             // Some models repeat thinking/reasoning text
             let deduped = deduplicate_consecutive_text(text);
-            set_compat_assistant(app, deduped);
+            set_live_assistant(app, deduped);
         } else if let Some(status) = result.get("status") {
             // /status response — rich self-evolution state
             let formatted = format_status(status);
-            set_compat_assistant(app, formatted);
+            set_live_assistant(app, formatted);
         } else if let Some(sessions) = result.get("sessions") {
             // /sessions response
             let formatted = format_sessions(sessions);
-            set_compat_assistant(app, formatted);
+            set_live_assistant(app, formatted);
         } else if let Some(_models) = result.get("models") {
             // /model response
             let formatted = format_models(result);
-            set_compat_assistant(app, formatted);
+            set_live_assistant(app, formatted);
         } else if let Some(skills) = result.get("skills") {
             // Phase B: SkillsCatalog response — populate the command registry
             // so Tab-completion and /help reflect daemon skills.
             app.registry.set_skills_from_json(skills);
             let formatted = format_skills_list(skills);
-            set_compat_assistant(app, formatted);
+            set_live_assistant(app, formatted);
         } else if let Some(facts) = result.get("facts") {
             // /memory response — render fact list
             let formatted = format_memory_facts(facts);
-            set_compat_assistant(app, formatted);
+            set_live_assistant(app, formatted);
         } else if let Some(memory) = result.get("memory") {
             // /memory status response
-            set_compat_assistant(app, format_memory_status(memory));
+            set_live_assistant(app, format_memory_status(memory));
         } else if let Some(receipt) = result.get("receipt") {
             if receipt.is_null() {
-                add_compat_notice(
+                add_system_notice(
                     app,
                     "No evaluation receipt is available for this session.".to_string(),
                 );
             } else {
-                match serde_json::from_value::<fabric::EvaluationReceiptRef>(receipt.clone()) {
+                match serde_json::from_value::<::contracts::EvaluationReceiptRef>(receipt.clone()) {
                     Ok(receipt) => {
                         app.app_state.latest_evaluation = Some(receipt.clone());
-                        add_compat_notice(
+                        add_system_notice(
                             app,
                             super::reducer::format_evaluation_receipt_ref(&receipt),
                         );
                     }
-                    Err(error) => add_compat_notice(
+                    Err(error) => add_system_notice(
                         app,
                         format!("Invalid evaluation receipt response: {error}"),
                     ),
@@ -696,31 +746,32 @@ fn apply_legacy_v0_response(app: &mut App, msg: &serde_json::Value) -> bool {
             }
         } else if let Some(content) = result.get("content").and_then(|value| value.as_str()) {
             // session.memory returns bounded markdown owned by the daemon.
-            set_compat_assistant(app, content.to_string());
+            set_live_assistant(app, content.to_string());
         } else if let Some(tools) = result.get("tools") {
             // tools/list response
             let formatted = format_tools_list(tools);
-            set_compat_assistant(app, formatted);
+            set_live_assistant(app, formatted);
         } else if let Some(agents) = result.get("agents") {
             // /agents response
             let formatted = format_agents(agents);
-            set_compat_assistant(app, formatted);
+            set_live_assistant(app, formatted);
         } else if let Some(msg_text) = result.get("message").and_then(|v| v.as_str()) {
             // Generic message response (e.g. /resume, /compact)
-            set_compat_assistant(app, msg_text.to_string());
+            set_live_assistant(app, msg_text.to_string());
         }
     } else if let Some(error) = msg.get("error") {
         let err = error
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        add_compat_notice(app, format!("Error: {err}"));
+        add_system_notice(app, format!("Error: {err}"));
     }
     msg.get("result").is_some() || msg.get("error").is_some()
 }
 
-fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> bool {
-    use fabric::contract::command::{
+#[cfg(test)]
+fn apply_typed_command_output(app: &mut TuiModel, message: &serde_json::Value) -> bool {
+    use ::contracts::contract::command::{
         CommandOutputEnvelopeV1, CommandOutputProtocol, CommandOutputV1,
     };
 
@@ -737,14 +788,14 @@ fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> boo
         Ok(output) if output.protocol == CommandOutputProtocol::CommandOutput => output,
         Ok(_) => unreachable!("CommandOutputProtocol currently has one variant"),
         Err(error) => {
-            add_compat_notice(app, format!("Command output protocol rejected: {error}"));
+            add_system_notice(app, format!("Command output protocol rejected: {error}"));
             return true;
         }
     };
     let output = match output.into_v1() {
         Ok(output) => output,
         Err(error) => {
-            add_compat_notice(app, format!("Command output protocol rejected: {error}"));
+            add_system_notice(app, format!("Command output protocol rejected: {error}"));
             return true;
         }
     };
@@ -752,12 +803,12 @@ fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> boo
     match output {
         CommandOutputV1::PromptAccepted => {}
         CommandOutputV1::PromptCompleted(completion) => {
-            set_compat_assistant(app, deduplicate_consecutive_text(&completion.response));
-            if completion.stop != fabric::TurnStop::Completed {
-                add_compat_notice(app, format!("Turn stopped: {:?}", completion.stop));
+            set_live_assistant(app, deduplicate_consecutive_text(&completion.response));
+            if completion.stop != ::contracts::TurnStop::Completed {
+                add_system_notice(app, format!("Turn stopped: {:?}", completion.stop));
             }
         }
-        CommandOutputV1::CancelRequested(cancel) => add_compat_notice(
+        CommandOutputV1::CancelRequested(cancel) => add_system_notice(
             app,
             format!(
                 "Cancellation requested for {} active turn(s).",
@@ -765,7 +816,7 @@ fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> boo
             ),
         ),
         CommandOutputV1::Status(status) => {
-            set_compat_assistant(
+            set_live_assistant(
                 app,
                 format!(
                     "{}: {}",
@@ -775,9 +826,9 @@ fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> boo
             );
         }
         CommandOutputV1::StatusProjected(status) => {
-            set_compat_assistant(app, format_status_projection(&status));
+            set_live_assistant(app, format_status_projection(&status));
         }
-        CommandOutputV1::Rejected(rejection) => add_compat_notice(
+        CommandOutputV1::Rejected(rejection) => add_system_notice(
             app,
             format!("Error {}: {}", rejection.code, rejection.message),
         ),
@@ -785,7 +836,8 @@ fn apply_typed_command_output(app: &mut App, message: &serde_json::Value) -> boo
     true
 }
 
-fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) -> bool {
+#[cfg(test)]
+fn apply_pending_command_response(app: &mut TuiModel, message: &serde_json::Value) -> bool {
     let Some(request_id) = message.get("id").and_then(serde_json::Value::as_u64) else {
         return false;
     };
@@ -802,12 +854,14 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
     }
 
     match (pending, message.get("result"), message.get("error")) {
+        #[cfg(test)]
         (super::PendingCommand::InitializeSession, Some(result), None) => {
             if let Some(session_id) = result.get("session_id").and_then(serde_json::Value::as_str) {
                 app.projection_target_session_id = Some(session_id.to_owned());
                 app.projection_session_id = None;
             }
         }
+        #[cfg(test)]
         (super::PendingCommand::InitializeSkills, Some(result), None) => {
             if let Some(skills) = result.get("skills") {
                 app.registry.set_skills_from_json(skills);
@@ -815,14 +869,16 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
         }
         (super::PendingCommand::OpenSessionPicker, Some(result), None) => {
             match serde_json::from_value::<
-                fabric::protocol::client::ClientMessage<
-                    fabric::protocol::client::SessionListSnapshot,
+                ::contracts::protocol::client::ClientMessage<
+                    ::contracts::protocol::client::SessionListSnapshot,
                 >,
             >(result.clone())
             .map_err(|error| error.to_string())
             .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
             {
-                Ok(list) if list.schema_version == fabric::SESSION_READ_MODEL_SCHEMA_VERSION => {
+                Ok(list)
+                    if list.schema_version == ::contracts::SESSION_READ_MODEL_SCHEMA_VERSION =>
+                {
                     match serde_json::to_value(list.sessions)
                         .map_err(|error| error.to_string())
                         .and_then(|sessions| {
@@ -834,11 +890,11 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                         }) {
                         Ok(picker) => app.session_picker = Some(picker),
                         Err(error) => app
-                            .compat_transcript
-                            .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
+                            .system_notices
+                            .push(ChatRole::System, format!("无法打开会话列表：{error}")),
                     }
                 }
-                Ok(list) => app.compat_transcript.add_text(
+                Ok(list) => app.system_notices.push(
                     ChatRole::System,
                     format!(
                         "无法打开会话列表：unsupported schema {}",
@@ -846,8 +902,8 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                     ),
                 ),
                 Err(error) => app
-                    .compat_transcript
-                    .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
+                    .system_notices
+                    .push(ChatRole::System, format!("无法打开会话列表：{error}")),
             }
         }
         (super::PendingCommand::OpenAgentInspector { focus }, Some(result), None) => {
@@ -860,24 +916,24 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             };
             if let Err(error) = parsed {
                 app.agent_inspector = None;
-                app.compat_transcript.add_text(
+                app.system_notices.push(
                     ChatRole::System,
                     format!("无法打开 Agent sessions：{error}"),
                 );
             }
         }
         (super::PendingCommand::OpenCheckpointPicker, Some(result), None) => {
-            match serde_json::from_value::<fabric::CheckpointListSnapshot>(result.clone()) {
+            match serde_json::from_value::<::contracts::CheckpointListSnapshot>(result.clone()) {
                 Ok(snapshot) => {
                     match super::checkpoint_picker::CheckpointPicker::from_snapshot(snapshot) {
                         Ok(picker) => app.checkpoint_picker = Some(picker),
-                        Err(error) => app.compat_transcript.add_text(
+                        Err(error) => app.system_notices.push(
                             ChatRole::System,
                             format!("无法打开工作区检查点列表：{error}"),
                         ),
                     }
                 }
-                Err(error) => app.compat_transcript.add_text(
+                Err(error) => app.system_notices.push(
                     ChatRole::System,
                     format!("无法读取工作区检查点列表：{error}"),
                 ),
@@ -890,7 +946,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             },
             Some(result),
             None,
-        ) => match serde_json::from_value::<fabric::SessionRecord>(result.clone()) {
+        ) => match serde_json::from_value::<::contracts::SessionRecord>(result.clone()) {
             Ok(child) => {
                 let child_session_id = child.id.0;
                 if let Some(prompt_index) = prompt_index {
@@ -903,13 +959,13 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                     app.projection_target_session_id = Some(child_session_id.clone());
                     app.projection_session_id = None;
                     app.projection_polling = false;
-                    app.compat_transcript.add_text(
+                    app.system_notices.push(
                         ChatRole::System,
                         format!("已分叉并切换到历史会话：{child_session_id}"),
                     );
                 }
             }
-            Err(error) => app.compat_transcript.add_text(
+            Err(error) => app.system_notices.push(
                 ChatRole::System,
                 format!("daemon 返回的会话分支无效：{error}；未恢复代码"),
             ),
@@ -919,22 +975,22 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 app.projection_target_session_id = Some(child_session_id.clone());
                 app.projection_session_id = None;
                 app.projection_polling = false;
-                app.compat_transcript.add_text(
+                app.system_notices.push(
                     ChatRole::System,
                     format!("代码已恢复；已切换到历史会话分支：{child_session_id}"),
                 );
             } else {
-                app.compat_transcript
-                    .add_text(ChatRole::System, "代码检查点恢复完成".to_string());
+                app.system_notices
+                    .push(ChatRole::System, "代码检查点恢复完成".to_string());
             }
         }
         (super::PendingCommand::TransactionReview, Some(result), None) => {
-            match serde_json::from_value::<fabric::TransactionReviewSnapshot>(result.clone()) {
+            match serde_json::from_value::<::contracts::TransactionReviewSnapshot>(result.clone()) {
                 Ok(snapshot) => {
                     if let Some(detail) = app.detail.as_mut() {
                         detail.project_settlement(snapshot.settlement.clone());
                     }
-                    app.compat_transcript.add_text(
+                    app.system_notices.push(
                         ChatRole::System,
                         format!(
                             "Host review {:?}: {}",
@@ -942,7 +998,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                         ),
                     );
                 }
-                Err(error) => app.compat_transcript.add_text(
+                Err(error) => app.system_notices.push(
                     ChatRole::System,
                     format!("daemon 返回的 Host review snapshot 无效：{error}"),
                 ),
@@ -954,7 +1010,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .cloned()
                 .ok_or_else(|| "missing receipt".to_string())
                 .and_then(|value| {
-                    serde_json::from_value::<fabric::TransactionSettlementReceipt>(value)
+                    serde_json::from_value::<::contracts::TransactionSettlementReceipt>(value)
                         .map_err(|error| error.to_string())
                 }) {
                 Ok(receipt) => {
@@ -962,7 +1018,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                         detail.project_settlement(receipt);
                     }
                 }
-                Err(error) => app.compat_transcript.add_text(
+                Err(error) => app.system_notices.push(
                     ChatRole::System,
                     format!("daemon 返回的 settlement receipt 无效：{error}"),
                 ),
@@ -970,8 +1026,8 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
         }
         (super::PendingCommand::ProjectionSnapshot { session_id }, Some(result), None) => {
             match serde_json::from_value::<
-                fabric::protocol::client::ClientMessage<
-                    fabric::protocol::client::SessionReadSnapshot,
+                ::contracts::protocol::client::ClientMessage<
+                    ::contracts::protocol::client::SessionReadSnapshot,
                 >,
             >(result.clone())
             .map_err(|error| error.to_string())
@@ -997,7 +1053,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 }
                 Err(error) => {
                     app.projection_polling = false;
-                    app.compat_transcript.add_text(
+                    app.system_notices.push(
                         ChatRole::System,
                         format!("Session projection snapshot rejected: {error}"),
                     );
@@ -1009,7 +1065,9 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 return true;
             }
             match serde_json::from_value::<
-                fabric::protocol::client::ClientMessage<fabric::protocol::client::SessionEventPage>,
+                ::contracts::protocol::client::ClientMessage<
+                    ::contracts::protocol::client::SessionEventPage,
+                >,
             >(result.clone())
             .map_err(|error| error.to_string())
             .and_then(|message| message.into_v1().map_err(|error| error.to_string()))
@@ -1021,12 +1079,12 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                     );
                     apply_projection_effects(app, effects);
                     app.projection_next_poll_at =
-                        fabric::MonoTime(app.clock.mono_now().0.saturating_add(200));
+                        ::contracts::MonoTime(app.clock.mono_now().0.saturating_add(200));
                 }
                 Err(error) => {
                     app.projection_session_id = None;
                     app.projection_polling = false;
-                    app.compat_transcript.add_text(
+                    app.system_notices.push(
                         ChatRole::System,
                         format!("Session projection event page rejected: {error}"),
                     );
@@ -1040,8 +1098,8 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .is_some() =>
         {
             if clear_screen {
-                app.compat_transcript = super::chat::ChatWidget::new(app.caps.clone());
-                app.compat_projected_entries = 0;
+                app.system_notices = SystemNoticeQueue::new(app.caps.clone());
+                app.system_notice_cursor = 0;
             }
             let session_id = result
                 .get("session_id")
@@ -1050,17 +1108,19 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             app.app_state.reset_execution_target_for_session();
             app.projection_target_session_id = Some(session_id.to_owned());
             app.projection_session_id = None;
-            app.compat_transcript
-                .add_text(ChatRole::System, format!("已创建新会话：{session_id}"));
+            app.system_notices
+                .push(ChatRole::System, format!("已创建新会话：{session_id}"));
         }
+        #[cfg(test)]
         (super::PendingCommand::InitializeSession, _, Some(error)) => {
             let message = error
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("初始化会话失败");
-            app.compat_transcript
-                .add_text(ChatRole::System, format!("Error: {message}"));
+            app.system_notices
+                .push(ChatRole::System, format!("Error: {message}"));
         }
+        #[cfg(test)]
         (super::PendingCommand::InitializeSkills, _, Some(_)) => {
             // Startup catalog refresh is best-effort. Keep the TUI clean and
             // retain the built-in command registry when the daemon is unavailable.
@@ -1070,7 +1130,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("会话分支创建失败");
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 format!("Error: {message}。未恢复代码，原会话保持不变。"),
             );
@@ -1080,7 +1140,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("工作区恢复失败");
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 format!("Error: {message}。请检查 terminal restore receipt 后重试或人工恢复。"),
             );
@@ -1090,8 +1150,8 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("Host review action 失败");
-            app.compat_transcript
-                .add_text(ChatRole::System, format!("Error: {message}"));
+            app.system_notices
+                .push(ChatRole::System, format!("Error: {message}"));
         }
         (super::PendingCommand::TransactionSettlementLatest, _, Some(error)) => {
             // No prior receipt is a normal pending-review state. Other daemon
@@ -1101,8 +1161,8 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("settlement receipt 查询失败");
             if message != "transaction settlement not found" {
-                app.compat_transcript
-                    .add_text(ChatRole::System, format!("Error: {message}"));
+                app.system_notices
+                    .push(ChatRole::System, format!("Error: {message}"));
             }
         }
         (super::PendingCommand::ProjectionSnapshot { session_id }, _, Some(error)) => {
@@ -1115,7 +1175,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("恢复会话失败");
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 format!("Error: {message}。旧会话保持不变。"),
             );
@@ -1127,21 +1187,21 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("会话事件读取失败");
-            app.compat_transcript
-                .add_text(ChatRole::System, format!("Error: {message}"));
+            app.system_notices
+                .push(ChatRole::System, format!("Error: {message}"));
         }
         (_, _, Some(error)) => {
             let message = error
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("创建新会话失败");
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 format!("Error: {message}。旧会话和界面保持不变。"),
             );
         }
         _ => {
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 "Error: daemon 返回了无效的会话创建响应；旧会话和界面保持不变。".to_string(),
             );
@@ -1150,7 +1210,7 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
     true
 }
 
-fn apply_projection_effects(app: &mut App, effects: Vec<super::reducer::UiEffect>) {
+fn apply_projection_effects(app: &mut TuiModel, effects: Vec<super::reducer::UiEffect>) {
     for effect in effects {
         match effect {
             super::reducer::UiEffect::Render | super::reducer::UiEffect::SubscribeAfter(_) => {}
@@ -1161,7 +1221,7 @@ fn apply_projection_effects(app: &mut App, effects: Vec<super::reducer::UiEffect
                 }
             }
             super::reducer::UiEffect::AnnounceError(message) => {
-                app.compat_transcript.add_text(ChatRole::System, message);
+                app.system_notices.push(ChatRole::System, message);
             }
         }
     }
@@ -1173,9 +1233,10 @@ fn apply_projection_effects(app: &mut App, effects: Vec<super::reducer::UiEffect
     }
 }
 
-fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {
+#[cfg(test)]
+fn apply_typed_protocol_event(app: &mut TuiModel, message: &serde_json::Value) -> bool {
     use super::reducer::{format_evaluation_receipt_ref, reduce, UiAction, UiError};
-    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage, ItemPhase};
+    use ::contracts::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage, ItemPhase};
 
     let candidate = message
         .get("params")
@@ -1185,7 +1246,7 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
     let message = match serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone()) {
         Ok(message) => message,
         Err(error) if claims_typed_protocol => {
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 format!("Typed client protocol rejected: {error}"),
             );
@@ -1196,7 +1257,7 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
     let event = match message.into_v1() {
         Ok(event) => event,
         Err(error) => {
-            app.compat_transcript.add_text(
+            app.system_notices.push(
                 ChatRole::System,
                 format!("Typed client protocol rejected: {error}"),
             );
@@ -1206,7 +1267,7 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
     let evaluation = match &event {
         ProtocolEvent::Item(item) if item.phase == ItemPhase::Completed => {
             item.item.as_ref().and_then(|record| match &record.payload {
-                fabric::ItemPayload::EvaluationReceiptRef { receipt } => Some(receipt.clone()),
+                ::contracts::ItemPayload::EvaluationReceiptRef { receipt } => Some(receipt.clone()),
                 _ => None,
             })
         }
@@ -1234,6 +1295,11 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
         ProtocolEvent::Snapshot(value) => UiAction::Snapshot(value),
         ProtocolEvent::Item(value) => UiAction::Item(value),
         ProtocolEvent::Approval(value) => UiAction::Approval(value),
+        // Connection-owned approval requests are replayable protocol
+        // evidence. The legacy TUI approval dialog still consumes the live
+        // notification path until CGP-06 replaces the controller; do not
+        // misinterpret the replay DTO as a durable ApprovalSnapshot.
+        ProtocolEvent::ApprovalRequested { .. } => return true,
         ProtocolEvent::Agent(value) => UiAction::Agent(value),
         ProtocolEvent::Reconnected(value) => UiAction::Reconnected(value),
         ProtocolEvent::CommandCompleted { .. } => return true,
@@ -1250,8 +1316,8 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
     let effects = reduce(&mut app.app_state, action);
     if !effects.is_empty() {
         if let Some(receipt) = evaluation {
-            app.compat_transcript
-                .add_text(ChatRole::System, format_evaluation_receipt_ref(&receipt));
+            app.system_notices
+                .push(ChatRole::System, format_evaluation_receipt_ref(&receipt));
         }
     }
     true
@@ -1325,13 +1391,17 @@ pub fn format_models(result: &serde_json::Value) -> String {
 
 /// Format status response for display.
 pub fn format_status(status: &serde_json::Value) -> String {
-    match serde_json::from_value::<fabric::contract::command::StatusProjectionV1>(status.clone()) {
+    match serde_json::from_value::<::contracts::contract::command::StatusProjectionV1>(
+        status.clone(),
+    ) {
         Ok(status) => format_status_projection(&status),
         Err(error) => format!("Invalid typed status projection: {error}"),
     }
 }
 
-pub fn format_status_projection(status: &fabric::contract::command::StatusProjectionV1) -> String {
+pub fn format_status_projection(
+    status: &::contracts::contract::command::StatusProjectionV1,
+) -> String {
     let session_id = status.session_id.as_str();
 
     let mut lines = Vec::new();
@@ -1443,7 +1513,11 @@ pub fn format_skills_list(skills: &serde_json::Value) -> String {
 
 pub fn format_memory_facts(facts: &serde_json::Value) -> String {
     let empty = vec![];
-    let arr = facts.as_array().unwrap_or(&empty);
+    let arr = facts
+        .as_array()
+        .or_else(|| facts.get("facts").and_then(serde_json::Value::as_array))
+        .or_else(|| facts.get("items").and_then(serde_json::Value::as_array))
+        .unwrap_or(&empty);
     if arr.is_empty() {
         return "=== Memory Facts ===\n\n(no facts stored yet)".to_string();
     }
@@ -1471,6 +1545,7 @@ pub fn format_memory_facts(facts: &serde_json::Value) -> String {
 }
 
 pub fn format_memory_status(memory: &serde_json::Value) -> String {
+    let memory = memory.get("memory").unwrap_or(memory);
     let provider = memory
         .get("provider")
         .and_then(serde_json::Value::as_str)
@@ -1501,19 +1576,56 @@ pub fn format_memory_status(memory: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        deduplicate_consecutive_text, format_memory_status, handle_event, process_response,
-        public_tool_args,
+        apply_typed_projection_result, deduplicate_consecutive_text, format_memory_status,
+        handle_event, process_response, public_tool_args,
     };
-    use crate::tui::{
-        chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App, PendingCommand,
-    };
-    use executive::application::{tool_stream_bridge::ToolStreamHandle, turn_pipeline};
-    use fabric::{
-        ipc::{StreamConfig, TurnEventStream, TurnEventV1},
-        ToolProgress, ToolResult, ToolResultMeta,
-    };
+    use crate::tui::{host_time::ClientClock, term_compat::TermCaps, PendingCommand, TuiModel};
+    use ::contracts::ipc::{TurnEventStream, TurnEventV1};
     use std::sync::Arc;
-    use tokio_util::sync::CancellationToken;
+
+    fn projection_snapshot(
+        turn_id: ::contracts::TurnId,
+        phase: ::contracts::TaskPhase,
+    ) -> ::contracts::protocol::client::SessionReadSnapshot {
+        let session_id = ::contracts::SessionId("session-1".into());
+        ::contracts::protocol::client::SessionReadSnapshot {
+            schema_version: ::contracts::SESSION_READ_MODEL_SCHEMA_VERSION,
+            session: ::contracts::SessionRecord {
+                schema_version: ::contracts::SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 1,
+                status: ::contracts::SessionStatus::Active,
+            },
+            through: ::contracts::protocol::client::EventCursor::origin(),
+            items: Vec::new(),
+            tasks: vec![::contracts::TaskSnapshot {
+                task_id: "session:session-1:task".into(),
+                session_id,
+                goal: None,
+                phase,
+                plan_revision: None,
+                steps: vec![::contracts::TaskStepSnapshot {
+                    step_id: format!("turn:{}", turn_id.0),
+                    turn_id,
+                    phase,
+                    first_sequence: 1,
+                    last_sequence: 1,
+                }],
+                active_turn_id: (phase == ::contracts::TaskPhase::Active).then_some(turn_id),
+                active_runtime_children: Vec::new(),
+                active_commands: Vec::new(),
+                pending_approvals: Vec::new(),
+                budget: None,
+                checkpoint_head: None,
+                checkpoint_review: None,
+                settlement: None,
+                review_findings: Vec::new(),
+                runtime_facts: None,
+            }],
+            activities: Vec::new(),
+        }
+    }
 
     #[test]
     fn public_tool_arguments_are_bounded_and_redacted() {
@@ -1566,11 +1678,9 @@ mod tests {
 
     #[tokio::test]
     async fn typed_command_completion_uses_the_shared_versioned_contract() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             TermCaps {
                 color: true,
                 true_color: false,
@@ -1583,12 +1693,12 @@ mod tests {
             workspace,
             Vec::new(),
         );
-        let output = fabric::contract::command::CommandOutputEnvelopeV1::new(
+        let output = ::contracts::contract::command::CommandOutputEnvelopeV1::new(
             "tui:1",
-            fabric::contract::command::CommandOutputV1::PromptCompleted(
-                fabric::contract::command::PromptCompletionV1 {
+            ::contracts::contract::command::CommandOutputV1::PromptCompleted(
+                ::contracts::contract::command::PromptCompletionV1 {
                     response: "typed answer".into(),
-                    stop: fabric::TurnStop::Completed,
+                    stop: ::contracts::TurnStop::Completed,
                     failure: None,
                     usage: Default::default(),
                     metrics: Default::default(),
@@ -1603,10 +1713,11 @@ mod tests {
 
         process_response(&mut app, serde_json::json!({"id": 1, "result": output}));
 
-        assert!(matches!(
-            app.compat_transcript.entries.last(),
-            Some(ChatEntry::Text(message)) if message.content == "typed answer"
-        ));
+        assert!(app
+            .app_state
+            .items
+            .values()
+            .any(|item| { item.kind == "assistant" && item.content == "typed answer" }));
         assert_eq!(
             app.app_state
                 .items
@@ -1633,12 +1744,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn typed_cancel_ack_is_not_parsed_as_a_status_projection() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+    async fn typed_projection_settles_only_the_submitted_turn() {
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             TermCaps {
                 color: true,
                 true_color: false,
@@ -1651,32 +1760,87 @@ mod tests {
             workspace,
             Vec::new(),
         );
-        let output = fabric::contract::command::CommandOutputEnvelopeV1::new(
+        app.app_state.session_id = Some("session-1".into());
+        app.turn_active = true;
+        app.streaming = true;
+        app.app_state.turn_active = true;
+        let old_turn = ::contracts::TurnId(uuid::Uuid::from_u128(1));
+        let submitted_turn = ::contracts::TurnId(uuid::Uuid::from_u128(2));
+        let submitted_ref = submitted_turn.0.to_string();
+        app.active_turn_ref = Some(submitted_ref.clone());
+
+        // A stale snapshot containing only an older completed turn must not
+        // clear the newly submitted turn's spinner.
+        let stale = projection_snapshot(old_turn, ::contracts::TaskPhase::Completed);
+        apply_typed_projection_result(
+            &mut app,
+            "session-1",
+            serde_json::json!({"snapshot": stale}),
+        );
+        assert!(app.turn_active);
+        assert!(app.streaming);
+        assert_eq!(app.active_turn_ref.as_deref(), Some(submitted_ref.as_str()));
+
+        // Once the matching canonical step settles, the typed projection is
+        // sufficient to clear the live state and permit the next prompt.
+        let settled = projection_snapshot(submitted_turn, ::contracts::TaskPhase::Completed);
+        apply_typed_projection_result(
+            &mut app,
+            "session-1",
+            serde_json::json!({"snapshot": settled}),
+        );
+        assert!(!app.turn_active);
+        assert!(!app.streaming);
+        assert!(app.active_turn_ref.is_none());
+        assert_eq!(
+            app.app_state.last_terminal_status,
+            Some(::contracts::TurnTerminalStatus::Completed)
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_cancel_ack_is_not_parsed_as_a_status_projection() {
+        let workspace =
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
+            TermCaps {
+                color: true,
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        let output = ::contracts::contract::command::CommandOutputEnvelopeV1::new(
             "cancel:1",
-            fabric::contract::command::CommandOutputV1::CancelRequested(
-                fabric::contract::command::CancelRequestedV1 { active_turns: 1 },
+            ::contracts::contract::command::CommandOutputV1::CancelRequested(
+                ::contracts::contract::command::CancelRequestedV1 { active_turns: 1 },
             ),
         );
 
         process_response(&mut app, serde_json::json!({"id": 1, "result": output}));
 
-        assert!(app.compat_transcript.entries.iter().any(|entry| {
-            matches!(entry, ChatEntry::Text(message)
-                if message.content == "Cancellation requested for 1 active turn(s).")
-        }));
-        assert!(!app.compat_transcript.entries.iter().any(|entry| {
-            matches!(entry, ChatEntry::Text(message)
-                if message.content.contains("Invalid typed status projection"))
-        }));
+        assert!(app
+            .system_notices
+            .entries
+            .iter()
+            .any(|entry| { entry.content == "Cancellation requested for 1 active turn(s)." }));
+        assert!(!app
+            .system_notices
+            .entries
+            .iter()
+            .any(|entry| { entry.content.contains("Invalid typed status projection") }));
     }
 
     #[tokio::test]
     async fn cancelled_compatibility_turn_settles_live_progress_and_keeps_output() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             TermCaps {
                 color: true,
                 true_color: false,
@@ -1710,16 +1874,16 @@ mod tests {
 
         assert_eq!(
             app.app_state.last_terminal_status,
-            Some(fabric::TurnTerminalStatus::Interrupted)
+            Some(::contracts::TurnTerminalStatus::Interrupted)
         );
         assert!(app
             .app_state
             .activities
             .iter()
-            .all(|activity| activity.state != fabric::ActivityState::Running));
+            .all(|activity| activity.state != ::contracts::ActivityState::Running));
         assert!(app.app_state.activities.iter().any(|activity| {
-            activity.kind == fabric::ActivityKind::Runtime
-                && activity.state == fabric::ActivityState::Cancelled
+            activity.kind == ::contracts::ActivityKind::Runtime
+                && activity.state == ::contracts::ActivityState::Cancelled
         }));
         assert!(app.app_state.items.values().any(|item| {
             item.kind == "assistant" && item.content.starts_with("Cancelled by user")
@@ -1728,11 +1892,9 @@ mod tests {
 
     #[tokio::test]
     async fn claimed_command_protocol_mismatch_is_rejected_without_legacy_fallback() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             TermCaps {
                 color: true,
                 true_color: false,
@@ -1760,19 +1922,20 @@ mod tests {
             }),
         );
 
-        assert!(app.compat_transcript.entries.iter().any(|entry| {
-            matches!(entry, ChatEntry::Text(message)
-                if message.content.contains("unsupported command output schema 99"))
+        assert!(app.system_notices.entries.iter().any(|entry| {
+            entry
+                .content
+                .contains("unsupported command output schema 99")
         }));
-        assert!(!app.compat_transcript.entries.iter().any(|entry| {
-            matches!(entry, ChatEntry::Text(message)
-                if message.content.contains("must not be guessed"))
-        }));
+        assert!(!app
+            .system_notices
+            .entries
+            .iter()
+            .any(|entry| { entry.content.contains("must not be guessed") }));
     }
 
     #[tokio::test]
     async fn startup_skill_catalog_updates_registry_without_rendering_chat() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
             color: true,
             true_color: false,
@@ -1781,9 +1944,8 @@ mod tests {
             height: 24,
         };
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             caps,
             "test".into(),
             Arc::new(ClientClock::new()),
@@ -1808,16 +1970,14 @@ mod tests {
         );
 
         assert!(app.registry.is_skill("test-skill"));
-        assert!(app.compat_transcript.entries.is_empty());
+        assert!(app.system_notices.entries.is_empty());
     }
 
     #[tokio::test]
     async fn tui_review_projects_the_exact_host_settlement_receipt() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             TermCaps {
                 color: true,
                 true_color: false,
@@ -1833,12 +1993,12 @@ mod tests {
         app.detail = Some(crate::tui::diff_view::DiffView::new("diff"));
         app.pending_commands
             .insert(8, PendingCommand::TransactionSettlementLatest);
-        let receipt = fabric::TransactionSettlementReceipt {
+        let receipt = ::contracts::TransactionSettlementReceipt {
             settlement_id: "settlement-1".into(),
             transaction_id: "transaction-1".into(),
             session_id: "session-1".into(),
             workspace_version: "version-1".into(),
-            decision: fabric::TransactionSettlementDecision::RepairRequired,
+            decision: ::contracts::TransactionSettlementDecision::RepairRequired,
             finding_ids: vec!["finding-1".into()],
             validation_receipt_refs: vec!["artifact://validation".into()],
             validation_omissions: vec![],
@@ -1858,7 +2018,6 @@ mod tests {
 
     #[tokio::test]
     async fn fork_and_rewind_waits_for_authoritative_fork_response() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
             color: true,
             true_color: false,
@@ -1867,9 +2026,8 @@ mod tests {
             height: 24,
         };
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             caps,
             "test".into(),
             Arc::new(ClientClock::new()),
@@ -1883,15 +2041,15 @@ mod tests {
                 prompt_index: Some(4),
             },
         );
-        let child = fabric::SessionRecord {
-            schema_version: fabric::SESSION_SCHEMA_VERSION,
-            id: fabric::SessionId("child".into()),
-            parent: Some(fabric::SessionFork {
-                session_id: fabric::SessionId("parent".into()),
+        let child = ::contracts::SessionRecord {
+            schema_version: ::contracts::SESSION_SCHEMA_VERSION,
+            id: ::contracts::SessionId("child".into()),
+            parent: Some(::contracts::SessionFork {
+                session_id: ::contracts::SessionId("parent".into()),
                 through_sequence: 12,
             }),
             created_at_ms: 1,
-            status: fabric::SessionStatus::Active,
+            status: ::contracts::SessionStatus::Active,
         };
 
         process_response(&mut app, serde_json::json!({"id": 9, "result": child}));
@@ -1907,7 +2065,6 @@ mod tests {
 
     #[tokio::test]
     async fn error_event_releases_the_active_turn() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
             color: true,
             true_color: false,
@@ -1916,9 +2073,8 @@ mod tests {
             height: 24,
         };
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             caps,
             "test".into(),
             Arc::new(ClientClock::new()),
@@ -1945,11 +2101,9 @@ mod tests {
 
     #[tokio::test]
     async fn multi_round_usage_accumulates_without_resetting_the_active_turn() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             TermCaps {
                 color: true,
                 true_color: false,
@@ -1964,21 +2118,21 @@ mod tests {
         );
 
         for event in [
-            fabric::ui_event::ClientEvent::TurnStarted { iteration: 0 },
-            fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 },
-            fabric::ui_event::ClientEvent::Usage {
-                usage: fabric::InferenceUsage::unsupported(Some(100), Some(10)),
+            gateway::protocol::legacy_progress::ClientEvent::TurnStarted { iteration: 0 },
+            gateway::protocol::legacy_progress::ClientEvent::TurnStarted { iteration: 1 },
+            gateway::protocol::legacy_progress::ClientEvent::Usage {
+                usage: ::contracts::InferenceUsage::unsupported(Some(100), Some(10)),
             },
-            fabric::ui_event::ClientEvent::ToolCallStart {
+            gateway::protocol::legacy_progress::ClientEvent::ToolCallStart {
                 call_id: "call-1".into(),
                 tool: "file_read".into(),
                 args: serde_json::Value::Null,
             },
-            fabric::ui_event::ClientEvent::TurnStarted { iteration: 2 },
-            fabric::ui_event::ClientEvent::Usage {
-                usage: fabric::InferenceUsage::unsupported(Some(200), Some(20)),
+            gateway::protocol::legacy_progress::ClientEvent::TurnStarted { iteration: 2 },
+            gateway::protocol::legacy_progress::ClientEvent::Usage {
+                usage: ::contracts::InferenceUsage::unsupported(Some(200), Some(20)),
             },
-            fabric::ui_event::ClientEvent::ContextUpdate {
+            gateway::protocol::legacy_progress::ClientEvent::ContextUpdate {
                 used_tokens: 200,
                 max_tokens: 1_000_000,
             },
@@ -2001,14 +2155,13 @@ mod tests {
         assert_eq!(inference.len(), 2);
         assert!(inference
             .iter()
-            .all(|activity| activity.state == fabric::ActivityState::Completed));
+            .all(|activity| activity.state == ::contracts::ActivityState::Completed));
         assert_eq!(app.app_state.context.used, Some(200));
         assert_eq!(app.app_state.context.max, Some(1_000_000));
     }
 
     #[tokio::test]
     async fn terminal_text_snapshot_replaces_an_incomplete_stream() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
             color: true,
             true_color: false,
@@ -2017,9 +2170,8 @@ mod tests {
             height: 24,
         };
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             caps,
             "test".into(),
             Arc::new(ClientClock::new()),
@@ -2043,16 +2195,14 @@ mod tests {
             app.stream_ctrl.current_text(),
             "complete authoritative answer."
         );
-        assert!(matches!(
-            app.compat_transcript.entries.last(),
-            Some(ChatEntry::Text(message))
-                if message.content == "complete authoritative answer."
-        ));
+        assert_eq!(
+            app.stream_ctrl.current_text(),
+            "complete authoritative answer."
+        );
     }
 
     #[tokio::test]
     async fn patch_progress_is_materialized_immediately_in_chat() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
             color: true,
             true_color: false,
@@ -2061,16 +2211,15 @@ mod tests {
             height: 24,
         };
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             caps,
             "test".into(),
             Arc::new(ClientClock::new()),
             workspace,
             Vec::new(),
         );
-        let event = fabric::ui_event::ClientEvent::PatchProgress {
+        let event = gateway::protocol::legacy_progress::ClientEvent::PatchProgress {
             status: "file_changed".into(),
             path: Some("src/lib.rs".into()),
             operation: Some("update".into()),
@@ -2081,16 +2230,13 @@ mod tests {
 
         handle_event(&mut app, &serde_json::to_value(event).unwrap());
 
-        assert!(app.compat_transcript.entries.iter().any(|entry| {
-            matches!(entry, ChatEntry::Text(message)
-                if message.content.contains("Patch file_changed")
-                    && message.content.contains("src/lib.rs"))
+        assert!(app.system_notices.entries.iter().any(|entry| {
+            entry.content.contains("Patch file_changed") && entry.content.contains("src/lib.rs")
         }));
     }
 
     #[tokio::test]
     async fn governed_tool_progress_reaches_tui_and_keeps_one_terminal() {
-        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
         let caps = TermCaps {
             color: true,
             true_color: false,
@@ -2099,9 +2245,8 @@ mod tests {
             height: 24,
         };
         let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let mut app = App::new(
-            stream,
+            ::contracts::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = TuiModel::new(
             caps,
             "test".into(),
             Arc::new(ClientClock::new()),
@@ -2110,8 +2255,10 @@ mod tests {
         );
         handle_event(
             &mut app,
-            &serde_json::to_value(fabric::ui_event::ClientEvent::TurnStarted { iteration: 0 })
-                .unwrap(),
+            &serde_json::to_value(
+                gateway::protocol::legacy_progress::ClientEvent::TurnStarted { iteration: 0 },
+            )
+            .unwrap(),
         );
         assert!(!app
             .app_state
@@ -2120,19 +2267,21 @@ mod tests {
             .any(|activity| activity.activity_id.contains(":inference:")));
         handle_event(
             &mut app,
-            &serde_json::to_value(fabric::ui_event::ClientEvent::TurnStarted { iteration: 1 })
-                .unwrap(),
+            &serde_json::to_value(
+                gateway::protocol::legacy_progress::ClientEvent::TurnStarted { iteration: 1 },
+            )
+            .unwrap(),
         );
         handle_event(
             &mut app,
-            &serde_json::to_value(fabric::ui_event::ClientEvent::Reflection {
+            &serde_json::to_value(gateway::protocol::legacy_progress::ClientEvent::Reflection {
                 summary: "Inspecting known entry files before scoped discovery".into(),
             })
             .unwrap(),
         );
         assert!(app.app_state.activities.iter().any(|activity| {
             activity.activity_id.ends_with(":inference:0")
-                && activity.state == fabric::ActivityState::Running
+                && activity.state == ::contracts::ActivityState::Running
         }));
         assert!(app.app_state.activities.iter().any(|activity| {
             activity.activity_id.ends_with(":progress")
@@ -2142,54 +2291,42 @@ mod tests {
         }));
         handle_event(
             &mut app,
-            &serde_json::to_value(fabric::ui_event::ClientEvent::ToolCallStart {
-                call_id: "call-e2e".into(),
-                tool: "bash_exec".into(),
-                args: serde_json::Value::Null,
-            })
+            &serde_json::to_value(
+                gateway::protocol::legacy_progress::ClientEvent::ToolCallStart {
+                    call_id: "call-e2e".into(),
+                    tool: "bash_exec".into(),
+                    args: serde_json::Value::Null,
+                },
+            )
             .unwrap(),
         );
         assert!(app.app_state.activities.iter().any(|activity| {
             activity.activity_id.ends_with(":tool:call-e2e")
                 && activity.label == "bash_exec"
-                && activity.state == fabric::ActivityState::Running
+                && activity.state == ::contracts::ActivityState::Running
         }));
 
-        let ToolStreamHandle { mut sink, event_rx } = ToolStreamHandle::new();
-        let (mut daemon_stream, daemon_sender) =
-            TurnEventStream::new(StreamConfig::turn_events(16));
-        let bridge_sender = daemon_sender.clone();
-        let bridge = tokio::spawn(async move {
-            executive::application::tool_stream_bridge::bridge_tool_stream(
-                event_rx,
-                bridge_sender,
-                "bash_exec".into(),
-                "call-e2e".into(),
-                CancellationToken::new(),
-            )
-            .await
-        });
-
-        assert!(sink.progress(ToolProgress::Structured(serde_json::json!({"line": 1}))));
-        assert!(sink.progress(ToolProgress::Structured(serde_json::json!({"line": 2}))));
-        sink.terminal(Ok(ToolResult {
-            content: "finished".into(),
-            is_error: false,
-            metadata: ToolResultMeta::default(),
-        }))
-        .await;
-        let outcome = bridge.await.unwrap();
-        let terminal = outcome.terminal.unwrap();
-
-        // Production settlement emits the unique authoritative ToolResult only
-        // after the progress bridge returns its single terminal.
+        let (mut daemon_stream, daemon_sender) = TurnEventStream::new();
+        // The typed turn stream carries zero-to-many progress events followed
+        // by one authoritative terminal. This presentation test consumes the
+        // canonical stream directly and does not import Executive internals.
+        for line in [1, 2] {
+            daemon_sender
+                .send(&TurnEventV1::ToolProgress {
+                    name: "bash_exec".into(),
+                    call_id: "call-e2e".into(),
+                    kind: "structured".into(),
+                    payload: serde_json::json!({"line": line}),
+                })
+                .unwrap();
+        }
         daemon_sender
             .send(&TurnEventV1::ToolResult {
                 name: "bash_exec".into(),
                 call_id: "call-e2e".into(),
-                content: terminal.content,
-                is_error: terminal.is_error,
-                execution_time_ms: terminal.metadata.execution_time_ms,
+                content: "finished".into(),
+                is_error: false,
+                execution_time_ms: 0,
                 patch_delta: None,
             })
             .unwrap();
@@ -2204,12 +2341,35 @@ mod tests {
                 TurnEventV1::ToolResult { .. } => terminal_count += 1,
                 other => panic!("unexpected daemon turn event: {other:?}"),
             }
-            let client = turn_pipeline::turn_event_to_client_event(&event).unwrap();
-            handle_event(&mut app, &serde_json::to_value(client).unwrap());
+            let client = match &event {
+                TurnEventV1::ToolProgress {
+                    call_id, payload, ..
+                } => serde_json::json!({
+                    "type": "tool_progress",
+                    "call_id": call_id,
+                    "tool": "bash_exec",
+                    "payload": payload,
+                }),
+                TurnEventV1::ToolResult {
+                    call_id,
+                    content,
+                    is_error,
+                    execution_time_ms,
+                    ..
+                } => serde_json::json!({
+                    "type": "tool_call_result",
+                    "call_id": call_id,
+                    "tool": "bash_exec",
+                    "output": content,
+                    "is_error": is_error,
+                    "elapsed_ms": execution_time_ms,
+                }),
+                _ => unreachable!(),
+            };
+            handle_event(&mut app, &client);
             if matches!(event, TurnEventV1::ToolProgress { .. }) {
-                let visible = app.compat_transcript.entries.iter().any(|entry| {
-                    matches!(entry, ChatEntry::Exec(execution)
-                        if execution.call_id == "call-e2e" && !execution.output.is_empty())
+                let visible = app.app_state.activities.iter().any(|activity| {
+                    activity.activity_id.contains("call-e2e") && activity.progress.is_some()
                 });
                 assert!(visible, "TUI must materialize each progress event");
                 tui_progress_observations += 1;
@@ -2219,21 +2379,17 @@ mod tests {
         assert_eq!(progress_count, 2);
         assert_eq!(tui_progress_observations, 2);
         assert_eq!(terminal_count, 1);
-        let execution = app
-            .compat_transcript
-            .entries
+        let activity = app
+            .app_state
+            .activities
             .iter()
-            .find_map(|entry| match entry {
-                ChatEntry::Exec(execution) if execution.call_id == "call-e2e" => Some(execution),
-                _ => None,
-            })
+            .find(|activity| activity.activity_id.contains("call-e2e"))
             .unwrap();
-        assert!(execution.finished);
-        assert_eq!(execution.output, "finished");
+        assert_eq!(activity.state, ::contracts::ActivityState::Completed);
         assert!(
             app.app_state.activities.iter().any(|activity| {
                 activity.activity_id.ends_with(":tool:call-e2e")
-                    && activity.state == fabric::ActivityState::Completed
+                    && activity.state == ::contracts::ActivityState::Completed
                     && activity.progress.as_ref().is_some_and(|progress| {
                         progress.get("status").and_then(serde_json::Value::as_str)
                             == Some("completed")

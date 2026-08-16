@@ -1,10 +1,11 @@
 // crates/aletheon-runtime/src/impl/hooks/mod.rs
 
 pub mod builtin;
+pub mod contracts;
 pub mod loader;
 pub mod registry;
 
-use fabric::hook::{HookContext, HookPoint, HookResult};
+pub use self::contracts::{HookContext, HookPoint, HookResult, HookToolResult};
 use registry::HookRegistry;
 
 /// High-level hook events that map to ABI `HookPoint` values.
@@ -111,7 +112,7 @@ impl HookEvent {
                     turn_count,
                     tool_name: Some(tool_name.clone()),
                     tool_input: None,
-                    tool_result: Some(fabric::hook::HookToolResult {
+                    tool_result: Some(crate::hook::HookToolResult {
                         content: output.clone(),
                         is_error: !success,
                         execution_time_ms: *duration_ms,

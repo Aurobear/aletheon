@@ -7,15 +7,15 @@ use crate::core::{
 use crate::harness::config::HarnessConfig;
 use crate::harness::linear::DynLlmRef;
 use crate::harness::linear::{BatchPlanner, CompactorTrait, ReActLoop};
-use async_trait::async_trait;
-use fabric::types::inference_receipt::{
+use ::contracts::types::inference_receipt::{
     InferenceTerminalReceipt, InferenceTerminalStatus, INFERENCE_TERMINAL_RECEIPT_SCHEMA_V1,
 };
-use fabric::{
+use ::contracts::{
     CapabilityCall, CapabilityErrorClass, CapabilityReceiptDetails, CapabilityRetryDisposition,
     CapabilityTerminalReceipt, CapabilityTerminalStatus, Message, TurnEvent, TurnEventSink,
     TurnMetrics as FabricTurnMetrics, TurnRequest, TurnResult, TurnServices, TurnStop,
 };
+use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -25,20 +25,33 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_DASEIN_CONTEXT_BYTES: usize = 8_000;
 
-struct ProjectionRecordingLlm<'a> {
-    inner: &'a dyn fabric::LlmProvider,
+pub(super) struct ProjectionRecordingLlm<'a> {
+    inner: &'a dyn ::contracts::LlmProvider,
     services: &'a dyn TurnServices,
-    operation_id: fabric::OperationId,
+    operation_id: ::contracts::OperationId,
     pending: Arc<Mutex<Vec<InferenceTerminalReceipt>>>,
 }
 
 impl ProjectionRecordingLlm<'_> {
+    pub(super) fn new<'a>(
+        inner: &'a dyn ::contracts::LlmProvider,
+        services: &'a dyn TurnServices,
+        operation_id: ::contracts::OperationId,
+    ) -> ProjectionRecordingLlm<'a> {
+        ProjectionRecordingLlm {
+            inner,
+            services,
+            operation_id,
+            pending: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
     async fn record(
         &self,
         messages: &[Message],
-        tools: &[fabric::ToolDefinition],
+        tools: &[::contracts::ToolDefinition],
     ) -> anyhow::Result<InferenceMetadata> {
-        use fabric::model_projection::{
+        use ::contracts::model_projection::{
             ModelContextClassification, ModelContextFragmentReceipt, ModelContextProjectionReceipt,
         };
         let fragments = messages
@@ -50,14 +63,14 @@ impl ProjectionRecordingLlm<'_> {
                 let classification = if message
                     .content
                     .iter()
-                    .any(|block| matches!(block, fabric::ContentBlock::ToolResult { .. }))
+                    .any(|block| matches!(block, ::contracts::ContentBlock::ToolResult { .. }))
                 {
                     ModelContextClassification::ToolEvidence
                 } else {
                     match message.role {
-                        fabric::Role::System => ModelContextClassification::Instruction,
-                        fabric::Role::User => ModelContextClassification::UntrustedInput,
-                        fabric::Role::Assistant => ModelContextClassification::ModelHistory,
+                        ::contracts::Role::System => ModelContextClassification::Instruction,
+                        ::contracts::Role::User => ModelContextClassification::UntrustedInput,
+                        ::contracts::Role::Assistant => ModelContextClassification::ModelHistory,
                     }
                 };
                 ModelContextFragmentReceipt {
@@ -81,11 +94,11 @@ impl ProjectionRecordingLlm<'_> {
         let system_bytes = serde_json::to_vec(
             &messages
                 .iter()
-                .filter(|message| message.role == fabric::Role::System)
+                .filter(|message| message.role == ::contracts::Role::System)
                 .collect::<Vec<_>>(),
         )?;
         let system_prefix_digest = format!("sha256:{:x}", Sha256::digest(system_bytes));
-        let tool_schema_digest = fabric::tool_schema_digest(tools)?;
+        let tool_schema_digest = ::contracts::tool_schema_digest(tools)?;
         self.services
             .record_model_context_projection(ModelContextProjectionReceipt {
                 inference_id: inference_id.clone(),
@@ -136,7 +149,7 @@ impl InferenceMetadata {
     fn receipt(
         &self,
         status: InferenceTerminalStatus,
-        usage: fabric::InferenceUsage,
+        usage: ::contracts::InferenceUsage,
         failure_kind: Option<&str>,
     ) -> InferenceTerminalReceipt {
         InferenceTerminalReceipt {
@@ -162,10 +175,10 @@ impl InferenceMetadata {
 }
 
 struct TerminalRecordingStream {
-    inner: fabric::LlmStream,
+    inner: ::contracts::LlmStream,
     metadata: InferenceMetadata,
     pending: Arc<Mutex<Vec<InferenceTerminalReceipt>>>,
-    usage: fabric::InferenceUsage,
+    usage: ::contracts::InferenceUsage,
     terminal: bool,
 }
 
@@ -186,17 +199,17 @@ impl TerminalRecordingStream {
 }
 
 impl futures::Stream for TerminalRecordingStream {
-    type Item = anyhow::Result<fabric::StreamChunk>;
+    type Item = anyhow::Result<::contracts::StreamChunk>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.inner.as_mut().poll_next(cx) {
-            Poll::Ready(Some(Ok(fabric::StreamChunk::Usage { usage }))) => {
+            Poll::Ready(Some(Ok(::contracts::StreamChunk::Usage { usage }))) => {
                 self.usage = usage.clone();
-                Poll::Ready(Some(Ok(fabric::StreamChunk::Usage { usage })))
+                Poll::Ready(Some(Ok(::contracts::StreamChunk::Usage { usage })))
             }
-            Poll::Ready(Some(Ok(fabric::StreamChunk::Done { stop_reason }))) => {
+            Poll::Ready(Some(Ok(::contracts::StreamChunk::Done { stop_reason }))) => {
                 self.finish(InferenceTerminalStatus::Succeeded, None);
-                Poll::Ready(Some(Ok(fabric::StreamChunk::Done { stop_reason })))
+                Poll::Ready(Some(Ok(::contracts::StreamChunk::Done { stop_reason })))
             }
             Poll::Ready(Some(Err(error))) => {
                 self.finish(InferenceTerminalStatus::Failed, Some("unknown"));
@@ -214,13 +227,13 @@ impl Drop for TerminalRecordingStream {
 }
 
 #[async_trait]
-impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
+impl ::contracts::LlmProvider for ProjectionRecordingLlm<'_> {
     async fn complete(
         &self,
         messages: &[Message],
-        tools: &[fabric::ToolDefinition],
-    ) -> anyhow::Result<fabric::LlmResponse> {
-        let tools = fabric::canonicalize_tool_definitions(tools)?;
+        tools: &[::contracts::ToolDefinition],
+    ) -> anyhow::Result<::contracts::LlmResponse> {
+        let tools = ::contracts::canonicalize_tool_definitions(tools)?;
         let metadata = self.record(messages, &tools).await?;
         let result = self.inner.complete(messages, &tools).await;
         let receipt = match &result {
@@ -231,7 +244,7 @@ impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
             ),
             Err(_) => metadata.receipt(
                 InferenceTerminalStatus::Failed,
-                fabric::InferenceUsage::default(),
+                ::contracts::InferenceUsage::default(),
                 Some("unknown"),
             ),
         };
@@ -242,23 +255,23 @@ impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
     async fn complete_stream(
         &self,
         messages: &[Message],
-        tools: &[fabric::ToolDefinition],
-    ) -> anyhow::Result<fabric::LlmStream> {
-        let tools = fabric::canonicalize_tool_definitions(tools)?;
+        tools: &[::contracts::ToolDefinition],
+    ) -> anyhow::Result<::contracts::LlmStream> {
+        let tools = ::contracts::canonicalize_tool_definitions(tools)?;
         let metadata = self.record(messages, &tools).await?;
         match self.inner.complete_stream(messages, &tools).await {
             Ok(inner) => Ok(Box::pin(TerminalRecordingStream {
                 inner,
                 metadata,
                 pending: self.pending.clone(),
-                usage: fabric::InferenceUsage::default(),
+                usage: ::contracts::InferenceUsage::default(),
                 terminal: false,
             })),
             Err(error) => {
                 self.services
                     .record_inference_receipt(metadata.receipt(
                         InferenceTerminalStatus::Failed,
-                        fabric::InferenceUsage::default(),
+                        ::contracts::InferenceUsage::default(),
                         Some("unknown"),
                     ))
                     .await;
@@ -271,7 +284,7 @@ impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
         self.inner.name()
     }
 
-    fn runtime_facts(&self) -> fabric::ModelRuntimeFacts {
+    fn runtime_facts(&self) -> ::contracts::ModelRuntimeFacts {
         self.inner.runtime_facts()
     }
 
@@ -294,7 +307,7 @@ pub struct ChannelCognitiveStreamSink {
 /// Production sink that writes Cognit lifecycle events directly onto the
 /// canonical Fabric turn stream.
 pub struct CanonicalTurnEventSink {
-    sender: fabric::ipc::TurnEventSender,
+    sender: ::contracts::ipc::TurnEventSender,
     pending_text: std::sync::Mutex<String>,
     receiver_closed: std::sync::atomic::AtomicBool,
 }
@@ -306,11 +319,11 @@ const CANONICAL_TEXT_CHUNK_BYTES: usize = 256;
 /// share the bounded Fabric turn stream: a Robot episode receipt must never be
 /// disguised as model text or a generic diagnostic event.
 pub struct CanonicalRuntimeTurnEventSink {
-    sender: fabric::ipc::TurnEventSender,
+    sender: ::contracts::ipc::TurnEventSender,
 }
 
 impl CanonicalTurnEventSink {
-    pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
+    pub fn new(sender: ::contracts::ipc::TurnEventSender) -> Self {
         Self {
             sender,
             pending_text: std::sync::Mutex::new(String::new()),
@@ -322,7 +335,7 @@ impl CanonicalTurnEventSink {
         CanonicalRuntimeTurnEventSink::new(self.sender.clone())
     }
 
-    fn send_event(&self, event: &fabric::ipc::TurnEventV1) {
+    fn send_event(&self, event: &::contracts::ipc::TurnEventV1) {
         use std::sync::atomic::Ordering;
 
         if self.receiver_closed.load(Ordering::Relaxed) {
@@ -345,7 +358,7 @@ impl CanonicalTurnEventSink {
 
     fn flush_pending_text(&self) {
         if let Some(delta) = self.take_pending_text() {
-            self.send_event(&fabric::ipc::TurnEventV1::TextDelta { delta });
+            self.send_event(&::contracts::ipc::TurnEventV1::TextDelta { delta });
         }
     }
 }
@@ -357,7 +370,7 @@ impl Drop for CanonicalTurnEventSink {
 }
 
 impl CanonicalRuntimeTurnEventSink {
-    pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
+    pub fn new(sender: ::contracts::ipc::TurnEventSender) -> Self {
         Self { sender }
     }
 }
@@ -367,7 +380,7 @@ impl TurnEventSink for CanonicalRuntimeTurnEventSink {
     async fn emit(&self, event: TurnEvent) {
         let projected = match event {
             TurnEvent::RobotEpisodeSettled { receipt } => {
-                Some(fabric::ipc::TurnEventV1::RobotEpisodeSettled { receipt })
+                Some(::contracts::ipc::TurnEventV1::RobotEpisodeSettled { receipt })
             }
             // Started/Finished are represented by the cognitive stream's
             // lifecycle events. Embodiment progress retains its dedicated
@@ -397,7 +410,7 @@ impl CognitiveStreamSink for CanonicalTurnEventSink {
                 (pending.len() >= CANONICAL_TEXT_CHUNK_BYTES).then(|| std::mem::take(&mut *pending))
             };
             if let Some(delta) = ready {
-                self.send_event(&fabric::ipc::TurnEventV1::TextDelta { delta });
+                self.send_event(&::contracts::ipc::TurnEventV1::TextDelta { delta });
             }
         } else {
             self.flush_pending_text();
@@ -477,7 +490,7 @@ impl CognitError {
         }
     }
 
-    fn from_runtime(error: anyhow::Error) -> Self {
+    pub(crate) fn from_runtime(error: anyhow::Error) -> Self {
         use crate::adapters::inference::scheduler::{classify_error, ErrorClass};
         let kind = match error.downcast_ref::<crate::inference::InferenceFailure>() {
             Some(failure) => match failure.kind {
@@ -505,7 +518,7 @@ impl CognitError {
 }
 
 pub struct CognitiveSessionDependencies {
-    pub clock: Arc<dyn fabric::Clock>,
+    pub clock: Arc<dyn ::contracts::Clock>,
     pub cancellation: CancellationToken,
     pub compactor: Option<Box<dyn CompactorTrait>>,
     pub batch_planner: Option<Arc<dyn BatchPlanner>>,
@@ -514,7 +527,7 @@ pub struct CognitiveSessionDependencies {
     pub evicted_callback: Option<Arc<dyn Fn(Vec<Message>) + Send + Sync>>,
     /// Optional coding verifier (Wave 3). When set, ReActLoop validates the
     /// model's final answer before accepting it as complete.
-    pub verifier: Option<Arc<dyn fabric::policy::verifier::Verifier>>,
+    pub verifier: Option<Arc<dyn crate::ports::verifier::Verifier>>,
     pub grounded_outcome_sink: Option<Arc<dyn crate::core::GroundedOutcomeSink>>,
 }
 
@@ -568,7 +581,7 @@ pub trait CognitiveSession: Send {
 pub struct LinearCognitiveSession {
     inner: ReActLoop,
     cancellation: CancellationToken,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl LinearCognitiveSession {
@@ -623,24 +636,24 @@ impl LinearCognitiveSession {
         }
         let model_contract = render_turn_contract(evaluation, &requirements);
         let track_evaluation_obligations = evaluation
-            .is_some_and(|contract| contract.mode == fabric::EvaluationMode::Enforce)
+            .is_some_and(|contract| contract.mode == ::contracts::EvaluationMode::Enforce)
             || requirements.is_empty();
         let required_actions = requirements
             .iter()
             .cloned()
             .map(|requirement| match requirement {
-                fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => {
+                ::contracts::TurnRequirement::InvokeAgentRuntime { runtime_id } => {
                     RequiredAction::InvokeAgent {
                         runtime: AgentRuntimeId(runtime_id),
                     }
                 }
-                fabric::TurnRequirement::InvokeCapability { name } => {
+                ::contracts::TurnRequirement::InvokeCapability { name } => {
                     RequiredAction::InvokeTool { tool_name: name }
                 }
-                fabric::TurnRequirement::ObserveTerminal { operation_id } => {
+                ::contracts::TurnRequirement::ObserveTerminal { operation_id } => {
                     RequiredAction::ObserveTerminal { operation_id }
                 }
-                fabric::TurnRequirement::RunRoleGraph { .. } => RequiredAction::RunRoleGraph {
+                ::contracts::TurnRequirement::RunRoleGraph { .. } => RequiredAction::RunRoleGraph {
                     root_task_id: request
                         .context
                         .turn_id
@@ -694,7 +707,7 @@ impl LinearCognitiveSession {
             }));
         self.inner
             .set_completion_gate_mode(match (requirements.is_empty(), evaluation) {
-                (true, Some(contract)) if contract.mode == fabric::EvaluationMode::Shadow => {
+                (true, Some(contract)) if contract.mode == ::contracts::EvaluationMode::Shadow => {
                     CompletionGateMode::Shadow
                 }
                 _ => CompletionGateMode::Enforce,
@@ -704,8 +717,8 @@ impl LinearCognitiveSession {
 }
 
 fn render_turn_contract(
-    evaluation: Option<&fabric::TaskEvaluationContract>,
-    requirements: &[fabric::TurnRequirement],
+    evaluation: Option<&::contracts::TaskEvaluationContract>,
+    requirements: &[::contracts::TurnRequirement],
 ) -> String {
     let mut lines = vec![
         "[cognitive_task_contract]".to_owned(),
@@ -729,7 +742,7 @@ fn render_turn_contract(
                 evidence_kind_name(evidence.kind)
             ));
             if evidence.kind
-                == fabric::types::metacognition_evidence::EvidenceKind::VerificationResult
+                == ::contracts::types::metacognition_evidence::EvidenceKind::VerificationResult
             {
                 lines.push(
                     "- For a code change, finish the scoped mutation, call `git_diff` with the current host-minted transaction ID, then invoke `validation_run` with the same transaction ID and an exact required step from the returned validation plan. Observe its authoritative terminal result; never validate before diff review, and a pending command is not completion evidence."
@@ -743,25 +756,27 @@ fn render_turn_contract(
     }
     for requirement in requirements {
         lines.push(match requirement {
-            fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => format!(
+            ::contracts::TurnRequirement::InvokeAgentRuntime { runtime_id } => format!(
                 "- During this turn call `agent_spawn` with its `runtime` field set exactly to `{runtime_id}` (the runtime ID is not a profile name), then call `agent_wait` for the returned `agent_id` and observe an authoritative terminal result whose `runtime_id` is `{runtime_id}`; historical Agent receipts do not satisfy this obligation."
             ),
-            fabric::TurnRequirement::InvokeCapability { name } => {
+            ::contracts::TurnRequirement::InvokeCapability { name } => {
                 format!("- Invoke capability `{name}` during this turn.")
             }
-            fabric::TurnRequirement::ObserveTerminal { operation_id } => format!(
+            ::contracts::TurnRequirement::ObserveTerminal { operation_id } => format!(
                 "- Observe authoritative terminal evidence for operation `{}`.",
                 operation_id.0
             ),
-            fabric::TurnRequirement::RunRoleGraph { .. } =>
+            ::contracts::TurnRequirement::RunRoleGraph { .. } =>
                 "- Complete the host-authorized canonical role graph and persist its terminal receipt.".into(),
         });
     }
     lines.join("\n")
 }
 
-fn evidence_kind_name(kind: fabric::types::metacognition_evidence::EvidenceKind) -> &'static str {
-    use fabric::types::metacognition_evidence::EvidenceKind;
+fn evidence_kind_name(
+    kind: ::contracts::types::metacognition_evidence::EvidenceKind,
+) -> &'static str {
+    use ::contracts::types::metacognition_evidence::EvidenceKind;
     match kind {
         EvidenceKind::Assertion => "assertion",
         EvidenceKind::Observation => "observation",
@@ -775,11 +790,11 @@ fn evidence_kind_name(kind: fabric::types::metacognition_evidence::EvidenceKind)
     }
 }
 
-async fn invoke_with_terminal_receipt(
+pub(super) async fn invoke_with_terminal_receipt(
     services: &dyn TurnServices,
     call: CapabilityCall,
-    clock: &dyn fabric::Clock,
-) -> fabric::CapabilityResult {
+    clock: &dyn ::contracts::Clock,
+) -> ::contracts::CapabilityResult {
     let started_at = clock.mono_now();
     let result = services.invoke(call.clone()).await;
     let finished_at = clock.mono_now();
@@ -799,7 +814,7 @@ async fn invoke_with_terminal_receipt(
 
 fn terminal_receipt_details(
     capability: &str,
-    result: &fabric::CapabilityResult,
+    result: &::contracts::CapabilityResult,
 ) -> Option<CapabilityReceiptDetails> {
     if !matches!(
         capability,
@@ -1151,9 +1166,9 @@ fn bounded_dasein_context(content: &str) -> String {
     // Dasein state is durable host-projected context, not the current user
     // message. Scrub before bounding so prior outcomes cannot re-expose a
     // secret to a later turn or session.
-    let governed = fabric::types::data_governance::scrub_for_projection(
+    let governed = ::contracts::data_governance::scrub_for_projection(
         content,
-        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+        ::contracts::data_governance::ContentTrust::ExternalUntrusted,
     );
     let content = governed.content;
     if content.len() <= MAX_DASEIN_CONTEXT_BYTES {
@@ -1173,13 +1188,12 @@ fn bounded_dasein_context(content: &str) -> String {
 #[cfg(test)]
 mod context_tests {
     use super::*;
-    use fabric::{RecallRequest, RecallSet};
+    use ::contracts::{RecallRequest, RecallSet};
     use std::sync::Mutex as StdMutex;
 
     #[tokio::test]
     async fn canonical_sink_coalesces_text_but_flushes_before_lifecycle_events() {
-        let (mut stream, sender) =
-            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(1));
+        let (mut stream, sender) = ::contracts::ipc::TurnEventStream::new();
         let sink = CanonicalTurnEventSink::new(sender);
 
         for _ in 0..100 {
@@ -1188,25 +1202,25 @@ mod context_tests {
         CognitiveStreamSink::emit(
             &sink,
             CognitiveStreamEvent::Usage {
-                usage: fabric::InferenceUsage::default(),
+                usage: ::contracts::InferenceUsage::default(),
             },
         );
 
         let first = stream.recv().await.unwrap();
         assert!(matches!(
             first,
-            fabric::ipc::TurnEventV1::TextDelta { delta }
+            ::contracts::ipc::TurnEventV1::TextDelta { delta }
                 if delta == "x".repeat(100)
         ));
         assert!(matches!(
             stream.recv().await.unwrap(),
-            fabric::ipc::TurnEventV1::Usage { .. }
+            ::contracts::ipc::TurnEventV1::Usage { .. }
         ));
         assert!(stream.try_recv().is_none());
     }
 
     struct ReceiptServices {
-        result: fabric::CapabilityResult,
+        result: ::contracts::CapabilityResult,
         receipts: StdMutex<Vec<CapabilityTerminalReceipt>>,
     }
 
@@ -1217,14 +1231,14 @@ mod context_tests {
         }
         async fn dasein_view(
             &self,
-            _process: fabric::ProcessId,
-        ) -> anyhow::Result<fabric::DaseinView> {
-            Ok(fabric::DaseinView::default())
+            _process: ::contracts::ProcessId,
+        ) -> anyhow::Result<::contracts::DaseinView> {
+            Ok(::contracts::DaseinView::default())
         }
-        async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
-            Ok(fabric::AgoraView::default())
+        async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
+            Ok(::contracts::AgoraView::default())
         }
-        async fn invoke(&self, _call: CapabilityCall) -> fabric::CapabilityResult {
+        async fn invoke(&self, _call: CapabilityCall) -> ::contracts::CapabilityResult {
             self.result.clone()
         }
         async fn record_capability_receipt(&self, receipt: CapabilityTerminalReceipt) {
@@ -1272,7 +1286,7 @@ mod context_tests {
 
     #[test]
     fn running_managed_command_does_not_create_terminal_receipt() {
-        let result = fabric::CapabilityResult {
+        let result = ::contracts::CapabilityResult {
             call_id: "call".into(),
             output: serde_json::json!({
                 "session_id": "session",
@@ -1281,7 +1295,7 @@ mod context_tests {
             })
             .to_string(),
             is_error: false,
-            usage: fabric::UsageReport::default(),
+            usage: ::contracts::UsageReport::default(),
             audit_id: None,
             patch_delta: None,
             served_from_cache: false,
@@ -1293,7 +1307,7 @@ mod context_tests {
     fn agent_requirement_names_the_runtime_override_field() {
         let contract = render_turn_contract(
             None,
-            &[fabric::TurnRequirement::InvokeAgentRuntime {
+            &[::contracts::TurnRequirement::InvokeAgentRuntime {
                 runtime_id: "pi-rpc".into(),
             }],
         );
@@ -1305,7 +1319,7 @@ mod context_tests {
 
     #[test]
     fn terminal_validation_projects_exact_status_and_output_reference() {
-        let result = fabric::CapabilityResult {
+        let result = ::contracts::CapabilityResult {
             call_id: "call".into(),
             output: serde_json::json!({
                 "session_id": "session",
@@ -1315,7 +1329,7 @@ mod context_tests {
             })
             .to_string(),
             is_error: false,
-            usage: fabric::UsageReport::default(),
+            usage: ::contracts::UsageReport::default(),
             audit_id: None,
             patch_delta: None,
             served_from_cache: false,
@@ -1333,11 +1347,11 @@ mod context_tests {
     #[tokio::test]
     async fn terminal_invocation_is_forwarded_to_receipt_port_once() {
         let services = ReceiptServices {
-            result: fabric::CapabilityResult {
+            result: ::contracts::CapabilityResult {
                 call_id: "call".into(),
                 output: "observed".into(),
                 is_error: false,
-                usage: fabric::UsageReport::default(),
+                usage: ::contracts::UsageReport::default(),
                 audit_id: None,
                 patch_delta: None,
                 served_from_cache: false,
@@ -1345,8 +1359,8 @@ mod context_tests {
             receipts: StdMutex::new(Vec::new()),
         };
         let call = CapabilityCall {
-            operation_id: fabric::OperationId::new(),
-            process_id: fabric::ProcessId::new(),
+            operation_id: ::contracts::OperationId::new(),
+            process_id: ::contracts::ProcessId::new(),
             name: "file_read".into(),
             input: serde_json::Value::Null,
             call_id: "call".into(),

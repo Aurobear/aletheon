@@ -1,5 +1,5 @@
 use super::*;
-use fabric::{Subsystem, SubsystemContext};
+use ::contracts::{Subsystem, SubsystemContext};
 use std::path::Path;
 
 struct EmptyVectorBackend;
@@ -16,7 +16,7 @@ impl crate::RecallSearchBackend for EmptyVectorBackend {
     }
 }
 
-fn test_clock() -> Arc<dyn fabric::Clock> {
+fn test_clock() -> Arc<dyn ::contracts::Clock> {
     Arc::new(kernel::chronos::TestClock::default())
 }
 
@@ -36,7 +36,6 @@ async fn build_service(dir: &Path) -> DefaultMemoryService {
         name: "episodic_memory".into(),
         working_dir: dir.to_path_buf(),
         config: serde_json::Value::Null,
-        bus: None,
     };
     episodic_memory.init(&ctx).await.unwrap();
     let episodic = Arc::new(Mutex::new(episodic_memory));
@@ -158,7 +157,7 @@ async fn memory_hybrid_flag_off_is_fts_path_equivalent() {
 
 #[tokio::test]
 async fn verified_agent_recall_cannot_widen_scope_from_request_or_query() {
-    use fabric::{AgentId, AgentTaskId, ProcessId};
+    use ::contracts::{AgentId, AgentTaskId, ProcessId};
     use uuid::Uuid;
 
     let dir = tempfile::tempdir().unwrap();

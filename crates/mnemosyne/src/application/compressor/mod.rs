@@ -5,12 +5,12 @@ pub mod template;
 use anyhow::Result;
 use tracing::info;
 
-use fabric::message::{ContentBlock, Message};
-use fabric::CompactorTrait;
-use fabric::LlmProvider;
-use fabric::{
-    is_degenerate_summary, safe_tail_cut, CompactionFailure, CompactionOutcome, CompactionStrategy,
-    MIN_SUMMARY_SEED_CHARS,
+use ::contracts::message::{ContentBlock, Message};
+use ::contracts::LlmProvider;
+use runtime::compaction::CompactorTrait;
+use runtime::compaction::{
+    is_degenerate_summary, prune_tool_outputs, safe_tail_cut, CompactionFailure, CompactionOutcome,
+    CompactionStrategy, MIN_SUMMARY_SEED_CHARS,
 };
 use tail::{find_tail_cut, TailProtectionConfig};
 use template::{SummaryTemplate, SUMMARY_PREFIX};
@@ -192,7 +192,7 @@ impl AdvancedCompressor {
 
         // Prune tool outputs before summarization
         let mut pruned_messages = old_messages.to_vec();
-        fabric::prune_tool_outputs(&mut pruned_messages, 0);
+        prune_tool_outputs(&mut pruned_messages, 0);
         prune_long_text_for_summary(&mut pruned_messages);
 
         let summary = match self.generate_summary(&pruned_messages, llm).await {
@@ -205,7 +205,7 @@ impl AdvancedCompressor {
         // remains the verbatim active instruction instead of existing only in
         // generated summary text.
         let latest_text_user = messages.iter().rposition(|message| {
-            message.role == fabric::Role::User
+            message.role == ::contracts::Role::User
                 && message
                     .content
                     .iter()
@@ -348,7 +348,7 @@ impl AdvancedCompressor {
         }
 
         let mut pruned = old_messages.to_vec();
-        fabric::prune_tool_outputs(&mut pruned, 0);
+        prune_tool_outputs(&mut pruned, 0);
 
         let summary = match self.generate_summary(&pruned, llm).await {
             Ok(s) => s,
@@ -392,7 +392,7 @@ impl AdvancedCompressor {
         let tail_messages = &messages[cut..];
 
         let latest_text_user = messages.iter().rposition(|message| {
-            message.role == fabric::Role::User
+            message.role == ::contracts::Role::User
                 && message
                     .content
                     .iter()
@@ -494,7 +494,7 @@ impl AdvancedCompressor {
                 while let Some(chunk) =
                     std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await
                 {
-                    if let fabric::StreamChunk::TextDelta { text: delta } = chunk? {
+                    if let ::contracts::StreamChunk::TextDelta { text: delta } = chunk? {
                         text.push_str(&delta);
                     }
                 }
@@ -623,9 +623,9 @@ mod tests {
 ## Relevant Files\nsrc/lib.rs\n\
 ## Remaining Work\nvalidate\n\
 ## Critical Context\nconstraints remain";
+    use ::contracts::ToolDefinition;
+    use ::contracts::{InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason};
     use async_trait::async_trait;
-    use fabric::ToolDefinition;
-    use fabric::{InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason};
 
     #[test]
     fn test_new_compressor() {
@@ -752,7 +752,7 @@ mod tests {
         let mut messages = vec![Message::user("旧任务")];
         for i in 0..8 {
             messages.push(Message {
-                role: fabric::Role::Assistant,
+                role: ::contracts::Role::Assistant,
                 content: vec![ContentBlock::ToolUse {
                     id: format!("old-{i}"),
                     name: "bash_exec".into(),
@@ -768,7 +768,7 @@ mod tests {
         }
         messages.push(Message::user("还是A吧"));
         messages.push(Message {
-            role: fabric::Role::Assistant,
+            role: ::contracts::Role::Assistant,
             content: vec![ContentBlock::ToolUse {
                 id: "latest".into(),
                 name: "file_read".into(),
@@ -792,7 +792,7 @@ mod tests {
 
     fn contains_text_user(messages: &[Message], expected: &str) -> bool {
         messages.iter().any(|message| {
-            message.role == fabric::Role::User
+            message.role == ::contracts::Role::User
                 && message
                     .content
                     .iter()
@@ -803,7 +803,7 @@ mod tests {
     fn assert_tail_is_tool_boundary_safe(messages: &[Message]) {
         let first_non_system = messages
             .iter()
-            .find(|message| message.role != fabric::Role::System)
+            .find(|message| message.role != ::contracts::Role::System)
             .expect("compacted tail");
         assert!(
             !matches!(
@@ -1069,7 +1069,7 @@ mod tests {
             serde_json::to_value(messages.last().unwrap()).unwrap(),
             latest
         );
-        assert!(matches!(messages[0].role, fabric::Role::System));
+        assert!(matches!(messages[0].role, ::contracts::Role::System));
         assert!(outcome.tokens_after < outcome.tokens_before);
     }
 }

@@ -3,13 +3,12 @@
 //! Contains standalone query methods on `EpisodicMemory` and the `row_to_entry`
 //! helper used by the `MemoryBackend` impl in `storage.rs`.
 
+use crate::memory::{MemoryEntry, MemoryFilter, MemoryQuery, MemoryStats, MemoryType};
+use ::contracts::reflection::{EvolutionLogEntry, ReflectionEntry, ReflectionTrigger};
+use ::contracts::wall_to_datetime;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use fabric::{
-    wall_to_datetime, AwarenessCore, AwarenessExtension, AwarenessExtensionCounts,
-    EvolutionLogEntry, MemoryEntry, MemoryFilter, MemoryQuery, MemoryStats, MemoryType,
-    ReflectionEntry, ReflectionTrigger, SelfAwareness,
-};
+use dasein::{AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, SelfAwareness};
 use rusqlite::params;
 use uuid::Uuid;
 
@@ -44,9 +43,9 @@ impl EpisodicMemory {
                     };
 
                     let outcome = match outcome_str.as_str() {
-                        "partial" => fabric::ReflectionOutcome::Partial,
-                        "failure" => fabric::ReflectionOutcome::Failure,
-                        _ => fabric::ReflectionOutcome::Success,
+                        "partial" => ::contracts::reflection::ReflectionOutcome::Partial,
+                        "failure" => ::contracts::reflection::ReflectionOutcome::Failure,
+                        _ => ::contracts::reflection::ReflectionOutcome::Success,
                     };
 
                     Ok(ReflectionEntry {
@@ -109,9 +108,9 @@ impl EpisodicMemory {
                     };
 
                     let outcome = match outcome_str.as_str() {
-                        "partial" => fabric::ReflectionOutcome::Partial,
-                        "failure" => fabric::ReflectionOutcome::Failure,
-                        _ => fabric::ReflectionOutcome::Success,
+                        "partial" => ::contracts::reflection::ReflectionOutcome::Partial,
+                        "failure" => ::contracts::reflection::ReflectionOutcome::Failure,
+                        _ => ::contracts::reflection::ReflectionOutcome::Success,
                     };
 
                     Ok((
@@ -293,7 +292,7 @@ impl EpisodicMemory {
 /// Convert a rusqlite Row into a MemoryEntry.
 pub(super) fn row_to_entry(
     row: &rusqlite::Row,
-    clock: &std::sync::Arc<dyn fabric::Clock>,
+    clock: &std::sync::Arc<dyn ::contracts::Clock>,
 ) -> rusqlite::Result<MemoryEntry> {
     let id_str: String = row.get("id")?;
     let tags_str: String = row.get("tags")?;

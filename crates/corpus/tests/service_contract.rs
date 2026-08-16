@@ -1,18 +1,18 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use ::contracts::types::admission::RiskLevel;
+use ::contracts::{
+    CapabilityAuthority, CapabilityCall, CapabilityId, CapabilityRequest, CapabilityResult,
+    CapabilityScope, ExecutionPermit, InvocationControl, MonoDeadline, MonoTime, OperationId,
+    PermitId, PrincipalId, ProcessId, SandboxDecision, SandboxRequirement, ToolDefinition,
+    UsageReport,
+};
 use async_trait::async_trait;
 use corpus::{
     ActivationRequest, CorpusError, CorpusRetryDisposition, CorpusService, DefaultCorpusService,
     ExtensionCatalog, ExtensionDescriptor, ExtensionGrant, ExtensionId, ExtensionKind,
     GovernedInvocation,
-};
-use fabric::types::admission::RiskLevel;
-use fabric::{
-    CapabilityAuthority, CapabilityCall, CapabilityId, CapabilityRequest, CapabilityResult,
-    CapabilityScope, ExecutionPermit, InvocationControl, MonoDeadline, MonoTime, OperationId,
-    PermitId, PrincipalId, ProcessId, SandboxDecision, SandboxRequirement, ToolDefinition,
-    UsageReport,
 };
 use kernel::capability::ToolExecutor;
 
@@ -175,14 +175,17 @@ async fn governed_invocation_requires_activation_binding_scope_and_permit() {
             budget: None,
             lease: None,
             sandbox: SandboxRequirement::NotRequired,
-            connection_id: fabric::ConnectionId::new(),
-            thread_id: fabric::ThreadId("session-1".into()),
-            turn_id: fabric::TurnId::new(),
-            workspace: fabric::WorkspacePolicy::from_resolved_roots("/workspace".into(), vec![])
-                .unwrap(),
+            connection_id: ::contracts::ConnectionId::new(),
+            thread_id: ::contracts::ThreadId("session-1".into()),
+            turn_id: ::contracts::TurnId::new(),
+            workspace: ::contracts::WorkspacePolicy::from_resolved_roots(
+                "/workspace".into(),
+                vec![],
+            )
+            .unwrap(),
             session_id: "session-1".into(),
             working_dir: "/workspace".into(),
-            permission_mode: fabric::permission::HostPermissionMode::Safe,
+            permission_mode: ::contracts::permission::HostPermissionMode::Safe,
         },
         control: InvocationControl::default(),
     };

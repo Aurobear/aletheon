@@ -47,10 +47,10 @@ fn cli_paths_delegate_as_an_explicit_host_request() {
         cwd: Some(PathBuf::from("/tmp")),
         add_dirs: vec![PathBuf::from("/var/tmp")],
     };
-    let executive = args.executive_launch();
+    let exec = args.exec_launch();
     let interact = args.interact_launch();
-    assert_eq!(executive.cwd, Some(PathBuf::from("/tmp")));
-    assert_eq!(executive.add_dirs, vec![PathBuf::from("/var/tmp")]);
-    assert_eq!(interact.cwd, executive.cwd);
-    assert_eq!(interact.add_dirs, executive.add_dirs);
+    assert_eq!(exec.cwd, Some(PathBuf::from("/tmp")));
+    assert_eq!(exec.add_dirs, vec![PathBuf::from("/var/tmp")]);
+    assert_eq!(interact.cwd, exec.cwd);
+    assert_eq!(interact.add_dirs, exec.add_dirs);
 }

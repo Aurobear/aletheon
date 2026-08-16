@@ -1,9 +1,9 @@
+use ::contracts::types::embodiment::{DeviceId, RiskClass, SkillDescriptor, SkillId};
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::types::skill_proposal::{PolicyProvenance, SkillProposal};
+use ::contracts::types::world_state::WorldSnapshot;
+use ::contracts::MonoTime;
 use cognit::harness::robot::proposal_validator::validate_proposal;
-use fabric::types::embodiment::{DeviceId, RiskClass, SkillDescriptor, SkillId};
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
-use fabric::types::world_state::WorldSnapshot;
-use fabric::MonoTime;
 
 fn allowed_skills() -> Vec<SkillDescriptor> {
     vec![SkillDescriptor {
@@ -43,7 +43,7 @@ fn integration_valid_proposal_passes() {
         skill: SkillId("kuavo.stance".into()),
         device: DeviceId("bot".into()),
         parameters: serde_json::json!({}),
-        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
+        goal_alignment: ::contracts::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "mode".into(),
@@ -74,7 +74,7 @@ fn integration_unknown_skill_fails() {
         skill: SkillId("unknown".into()),
         device: DeviceId("bot".into()),
         parameters: serde_json::json!({}),
-        goal_alignment: fabric::types::skill_proposal::GoalAlignment::Direct,
+        goal_alignment: ::contracts::types::skill_proposal::GoalAlignment::Direct,
         expected_outcome: ExpectedOutcome {
             predicate: OutcomePredicate::Equals {
                 path: "x".into(),

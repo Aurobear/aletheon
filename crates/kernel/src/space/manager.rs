@@ -3,11 +3,9 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use async_trait::async_trait;
-use fabric::include::space::SpaceManager;
-use fabric::types::operation::ProcessId;
-use fabric::types::process::{NamespaceId, SpaceId};
-use fabric::types::space::{ContextBinding, ContextSpace, SpaceSnapshotId, VersionedOverlay};
+use ::contracts::types::operation::ProcessId;
+use ::contracts::types::process::{NamespaceId, SpaceId};
+use ::contracts::types::space::{ContextBinding, ContextSpace, SpaceSnapshotId, VersionedOverlay};
 
 /// In-memory SpaceManager that stores context-space records behind a Mutex.
 pub struct InMemorySpaceManager {
@@ -100,9 +98,8 @@ fn empty_space(id: SpaceId) -> ContextSpace {
     }
 }
 
-#[async_trait]
-impl SpaceManager for InMemorySpaceManager {
-    async fn fork_space(&self, parent: SpaceId, owner: ProcessId) -> anyhow::Result<SpaceId> {
+impl InMemorySpaceManager {
+    pub async fn fork_space(&self, parent: SpaceId, owner: ProcessId) -> anyhow::Result<SpaceId> {
         let child_id = SpaceId::new();
         let mut spaces = self
             .spaces
@@ -126,16 +123,6 @@ impl SpaceManager for InMemorySpaceManager {
         };
         spaces.insert(child_id, child);
         Ok(child_id)
-    }
-
-    async fn attach_region(&self, space: SpaceId, binding: ContextBinding) -> anyhow::Result<()> {
-        let mut spaces = self
-            .spaces
-            .lock()
-            .map_err(|e| anyhow::anyhow!("space mutex poisoned: {e}"))?;
-        let entry = spaces.entry(space).or_insert_with(|| empty_space(space));
-        entry.bindings.push(binding);
-        Ok(())
     }
 }
 
@@ -177,7 +164,9 @@ mod tests {
 
     #[test]
     fn upsert_replaces_singletons_appends_artifacts() {
-        use fabric::types::space::{AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, SessionId};
+        use ::contracts::types::space::{
+            AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, SessionId,
+        };
         let m = InMemorySpaceManager::new();
         let s = SpaceId::new();
 
@@ -229,7 +218,7 @@ mod tests {
 
     #[test]
     fn reused_space_does_not_grow_across_turns() {
-        use fabric::types::space::{AgoraSpaceId, AgoraVersion, SessionId};
+        use ::contracts::types::space::{AgoraSpaceId, AgoraVersion, SessionId};
         let m = InMemorySpaceManager::new();
         let s = SpaceId::new(); // one long-lived space
         for v in 0..1000u64 {

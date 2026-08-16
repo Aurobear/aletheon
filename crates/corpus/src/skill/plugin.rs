@@ -12,16 +12,15 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::tools::tools::script_tool::ScriptTool;
-use crate::tools::tools::ToolRegistry;
-use fabric::tool::{PermissionLevel, ToolExposure};
-use fabric::Registry;
+use crate::tools::tools::{Registry, ToolRegistry};
+use ::contracts::tool::{PermissionLevel, ToolExposure};
 
 use super::manifest::{
     parse_exposure, parse_permission, HookManifest, HooksManifest, SkillManifest,
 };
 
 use crate::hook::registry::{HookRegistry, RegisteredHook};
-use fabric::hook::HookPoint;
+use crate::hook::HookPoint;
 
 /// A fully parsed skill plugin with all metadata and content.
 #[derive(Debug, Clone)]

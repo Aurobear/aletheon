@@ -3,8 +3,10 @@
 //! A genome is data, so production verification validates and replays the exact
 //! candidate. It deliberately never launches repository build tools.
 
+use crate::genome::contracts::Genome;
+use crate::governance::contracts::{RuntimeCandidate, TestResult};
+use ::contracts::Clock;
 use anyhow::{Context, Result};
-use fabric::{Clock, Genome, RuntimeCandidate, TestResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
@@ -183,7 +185,7 @@ impl SandboxRunner {
 mod tests {
     use super::*;
     use crate::{evolution::candidate::CandidateGenerator, genome::loader::GenomeLoader};
-    use fabric::MutationIntent;
+    use dasein::MutationIntent;
     use kernel::chronos::TestClock;
 
     #[tokio::test]

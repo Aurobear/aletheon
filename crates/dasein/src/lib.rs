@@ -62,6 +62,8 @@ pub mod core;
 
 // DaseinModule — existential substrate (temporality, bewandtnis, self-model, care)
 pub mod dasein;
+pub mod ops;
+pub use ops::DaseinOps;
 
 // Bridge: adapters from impl subsystems into SelfField Verdict system
 pub mod bridge;
@@ -81,7 +83,14 @@ pub mod mutation {
 }
 
 // Re-export the main entry point
+pub use core::contracts::{
+    AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, AwarenessGrowthSuggestion,
+    AwarenessRiskLevel, Care, Conflict, ConflictSource, Identity, Intent, IntentSource,
+    MutationIntent, Resolution, SelfAwareness, SelfFieldOps, SelfState, Verdict, VerdictAction,
+    VerdictHandler,
+};
 pub use core::{SelfField, SelfFieldConfig};
+pub use dasein::context::*;
 
 #[cfg(test)]
 pub mod testing;

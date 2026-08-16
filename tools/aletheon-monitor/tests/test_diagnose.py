@@ -134,6 +134,15 @@ def test_build_timeline_sorts_sources_by_timestamp():
     assert tl[1]["summary"].startswith("glob") or "glob" in tl[1]["summary"]
 
 
+def test_build_timeline_normalizes_numeric_audit_timestamp():
+    journal = [{"timestamp": "2026-08-15T09:00:01+00:00", "type": "turn"}]
+    audit = [json.dumps({"timestamp": 1786438800000, "tool_name": "read"})]
+
+    timeline = build_timeline(journal, audit)
+
+    assert all(isinstance(event["ts"], str) for event in timeline)
+
+
 def test_provider_error_frame_cannot_pass_as_final_answer():
     assertions = frame_assertions(
         "│ hello\nerror: cognitive session: provider_unavailable\n❯",
@@ -419,6 +428,29 @@ def test_event_acceptance_accepts_complete_successful_turn(tmp_path):
     assert result["inference_rounds"] == 1
     assert result["tool_calls"] == 1
     assert result["text_source"] == "text_snapshot"
+    assert all(item["passed"] for item in result["assertions"])
+
+
+def test_event_acceptance_accepts_short_no_tool_turn_and_preserves_session(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {
+            "type": "text_snapshot",
+            "session_id": "session-current",
+            "params": {"text": "请求已处理。"},
+        },
+        {
+            "type": "turn_done",
+            "session_id": "session-current",
+            "params": {},
+        },
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+
+    result = event_acceptance(str(path))
+
+    assert result["session_id"] == "session-current"
+    assert result["tool_calls"] == 0
     assert all(item["passed"] for item in result["assertions"])
 
 

@@ -1,5 +1,5 @@
 use crate::chronos::SystemTimer;
-use fabric::{OperationExitReason, OperationId, Timer};
+use ::contracts::{OperationExitReason, OperationId, Timer};
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
@@ -185,7 +185,9 @@ impl OperationScope {
                 reason: if err.is_panic() {
                     OperationExitReason::Panic(format!("{err}"))
                 } else {
-                    OperationExitReason::Cancelled(fabric::CancelReason::Other(format!("{err}")))
+                    OperationExitReason::Cancelled(::contracts::CancelReason::Other(format!(
+                        "{err}"
+                    )))
                 },
             }),
         }
@@ -195,7 +197,7 @@ impl OperationScope {
     /// grace period expires, the method falls back to the abort protocol.
     pub async fn settle_and_drain(
         &mut self,
-        _clock: &dyn fabric::Clock,
+        _clock: &dyn ::contracts::Clock,
         grace: Duration,
     ) -> OperationScopeCleanupReport {
         self.drain(OperationScopeCleanupKind::Settled, grace).await
@@ -204,7 +206,7 @@ impl OperationScope {
     /// Cancel the turn and account for every registered task before returning.
     pub async fn abort_and_drain(
         &mut self,
-        _clock: &dyn fabric::Clock,
+        _clock: &dyn ::contracts::Clock,
         grace: Duration,
     ) -> OperationScopeCleanupReport {
         self.cancel.cancel();
@@ -214,7 +216,7 @@ impl OperationScope {
     /// Compatibility adapter for callers using the original PR-3 API.
     pub async fn cancel_and_drain(
         &mut self,
-        clock: &dyn fabric::Clock,
+        clock: &dyn ::contracts::Clock,
         grace: Duration,
     ) -> Vec<TaskExit> {
         self.abort_and_drain(clock, grace).await.exits
@@ -322,7 +324,7 @@ impl Drop for OperationScope {
 mod tests {
     use super::*;
     use crate::chronos::TestClock;
-    use fabric::CancelReason;
+    use ::contracts::CancelReason;
     use std::sync::atomic::AtomicBool;
 
     static GAUGE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

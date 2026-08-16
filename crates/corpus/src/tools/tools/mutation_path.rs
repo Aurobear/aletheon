@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use fabric::{ProtectedPathPolicy, WorkspacePolicy};
+use ::contracts::{ProtectedPathPolicy, WorkspacePolicy};
 
 const PROTECTED_METADATA_COMPONENTS: &[&str] = &[".git", ".aletheon"];
 

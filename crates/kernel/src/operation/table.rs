@@ -1,8 +1,9 @@
-use async_trait::async_trait;
-use fabric::{
-    CancelReason, Clock, OperationExitReason, OperationHandle, OperationId, OperationManager,
-    OperationRecord, OperationRequest, OperationResult, OperationState,
+use crate::{OperationHandle, OperationManager};
+use ::contracts::{
+    CancelReason, Clock, OperationExitReason, OperationId, OperationRecord, OperationRequest,
+    OperationResult, OperationState,
 };
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
@@ -172,7 +173,7 @@ impl OperationTable {
         ids
     }
 
-    pub(crate) async fn ids_for_owner(&self, owner: fabric::ProcessId) -> Vec<OperationId> {
+    pub(crate) async fn ids_for_owner(&self, owner: ::contracts::ProcessId) -> Vec<OperationId> {
         self.records
             .lock()
             .await

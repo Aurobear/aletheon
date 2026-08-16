@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use fabric::types::embodiment::{DeviceId, EmbodiedObservation};
+use ::contracts::types::embodiment::{DeviceId, EmbodiedObservation};
 use hardware::grpc::provider::{
     GrpcEmbodimentProvider, GrpcProviderConfig, ObservationSchemaRequirement,
 };

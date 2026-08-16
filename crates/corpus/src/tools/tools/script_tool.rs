@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 use tracing::warn;
 
-use fabric::tool::{
+use ::contracts::tool::{
     PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolExposure, ToolResult,
     ToolResultMeta,
 };

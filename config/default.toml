@@ -11,6 +11,11 @@ max_iterations = 50
 # budget; complex work should use additional bounded rounds instead.
 max_tokens = 16384
 
+[bootstrap]
+# Canonical Session writer. Legacy is reserved for an explicit rollback window
+# after migration/audit, not for normal daemon startup.
+session_writer = "runtime"
+
 [agent.provider_timeouts]
 # Bound connection setup, whole non-stream responses / stream headers, and SSE silence.
 connect_timeout_ms = 10000
@@ -216,7 +221,7 @@ max_pending_jobs = 64
 max_concurrent_jobs = 2
 
 [daemon]
-# Canonical socket dir is fabric::paths::SOCKET_DIR = /run/aletheon.
+# Canonical socket dir is contracts::paths::SOCKET_DIR = /run/aletheon.
 # Linux /var/run compatibility is supplied by the OS symlink.
 socket_path = "/run/aletheon/aletheon.sock"
 log_level = "info"

@@ -1,5 +1,5 @@
 use super::reducer::DaseinStateEngine;
-use fabric::dasein::{DaseinEvent, ExperienceSource, InterpretedExperience};
+use ::contracts::dasein::{DaseinEvent, ExperienceSource, InterpretedExperience};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -38,13 +38,13 @@ pub struct SorgeLoop {
     stop_tx: watch::Sender<u64>,
     timer: Arc<dyn SorgeTimer>,
     #[allow(dead_code)]
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
 }
 
 impl SorgeLoop {
     pub fn new(
         buffer_size: usize,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
         timer: Arc<dyn SorgeTimer>,
     ) -> (Self, mpsc::Sender<DaseinEvent>) {
         let (event_tx, event_rx) = mpsc::channel(buffer_size);

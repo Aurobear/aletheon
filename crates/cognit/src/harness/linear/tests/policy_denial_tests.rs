@@ -28,7 +28,7 @@ async fn authoritative_policy_denial_blocks_without_another_inference() {
         .await
         .unwrap();
 
-    assert_eq!(metrics.stop, fabric::TurnStop::Blocked);
+    assert_eq!(metrics.stop, ::contracts::TurnStop::Blocked);
     assert!(!metrics.completed_normally);
     assert_eq!(metrics.tool_calls_made, 1);
     assert_eq!(metrics.tool_errors, 1);

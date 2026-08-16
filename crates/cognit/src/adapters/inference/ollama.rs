@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::provider::*;
 use crate::config::ProviderTimeoutConfig;
-use fabric::message::{ContentBlock, Message, Role};
+use ::contracts::message::{ContentBlock, Message, Role};
 
 /// Ollama provider using the native `/api/chat` endpoint.
 ///

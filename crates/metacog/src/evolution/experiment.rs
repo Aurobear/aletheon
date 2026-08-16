@@ -5,7 +5,7 @@
 //! and candidate evaluation reports against configured thresholds.
 
 pub use crate::problem::model::{ProblemRecord, ProblemSeverity, ProblemState};
-pub use fabric::types::metacognition_evaluation::{EvaluationReport, GateResult};
+pub use ::contracts::types::metacognition_evaluation::{EvaluationReport, GateResult};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -233,7 +233,9 @@ mod tests {
         gates: Vec<GateResult>,
     ) -> EvaluationReport {
         EvaluationReport {
-            rubric: fabric::types::metacognition_evaluation::RubricId("experiment-test".into()),
+            rubric: ::contracts::types::metacognition_evaluation::RubricId(
+                "experiment-test".into(),
+            ),
             rubric_version: 1,
             dimensions: Vec::new(),
             weighted_total_millis: Some(weighted_total_millis),
@@ -369,7 +371,9 @@ mod tests {
     #[test]
     fn inconclusive_when_no_weighted_totals() {
         let no_score = EvaluationReport {
-            rubric: fabric::types::metacognition_evaluation::RubricId("experiment-test".into()),
+            rubric: ::contracts::types::metacognition_evaluation::RubricId(
+                "experiment-test".into(),
+            ),
             rubric_version: 1,
             dimensions: Vec::new(),
             weighted_total_millis: None,

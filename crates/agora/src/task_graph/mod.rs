@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use fabric::cognitive_workflow::{CognitiveArtifactId, CognitiveTaskNode, CognitiveTaskNodeId};
+use ::contracts::cognitive_workflow::{
+    CognitiveArtifactId, CognitiveTaskNode, CognitiveTaskNodeId,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

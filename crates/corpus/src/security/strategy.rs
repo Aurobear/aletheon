@@ -1,4 +1,4 @@
-use fabric::tool::PermissionLevel;
+use ::contracts::tool::PermissionLevel;
 
 /// Defines how the runner should execute a tool.
 #[derive(Debug, Clone, PartialEq, Eq)]

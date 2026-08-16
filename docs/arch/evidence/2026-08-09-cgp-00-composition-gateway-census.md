@@ -17,7 +17,7 @@ Target owner/writer: unchanged by this census
 IDs minted here: none
 Production callers: enumerated per route (daemon principal auth) and per composition point
 Test-only callers: excluded
-Installed/config callers: cross-checked against interact-authority-census.md 56/56
+Installed/config callers: cross-checked against interact-authority-census.md 53/53
 Tables/files/wire schemas: none changed
 External side effects: none
 Compatibility seam: none added
@@ -69,18 +69,18 @@ All routes are `compatibility` classification today: raw `serde_json::Value` req
 | executive `bootstrap/services.rs:524` + `request.rs:948` | RequestHandler/SessionGateway/AgentControlService | executive | aletheon root (moves out) |
 | executive `user_runtime/mod.rs:283` | CLI/message/TUI composition | executive | aletheon root |
 | executive `turn_coordinator.rs:38` | SessionAppendStore/EventSpine | executive | Runtime ports |
-| executive `agent_loader/mod.rs:49` | AgentLoader | executive | Runtime profile port |
+| executive `agent_loader/mod.rs:49` | MarkdownAgentProfileLoader | executive | Runtime profile port |
 | interact `host.rs:64` | ExecutiveDaemonEnsurer | interact (executive dep) | aletheon lifecycle client |
 | gateway `lib.rs:25` | Telegram transport | gateway | Gateway protocol/client |
 | interact `acp/gateway.rs:42` | AcpBackend | interact | GatewayClient backend |
 | interact `memory_client.rs` | own UnixStream | interact | GatewayClient |
-| interact `tui/mod.rs:388` | monolithic App | interact | TuiModel/Controller/Renderer |
+| interact `tui/model.rs:44` + `tui/controller.rs:10` | model/controller seams (renderer in `tui/render/`) | interact | TuiModel/Controller/Renderer |
 
 Interact is NOT the primary composition root (no canonical Agent construction), but `host.rs` imports Executive (daemon auto-start) and `tui/mod.rs` is the second workspace derivation point — both must move to `aletheon`/GatewayClient per plan.
 
-## 3. Interact 56/56 baseline
+## 3. Interact 53/53 baseline
 
-`rg --files crates/interact/src -g '*.rs' | wc -l` = **56** — matches `docs/plans/2026-08-09-interact-authority-census.md` §8 `actual=56`. The CGP-00 gate enforces this set stays mechanically equal (no new/removed interact source files without a census update).
+`rg --files crates/interact/src -g '*.rs' | wc -l` = **53** — matches the revised `docs/plans/2026-08-09-interact-authority-census.md` §8 `actual=53` after caller-zero retirement of six stale/duplicate-framing shells, deletion of the caller-zero `intent.rs` facade, and registration of the CGP-07 model/controller seams. The CGP-00 gate enforces this set stays mechanically equal (no new/removed interact source files without a census update).
 
 ## 4. Validation
 
@@ -100,9 +100,9 @@ bash scripts/cargo-agent.sh check -p executive --lib  PASS (4.34s)
 |---|---|
 | drop `CGP-R-08` (turn-control) row | REJECTED (its methods become unregistered) |
 | add new RPC method `new.route` to rpc.rs | REJECTED (unregistered route) |
-| clean baseline | ACCEPTED (16 route rows, 56/56 interact, all methods registered) |
+| clean baseline | ACCEPTED (16 route rows, 53/53 interact, all methods registered) |
 
-The CGP-00 gate enforces: route census structural integrity, per-row evidence match, the Interact 56-file set, and complete coverage of every daemon RPC dispatch method.
+The CGP-00 gate enforces: route census structural integrity, per-row evidence match, the Interact 52-file set, and complete coverage of every daemon RPC dispatch method.
 
 ## 5. Scope boundaries
 

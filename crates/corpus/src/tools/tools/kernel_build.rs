@@ -124,8 +124,8 @@ impl KernelBuildTool {
         &self,
         input: &Value,
         source_dir: &str,
-        clock: &dyn fabric::Clock,
-        start: fabric::MonoTime,
+        clock: &dyn ::contracts::Clock,
+        start: ::contracts::MonoTime,
     ) -> ToolResult {
         let repo_url = input["repo_url"]
             .as_str()
@@ -205,8 +205,8 @@ impl KernelBuildTool {
     async fn action_config(
         &self,
         source_dir: &str,
-        clock: &dyn fabric::Clock,
-        start: fabric::MonoTime,
+        clock: &dyn ::contracts::Clock,
+        start: ::contracts::MonoTime,
     ) -> ToolResult {
         info!("Preparing kernel config from running kernel");
 
@@ -284,8 +284,8 @@ impl KernelBuildTool {
         &self,
         input: &Value,
         source_dir: &str,
-        clock: &dyn fabric::Clock,
-        start: fabric::MonoTime,
+        clock: &dyn ::contracts::Clock,
+        start: ::contracts::MonoTime,
     ) -> ToolResult {
         let jobs = input["jobs"]
             .as_u64()
@@ -366,8 +366,8 @@ impl KernelBuildTool {
     async fn action_install(
         &self,
         source_dir: &str,
-        clock: &dyn fabric::Clock,
-        start: fabric::MonoTime,
+        clock: &dyn ::contracts::Clock,
+        start: ::contracts::MonoTime,
     ) -> ToolResult {
         info!("Installing kernel from {}", source_dir);
 

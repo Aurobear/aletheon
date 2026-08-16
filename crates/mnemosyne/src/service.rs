@@ -13,12 +13,13 @@
 //! used by `CoreMemory`. Re-exporting both under the same name would
 //! collide, so callers reach this type via `mnemosyne::service::MemoryScope`.
 
+use ::contracts::reflection::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 use std::sync::Arc;
 use std::time::Instant;
 
+use ::contracts::wall_to_datetime;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use fabric::{self, wall_to_datetime, ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -437,7 +438,7 @@ pub struct DefaultMemoryService {
     #[allow(dead_code)]
     core_memory: Arc<Mutex<CoreMemory>>,
     episodic: Arc<Mutex<EpisodicMemory>>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
     consolidation: Option<Arc<crate::consolidation::ConsolidationRepository>>,
     retention: Option<Arc<crate::retention::RetentionRepository>>,
     metrics: MemoryMetrics,
@@ -496,7 +497,7 @@ impl DefaultMemoryService {
         fact_store: Arc<Mutex<FactStore>>,
         core_memory: Arc<Mutex<CoreMemory>>,
         episodic: Arc<Mutex<EpisodicMemory>>,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
     ) -> Self {
         Self {
             recall_memory,

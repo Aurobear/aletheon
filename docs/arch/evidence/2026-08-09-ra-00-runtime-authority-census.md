@@ -92,7 +92,7 @@ Both hold Pi/Native launchers (RA-D-01/02/03). Target: single `DelegateBackendRe
 
 ### Q8 — production/package/runtime manifest loaders
 
-`AgentLoader` (`composition/agent_loader/mod.rs:49`) is the surviving production profile loader, composed at `host/daemon/bootstrap/runtime.rs:11,79,105,120`. PR #192 removed only `composition/agents`. Target: Runtime profile port (RA-05).
+`MarkdownAgentProfileLoader` (`composition/agent_loader/mod.rs:49`) is the surviving production profile loader, composed at `host/daemon/bootstrap/runtime.rs:11,79,105,120`. PR #192 removed only `composition/agents`. Target: Runtime profile port (RA-05).
 
 ### Q9 — installed profile/config/schema references
 

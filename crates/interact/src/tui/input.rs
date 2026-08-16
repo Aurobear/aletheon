@@ -11,7 +11,7 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use fabric::WorkspacePolicy;
+use ::contracts::WorkspacePolicy;
 
 const HISTORY_SCHEMA_VERSION: u16 = 2;
 const INPUT_RETENTION_SECS: u64 = 30 * 24 * 60 * 60;

@@ -127,7 +127,7 @@ impl ProviderRegistry {
 
     /// Resolve the typed machine admission policy for a canonical provider key.
     ///
-    /// The key is produced by `fabric::memory::provider_backpressure_key`;
+    /// The key is produced by `::contracts::memory::provider_backpressure_key`;
     /// matching against configured endpoint prefixes keeps provider policy in
     /// the machine registry rather than recreating it in the RPC adapter.
     pub fn backpressure_config_for_key(
@@ -273,7 +273,7 @@ local = "ollama/qwen3:8b"
         let mut config = make_config();
         config.providers[0].backpressure.max_concurrent_requests = 7;
         let registry = ProviderRegistry::from_config(&config).unwrap();
-        let key = fabric::memory::provider_backpressure_key(
+        let key = ::contracts::memory::provider_backpressure_key(
             "https://token-plan-sgp.xiaomimimo.com/",
             "mimo-v2.5-pro",
         );

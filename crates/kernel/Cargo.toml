@@ -7,12 +7,14 @@ license.workspace = true
 description = "Aletheon macro-kernel — process/operation tables, admission, chronos, supervision"
 
 [dependencies]
-fabric = { path = "../fabric" }
+contracts = { path = "../contracts" }
+runtime = { path = "../runtime" }
 async-trait.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
+libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror = "2"
@@ -21,6 +23,7 @@ thiserror = "2"
 serde_json.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
+tempfile = "3"
 
 [lints]
 workspace = true

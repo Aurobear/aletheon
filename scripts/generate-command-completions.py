@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = ROOT / "crates/fabric/src/contract/command-specs.tsv"
+SPEC = ROOT / "crates/contracts/src/contract/command-specs.tsv"
 BASH = ROOT / "scripts/completions/aletheon.bash"
 ZSH = ROOT / "scripts/completions/aletheon.zsh"
 

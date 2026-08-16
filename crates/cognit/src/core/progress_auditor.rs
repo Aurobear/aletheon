@@ -1,6 +1,6 @@
 //! Deterministic comparison of declared obligations with authoritative evidence.
 
-use fabric::OperationId;
+use ::contracts::OperationId;
 use serde::{Deserialize, Serialize};
 
 use super::cognitive_task::{

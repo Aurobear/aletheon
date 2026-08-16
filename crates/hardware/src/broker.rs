@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use fabric::types::embodiment::{DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult};
+use ::contracts::types::embodiment::{DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult};
 
 use crate::{
     AuthorizedSkillRequest, DeviceOperationId, EmbodimentProvider, MonotonicClock, ProviderError,
@@ -141,8 +141,8 @@ fn validate_projected_authority(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use ::contracts::types::embodiment::{SkillId, SkillOutcome, SkillProgress, SkillRequest};
     use async_trait::async_trait;
-    use fabric::types::embodiment::{SkillId, SkillOutcome, SkillProgress, SkillRequest};
 
     use super::*;
     use crate::{skill::authorized_fixture, CancelAck, ManualClock, StopReceipt};

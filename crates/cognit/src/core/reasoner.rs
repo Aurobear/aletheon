@@ -4,9 +4,9 @@
 //! that explains how to approach the problem. The reasoning chain feeds into
 //! the Planner to produce concrete steps.
 
-use fabric::context::Context;
-use fabric::dasein::Stimmung;
-use fabric::self_field::Intent;
+use ::contracts::dasein::Stimmung;
+use ::contracts::Context;
+use dasein::Intent;
 use std::collections::HashMap;
 
 /// Reasoning strategy — determines how the reasoner approaches a problem.
@@ -216,7 +216,7 @@ impl Reasoner {
             Stimmung::Verfallenheit { .. } => ReasoningStrategy::ChainOfThought,
             Stimmung::Entschlossenheit { .. } => ReasoningStrategy::ChainOfThought,
             Stimmung::Langeweile {
-                depth: fabric::dasein::BoredomDepth::Deep,
+                depth: ::contracts::dasein::BoredomDepth::Deep,
             } => ReasoningStrategy::ChainOfThought,
             _ => ReasoningStrategy::Direct,
         }
@@ -237,7 +237,8 @@ impl Reasoner {
 #[allow(deprecated)]
 mod tests {
     use super::*;
-    use fabric::{Context, IntentSource};
+    use ::contracts::Context;
+    use dasein::IntentSource;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -346,7 +347,7 @@ mod tests {
     fn test_stimmung_angst_uses_cot() {
         let reasoner = Reasoner::new(ReasoningStrategy::Direct);
         let mood = Stimmung::Angst {
-            facing: fabric::dasein::AngstSource::Freedom,
+            facing: ::contracts::dasein::AngstSource::Freedom,
         };
         let result = reasoner.think_with_stimmung(&make_intent(), &make_ctx(), "", &mood);
         // Angst should trigger ChainOfThought reasoning
@@ -380,7 +381,7 @@ mod tests {
     fn test_strategy_for_stimmung() {
         assert_eq!(
             Reasoner::strategy_for_stimmung(&Stimmung::Angst {
-                facing: fabric::dasein::AngstSource::Nothingness,
+                facing: ::contracts::dasein::AngstSource::Nothingness,
             }),
             ReasoningStrategy::ChainOfThought
         );
@@ -396,13 +397,13 @@ mod tests {
         );
         assert_eq!(
             Reasoner::strategy_for_stimmung(&Stimmung::Langeweile {
-                depth: fabric::dasein::BoredomDepth::Deep,
+                depth: ::contracts::dasein::BoredomDepth::Deep,
             }),
             ReasoningStrategy::ChainOfThought
         );
         assert_eq!(
             Reasoner::strategy_for_stimmung(&Stimmung::Langeweile {
-                depth: fabric::dasein::BoredomDepth::Surface,
+                depth: ::contracts::dasein::BoredomDepth::Surface,
             }),
             ReasoningStrategy::Direct
         );

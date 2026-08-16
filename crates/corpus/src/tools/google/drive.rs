@@ -1,7 +1,8 @@
 //! Minimal read-only Google Drive API adapter used by delta synchronization.
 
 use super::{GoogleApiClient, GoogleApiError};
-use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
+use ::contracts::PrincipalId;
+use application::{ExternalCapabilityId, ExternalIdentityId};
 use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
 

@@ -39,17 +39,17 @@ pub struct OperationEpoch(pub u64);
 /// legacy `OperationRecord` in table.rs is the in-memory view until K4.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationRecord {
-    pub id: fabric::OperationId,
+    pub id: ::contracts::OperationId,
     pub state: OperationState,
     pub epoch: OperationEpoch,
-    pub parent: Option<fabric::OperationId>,
+    pub parent: Option<::contracts::OperationId>,
 }
 
 /// Operation receipt returned after admission.  Runtime/owners hold the ref;
 /// the Kernel owns the terminal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationReceipt {
-    pub id: fabric::OperationId,
+    pub id: ::contracts::OperationId,
     pub epoch: OperationEpoch,
 }
 
@@ -57,14 +57,14 @@ pub struct OperationReceipt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OperationCommand {
     Submit {
-        id: fabric::OperationId,
-        parent: Option<fabric::OperationId>,
+        id: ::contracts::OperationId,
+        parent: Option<::contracts::OperationId>,
     },
     Start {
-        id: fabric::OperationId,
+        id: ::contracts::OperationId,
     },
     Settle {
-        id: fabric::OperationId,
+        id: ::contracts::OperationId,
         state: OperationState,
     },
 }
@@ -74,7 +74,7 @@ pub enum OperationCommand {
 #[async_trait::async_trait]
 pub trait ExecutionJournal: Send + Sync {
     /// Read a single operation record by id.
-    async fn read(&self, id: fabric::OperationId) -> Option<OperationRecord>;
+    async fn read(&self, id: ::contracts::OperationId) -> Option<OperationRecord>;
     /// Replay all records after a given epoch (for restart recovery/shadow).
     async fn replay_after(&self, after_epoch: OperationEpoch) -> Vec<OperationRecord>;
 }

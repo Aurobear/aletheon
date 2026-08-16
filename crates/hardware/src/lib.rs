@@ -2,7 +2,7 @@
 //!
 //! Real actuators are deliberately unsupported. The single `hardware` crate
 //! owns device-domain validation while Kernel remains permit authority and
-//! Executive remains orchestration/settlement authority.
+//! Runtime remains orchestration/settlement authority.
 
 pub mod broker;
 pub mod clock;
@@ -10,6 +10,7 @@ pub mod command;
 pub mod deployment_gate;
 pub mod device;
 pub mod emergency_stop;
+pub mod emergency_stop_contract;
 pub mod grpc;
 pub mod lease;
 pub mod observation;
@@ -29,6 +30,7 @@ pub use device::{
     MonotonicInstant, PrincipalId,
 };
 pub use emergency_stop::EmergencyStop;
+pub use emergency_stop_contract::{EStopEvent, EStopState};
 pub use grpc::provider::{
     BridgeCapabilitySnapshot, BridgeHealthComponentSnapshot, BridgeHealthSnapshot,
     BridgeStartupError, GrpcEmbodimentProvider, GrpcProviderConfig, ObservationSchemaRequirement,
@@ -44,3 +46,11 @@ pub use skill::{
     StopReceipt, ValidatedSkillCommand,
 };
 pub use telemetry::TelemetryEnvelope;
+
+pub mod progress_projection;
+
+pub mod approval;
+
+pub mod recovery;
+
+pub mod world_state;

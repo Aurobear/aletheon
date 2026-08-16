@@ -6,7 +6,7 @@
 //! Constraints honoured (CGP-01):
 //! - no `ComponentGraph`/`ServiceBag` — every component is an explicit handle;
 //! - `compose` does **no** I/O and **no** spawn (it only wires handles);
-//! - config is normalized per owner, not a single Executive `AppConfig`;
+//! - config is normalized per owner, not a single Aletheon `AppConfig`;
 //! - the legacy launcher is still the live path; this skeleton is a one-way
 //!   additive seam (no official socket cutover).
 //!
@@ -28,7 +28,7 @@ pub enum LifecyclePhase {
 }
 
 /// Per-owner normalized config handles.  The composition root never spreads a
-/// single Executive `AppConfig`; each owner receives only its own slice.
+/// single Aletheon `AppConfig`; each owner receives only its own slice.
 #[derive(Debug, Clone, Default)]
 pub struct OwnerConfig {
     pub owner: &'static str,

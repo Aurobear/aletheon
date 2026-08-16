@@ -1,14 +1,16 @@
 //! Centralized TUI application state.
 //!
-//! Extracts state fields from the monolithic App struct in mod.rs
+//! Extracts state fields from the monolithic TuiModel struct in mod.rs
 //! into a focused module for clarity and testability.
 
-use fabric::protocol::client::EventCursor;
-use fabric::ui_event::{AwarenessLevel, CollaborationMode};
-use fabric::{
+use super::presentation::AwarenessLevel;
+use super::presentation::CollaborationModePresentation;
+use ::contracts::protocol::client::EventCursor;
+use ::contracts::{
     AgentSnapshot, ApprovalSnapshot, EvaluationReceiptRef, ExecutionTargetSelection, MonoTime,
     TurnTerminalStatus,
 };
+use application::turn_control::CollaborationMode;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -163,11 +165,12 @@ pub struct AppState {
     pub session_id: Option<String>,
     /// Exact turn identity from the versioned client protocol. Ephemeral
     /// overlay keys use this instead of global text positions.
-    pub active_turn_id: Option<fabric::TurnId>,
-    /// Compatibility streams do not carry a turn id. The reducer assigns one
-    /// ephemeral identity per such turn so every chunk/tool update in that
-    /// turn uses one stable key without pretending it is durable authority.
-    pub(crate) live_turn_id: Option<fabric::TurnId>,
+    pub active_turn_id: Option<::contracts::TurnId>,
+    /// Compatibility streams do not carry a turn id. Keep a presentation-only
+    /// generation for stable overlay keys; it is deliberately not a domain ID
+    /// and is never serialized or sent back to the daemon.
+    pub(crate) live_turn_key: Option<u64>,
+    pub(crate) next_live_turn_key: u64,
     pub provider_name: Option<String>,
     pub items: BTreeMap<String, UiItem>,
     /// Scrollback offset for the actually rendered Task Console conversation.
@@ -178,9 +181,9 @@ pub struct AppState {
     /// Daemon-owned Session/Task/Activity projection. These fields are
     /// replaced atomically by a schema-versioned read snapshot and are never
     /// inferred from chat text or local widgets.
-    pub projected_session: Option<fabric::SessionRecord>,
-    pub tasks: Vec<fabric::TaskSnapshot>,
-    pub activities: Vec<fabric::ActivitySnapshot>,
+    pub projected_session: Option<::contracts::SessionRecord>,
+    pub tasks: Vec<::contracts::TaskSnapshot>,
+    pub activities: Vec<::contracts::ActivitySnapshot>,
     /// Ephemeral activity identities currently overlaid in `activities`.
     ///
     /// The reducer owns insertion, terminal updates, and durable reconciliation;
@@ -216,7 +219,8 @@ impl Default for AppState {
             cursor: EventCursor::origin(),
             session_id: None,
             active_turn_id: None,
-            live_turn_id: None,
+            live_turn_key: None,
+            next_live_turn_key: 0,
             provider_name: None,
             items: BTreeMap::new(),
             conversation_scroll: 0,
@@ -271,13 +275,13 @@ impl AppState {
         self.pending_execution_target = None;
     }
 
-    pub fn latest_context_budget(&self) -> Option<&fabric::ContextBudgetProjection> {
+    pub fn latest_context_budget(&self) -> Option<&::contracts::ContextBudgetProjection> {
         self.tasks
             .iter()
             .find(|task| {
                 matches!(
                     task.phase,
-                    fabric::TaskPhase::Active | fabric::TaskPhase::Interrupted
+                    ::contracts::TaskPhase::Active | ::contracts::TaskPhase::Interrupted
                 )
             })
             .or_else(|| self.tasks.first())
@@ -365,15 +369,15 @@ impl AppState {
     }
 }
 
-fn rollout_diagnostic(value: &fabric::RolloutBudgetValue) -> String {
+fn rollout_diagnostic(value: &::contracts::RolloutBudgetValue) -> String {
     match value {
-        fabric::RolloutBudgetValue::Known { value, source } => format!(
+        ::contracts::RolloutBudgetValue::Known { value, source } => format!(
             "{} (source: {} / {})",
             compact_tokens(value.get()),
             source.kind.as_str(),
             source.label
         ),
-        fabric::RolloutBudgetValue::Unknown { source, reason } => format!(
+        ::contracts::RolloutBudgetValue::Unknown { source, reason } => format!(
             "unknown ({}, source: {} / {})",
             reason.as_str(),
             source.kind.as_str(),

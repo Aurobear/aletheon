@@ -1,7 +1,7 @@
+use ::contracts::{ApprovalId, ApprovalStatus};
 use corpus::tools::subagent::{
     ApplyAuthorization, ApplyAuthorizer, ApplyError, ApplySpec, ControlledApply,
 };
-use fabric::{ApprovalId, ApprovalStatus};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;

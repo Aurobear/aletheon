@@ -2,7 +2,7 @@
 
 use std::{collections::VecDeque, fs, path::PathBuf};
 
-use fabric::WorkspacePolicy;
+use ::contracts::WorkspacePolicy;
 
 const MAX_VISITED_ENTRIES: usize = 20_000;
 const MAX_RESULTS: usize = 64;

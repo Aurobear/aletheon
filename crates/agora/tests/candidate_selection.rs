@@ -1,9 +1,9 @@
-use agora::{AdmissionOutcome, CandidatePool, CandidatePoolConfig, SelectionPolicy};
-use fabric::{
+use ::contracts::{
     AgoraSpaceId, ContentId, MonoDeadline, MonoTime, ProcessId, SalienceVector, VisibilityScope,
     WallTime, WorkspaceCandidate, WorkspaceContent, WorkspaceObservation, WorkspaceProvenance,
     WORKSPACE_SCHEMA_V1,
 };
+use agora::{AdmissionOutcome, CandidatePool, CandidatePoolConfig, SelectionPolicy};
 use uuid::Uuid;
 
 fn candidate(id: u128, source: u128, score: f32, created: u64) -> WorkspaceCandidate {
@@ -18,7 +18,7 @@ fn candidate(id: u128, source: u128, score: f32, created: u64) -> WorkspaceCandi
             what: format!("observation-{id}"),
             source: "fixture".into(),
             data: serde_json::json!({"id": id}),
-            attribution: fabric::WorkspaceAttribution::Environment,
+            attribution: ::contracts::WorkspaceAttribution::Environment,
         }),
         confidence: 1.0,
         salience: SalienceVector {

@@ -1,12 +1,13 @@
+use ::contracts::{
+    CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider, LlmResponse,
+    LlmStream, Message, NoopTurnEventSink, OperationId, ProcessId, Role, StopReason, StubTurnServices,
+    ToolDefinition, TurnRequest, TurnServices, TurnStop,
+};
 use async_trait::async_trait;
+use cognit::harness::session_log::{HarnessSessionEventKind, HarnessSessionId};
 use cognit::harness::{
     CognitiveSession, CognitiveSessionDependencies, CognitiveStreamEvent, CognitiveStreamSink,
-    HarnessConfig, LinearCognitiveSession,
-};
-use fabric::{
-    CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider, LlmResponse,
-    LlmStream, NoopTurnEventSink, OperationId, ProcessId, StopReason, StubTurnServices,
-    ToolDefinition, TurnRequest, TurnServices, TurnStop,
+    HarnessCognitiveSession, HarnessConfig, LinearCognitiveSession,
 };
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,17 +31,17 @@ fn request(input: &str) -> TurnRequest {
     TurnRequest {
         operation_id: OperationId::new(),
         process_id: ProcessId::new(),
-        context: fabric::PrincipalContext::new(
-            fabric::PrincipalId("test:cognitive-session".into()),
-            fabric::LocalOsPrincipal { uid: 0, gid: 0 },
-            fabric::ConnectionId::new(),
-            fabric::ThreadId("test".into()),
-            fabric::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
-            fabric::PermissionProfileId::workspace_write(),
-            fabric::ApprovalPolicy::OnRequest,
+        context: ::contracts::PrincipalContext::new(
+            ::contracts::PrincipalId("test:cognitive-session".into()),
+            ::contracts::LocalOsPrincipal { uid: 0, gid: 0 },
+            ::contracts::ConnectionId::new(),
+            ::contracts::ThreadId("test".into()),
+            ::contracts::WorkspacePolicy::from_resolved_roots(cwd, vec![]).unwrap(),
+            ::contracts::PermissionProfileId::workspace_write(),
+            ::contracts::ApprovalPolicy::OnRequest,
         ),
         input: input.into(),
-        execution_target: fabric::ExecutionTargetSelection::default(),
+        execution_target: ::contracts::ExecutionTargetSelection::default(),
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
@@ -49,37 +50,40 @@ fn request(input: &str) -> TurnRequest {
     }
 }
 
-fn with_coding_contract(mut request: TurnRequest, mode: fabric::EvaluationMode) -> TurnRequest {
-    let turn_id = fabric::TurnId::new();
+fn with_coding_contract(
+    mut request: TurnRequest,
+    mode: ::contracts::EvaluationMode,
+) -> TurnRequest {
+    let turn_id = ::contracts::TurnId::new();
     request.context.turn_id = Some(turn_id);
-    request.requested_task_kind = Some(fabric::TaskKind::Coding);
-    request.evaluation_contract = Some(fabric::TaskEvaluationContract {
-        schema_version: fabric::EVALUATION_SCHEMA_V1,
-        contract_id: fabric::EvaluationContractId::new(),
-        task_kind: fabric::TaskKind::Coding,
-        subject: fabric::EvaluationSubject::Turn {
+    request.requested_task_kind = Some(::contracts::TaskKind::Coding);
+    request.evaluation_contract = Some(::contracts::TaskEvaluationContract {
+        schema_version: ::contracts::EVALUATION_SCHEMA_V1,
+        contract_id: ::contracts::EvaluationContractId::new(),
+        task_kind: ::contracts::TaskKind::Coding,
+        subject: ::contracts::EvaluationSubject::Turn {
             turn_id,
             operation_id: request.operation_id,
         },
-        rubric: fabric::types::metacognition_evaluation::RubricId("coding-v2".into()),
+        rubric: ::contracts::types::metacognition_evaluation::RubricId("coding-v2".into()),
         rubric_version: 2,
         mode,
-        objective_ref: fabric::EvidenceRef("test:objective".into()),
+        objective_ref: ::contracts::EvidenceRef("test:objective".into()),
         requirement_refs: Vec::new(),
-        required_evidence: vec![fabric::RequiredEvidence {
-            kind: fabric::types::metacognition_evidence::EvidenceKind::VerificationResult,
+        required_evidence: vec![::contracts::RequiredEvidence {
+            kind: ::contracts::types::metacognition_evidence::EvidenceKind::VerificationResult,
             minimum_count: 1,
             authoritative: true,
         }],
         required_gates: vec![
-            fabric::RequiredGate {
+            ::contracts::RequiredGate {
                 name: "required_verification_passed".into(),
             },
-            fabric::RequiredGate {
+            ::contracts::RequiredGate {
                 name: "change_within_scope".into(),
             },
         ],
-        thresholds: fabric::EvaluationThresholds {
+        thresholds: ::contracts::EvaluationThresholds {
             min_score_millis: 70_000,
             min_evidence_coverage_millis: 600,
             min_confidence_millis: 700,
@@ -111,7 +115,7 @@ struct ScriptedLlm {
 impl LlmProvider for ScriptedLlm {
     async fn complete(
         &self,
-        _messages: &[fabric::Message],
+        _messages: &[::contracts::Message],
         _tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmResponse> {
         let mut calls = self.calls.lock().unwrap();
@@ -139,7 +143,7 @@ impl LlmProvider for ScriptedLlm {
 
     async fn complete_stream(
         &self,
-        _messages: &[fabric::Message],
+        _messages: &[::contracts::Message],
         _tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmStream> {
         unimplemented!("not used by this test")
@@ -161,16 +165,19 @@ struct ScriptedTurnServices {
 
 #[async_trait]
 impl TurnServices for ScriptedTurnServices {
-    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
-        Ok(fabric::RecallSet::default())
+    async fn recall(
+        &self,
+        _req: ::contracts::RecallRequest,
+    ) -> anyhow::Result<::contracts::RecallSet> {
+        Ok(::contracts::RecallSet::default())
     }
 
-    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
-        Ok(fabric::DaseinView::default())
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<::contracts::DaseinView> {
+        Ok(::contracts::DaseinView::default())
     }
 
-    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
-        Ok(fabric::AgoraView::default())
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
+        Ok(::contracts::AgoraView::default())
     }
 
     async fn invoke(&self, req: CapabilityCall) -> CapabilityResult {
@@ -179,7 +186,7 @@ impl TurnServices for ScriptedTurnServices {
             call_id: req.call_id,
             output: req.input["text"].as_str().unwrap_or_default().to_string(),
             is_error: false,
-            usage: fabric::UsageReport::default(),
+            usage: ::contracts::UsageReport::default(),
             audit_id: None,
             patch_delta: None,
             served_from_cache: false,
@@ -226,23 +233,315 @@ async fn linear_session_runs_react_with_turn_services() {
     assert_eq!(*services.invoked.lock().unwrap(), vec!["echo_tool"]);
 }
 
+#[tokio::test]
+async fn core_harness_session_adapts_public_turn_services_without_a_second_history() {
+    let services = ScriptedTurnServices {
+        llm: ScriptedLlm {
+            calls: Mutex::new(0),
+        },
+        invoked: Mutex::new(Vec::new()),
+    };
+    let mut session = HarnessCognitiveSession::new(
+        HarnessSessionId("core-adapter".into()),
+        Arc::new(kernel::chronos::TestClock::default()),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    let log = session.event_log();
+    let result = session
+        .run_turn(request("use echo"), &services, &NoopTurnEventSink)
+        .await
+        .unwrap();
+
+    assert_eq!(result.stop, TurnStop::Completed);
+    assert_eq!(result.output, "done: hi");
+    assert_eq!(result.metrics.iterations, 2);
+    assert_eq!(result.metrics.tool_calls_made, 1);
+    assert_eq!(services.invoked.lock().unwrap().as_slice(), ["echo_tool"]);
+    let log = log.lock().unwrap();
+    assert_eq!(log.derive_messages().len(), 4);
+    assert!(matches!(
+        log.events().last().unwrap().kind,
+        HarnessSessionEventKind::TurnEnd { .. }
+    ));
+}
+
+struct SeedRecordingLlm {
+    requests: Mutex<Vec<Vec<Message>>>,
+}
+
+#[async_trait]
+impl LlmProvider for SeedRecordingLlm {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmResponse> {
+        self.requests.lock().unwrap().push(messages.to_vec());
+        Ok(LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: "seeded".into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            usage: InferenceUsage::default(),
+        })
+    }
+
+    async fn complete_stream(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmStream> {
+        unimplemented!("collecting Harness adapter uses complete")
+    }
+
+    fn name(&self) -> &str {
+        "seed-recording"
+    }
+
+    fn max_context_length(&self) -> usize {
+        100_000
+    }
+}
+
+struct SeededTurnServices {
+    llm: SeedRecordingLlm,
+    seed: Vec<Message>,
+}
+
+#[async_trait]
+impl TurnServices for SeededTurnServices {
+    async fn recall(
+        &self,
+        _req: ::contracts::RecallRequest,
+    ) -> anyhow::Result<::contracts::RecallSet> {
+        Ok(Default::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<::contracts::DaseinView> {
+        Ok(Default::default())
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
+        Ok(Default::default())
+    }
+
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        CapabilityResult {
+            call_id: call.call_id,
+            output: String::new(),
+            is_error: false,
+            usage: Default::default(),
+            audit_id: None,
+            patch_delta: None,
+            served_from_cache: false,
+        }
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(&self.llm)
+    }
+
+    fn seed_messages(&self, _request: &TurnRequest) -> Vec<Message> {
+        self.seed.clone()
+    }
+}
+
+#[tokio::test]
+async fn core_harness_preserves_typed_seed_messages_without_json_system_reencoding() {
+    let seed = vec![
+        Message::system("system instructions"),
+        Message::user("older question"),
+        Message::assistant("older answer"),
+        Message::user("effective hello with projected context"),
+    ];
+    let services = SeededTurnServices {
+        llm: SeedRecordingLlm {
+            requests: Mutex::new(Vec::new()),
+        },
+        seed: seed.clone(),
+    };
+    let mut session = HarnessCognitiveSession::new(
+        HarnessSessionId("seed-adapter".into()),
+        Arc::new(kernel::chronos::TestClock::default()),
+        CancellationToken::new(),
+    )
+    .unwrap();
+
+    session
+        .run_turn(request("hello"), &services, &NoopTurnEventSink)
+        .await
+        .unwrap();
+
+    let requests = services.llm.requests.lock().unwrap();
+    assert_eq!(requests.as_slice(), &[seed]);
+    assert_eq!(requests[0][0].role, Role::System);
+}
+
+struct ActivatingLlm {
+    calls: Mutex<usize>,
+    visible_tools: Mutex<Vec<Vec<String>>>,
+}
+
+#[async_trait]
+impl LlmProvider for ActivatingLlm {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmResponse> {
+        self.visible_tools
+            .lock()
+            .unwrap()
+            .push(tools.iter().map(|tool| tool.name.clone()).collect());
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        Ok(if *calls == 1 {
+            LlmResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "discover".into(),
+                    name: "tool_search".into(),
+                    input: serde_json::json!({}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                usage: Default::default(),
+            }
+        } else {
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "activated".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Default::default(),
+            }
+        })
+    }
+
+    async fn complete_stream(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmStream> {
+        unimplemented!("collecting Harness adapter uses complete")
+    }
+
+    fn name(&self) -> &str {
+        "activating"
+    }
+
+    fn max_context_length(&self) -> usize {
+        100_000
+    }
+}
+
+struct ActivatingServices {
+    llm: ActivatingLlm,
+    activated: tokio::sync::Mutex<Vec<ToolDefinition>>,
+}
+
+#[async_trait]
+impl TurnServices for ActivatingServices {
+    async fn recall(
+        &self,
+        _req: ::contracts::RecallRequest,
+    ) -> anyhow::Result<::contracts::RecallSet> {
+        Ok(Default::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<::contracts::DaseinView> {
+        Ok(Default::default())
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
+        Ok(Default::default())
+    }
+
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        if call.name == "tool_search" {
+            self.activated.lock().await.push(ToolDefinition {
+                name: "activated_tool".into(),
+                description: "discovered tool".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            });
+        }
+        CapabilityResult {
+            call_id: call.call_id,
+            output: "found".into(),
+            is_error: false,
+            usage: Default::default(),
+            audit_id: None,
+            patch_delta: None,
+            served_from_cache: false,
+        }
+    }
+
+    async fn drain_activated_tool_definitions(&self) -> Vec<ToolDefinition> {
+        std::mem::take(&mut *self.activated.lock().await)
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(&self.llm)
+    }
+
+    fn tool_definitions(&self) -> Vec<ToolDefinition> {
+        vec![ToolDefinition {
+            name: "tool_search".into(),
+            description: "discover tools".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        }]
+    }
+}
+
+#[tokio::test]
+async fn core_harness_exposes_discovered_tool_schema_on_the_next_inference() {
+    let services = ActivatingServices {
+        llm: ActivatingLlm {
+            calls: Mutex::new(0),
+            visible_tools: Mutex::new(Vec::new()),
+        },
+        activated: tokio::sync::Mutex::new(Vec::new()),
+    };
+    let mut session = HarnessCognitiveSession::new(
+        HarnessSessionId("tool-activation".into()),
+        Arc::new(kernel::chronos::TestClock::default()),
+        CancellationToken::new(),
+    )
+    .unwrap();
+
+    session
+        .run_turn(request("discover"), &services, &NoopTurnEventSink)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        services.llm.visible_tools.lock().unwrap().as_slice(),
+        [
+            vec!["tool_search".to_string()],
+            vec!["activated_tool".to_string(), "tool_search".to_string()],
+        ]
+    );
+}
+
 struct StreamingServices {
     llm: cognit::testing::mock_llm::MockLlmProvider,
 }
 
 #[async_trait]
 impl TurnServices for StreamingServices {
-    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+    async fn recall(
+        &self,
+        _req: ::contracts::RecallRequest,
+    ) -> anyhow::Result<::contracts::RecallSet> {
         Ok(Default::default())
     }
 
-    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
-        Ok(fabric::DaseinView {
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<::contracts::DaseinView> {
+        Ok(::contracts::DaseinView {
             text: Some("calm".into()),
         })
     }
 
-    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
         Ok(Default::default())
     }
 
@@ -346,15 +645,18 @@ struct CodingContractServices {
 
 #[async_trait]
 impl TurnServices for CodingContractServices {
-    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+    async fn recall(
+        &self,
+        _req: ::contracts::RecallRequest,
+    ) -> anyhow::Result<::contracts::RecallSet> {
         Ok(Default::default())
     }
 
-    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<::contracts::DaseinView> {
         Ok(Default::default())
     }
 
-    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
         Ok(Default::default())
     }
 
@@ -392,7 +694,7 @@ impl TurnServices for CodingContractServices {
         }]
     }
 
-    fn turn_requirements(&self, request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
+    fn turn_requirements(&self, request: &TurnRequest) -> Vec<::contracts::TurnRequirement> {
         request.requirements.clone()
     }
 }
@@ -408,7 +710,7 @@ fn coding_contract_services(name: &str, responses: usize) -> CodingContractServi
     }
 }
 
-fn projected_model_text(messages: &[fabric::Message]) -> String {
+fn projected_model_text(messages: &[::contracts::Message]) -> String {
     messages
         .iter()
         .flat_map(|message| &message.content)
@@ -427,7 +729,7 @@ async fn coding_contract_configures_code_change_without_turn_requirements() {
 
     let result = session
         .run_turn(
-            with_coding_contract(request("change code"), fabric::EvaluationMode::Shadow),
+            with_coding_contract(request("change code"), ::contracts::EvaluationMode::Shadow),
             &services,
             &NoopTurnEventSink,
         )
@@ -449,7 +751,7 @@ async fn coding_contract_configures_enforced_completion_gate() {
 
     let result = session
         .run_turn(
-            with_coding_contract(request("change code"), fabric::EvaluationMode::Enforce),
+            with_coding_contract(request("change code"), ::contracts::EvaluationMode::Enforce),
             &services,
             &NoopTurnEventSink,
         )
@@ -468,9 +770,9 @@ async fn coding_contract_merges_explicit_turn_requirements() {
     let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
     let mut turn = with_coding_contract(
         request("delegate code change"),
-        fabric::EvaluationMode::Shadow,
+        ::contracts::EvaluationMode::Shadow,
     );
-    turn.requirements = vec![fabric::TurnRequirement::InvokeAgentRuntime {
+    turn.requirements = vec![::contracts::TurnRequirement::InvokeAgentRuntime {
         runtime_id: "pi-rpc".into(),
     }];
 
@@ -509,7 +811,7 @@ async fn terminal_validation_satisfies_enforced_coding_contract() {
 
     let result = session
         .run_turn(
-            with_coding_contract(request("change code"), fabric::EvaluationMode::Enforce),
+            with_coding_contract(request("change code"), ::contracts::EvaluationMode::Enforce),
             &services,
             &NoopTurnEventSink,
         )
@@ -522,20 +824,23 @@ async fn terminal_validation_satisfies_enforced_coding_contract() {
 
 struct RequiredCapabilityServices {
     llm: cognit::testing::mock_llm::MockLlmProvider,
-    projections: Mutex<Vec<fabric::model_projection::ModelContextProjectionReceipt>>,
+    projections: Mutex<Vec<::contracts::model_projection::ModelContextProjectionReceipt>>,
 }
 
 #[async_trait]
 impl TurnServices for RequiredCapabilityServices {
-    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+    async fn recall(
+        &self,
+        _req: ::contracts::RecallRequest,
+    ) -> anyhow::Result<::contracts::RecallSet> {
         Ok(Default::default())
     }
 
-    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<::contracts::DaseinView> {
         Ok(Default::default())
     }
 
-    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
         Ok(Default::default())
     }
 
@@ -555,9 +860,9 @@ impl TurnServices for RequiredCapabilityServices {
         Some(&self.llm)
     }
 
-    fn turn_requirements(&self, request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
+    fn turn_requirements(&self, request: &TurnRequest) -> Vec<::contracts::TurnRequirement> {
         if request.requirements.is_empty() {
-            vec![fabric::TurnRequirement::InvokeCapability {
+            vec![::contracts::TurnRequirement::InvokeCapability {
                 name: "file_read".into(),
             }]
         } else {
@@ -567,7 +872,7 @@ impl TurnServices for RequiredCapabilityServices {
 
     async fn record_model_context_projection(
         &self,
-        receipt: fabric::model_projection::ModelContextProjectionReceipt,
+        receipt: ::contracts::model_projection::ModelContextProjectionReceipt,
     ) {
         self.projections.lock().unwrap().push(receipt);
     }
@@ -636,7 +941,7 @@ async fn explicit_request_agent_requirement_reaches_the_enforced_gate() {
     let services = required_capability_services("request-agent-gate");
     let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
     let mut turn = request("inspect through the selected runtime");
-    turn.requirements = vec![fabric::TurnRequirement::InvokeAgentRuntime {
+    turn.requirements = vec![::contracts::TurnRequirement::InvokeAgentRuntime {
         runtime_id: "pi-rpc".into(),
     }];
 
@@ -659,15 +964,18 @@ struct InterjectingServices {
 
 #[async_trait]
 impl TurnServices for InterjectingServices {
-    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+    async fn recall(
+        &self,
+        _req: ::contracts::RecallRequest,
+    ) -> anyhow::Result<::contracts::RecallSet> {
         Ok(Default::default())
     }
 
-    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<::contracts::DaseinView> {
         Ok(Default::default())
     }
 
-    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<::contracts::AgoraView> {
         Ok(Default::default())
     }
 
@@ -707,7 +1015,7 @@ impl TurnServices for InterjectingServices {
     }
 }
 
-fn single_text(message: &fabric::Message) -> Option<&str> {
+fn single_text(message: &::contracts::Message) -> Option<&str> {
     match message.content.as_slice() {
         [ContentBlock::Text { text }] => Some(text),
         _ => None,
@@ -754,7 +1062,7 @@ async fn react_completion_injects_fifo_interjections_as_independent_user_message
     );
     assert!(second_call[second_call.len() - 2..]
         .iter()
-        .all(|message| message.role == fabric::Role::User));
+        .all(|message| message.role == ::contracts::Role::User));
 }
 
 #[tokio::test]

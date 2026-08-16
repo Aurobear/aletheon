@@ -4,8 +4,8 @@
 //! 1. Genome-level: checks safety weight, immutable rules, adjustment magnitude
 //! 2. ABI-level: evaluates RuntimeCandidate after sandbox testing
 
+use crate::governance::contracts::{Evaluation, Recommendation, RuntimeCandidate, TestResult};
 use anyhow::Result;
-use fabric::{meta::Recommendation, Evaluation, RuntimeCandidate, TestResult};
 
 /// Safety threshold below which a candidate is rejected.
 const SAFETY_THRESHOLD: f64 = 0.8;

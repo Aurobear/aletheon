@@ -16,7 +16,11 @@ fn required_string(input: &Value, field: &str) -> Result<String, String> {
         .ok_or_else(|| format!("'{field}' must be a non-empty string"))
 }
 
-fn result(ctx: &ToolContext, start: fabric::MonoTime, value: Result<Value, String>) -> ToolResult {
+fn result(
+    ctx: &ToolContext,
+    start: ::contracts::MonoTime,
+    value: Result<Value, String>,
+) -> ToolResult {
     let (content, is_error) = match value {
         Ok(value) => match serde_json::to_string(&value) {
             Ok(content) => (content, false),
@@ -38,11 +42,11 @@ fn result(ctx: &ToolContext, start: fabric::MonoTime, value: Result<Value, Strin
 macro_rules! robot_tool {
     ($name:ident, $tool_name:literal, $description:literal, $permission:expr, $concurrency:expr, $schema:expr, |$this:ident, $input:ident| $body:block) => {
         pub struct $name {
-            port: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>,
+            port: Arc<dyn ::contracts::types::embodiment::EmbodimentExecutionPort>,
         }
 
         impl $name {
-            pub fn new(port: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>) -> Self {
+            pub fn new(port: Arc<dyn ::contracts::types::embodiment::EmbodimentExecutionPort>) -> Self {
                 Self { port }
             }
         }
@@ -85,7 +89,7 @@ robot_tool!(
     |this, input| {
         let device = required_string(&input, "device")?;
         this.port
-            .observe(&fabric::types::embodiment::DeviceId(device))
+            .observe(&::contracts::types::embodiment::DeviceId(device))
             .await
             .map(|value| json!(value))
             .map_err(|error| error.to_string())
@@ -102,7 +106,7 @@ robot_tool!(
     |this, input| {
         let device = required_string(&input, "device")?;
         this.port
-            .get_state(&fabric::types::embodiment::DeviceId(device))
+            .get_state(&::contracts::types::embodiment::DeviceId(device))
             .await
             .map(|value| json!(value))
             .map_err(|error| error.to_string())
@@ -119,7 +123,7 @@ robot_tool!(
     |this, input| {
         let device = required_string(&input, "device")?;
         this.port
-            .list_skills(&fabric::types::embodiment::DeviceId(device))
+            .list_skills(&::contracts::types::embodiment::DeviceId(device))
             .await
             .map(|value| json!(value))
             .map_err(|error| error.to_string())
@@ -153,9 +157,9 @@ robot_tool!(
             return Err("'parameters' must be an object".into());
         }
         this.port
-            .execute_skill(fabric::types::embodiment::SkillRequest {
-                device: fabric::types::embodiment::DeviceId(device),
-                skill: fabric::types::embodiment::SkillId(skill),
+            .execute_skill(::contracts::types::embodiment::SkillRequest {
+                device: ::contracts::types::embodiment::DeviceId(device),
+                skill: ::contracts::types::embodiment::SkillId(skill),
                 parameters,
             })
             .await
@@ -178,7 +182,7 @@ robot_tool!(
     }),
     |this, input| {
         let operation = required_string(&input, "operation_id")?
-            .parse::<fabric::OperationId>()
+            .parse::<::contracts::OperationId>()
             .map_err(|_| "'operation_id' must be a canonical UUID".to_string())?;
         this.port
             .cancel(&operation)
@@ -198,7 +202,7 @@ robot_tool!(
     |this, input| {
         let device = required_string(&input, "device")?;
         this.port
-            .safe_stop(&fabric::types::embodiment::DeviceId(device.clone()))
+            .safe_stop(&::contracts::types::embodiment::DeviceId(device.clone()))
             .await
             .map(|()| json!({"device": device, "stopped": true}))
             .map_err(|error| error.to_string())
@@ -216,65 +220,65 @@ mod tests {
     }
 
     #[async_trait]
-    impl fabric::types::embodiment::EmbodimentExecutionPort for RecordingPort {
+    impl ::contracts::types::embodiment::EmbodimentExecutionPort for RecordingPort {
         async fn observe(
             &self,
-            _device: &fabric::types::embodiment::DeviceId,
+            _device: &::contracts::types::embodiment::DeviceId,
         ) -> Result<
-            Vec<fabric::types::embodiment::EmbodiedObservation>,
-            fabric::types::embodiment::SkillDispatchError,
+            Vec<::contracts::types::embodiment::EmbodiedObservation>,
+            ::contracts::types::embodiment::SkillDispatchError,
         > {
             self.calls.lock().unwrap().push("observe".into());
             Ok(vec![])
         }
         async fn get_state(
             &self,
-            _device: &fabric::types::embodiment::DeviceId,
+            _device: &::contracts::types::embodiment::DeviceId,
         ) -> Result<
-            Option<fabric::types::embodiment::EmbodiedObservation>,
-            fabric::types::embodiment::SkillDispatchError,
+            Option<::contracts::types::embodiment::EmbodiedObservation>,
+            ::contracts::types::embodiment::SkillDispatchError,
         > {
             self.calls.lock().unwrap().push("get_state".into());
             Ok(None)
         }
         async fn list_skills(
             &self,
-            _device: &fabric::types::embodiment::DeviceId,
+            _device: &::contracts::types::embodiment::DeviceId,
         ) -> Result<
-            Vec<fabric::types::embodiment::SkillDescriptor>,
-            fabric::types::embodiment::SkillDispatchError,
+            Vec<::contracts::types::embodiment::SkillDescriptor>,
+            ::contracts::types::embodiment::SkillDispatchError,
         > {
             self.calls.lock().unwrap().push("list_skills".into());
             Ok(vec![])
         }
         async fn execute_skill(
             &self,
-            request: fabric::types::embodiment::SkillRequest,
+            request: ::contracts::types::embodiment::SkillRequest,
         ) -> Result<
-            fabric::types::embodiment::SkillResult,
-            fabric::types::embodiment::SkillDispatchError,
+            ::contracts::types::embodiment::SkillResult,
+            ::contracts::types::embodiment::SkillDispatchError,
         > {
             self.calls.lock().unwrap().push("execute_skill".into());
-            Ok(fabric::types::embodiment::SkillResult {
-                operation_id: fabric::OperationId::new(),
+            Ok(::contracts::types::embodiment::SkillResult {
+                operation_id: ::contracts::OperationId::new(),
                 skill: request.skill,
                 device: request.device,
-                outcome: fabric::types::embodiment::SkillOutcome::Succeeded,
+                outcome: ::contracts::types::embodiment::SkillOutcome::Succeeded,
                 duration_ms: 1,
                 evidence: vec![],
             })
         }
         async fn cancel(
             &self,
-            _operation_id: &fabric::OperationId,
-        ) -> Result<(), fabric::types::embodiment::SkillDispatchError> {
+            _operation_id: &::contracts::OperationId,
+        ) -> Result<(), ::contracts::types::embodiment::SkillDispatchError> {
             self.calls.lock().unwrap().push("cancel".into());
             Ok(())
         }
         async fn safe_stop(
             &self,
-            _device: &fabric::types::embodiment::DeviceId,
-        ) -> Result<(), fabric::types::embodiment::SkillDispatchError> {
+            _device: &::contracts::types::embodiment::DeviceId,
+        ) -> Result<(), ::contracts::types::embodiment::SkillDispatchError> {
             self.calls.lock().unwrap().push("safe_stop".into());
             Ok(())
         }
@@ -329,7 +333,7 @@ mod tests {
             assert_eq!(tool.concurrency_class(), concurrency);
             assert_eq!(
                 tool.cache_policy(),
-                fabric::tool::ToolCachePolicy::Never,
+                ::contracts::tool::ToolCachePolicy::Never,
                 "robot state and actions must never opt into the generic tool result cache"
             );
             let schema = tool.input_schema().to_string();
@@ -342,7 +346,7 @@ mod tests {
     #[tokio::test]
     async fn each_adapter_calls_exactly_one_matching_port_method() {
         let port = Arc::new(RecordingPort::default());
-        let operation = fabric::OperationId::new();
+        let operation = ::contracts::OperationId::new();
         let tools: Vec<(Box<dyn Tool>, Value)> = vec![
             (
                 Box::new(RobotObserveTool::new(port.clone())),

@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use sha2::Digest;
 
-use fabric::types::metacognition_evidence::{
+use ::contracts::types::metacognition_evidence::{
     EvidenceId, EvidenceItem, EvidenceKind, EvidenceTrust,
 };
-use fabric::types::metacognition_experience::{
+use ::contracts::types::metacognition_experience::{
     DomainId, ExperienceEnvelope, ExperienceId, ExperienceOutcome, SubjectId,
     METACOGNITION_SCHEMA_V1,
 };

@@ -4,18 +4,18 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use fabric::change_transaction::{
+use super::repository::RepositoryContext;
+use ::contracts::change_transaction::{
     ActiveCommandLease, ChangeTransactionId, ChangeTransactionPhase, ChangeTransactionSnapshot,
     ChangedRange, MutationCoverage, ValidationImpact, ValidationRisk, VersionedValidationReceipt,
     WorkFailure, WorkFailureClass, WorkspaceVersion,
 };
-use fabric::repository::RepositoryContext;
+use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::Mutex;
 
 #[cfg(test)]
-use fabric::change_transaction::ValidationPlanStep;
+use ::contracts::change_transaction::ValidationPlanStep;
 
 use crate::tools::artifact::ArtifactStore;
 
@@ -51,7 +51,7 @@ impl ChangeTransactionRegistry {
     async fn begin_for_agent(
         &self,
         owner_session_id: &str,
-        owner_agent: Option<fabric::AgentToolContext>,
+        owner_agent: Option<::contracts::AgentToolContext>,
         owner_turn_id: Option<String>,
         root: &Path,
     ) -> anyhow::Result<ChangeTransactionSnapshot> {
@@ -96,7 +96,7 @@ impl ChangeTransactionRegistry {
     pub async fn begin_with_context(
         &self,
         owner_session_id: &str,
-        owner_agent: Option<fabric::AgentToolContext>,
+        owner_agent: Option<::contracts::AgentToolContext>,
         owner_turn_id: Option<String>,
         context: RepositoryContext,
     ) -> anyhow::Result<ChangeTransactionSnapshot> {
@@ -119,7 +119,7 @@ impl ChangeTransactionRegistry {
         &self,
         transaction_id: ChangeTransactionId,
         owner_session_id: &str,
-        owner_agent: Option<fabric::AgentToolContext>,
+        owner_agent: Option<::contracts::AgentToolContext>,
         root: &Path,
     ) -> Result<ChangeTransactionSnapshot, WorkFailure> {
         let snapshot = self
@@ -185,7 +185,7 @@ impl ChangeTransactionRegistry {
         &self,
         transaction_id: ChangeTransactionId,
         owner_session_id: &str,
-        owner_agent: Option<fabric::AgentToolContext>,
+        owner_agent: Option<::contracts::AgentToolContext>,
         root: &Path,
         command_session_id: String,
         purpose: String,
@@ -247,7 +247,7 @@ impl ChangeTransactionRegistry {
         transaction_id: ChangeTransactionId,
         mut current: WorkspaceVersion,
     ) -> anyhow::Result<ChangeTransactionSnapshot> {
-        if current.basis == fabric::change_transaction::WorkspaceVersionBasis::BoundedTree {
+        if current.basis == ::contracts::change_transaction::WorkspaceVersionBasis::BoundedTree {
             if let Some(restore) = self
                 .restore_points
                 .lock()
@@ -389,7 +389,7 @@ impl ChangeTransactionRegistry {
         &self,
         transaction_id: ChangeTransactionId,
         owner_session_id: &str,
-        owner_agent: Option<fabric::AgentToolContext>,
+        owner_agent: Option<::contracts::AgentToolContext>,
         root: &Path,
     ) -> Result<ChangeTransactionSnapshot, WorkFailure> {
         let verified = self
@@ -414,7 +414,7 @@ impl ChangeTransactionRegistry {
         &self,
         transaction_id: ChangeTransactionId,
         owner_session_id: &str,
-        owner_agent: Option<fabric::AgentToolContext>,
+        owner_agent: Option<::contracts::AgentToolContext>,
         root: &Path,
     ) -> Result<ChangeTransactionSnapshot, WorkFailure> {
         let verified = self
@@ -443,7 +443,7 @@ impl ChangeTransactionRegistry {
         &self,
         transaction_id: ChangeTransactionId,
         owner_session_id: &str,
-        owner_agent: Option<fabric::AgentToolContext>,
+        owner_agent: Option<::contracts::AgentToolContext>,
         root: &Path,
     ) -> Result<ChangeTransactionSnapshot, WorkFailure> {
         let verified = self
@@ -862,7 +862,11 @@ fn transaction_id(input: &serde_json::Value) -> Result<ChangeTransactionId, Stri
         .map_err(|error| format!("invalid transaction_id: {error}"))
 }
 
-fn transaction_error(error: WorkFailure, ctx: &ToolContext, start: fabric::MonoTime) -> ToolResult {
+fn transaction_error(
+    error: WorkFailure,
+    ctx: &ToolContext,
+    start: ::contracts::MonoTime,
+) -> ToolResult {
     ToolResult {
         content: json!({
             "kind": "change_transaction_error",
@@ -1150,7 +1154,7 @@ impl Tool for TransactionalGitDiffTool {
             );
         }
         let mut output = if snapshot.current.basis
-            == fabric::change_transaction::WorkspaceVersionBasis::BoundedTree
+            == ::contracts::change_transaction::WorkspaceVersionBasis::BoundedTree
         {
             match self.registry.bounded_diff(id, &snapshot).await {
                 Ok(output) => output,
@@ -1169,7 +1173,8 @@ impl Tool for TransactionalGitDiffTool {
         } else {
             Vec::new()
         };
-        if snapshot.current.basis == fabric::change_transaction::WorkspaceVersionBasis::GitWorktree
+        if snapshot.current.basis
+            == ::contracts::change_transaction::WorkspaceVersionBasis::GitWorktree
         {
             let command_output = std::process::Command::new("git")
                 .args(["diff", "--binary", "HEAD", "--", "."])
@@ -1398,10 +1403,10 @@ fn changed_ranges_from_diff(output: &[u8], fallback_paths: &[String]) -> Vec<Cha
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use fabric::repository::{
+    use super::super::repository::{
         DeploymentPolicy, ManifestRef, RepositoryFileEvidence, ValidationSpec, VcsSnapshot,
     };
+    use super::*;
 
     fn init_repo() -> tempfile::TempDir {
         let temp = tempfile::tempdir().unwrap();
@@ -1600,16 +1605,16 @@ mod tests {
     async fn sibling_agent_in_same_session_cannot_use_transaction() {
         let repo = init_repo();
         let registry = ChangeTransactionRegistry::default();
-        let owner = fabric::AgentToolContext {
-            caller_root_agent_id: fabric::AgentId::new(),
-            parent_agent_id: fabric::AgentId::new(),
-            parent_process_id: fabric::ProcessId::new(),
+        let owner = ::contracts::AgentToolContext {
+            caller_root_agent_id: ::contracts::AgentId::new(),
+            parent_agent_id: ::contracts::AgentId::new(),
+            parent_process_id: ::contracts::ProcessId::new(),
             delegator_authority: None,
         };
-        let sibling = fabric::AgentToolContext {
+        let sibling = ::contracts::AgentToolContext {
             caller_root_agent_id: owner.caller_root_agent_id,
-            parent_agent_id: fabric::AgentId::new(),
-            parent_process_id: fabric::ProcessId::new(),
+            parent_agent_id: ::contracts::AgentId::new(),
+            parent_process_id: ::contracts::ProcessId::new(),
             delegator_authority: None,
         };
         let transaction = registry

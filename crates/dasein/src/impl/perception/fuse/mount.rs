@@ -278,7 +278,7 @@ mod tests {
     use kernel::chronos::TestClock;
     use std::sync::Arc;
 
-    fn test_clock() -> Arc<dyn fabric::Clock> {
+    fn test_clock() -> Arc<dyn ::contracts::Clock> {
         Arc::new(TestClock::default())
     }
 

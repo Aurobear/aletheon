@@ -79,7 +79,7 @@ impl FilesystemPolicy {
     /// Materialize the exact canonical workspace authority used by structured
     /// mutation tools. Only contract-defined metadata and explicitly supplied
     /// credential paths are re-protected.
-    pub fn from_workspace(workspace: &fabric::WorkspacePolicy) -> Self {
+    pub fn from_workspace(workspace: &::contracts::WorkspacePolicy) -> Self {
         let writable_roots = workspace
             .writable_roots()
             .iter()

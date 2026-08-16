@@ -1,6 +1,6 @@
 use super::ReActLoop;
 use crate::core::awareness_signal::{self, AwarenessSignal, StepType};
-use fabric::self_field::SelfState;
+use dasein::SelfState;
 
 impl ReActLoop {
     /// Emit an awareness signal into the collection buffer.
@@ -17,7 +17,7 @@ impl ReActLoop {
     ///
     /// Returns `(AwarenessLevel, context)` pairs suitable for TUI display.
     /// Signals with no detected state or unrecognized states are filtered out.
-    pub fn drain_awareness_events(&mut self) -> Vec<(fabric::ui_event::AwarenessLevel, String)> {
+    pub fn drain_awareness_events(&mut self) -> Vec<(awareness_signal::AwarenessLevel, String)> {
         let signals: Vec<_> = self.signals.drain(..).collect();
         awareness_signal::signals_to_ui_events(&signals)
     }
@@ -34,7 +34,7 @@ impl ReActLoop {
             step: StepType::LoopStart,
             action: action.to_string(),
             detected_state: detected,
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: ::contracts::wall_to_datetime(self.clock.wall_now()),
         });
     }
 
@@ -46,7 +46,7 @@ impl ReActLoop {
             step: StepType::ThinkingComplete,
             action: action.to_string(),
             detected_state: detected,
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: ::contracts::wall_to_datetime(self.clock.wall_now()),
         });
     }
 
@@ -77,7 +77,7 @@ impl ReActLoop {
             step: StepType::ToolCallEnd,
             action: format!("tool:{tool_name}"),
             detected_state: detected,
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: ::contracts::wall_to_datetime(self.clock.wall_now()),
         });
     }
 
@@ -87,7 +87,7 @@ impl ReActLoop {
             step: StepType::FinalResponse,
             action: action.to_string(),
             detected_state: Some(SelfState::Focused),
-            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
+            timestamp: ::contracts::wall_to_datetime(self.clock.wall_now()),
         });
     }
 }

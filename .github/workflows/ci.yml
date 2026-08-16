@@ -116,7 +116,7 @@ jobs:
       - name: Verify coding harness contracts
         run: bash tests/coding/static_test.sh
       - name: Verify production coding closure
-        run: bash scripts/cargo-agent.sh +stable test -p executive --test coding_production_e2e
+        run: bash scripts/cargo-agent.sh +stable test -p aletheon --test coding_production_e2e
       - name: Verify Linux platform contracts
         run: bash scripts/cargo-agent.sh +stable test -p platform --test contract_suite
       - name: Verify JSON-RPC snapshots
@@ -177,42 +177,4 @@ jobs:
             @earendil-works/pi-coding-agent@${ALETHEON_REAL_PI_VERSION}
           echo "$RUNNER_TEMP/pi/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Verify real Pi RPC framing and state response
-        run: bash scripts/cargo-agent.sh +stable test -p executive --test pi_real_contract -- --ignored --exact pinned_pi_rpc_get_state_obeys_reviewed_jsonl_contract
-
-  strict-fuzz:
-    name: Fuzz quick-check
-    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, Linux, X64, aletheon]
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify preinstalled nightly toolchain
-        run: rustup run nightly rustc --version
-      - name: Install cargo-fuzz when absent
-        run: command -v cargo-fuzz >/dev/null || cargo +nightly install cargo-fuzz --locked
-      - name: Run all executive fuzz targets
-        shell: bash
-        run: |
-          seconds=30
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            seconds=5
-          fi
-          targets=(
-            envelope_v2_parse
-            envelope_v2_roundtrip
-            jsonrpc_message_parse
-            jsonrpc_method_dispatch
-            toml_config_parse
-            tool_input_json
-            message_roundtrip
-          )
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # Sanitizer builds are target-specific and expensive on the bounded
-            # self-hosted runner. Gate representative parse and round-trip
-            # contracts on every PR; scheduled/manual runs retain the full set.
-            targets=(envelope_v2_parse envelope_v2_roundtrip)
-          fi
-          for target in "${targets[@]}"; do
-            bash scripts/cargo-agent.sh +nightly fuzz run "$target" \
-              --fuzz-dir crates/executive/fuzz -- -max_total_time="$seconds"
-          done
+        run: bash scripts/cargo-agent.sh +stable test -p aletheon --test pi_real_contract -- --ignored --exact pinned_pi_rpc_get_state_obeys_reviewed_jsonl_contract

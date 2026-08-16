@@ -2,8 +2,11 @@
 //!
 //! Applies mutation intents to a genome to produce RuntimeCandidates.
 
+use crate::genome::contracts::Genome;
+use crate::governance::contracts::RuntimeCandidate;
+use ::contracts::{wall_to_datetime, Clock};
 use anyhow::Result;
-use fabric::{wall_to_datetime, Clock, Genome, MutationIntent, RuntimeCandidate};
+use dasein::MutationIntent;
 use std::sync::Arc;
 
 /// Generates candidate runtimes from genome mutations.

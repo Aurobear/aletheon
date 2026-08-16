@@ -1,0 +1,73 @@
+//! Private daemon composition root.
+//!
+//! Construction code in this module is the only production code allowed to
+//! know the concrete implementations behind the request and turn ports.
+
+mod agents;
+mod approval_gate;
+mod bundled_profiles;
+mod channels;
+mod cognition;
+pub(crate) mod embodiment;
+mod extension_bootstrap;
+pub mod extension_connectors;
+mod extension_provider_launcher;
+pub mod extension_publisher;
+mod extension_skill_catalog;
+pub mod extensions;
+mod google;
+mod inference;
+mod integrations;
+mod memory;
+pub mod production_embodiment;
+mod request;
+mod request_ports;
+mod review;
+mod robot;
+mod role_profiles;
+mod runtime;
+mod security;
+mod services;
+mod sessions;
+mod storage;
+mod tools;
+mod turn_runtime;
+
+pub(super) mod journal_resources;
+pub(super) mod session_infrastructure;
+
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
+
+use crate::wiring::daemon::handler::ports::HandlerPorts;
+use crate::wiring::daemon::handler::RequestHandler;
+use crate::config::GrokHardeningConfig;
+
+/// Transient, non-cloneable result of daemon composition.
+///
+/// It is consumed immediately, so concrete construction state cannot become a
+/// long-lived service locator.
+pub(super) struct DaemonComposition {
+    request: Arc<HandlerPorts>,
+    active_connections: Arc<AtomicUsize>,
+    max_connections: Option<usize>,
+    thread_authority: Arc<application::thread_authority::ThreadAuthorityStore>,
+    grok_hardening: GrokHardeningConfig,
+    workspace_trust: Arc<crate::wiring::workspace_trust::WorkspaceTrustResolver>,
+    mcp: Option<Arc<corpus::tools::mcp::manager::McpManager>>,
+}
+
+impl DaemonComposition {
+    fn into_handler(self) -> RequestHandler {
+        RequestHandler {
+            ports: self.request,
+            notify_tx: None,
+            active_connections: self.active_connections,
+            max_connections: self.max_connections,
+            thread_authority: self.thread_authority,
+            grok_hardening: self.grok_hardening,
+            workspace_trust: self.workspace_trust,
+            mcp: self.mcp,
+        }
+    }
+}

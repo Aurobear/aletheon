@@ -28,6 +28,14 @@ pub struct ResumeSessionCommand {
     pub session_reference: String,
 }
 
+/// Fork a canonical session through a durable sequence. The Runtime assigns
+/// the child SessionId; callers cannot supply one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForkSessionCommand {
+    pub session: SessionId,
+    pub through_sequence: u64,
+}
+
 /// Start a turn on a session.  `TurnId` is assigned by the Runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartTurnCommand {
@@ -39,7 +47,9 @@ pub struct StartTurnCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpawnAgentRunCommand {
     pub parent_session: SessionId,
-    pub parent_turn: TurnId,
+    /// Optional canonical parent turn. Background work can be admitted
+    /// without inventing a turn-shaped correlation value.
+    pub parent_turn: Option<TurnId>,
     pub requested_profile: Option<String>,
 }
 
@@ -54,6 +64,7 @@ pub struct CancelTurnCommand {
 pub enum RuntimeCommand {
     CreateSession(CreateSessionCommand),
     ResumeSession(ResumeSessionCommand),
+    ForkSession(ForkSessionCommand),
     StartTurn(StartTurnCommand),
     SpawnAgentRun(SpawnAgentRunCommand),
     CancelTurn(CancelTurnCommand),

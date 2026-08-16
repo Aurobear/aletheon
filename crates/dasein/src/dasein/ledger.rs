@@ -1,5 +1,5 @@
 use crate::core::store::SelfFieldStore;
-use fabric::dasein::{
+use ::contracts::dasein::{
     SelfEventV1, SelfTransitionRequest, SelfVersion, SELF_EVENT_SCHEMA_V1, SELF_REDUCER_V1,
 };
 use rusqlite::{params, OptionalExtension};

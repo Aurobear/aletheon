@@ -7,13 +7,13 @@ use crate::adapters::policy::wire::v1::{
     HealthResponse, ProposeRequest, ReplanContextWire, SkillProposalWire,
 };
 use crate::harness::robot::state::ReplanContext;
+use crate::harness::robot::PerceptionObservation;
 use crate::ports::policy_provider::{PolicyProviderError, PolicyProviderPort};
+use ::contracts::types::embodiment::{DeviceId, SkillDescriptor};
+use ::contracts::types::expected_outcome::ExpectedOutcome;
+use ::contracts::types::skill_proposal::{GoalAlignment, PolicyProvenance, SkillProposal};
+use ::contracts::types::world_state::WorldSnapshot;
 use async_trait::async_trait;
-use fabric::types::embodiment::{DeviceId, SkillDescriptor};
-use fabric::types::expected_outcome::ExpectedOutcome;
-use fabric::types::perception_observation::PerceptionObservation;
-use fabric::types::skill_proposal::{GoalAlignment, PolicyProvenance, SkillProposal};
-use fabric::types::world_state::WorldSnapshot;
 use std::net::IpAddr;
 use std::time::Duration;
 use tonic::transport::Channel;
@@ -184,7 +184,7 @@ fn prost_value_to_json(v: &prost_types::Value) -> serde_json::Value {
 
 fn proposal_wire_to_domain(
     wire: SkillProposalWire,
-    selected_frames: &[fabric::types::frame::FrameRef],
+    selected_frames: &[::contracts::types::frame::FrameRef],
     capabilities: &PolicyCapabilitySnapshot,
 ) -> Result<SkillProposal, String> {
     if wire.provider != capabilities.provider_id {
@@ -207,7 +207,7 @@ fn proposal_wire_to_domain(
         }
     };
     Ok(SkillProposal {
-        skill: fabric::types::embodiment::SkillId(wire.skill_id),
+        skill: ::contracts::types::embodiment::SkillId(wire.skill_id),
         device: DeviceId(wire.device_id),
         parameters,
         expected_outcome,
@@ -456,7 +456,7 @@ impl GrpcPolicyProvider {
     }
 }
 
-fn failure_class_wire(class: fabric::types::robot_failure::RobotFailureClass) -> String {
+fn failure_class_wire(class: ::contracts::types::robot_failure::RobotFailureClass) -> String {
     class.as_str().to_owned()
 }
 
@@ -546,7 +546,7 @@ impl PolicyProviderPort for GrpcPolicyProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::types::expected_outcome::OutcomePredicate;
+    use ::contracts::types::expected_outcome::OutcomePredicate;
 
     #[test]
     fn loopback_without_tls_allowed_for_dev() {
@@ -707,8 +707,8 @@ mod tests {
 
     #[tokio::test]
     async fn propose_request_maps_frames_and_allowed_skills() {
-        use fabric::types::frame::FrameRef;
-        use fabric::types::perception_observation::PerceptionObservation;
+        use crate::harness::robot::PerceptionObservation;
+        use ::contracts::types::frame::FrameRef;
         let provider = GrpcPolicyProvider {
             client: unreachable_client(),
             config: GrpcPolicyConfig::default(),
@@ -735,11 +735,11 @@ mod tests {
             received_ms: 2,
         }];
         let skills = vec![SkillDescriptor {
-            skill: fabric::types::embodiment::SkillId("kuavo.stance".into()),
+            skill: ::contracts::types::embodiment::SkillId("kuavo.stance".into()),
             device: DeviceId("bot".into()),
             summary: "stance".into(),
             input_schema: serde_json::json!({}),
-            risk: fabric::types::embodiment::RiskClass::Low,
+            risk: ::contracts::types::embodiment::RiskClass::Low,
             timeout_ms: 10_000,
             cancellable: false,
             preconditions: vec![],
@@ -751,7 +751,7 @@ mod tests {
             schema_version: 1,
             sequence: 9,
             payload: serde_json::json!({"mode": "stance"}),
-            observed_at: fabric::MonoTime(1),
+            observed_at: ::contracts::MonoTime(1),
             valid_until: None,
             stale: false,
         }];

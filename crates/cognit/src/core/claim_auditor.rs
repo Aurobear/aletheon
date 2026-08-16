@@ -11,7 +11,7 @@ use super::progress_auditor::evidence_for_obligation;
 pub trait GroundedOutcomeSink: Send + Sync {
     async fn publish(
         &self,
-        outcome: fabric::cognitive_workflow::GroundedCognitiveOutcome,
+        outcome: ::contracts::cognitive_workflow::GroundedCognitiveOutcome,
     ) -> anyhow::Result<()>;
 }
 
@@ -69,8 +69,8 @@ pub fn grounded_completion_outcomes(
     state: &CognitiveTurnState,
     audit: &ClaimAudit,
     completed: bool,
-) -> Vec<fabric::cognitive_workflow::GroundedCognitiveOutcome> {
-    use fabric::cognitive_workflow::GroundedCognitiveOutcome;
+) -> Vec<::contracts::cognitive_workflow::GroundedCognitiveOutcome> {
+    use ::contracts::cognitive_workflow::GroundedCognitiveOutcome;
     if completed {
         let mut outcomes = audit
             .supported
@@ -242,7 +242,7 @@ mod tests {
 
         assert!(matches!(
             outcomes.first(),
-            Some(fabric::cognitive_workflow::GroundedCognitiveOutcome::ValidationFailed {
+            Some(::contracts::cognitive_workflow::GroundedCognitiveOutcome::ValidationFailed {
                 name,
                 evidence,
             }) if name == "focused-test" && evidence == "test-output"

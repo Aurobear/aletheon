@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use ::contracts::WallTime;
 use async_trait::async_trait;
-use fabric::WallTime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

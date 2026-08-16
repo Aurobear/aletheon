@@ -1,11 +1,11 @@
 //! Pure, bounded projection from canonical recall into Agora candidates.
 
-use chrono::{DateTime, Utc};
-use fabric::{
+use ::contracts::{
     AgoraSpaceId, BroadcastEpoch, ContentId, MonoDeadline, MonoTime, ProcessId,
     RecalledExperienceFrame, SalienceVector, VisibilityScope, WallTime, WorkspaceAttribution,
     WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -260,9 +260,9 @@ fn render_labelled(item: &RecallItem, max_bytes: usize) -> anyhow::Result<(Strin
     // Recall may reopen legacy records created before the current scrub policy.
     // Treat canonical storage as untrusted at this boundary and scrub again
     // before any content is projected into the model-visible workspace.
-    let governed = fabric::types::data_governance::scrub_for_projection(
+    let governed = ::contracts::data_governance::scrub_for_projection(
         &item.content,
-        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+        ::contracts::data_governance::ContentTrust::ExternalUntrusted,
     );
     let escaped = escape(&governed.content);
     let available = max_bytes - header.len() - closing.len();

@@ -7,7 +7,7 @@ use super::self_model::{
 use super::temporality::{ExperientialContent, TemporalStream};
 use super::types::BewandtnisNode;
 use super::types::{EntityId, ReadinessState as InternalReadinessState};
-use fabric::dasein::{
+use ::contracts::dasein::{
     CareActionKind, DaseinEvent, ExperienceProvenance, ExperienceSource, InterpretedExperience,
     NarrativeEntryId, OutcomeStatus, SelfEventId, SelfSignal, SelfTransitionReceipt,
     SelfTransitionRequest, SelfVersion, Stimmung, TemporalEventKind,
@@ -32,7 +32,7 @@ pub struct DaseinStateEngine {
     care: Arc<CareStructure>,
     mood: Arc<RwLock<Stimmung>>,
     state: Mutex<ReducerState>,
-    clock: Arc<dyn fabric::Clock>,
+    clock: Arc<dyn ::contracts::Clock>,
     ledger: Option<Arc<SelfLedger>>,
 }
 
@@ -43,7 +43,7 @@ impl DaseinStateEngine {
         self_model: Arc<MutableSelfModel>,
         care: Arc<CareStructure>,
         mood: Arc<RwLock<Stimmung>>,
-        clock: Arc<dyn fabric::Clock>,
+        clock: Arc<dyn ::contracts::Clock>,
         ledger: Option<Arc<SelfLedger>>,
     ) -> Self {
         Self {
@@ -275,7 +275,7 @@ impl DaseinStateEngine {
         ledger.save_checkpoint(&events, self.clock.wall_now().0)
     }
 
-    pub fn last_durable_observed_at(&self) -> anyhow::Result<Option<fabric::WallTime>> {
+    pub fn last_durable_observed_at(&self) -> anyhow::Result<Option<::contracts::WallTime>> {
         let Some(ledger) = &self.ledger else {
             return Ok(None);
         };
@@ -335,7 +335,7 @@ impl DaseinStateEngine {
                         because: "failed outcome".into(),
                     },
                     OutcomeStatus::Cancelled => Stimmung::Langeweile {
-                        depth: fabric::dasein::BoredomDepth::Surface,
+                        depth: ::contracts::dasein::BoredomDepth::Surface,
                     },
                 };
                 self.set_mood(next, &mut emitted);
@@ -504,11 +504,11 @@ impl DaseinStateEngine {
     }
 }
 
-fn to_internal_readiness(value: &fabric::dasein::ReadinessState) -> InternalReadinessState {
+fn to_internal_readiness(value: &::contracts::dasein::ReadinessState) -> InternalReadinessState {
     match value {
-        fabric::dasein::ReadinessState::ReadyToHand => InternalReadinessState::ReadyToHand,
-        fabric::dasein::ReadinessState::PresentAtHand => InternalReadinessState::PresentAtHand,
-        fabric::dasein::ReadinessState::Unavailable => InternalReadinessState::Unavailable,
-        fabric::dasein::ReadinessState::OutOfContext => InternalReadinessState::OutOfContext,
+        ::contracts::dasein::ReadinessState::ReadyToHand => InternalReadinessState::ReadyToHand,
+        ::contracts::dasein::ReadinessState::PresentAtHand => InternalReadinessState::PresentAtHand,
+        ::contracts::dasein::ReadinessState::Unavailable => InternalReadinessState::Unavailable,
+        ::contracts::dasein::ReadinessState::OutOfContext => InternalReadinessState::OutOfContext,
     }
 }

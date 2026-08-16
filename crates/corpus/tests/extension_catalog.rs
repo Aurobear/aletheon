@@ -1,9 +1,9 @@
-use corpus::{CorpusError, ExtensionCatalog};
-use fabric::types::admission::RiskLevel;
-use fabric::{
-    ActivationConstraints, CapabilityId, ExtensionCatalog as _, ExtensionDescriptor, ExtensionId,
-    ExtensionKind, ExtensionOrigin, ToolDefinition,
+use ::contracts::types::admission::RiskLevel;
+use ::contracts::{CapabilityId, ToolDefinition};
+use corpus::{
+    ActivationConstraints, ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionOrigin,
 };
+use corpus::{CorpusError, ExtensionCatalog};
 use std::sync::Arc;
 
 fn descriptor(kind: ExtensionKind, name: &str, capability: &str) -> ExtensionDescriptor {
@@ -106,7 +106,7 @@ fn runtime_skills_and_hooks_are_discovered_before_activation() {
         name: "audit".into(),
         source: "builtin".into(),
         script_path: None,
-        point: fabric::hook::HookPoint::PostTool,
+        point: corpus::hook::HookPoint::PostTool,
         priority: 10,
         timeout_ms: None,
     });

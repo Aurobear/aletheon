@@ -10,8 +10,9 @@
 //! If a resource is already leased, new requests are denied with
 //! `AdmissionError::LeaseUnavailable`.
 
+use crate::admission::LeaseManager;
+use ::contracts::{AdmissionError, LeaseRequest, ResourceLeaseId};
 use async_trait::async_trait;
-use fabric::{AdmissionError, LeaseManager, LeaseRequest, ResourceLeaseId};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
 

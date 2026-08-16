@@ -4,7 +4,7 @@
 use std::future::Future;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use fabric::{Clock, Elapsed, MonoTime, Timer, WallTime};
+use ::contracts::{Clock, Elapsed, MonoTime, Timer, WallTime};
 
 pub struct ClientClock {
     started: Instant,

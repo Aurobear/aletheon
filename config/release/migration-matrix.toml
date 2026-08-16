@@ -15,7 +15,7 @@ data_change = false
 backup_required = true
 forward = "reopen_current"
 rollback = "matching_data_and_binary"
-evidence = "crates/executive/tests/event_spine_repository.rs"
+evidence = "crates/aletheon/tests/event_spine_repository.rs"
 integrity_query = "PRAGMA integrity_check"
 
 [[transition]]
@@ -27,7 +27,7 @@ data_change = false
 backup_required = true
 forward = "reopen_current"
 rollback = "matching_data_and_binary"
-evidence = "crates/executive/tests/session_append_store.rs"
+evidence = "crates/aletheon/tests/session_append_store.rs"
 integrity_query = "PRAGMA integrity_check"
 
 [[transition]]
@@ -52,7 +52,7 @@ data_change = true
 backup_required = true
 forward = "daemon_startup"
 rollback = "restore_matching_data_and_binary"
-fixture = "crates/executive/tests/agent_control_repository.rs"
+fixture = "crates/aletheon/tests/agent_control_repository.rs"
 reopen_test = "repository_migrates_pre_workspace_rows_without_losing_runs"
 integrity_query = "PRAGMA integrity_check"
 
@@ -89,7 +89,7 @@ data_change = false
 backup_required = true
 forward = "typed_parse_and_schema_validation"
 rollback = "matching_config_and_binary"
-evidence = "crates/executive/tests/layered_config_contract.rs"
+evidence = "crates/aletheon/tests/layered_config_contract.rs"
 integrity_query = "checked-in schema equality"
 
 [[transition]]
@@ -125,7 +125,7 @@ data_change = false
 backup_required = true
 forward = "reopen_current_and_expire_stale_grants"
 rollback = "matching_data_and_binary"
-evidence = "crates/executive/tests/admin_service.rs"
+evidence = "crates/aletheon/tests/admin_service.rs"
 integrity_query = "PRAGMA integrity_check"
 
 [[transition]]
@@ -137,7 +137,7 @@ data_change = false
 backup_required = true
 forward = "rebuild_from_immutable_receipts"
 rollback = "matching_data_and_binary"
-evidence = "crates/executive/src/application/capability_benchmark.rs"
+evidence = "crates/adapters/sqlite/src/capability_benchmark.rs"
 integrity_query = "PRAGMA integrity_check"
 
 [[transition]]
@@ -149,5 +149,5 @@ data_change = false
 backup_required = true
 forward = "reopen_and_resume_idempotent_approval"
 rollback = "matching_data_and_binary"
-evidence = "crates/executive/src/application/evolution_proposer.rs"
+evidence = "crates/aletheon/src/wiring/composition/evolution_proposer.rs"
 integrity_query = "PRAGMA integrity_check"

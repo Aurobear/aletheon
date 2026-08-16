@@ -1,7 +1,7 @@
-use fabric::types::embodiment::DeviceId;
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
-use fabric::types::outcome_verification::VerificationDecision;
-use fabric::types::world_state::WorldSnapshot;
+use ::contracts::types::embodiment::DeviceId;
+use ::contracts::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use ::contracts::types::outcome_verification::VerificationDecision;
+use ::contracts::types::world_state::WorldSnapshot;
 use metacog::evaluation::outcome as outcome_verifier;
 
 fn snapshot(payload: serde_json::Value, seq: u64, stale: bool) -> WorldSnapshot {
@@ -11,7 +11,7 @@ fn snapshot(payload: serde_json::Value, seq: u64, stale: bool) -> WorldSnapshot 
         schema_version: 1,
         sequence: seq,
         payload,
-        observed_at: fabric::MonoTime(seq),
+        observed_at: ::contracts::MonoTime(seq),
         valid_until: None,
         stale,
     }

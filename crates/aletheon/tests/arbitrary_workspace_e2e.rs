@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use executive::application::inference_port::{
+use aletheon::wiring::core_rpc::{CorePeerPolicy, CoreRpcServer};
+use cognit::ports::inference::{
     CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
 };
-use executive::host::core_rpc::{CorePeerPolicy, CoreRpcServer};
-use executive::{
+use ::contracts::{
     ContentBlock, InferenceUsage, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk,
 };
 use futures::stream;
