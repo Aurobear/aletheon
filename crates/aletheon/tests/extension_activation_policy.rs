@@ -6,6 +6,7 @@ use ::contracts::{
     CapabilityId, CapabilityRequest, CapabilityResult, CapabilityScope, ExecutionPermit,
     PrincipalId,
 };
+use aletheon::config::{ConfigSource, ConfigSourceKind};
 use aletheon::extensions::extension_service::{
     ExtensionActivationDecision, ExtensionDecisionSink, ExtensionService, SessionExtensionPolicy,
     EXTENSION_ACTIVATION_EVENT_V1,
@@ -15,7 +16,6 @@ use corpus::{
     DefaultCorpusService, ExtensionCatalog, ExtensionDescriptor, ExtensionGrant, ExtensionId,
     ExtensionKind,
 };
-use aletheon::config::{ConfigSource, ConfigSourceKind};
 use kernel::capability::ToolExecutor;
 
 #[derive(Default)]

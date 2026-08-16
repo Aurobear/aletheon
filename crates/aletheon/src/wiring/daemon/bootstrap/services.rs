@@ -311,11 +311,11 @@ impl runtime::TurnEventSink for DurableRuntimeTurnEventSink {
 }
 
 use super::request_ports::{post_turn_runtime_port, TurnRuntimeFacadePorts};
+use crate::config::GrokHardeningConfig;
 use crate::wiring::daemon::context_working_set::ContextWorkingSet;
 use crate::wiring::daemon::DaemonConfig;
 use crate::wiring::domain::{MemoryGroup, SecurityGroup, SessionGroup};
 use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
-use crate::config::GrokHardeningConfig;
 
 /// Composition adapter that keeps the concrete Corpus transaction registry at
 /// the bootstrap boundary while exposing only the Aletheon authority port to
@@ -416,8 +416,7 @@ pub(super) struct AgentServices {
     pub agent_live_runs: Arc<crate::wiring::application::agent_control::LiveAgentRuns>,
     pub capability_rollups:
         Arc<crate::wiring::application::capability_benchmark::CapabilityRollupProjectionSink>,
-    pub role_workflow_factory:
-        Option<Arc<agora::cognitive_role_workflow::RoleWorkflowFactory>>,
+    pub role_workflow_factory: Option<Arc<agora::cognitive_role_workflow::RoleWorkflowFactory>>,
     pub runtime_agent_supervisor: Arc<runtime::RuntimeAgentSupervisor>,
     pub runtime_agent_backend: Arc<dyn runtime::DelegateBackend>,
 }
@@ -499,61 +498,62 @@ pub(super) async fn build_agent_services(
             sql_agent_projection,
             runtime_agent_supervisor.clone(),
         ));
-    let agent_facades = crate::wiring::application::agent_control::AgentHostAdapter::new_runtime_only(
-        kernel.clone(),
-        clock.clone(),
-        agent_repository.clone(),
-        Arc::new(
-            runtime::BoundedAgentAdmission::with_budget(
-                runtime::AgentAdmissionPolicy {
-                    max_agents_per_root: config.agent_admission.max_agents_per_root,
-                    max_running_agents: config.agent_admission.max_running_agents,
-                    max_depth: config.agent_admission.max_depth,
-                    max_queued_per_root: config.agent_admission.max_queued_per_root,
-                    sibling_fairness_quantum: config.agent_admission.sibling_fairness_quantum,
-                    root_max_tokens: config.agent_admission.root_max_tokens,
-                    root_max_cost_micro: config.agent_admission.root_max_cost_micro,
-                    max_child_tokens: config.agent_admission.max_child_tokens,
-                    max_child_cost_micro: config.agent_admission.max_child_cost_micro,
-                    max_storage_bytes: config.agent_admission.max_storage_bytes,
-                    max_storage_items: config.agent_admission.max_storage_items,
-                },
-                kernel.budget_controller(),
-            )
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        ),
-        canonical_event_spine.clone(),
-        runtime_agent_supervisor.clone(),
-    )
-    .with_agent_profiles(agent_profiles_for_tools.clone())
-    .with_agent_profile_resolver({
-        let catalog = agent_profile_catalog.clone();
-        Arc::new(move |profile_id: &::contracts::AgentProfileId| {
-            catalog
-                .resolve_by_name(&profile_id.0)
-                .ok()
-                .map(|resolved| resolved.profile)
+    let agent_facades =
+        crate::wiring::application::agent_control::AgentHostAdapter::new_runtime_only(
+            kernel.clone(),
+            clock.clone(),
+            agent_repository.clone(),
+            Arc::new(
+                runtime::BoundedAgentAdmission::with_budget(
+                    runtime::AgentAdmissionPolicy {
+                        max_agents_per_root: config.agent_admission.max_agents_per_root,
+                        max_running_agents: config.agent_admission.max_running_agents,
+                        max_depth: config.agent_admission.max_depth,
+                        max_queued_per_root: config.agent_admission.max_queued_per_root,
+                        sibling_fairness_quantum: config.agent_admission.sibling_fairness_quantum,
+                        root_max_tokens: config.agent_admission.root_max_tokens,
+                        root_max_cost_micro: config.agent_admission.root_max_cost_micro,
+                        max_child_tokens: config.agent_admission.max_child_tokens,
+                        max_child_cost_micro: config.agent_admission.max_child_cost_micro,
+                        max_storage_bytes: config.agent_admission.max_storage_bytes,
+                        max_storage_items: config.agent_admission.max_storage_items,
+                    },
+                    kernel.budget_controller(),
+                )
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+            ),
+            canonical_event_spine.clone(),
+            runtime_agent_supervisor.clone(),
+        )
+        .with_agent_profiles(agent_profiles_for_tools.clone())
+        .with_agent_profile_resolver({
+            let catalog = agent_profile_catalog.clone();
+            Arc::new(move |profile_id: &::contracts::AgentProfileId| {
+                catalog
+                    .resolve_by_name(&profile_id.0)
+                    .ok()
+                    .map(|resolved| resolved.profile)
+            })
         })
-    })
-    .with_runtime_profile_requirements(runtime_profile_requirements)
-    .with_capability_history(capability_rollups.clone())
-    .with_cognitive_task_admission(Arc::new(
-        agora::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora.clone()),
-    ))
-    .with_budget_controller(kernel.budget_controller())
-    .with_runtime_process_supervisor(Arc::new(
-        kernel::process::controller::LinuxRuntimeProcessSupervisor,
-    ))
-    .with_event_spine(canonical_event_spine.clone())
-    .with_event_projections(event_projections.clone())
-    .with_lifecycle_hooks(Arc::new(corpus::CorpusAgentLifecycleHookSink(corpus)))
-    .with_memory_vault(Arc::new(
-        mnemosyne::AgentMemoryVault::open(agent_state_root.join("agent_memory.db"))
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-    ))
-    .with_durable_memory(durable_memory)
-    .with_subagent_settlement(agent_daemon_generation.clone(), settlement_receipts)
-    .into_facades();
+        .with_runtime_profile_requirements(runtime_profile_requirements)
+        .with_capability_history(capability_rollups.clone())
+        .with_cognitive_task_admission(Arc::new(
+            agora::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora.clone()),
+        ))
+        .with_budget_controller(kernel.budget_controller())
+        .with_runtime_process_supervisor(Arc::new(
+            kernel::process::controller::LinuxRuntimeProcessSupervisor,
+        ))
+        .with_event_spine(canonical_event_spine.clone())
+        .with_event_projections(event_projections.clone())
+        .with_lifecycle_hooks(Arc::new(corpus::CorpusAgentLifecycleHookSink(corpus)))
+        .with_memory_vault(Arc::new(
+            mnemosyne::AgentMemoryVault::open(agent_state_root.join("agent_memory.db"))
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+        ))
+        .with_durable_memory(durable_memory)
+        .with_subagent_settlement(agent_daemon_generation.clone(), settlement_receipts)
+        .into_facades();
     let agent_host = agent_facades.effects.clone();
     let agent_lifecycle = agent_facades.lifecycle.clone();
     let runtime_agent_backend = Arc::new(
@@ -586,8 +586,9 @@ pub(super) async fn build_agent_services(
     // E6 owns the Pi-specific binding. The resident Pi delegate is composed
     // directly into Runtime's catalog; there is no Pi entry in the Aletheon
     // launcher registry and therefore no second selection path.
-    let pi_backend_id =
-        runtime::DelegateBackendId(crate::wiring::adapters::runtime::PI_CODER_RUNTIME_ID.to_owned());
+    let pi_backend_id = runtime::DelegateBackendId(
+        crate::wiring::adapters::runtime::PI_CODER_RUNTIME_ID.to_owned(),
+    );
     if let Some(pi_backend) = pi_backend {
         pi_backend
             .bind_host(&agent_host, &pi_backend)
@@ -740,9 +741,7 @@ pub(super) async fn build_turn_services(
     capability_rollups: Arc<
         crate::wiring::application::capability_benchmark::CapabilityRollupProjectionSink,
     >,
-    role_workflow_factory: Option<
-        Arc<agora::cognitive_role_workflow::RoleWorkflowFactory>,
-    >,
+    role_workflow_factory: Option<Arc<agora::cognitive_role_workflow::RoleWorkflowFactory>>,
     canonical_event_spine: Arc<adapters_sqlite::event_spine::SqliteEventSpine>,
     event_projections: Arc<adapters_sqlite::projection_set::DefaultEventProjectionSet>,
     agent_profile_registry: Arc<crate::wiring::adapters::runtime::AgentProfileRegistry>,

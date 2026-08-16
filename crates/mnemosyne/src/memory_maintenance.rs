@@ -18,10 +18,10 @@ use ::contracts::protocol::memory_maintenance::{
 };
 use async_trait::async_trait;
 
+use crate::memory_policy::MemoryPolicyConfig;
 use crate::memory_policy::{
     MemoryNovelty, MemoryPolicyDecisionKind, MemoryPolicyEvaluator, MemoryPolicyFacts,
 };
-use crate::memory_policy::MemoryPolicyConfig;
 
 #[async_trait]
 pub trait MemorySemanticProposalPort: Send + Sync {

@@ -12,13 +12,13 @@ use ::contracts::{
     AgentProfileId, AgentSpawnRequest, AgoraSpaceId, OperationId, OsProcessId, ProcessId,
     RuntimeId, RuntimeProcessId, WorkspacePolicy, AGENT_MESSAGE_SCHEMA_V1,
 };
-use anyhow::Result;
-use async_trait::async_trait;
+use aletheon::wiring::adapters::runtime::PiDelegateBackend;
 use aletheon::wiring::application::agent_control::{
     AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
     AgentRuntimeInput, AgentRuntimeLauncher,
 };
-use aletheon::wiring::adapters::runtime::PiDelegateBackend;
+use anyhow::Result;
+use async_trait::async_trait;
 use runtime::RuntimeProcessRegistrationPort;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;

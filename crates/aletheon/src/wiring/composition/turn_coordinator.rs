@@ -8,9 +8,9 @@ use kernel::KernelRuntime;
 use runtime::EventSpine;
 
 use crate::config::GrokHardeningConfig;
-use adapters_sqlite::session::event_sourced_store::EventSourcedSessionStore;
 use crate::wiring::application::evaluation::EvaluationService;
 use crate::wiring::application::turn_coordinator::TurnCoordinator;
+use adapters_sqlite::session::event_sourced_store::EventSourcedSessionStore;
 use runtime::read_model::EventProjectionSink;
 use runtime::session_projection::SessionProjectionStore;
 

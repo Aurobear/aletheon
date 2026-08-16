@@ -1,10 +1,10 @@
 use adapters_sqlite::approval_repository::ApprovalRepository;
-use async_trait::async_trait;
-use base64::Engine;
-use contracts::CodingAttemptRequest;
 use aletheon::wiring::application::goal::{
     AttemptExecutor, AttemptRequest, CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
+use async_trait::async_trait;
+use base64::Engine;
+use contracts::CodingAttemptRequest;
 const TEST_CODING_RUNTIME_ID: &str = "fake-coding-runtime";
 use ::contracts::*;
 use aletheon::wiring::application::verification::{VerificationCheckKind, VerificationContext};
@@ -244,7 +244,10 @@ impl Harness {
         &self,
         passed: bool,
         approvals: bool,
-    ) -> (aletheon::wiring::application::goal::AttemptCoordinator, Arc<Verifier>) {
+    ) -> (
+        aletheon::wiring::application::goal::AttemptCoordinator,
+        Arc<Verifier>,
+    ) {
         let verifier = Arc::new(Verifier {
             passed,
             calls: AtomicUsize::new(0),
@@ -333,7 +336,9 @@ async fn verified_diff_creates_one_hash_bound_apply_approval() {
         .execute_one(req.clone(), CancellationToken::new())
         .await
         .unwrap();
-    let aletheon::wiring::application::goal::AttemptCoordinationOutcome::Succeeded { goal, .. } = out else {
+    let aletheon::wiring::application::goal::AttemptCoordinationOutcome::Succeeded { goal, .. } =
+        out
+    else {
         panic!()
     };
     assert_eq!(goal.state, GoalState::AwaitingHuman);

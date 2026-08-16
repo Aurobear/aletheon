@@ -9,11 +9,11 @@ use ::contracts::protocol::memory_maintenance::{
 };
 use ::contracts::{Clock, MonoTime, WallTime};
 use async_trait::async_trait;
-use mnemosyne::memory_policy::MemoryPolicyConfig;
 use mnemosyne::memory_maintenance::{
     AgentControlMemorySemanticProposal, MemoryMaintenanceController, MemorySemanticProposalPort,
     NoMemorySemanticProposal,
 };
+use mnemosyne::memory_policy::MemoryPolicyConfig;
 use mnemosyne::{
     ExperienceEvent, ForgetPolicy, ForgetReceipt, GovernedMemoryObservation, MemoryIntakeLedger,
     MemoryRecord, MemoryService, RecallRequest, RecallSet, SupplementalCapabilityGrant,

@@ -137,12 +137,10 @@ impl MemoryPolicyConfig {
     }
 }
 
-
 use crate::GovernedMemoryObservation;
 use ::contracts::protocol::memory::{
     MemoryObservationKindV1, MemoryRecordKindV1, MemoryScorecardV1, MemorySensitivityV1,
 };
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryNovelty {

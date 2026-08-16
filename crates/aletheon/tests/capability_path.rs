@@ -38,7 +38,8 @@ fn production_has_one_governed_capability_construction() {
         }
         // Agent-control owns a separate admission and settlement lifecycle;
         // its terminology must not be mistaken for capability admission.
-        let is_canonical_boundary = path.ends_with("src/wiring/wiring/application/governed_capability.rs");
+        let is_canonical_boundary =
+            path.ends_with("src/wiring/wiring/application/governed_capability.rs");
         // RA-04's RuntimeTurnWriter is a separate canonical lifecycle writer;
         // its terminal fence is intentionally not the Corpus capability
         // settlement path this census protects.
@@ -70,7 +71,10 @@ fn production_has_one_governed_capability_construction() {
     // The governed capability invoker now lives in Kernel (capability owner).
     // `canonical_capability_invoker` is the single authoritative constructor;
     // the binary-owned wiring factory reuses it rather than minting a second.
-    assert!(default_constructors.is_empty(), "aletheon must not construct the invoker directly");
+    assert!(
+        default_constructors.is_empty(),
+        "aletheon must not construct the invoker directly"
+    );
     let kernel_root = root.join("../kernel/src");
     let mut kernel_files = Vec::new();
     rust_files(&kernel_root, &mut kernel_files);

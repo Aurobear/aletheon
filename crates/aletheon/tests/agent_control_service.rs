@@ -16,7 +16,10 @@ fn rust_files(path: &Path, output: &mut Vec<String>) {
 fn production_has_one_authoritative_agent_control_implementation() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut sources = Vec::new();
-    rust_files(&workspace.join("aletheon/src/wiring/application"), &mut sources);
+    rust_files(
+        &workspace.join("aletheon/src/wiring/application"),
+        &mut sources,
+    );
     let implementations = sources
         .iter()
         .filter(|source| source.contains("impl AgentControlPort for"))

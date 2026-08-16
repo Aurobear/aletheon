@@ -145,9 +145,10 @@ pub struct GoalEvaluationProjectionSink {
 impl GoalEvaluationProjectionSink {
     pub fn new(spine: Arc<dyn runtime::EventSpine>, store: Arc<Mutex<ObjectiveStore>>) -> Self {
         Self {
-            inner: crate::wiring::application::post_turn_projection::DurableDomainEvaluationSink::new(
-                "goal", spine,
-            ),
+            inner:
+                crate::wiring::application::post_turn_projection::DurableDomainEvaluationSink::new(
+                    "goal", spine,
+                ),
             store,
         }
     }

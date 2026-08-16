@@ -169,7 +169,9 @@ impl ExtensionExecutableRuntime {
         &self,
         supervisor: Arc<runtime::RuntimeAgentSupervisor>,
         backend: Arc<dyn runtime::DelegateBackend>,
-        agent_host: std::sync::Weak<dyn crate::wiring::application::agent_control::AgentHostEffects>,
+        agent_host: std::sync::Weak<
+            dyn crate::wiring::application::agent_control::AgentHostEffects,
+        >,
     ) -> anyhow::Result<()> {
         {
             let mut slot = self.runtime_agent_supervisor.write().await;

@@ -11,11 +11,11 @@ use ::contracts::protocol::memory::{
     MAX_MEMORY_RECALL_CONTENT_BYTES, MAX_MEMORY_RECALL_ITEMS,
 };
 use ::contracts::PrincipalId;
-use async_trait::async_trait;
-use chrono::{TimeZone, Utc};
 use aletheon::wiring::application::memory_gateway::{
     MemoryGatewayService, SupplementalBindingNegotiator, SupplementalBindingRecallPort,
 };
+use async_trait::async_trait;
+use chrono::{TimeZone, Utc};
 use kernel::chronos::TestClock;
 use mnemosyne::{
     ExperienceEvent, ForgetPolicy, ForgetReceipt, MemoryAuthority, MemoryIntakeLedger, MemoryKind,

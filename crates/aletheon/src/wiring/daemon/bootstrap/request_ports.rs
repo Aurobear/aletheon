@@ -259,7 +259,10 @@ impl PostTurnRuntimePort for PostTurnDomainAdapter {
             .lock()
             .await
             .post_evolution(
-                &crate::wiring::application::post_turn_projection::bounded_summary(&outcome.input, 100),
+                &crate::wiring::application::post_turn_projection::bounded_summary(
+                    &outcome.input,
+                    100,
+                ),
                 &outcome.output,
                 outcome.completed_normally && !outcome.output.starts_with("error:"),
                 outcome.tool_calls_made,

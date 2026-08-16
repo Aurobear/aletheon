@@ -10,10 +10,10 @@ use ::contracts::{
     AgentControlError, AgentControlErrorKind, AgentId, AgentResult, AgentWaitRequest, AgoraSpaceId,
     AttemptUsage, ProcessId, WorkspacePolicy,
 };
-use async_trait::async_trait;
 use aletheon::wiring::application::agent_control::{
     AgentEventSink, AgentRuntimeInput, AgentRuntimeLauncher, CognitiveTaskAdmissionPort,
 };
+use async_trait::async_trait;
 
 struct RecordingAdmission {
     admitted: Arc<AtomicBool>,

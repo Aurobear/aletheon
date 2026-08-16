@@ -1,9 +1,9 @@
 use ::contracts::{Clock, CodingJobId, CodingJobStatus, MonoTime, WallTime};
-use anyhow::{bail, Result};
-use aletheon::wiring::application::goal::CodingJobRecoveryRecord;
 use aletheon::wiring::adapters::runtime::worktree_recovery::{
     WorktreeCleaner, WorktreeRecoveryConfig, WorktreeRecoveryService,
 };
+use aletheon::wiring::application::goal::CodingJobRecoveryRecord;
+use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;

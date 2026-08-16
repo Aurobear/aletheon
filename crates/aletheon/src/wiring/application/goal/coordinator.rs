@@ -218,7 +218,8 @@ impl GoalCoordinator {
         clock: Arc<dyn Clock>,
         config: ApplyCoordinatorConfig,
         cleaner: Arc<dyn ManagedWorktreeCleaner>,
-    ) -> Result<ApplyCoordinator, crate::wiring::application::approval::ApplyCoordinationError> {
+    ) -> Result<ApplyCoordinator, crate::wiring::application::approval::ApplyCoordinationError>
+    {
         let coordinator = ApplyCoordinator::new(
             self.store.clone(),
             approvals,

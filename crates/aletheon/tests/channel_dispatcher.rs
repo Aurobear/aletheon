@@ -137,10 +137,7 @@ async fn setup() -> (
     store.bind("telegram", "owner", "owner", "active").unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
-    let router = ChannelRouter::new(
-        SqliteChannelProjectionStore::new(store),
-        executor.clone(),
-    );
+    let router = ChannelRouter::new(SqliteChannelProjectionStore::new(store), executor.clone());
     (router, executor, transport, dir)
 }
 
@@ -360,10 +357,7 @@ async fn executor_failure_inbox_retryable_cursor_unchanged() {
     }
     let failing_executor = Arc::new(FailingExecutor);
     let store = ChannelStore::open(&db_path).unwrap();
-    let mut router = ChannelRouter::new(
-        SqliteChannelProjectionStore::new(store),
-        failing_executor,
-    );
+    let mut router = ChannelRouter::new(SqliteChannelProjectionStore::new(store), failing_executor);
 
     let msg = owner_text("6", "corr-fail", "trigger failure");
     let envelope = ProviderEnvelope {

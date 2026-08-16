@@ -2,8 +2,8 @@
 
 //! Integration tests for Genome -> Runtime behavior mapping.
 
-use aletheon::wiring::cognitive_runtime::AletheonCognitiveRuntime;
 use aletheon::config::{CognitiveRuntimeConfig, GenomeConfig};
+use aletheon::wiring::cognitive_runtime::AletheonCognitiveRuntime;
 
 #[test]
 fn test_genome_config_default() {

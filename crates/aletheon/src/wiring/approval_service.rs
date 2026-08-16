@@ -7,10 +7,10 @@ use async_trait::async_trait;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
+use crate::wiring::application::approval::ApplyCoordinator;
 use adapters_sqlite::approval_repository::{
     ApprovalDecision, ApprovalRepository, ApprovalRepositoryError, ApprovalResolutionContext,
 };
-use crate::wiring::application::approval::ApplyCoordinator;
 
 const MAX_PENDING_APPROVALS: usize = 100;
 

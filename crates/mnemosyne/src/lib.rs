@@ -50,9 +50,6 @@ pub use binding::{
     WorkspaceMemoryBindingError, WorkspaceMemoryBindingPreview, WorkspaceMemoryBindingProposal,
     WorkspaceMemoryBindingRegistry, WorkspaceMemoryBindingState,
 };
-pub use memory_gateway::{
-    MemoryGatewayService, SupplementalBindingNegotiator, SupplementalBindingRecallPort,
-};
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
 };
@@ -65,6 +62,9 @@ pub use intake::{
     GovernedMemoryObservation, MemoryIntakeError, MemoryIntakeLedger, MemoryIntakeLimits,
     MemoryLifecycleUpdate, MemoryMaintenanceClaim, MemoryMaintenanceLease, MemoryMaintenancePhase,
     MemoryMaintenanceStatus,
+};
+pub use memory_gateway::{
+    MemoryGatewayService, SupplementalBindingNegotiator, SupplementalBindingRecallPort,
 };
 pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 

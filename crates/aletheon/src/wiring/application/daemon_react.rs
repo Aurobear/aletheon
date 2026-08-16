@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use cognit::{CanonicalTurnEventSink, CognitiveStreamEvent};
 use tokio_util::sync::CancellationToken;
 
-use crate::wiring::application::harness_factory::CognitiveSessionFactory;
 use crate::config::CognitiveRuntimeConfig;
+use crate::wiring::application::harness_factory::CognitiveSessionFactory;
 use runtime::prefix_cache_observability::{record_prefix_shape_miss, LocalMissReason};
 use runtime::turn_policy::TurnPolicy;
 

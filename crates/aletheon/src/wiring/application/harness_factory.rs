@@ -9,9 +9,9 @@
 //! cutover completes. No new implementation is added here.
 
 pub use cognit::harness::{
-    CognitiveSessionFactory, ExecutionTargetRoutingError, HarnessCognitiveSessionFactory,
-    LinearCognitiveSessionFactory, RobotSessionCapability, TargetRoutedCognitiveSessionFactory,
-    selected_harness_kind,
+    selected_harness_kind, CognitiveSessionFactory, ExecutionTargetRoutingError,
+    HarnessCognitiveSessionFactory, LinearCognitiveSessionFactory, RobotSessionCapability,
+    TargetRoutedCognitiveSessionFactory,
 };
 
 #[cfg(test)]

@@ -4,11 +4,11 @@ use ::contracts::{
     ItemPayload, OperationState, SessionId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
 };
 use adapters_sqlite::event_spine::{EventReadFilter, SqliteEventSpine};
-use async_trait::async_trait;
-use aletheon::wiring::application::harness_factory::CognitiveSessionFactory;
-use aletheon::wiring::application::turn_coordinator::TurnExecution;
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
 use aletheon::config::GrokHardeningConfig;
+use aletheon::wiring::application::harness_factory::CognitiveSessionFactory;
+use aletheon::wiring::application::turn_coordinator::TurnExecution;
+use async_trait::async_trait;
 use runtime::turn_policy::*;
 use runtime::{post_turn::PostTurnPipeline, pre_turn::PreTurnPipeline};
 #[path = "support/turn_service.rs"]
@@ -49,12 +49,13 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
     let kernel = Arc::new(KernelRuntime::new());
     let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
-    let coordinator = aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-        kernel.clone(),
-        read_store,
-        event_spine.clone(),
-        aletheon::config::GrokHardeningConfig::default(),
-    );
+    let coordinator =
+        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+            kernel.clone(),
+            read_store,
+            event_spine.clone(),
+            aletheon::config::GrokHardeningConfig::default(),
+        );
     let store = coordinator.store();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
@@ -595,12 +596,13 @@ async fn deadline_cancels_a_never_ending_turn_and_settles_exactly_once() {
     let kernel = Arc::new(KernelRuntime::new());
     let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
-    let coordinator = aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-        kernel.clone(),
-        read_store,
-        event_spine.clone(),
-        GrokHardeningConfig::default(),
-    );
+    let coordinator =
+        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+            kernel.clone(),
+            read_store,
+            event_spine.clone(),
+            GrokHardeningConfig::default(),
+        );
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -1151,19 +1153,21 @@ async fn panicking_runner_is_failed_and_guard_removes_active_turn() {
                     let _ = started_tx.send(request.operation_id);
                     panic!("injected runner panic");
                     #[allow(unreachable_code)]
-                    Ok(aletheon::wiring::application::turn_coordinator::TurnExecution {
-                        result: TurnResult {
-                            output: String::new(),
-                            stop: ::contracts::TurnStop::Failed,
-                            failure: None,
-                            usage: Default::default(),
-                            metrics: TurnMetrics::default(),
+                    Ok(
+                        aletheon::wiring::application::turn_coordinator::TurnExecution {
+                            result: TurnResult {
+                                output: String::new(),
+                                stop: ::contracts::TurnStop::Failed,
+                                failure: None,
+                                usage: Default::default(),
+                                metrics: TurnMetrics::default(),
+                            },
+                            items: Vec::new(),
+                            projection: None,
+                            context_projection: None,
+                            evaluation_artifacts: Default::default(),
                         },
-                        items: Vec::new(),
-                        projection: None,
-                        context_projection: None,
-                        evaluation_artifacts: Default::default(),
-                    })
+                    )
                 },
             )
             .await

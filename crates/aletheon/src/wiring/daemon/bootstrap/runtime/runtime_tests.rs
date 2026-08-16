@@ -477,10 +477,9 @@ mod goal_runtime_tests {
         .is_err());
 
         unknown_default.default.clear();
-        unknown_default.overrides.insert(
-            "missing".into(),
-            crate::config::ProfileOverride::default(),
-        );
+        unknown_default
+            .overrides
+            .insert("missing".into(), crate::config::ProfileOverride::default());
         assert!(super::load_agent_profiles(
             directory.path(),
             inference,

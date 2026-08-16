@@ -170,7 +170,10 @@ impl RuntimeAgentSupervisor {
     /// Attach the one host adapter used for rich AgentControl runs. This is
     /// set once by the composition root after both sides of the cycle exist.
     pub fn set_observed_backend(&self, backend: Arc<dyn ObservedAgentBackend>) {
-        *self.observed_backend.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(backend);
+        *self
+            .observed_backend
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(backend);
     }
 
     /// Record Runtime admission before the host's SQL AgentRun projection.
@@ -202,7 +205,13 @@ impl RuntimeAgentSupervisor {
         // the check, journal append, and publication so two concurrent host
         // adapters cannot both append an Accepted receipt for one run.
         let _write_guard = self.terminal_write_lock.lock().await;
-        if let Some(existing) = self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&agent_run).cloned() {
+        if let Some(existing) = self
+            .accepted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&agent_run)
+            .cloned()
+        {
             if existing.session == session && existing.generation == generation {
                 return Ok(());
             }
@@ -212,7 +221,12 @@ impl RuntimeAgentSupervisor {
                 RuntimeError::WrongGeneration
             });
         }
-        if self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(&agent_run) {
+        if self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(&agent_run)
+        {
             return Err(RuntimeError::AlreadyTerminal);
         }
         self.append_event(crate::RuntimeEvent::AgentRunAccepted {
@@ -222,13 +236,16 @@ impl RuntimeAgentSupervisor {
             backend,
         })
         .await?;
-        self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(
-            agent_run,
-            AgentStartRecord {
-                session,
-                generation,
-            },
-        );
+        self.accepted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                agent_run,
+                AgentStartRecord {
+                    session,
+                    generation,
+                },
+            );
         Ok(())
     }
 
@@ -344,10 +361,21 @@ impl RuntimeAgentSupervisor {
                 RuntimeError::WrongGeneration
             });
         }
-        if self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(&agent_run) {
+        if self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(&agent_run)
+        {
             return Err(RuntimeError::AlreadyTerminal);
         }
-        if let Some(accepted) = self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&agent_run).cloned() {
+        if let Some(accepted) = self
+            .accepted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&agent_run)
+            .cloned()
+        {
             if accepted.session != session {
                 return Err(RuntimeError::WrongSession);
             }
@@ -362,13 +390,16 @@ impl RuntimeAgentSupervisor {
             backend: backend.clone(),
         })
         .await?;
-        self.observed_starts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(
-            agent_run,
-            AgentStartRecord {
-                session,
-                generation,
-            },
-        );
+        self.observed_starts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                agent_run,
+                AgentStartRecord {
+                    session,
+                    generation,
+                },
+            );
         Ok(())
     }
 
@@ -380,7 +411,13 @@ impl RuntimeAgentSupervisor {
         agent_run: &AgentRunId,
         terminal: TurnTerminal,
     ) -> Result<(), RuntimeError> {
-        if let Some(existing) = self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run).cloned() {
+        if let Some(existing) = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+            .cloned()
+        {
             return if existing == terminal {
                 Ok(())
             } else {
@@ -393,7 +430,13 @@ impl RuntimeAgentSupervisor {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(agent_run)
             .cloned()
-            .or_else(|| self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run).cloned())
+            .or_else(|| {
+                self.accepted
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get(agent_run)
+                    .cloned()
+            })
             .ok_or(RuntimeError::AgentRunNotFound)?;
         self.settle(&start.session, agent_run, start.generation, terminal)
             .await
@@ -415,7 +458,12 @@ impl RuntimeAgentSupervisor {
         if kind.trim().is_empty() || kind.len() > 256 {
             return Err(RuntimeError::UnsupportedRequest);
         }
-        if self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(agent_run) {
+        if self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(agent_run)
+        {
             return Err(RuntimeError::AlreadyTerminal);
         }
         let session = self
@@ -467,7 +515,12 @@ impl RuntimeAgentSupervisor {
         // Recovery after a terminal fence is an idempotent host observation;
         // do not append a second lifecycle transition that the reducer must
         // reject as a late write.
-        if self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(agent_run) {
+        if self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(agent_run)
+        {
             return Ok(());
         }
         if self
@@ -485,7 +538,13 @@ impl RuntimeAgentSupervisor {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(agent_run)
             .cloned()
-            .or_else(|| self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run).cloned())
+            .or_else(|| {
+                self.accepted
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get(agent_run)
+                    .cloned()
+            })
             .ok_or(RuntimeError::AgentRunNotFound)?;
         self.append_event(crate::RuntimeEvent::AgentRunRecovery {
             session: start.session,
@@ -516,7 +575,12 @@ impl RuntimeAgentSupervisor {
         if delivery_id.trim().is_empty() || kind.trim().is_empty() {
             return Err(RuntimeError::UnsupportedRequest);
         }
-        if self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(agent_run) {
+        if self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(agent_run)
+        {
             return Err(RuntimeError::AlreadyTerminal);
         }
         let session = self
@@ -554,7 +618,12 @@ impl RuntimeAgentSupervisor {
         session: SessionId,
     ) -> Result<(), RuntimeError> {
         let key = (agent_run.clone(), delivery_id.clone());
-        if let Some(existing) = self.mailbox_deliveries.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&key) {
+        if let Some(existing) = self
+            .mailbox_deliveries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&key)
+        {
             if existing == &delivery {
                 return Ok(());
             }
@@ -707,15 +776,18 @@ impl RuntimeAgentSupervisor {
                 .await;
             return Err(RuntimeError::WrongGeneration);
         }
-        self.bindings.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(
-            agent_run.clone(),
-            AgentBinding {
-                backend,
-                backend_run: backend_receipt.agent_run,
-                parent_session: parent_session.clone(),
-                generation: generation.clone(),
-            },
-        );
+        self.bindings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                agent_run.clone(),
+                AgentBinding {
+                    backend,
+                    backend_run: backend_receipt.agent_run,
+                    parent_session: parent_session.clone(),
+                    generation: generation.clone(),
+                },
+            );
         Ok(DelegateReceipt {
             agent_run,
             generation,
@@ -729,17 +801,28 @@ impl RuntimeAgentSupervisor {
         // backend binding was rebuilt. The durable terminal is authoritative
         // and must be returned instead of treating the missing process-local
         // binding as an unknown/successful run.
-        if let Some(existing) = self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run).cloned() {
+        if let Some(existing) = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+            .cloned()
+        {
             return Ok(existing);
         }
-        let binding = self.bindings.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run).map(|binding| {
-            (
-                binding.backend.clone(),
-                binding.backend_run.clone(),
-                binding.parent_session.clone(),
-                binding.generation.clone(),
-            )
-        });
+        let binding = self
+            .bindings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+            .map(|binding| {
+                (
+                    binding.backend.clone(),
+                    binding.backend_run.clone(),
+                    binding.parent_session.clone(),
+                    binding.generation.clone(),
+                )
+            });
         let (backend, backend_run, parent_session, generation) = match binding {
             Some(binding) => binding,
             None => {
@@ -780,7 +863,12 @@ impl RuntimeAgentSupervisor {
         &self,
         agent_run: &AgentRunId,
     ) -> Result<crate::DelegateResult, RuntimeError> {
-        if !self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(agent_run) {
+        if !self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(agent_run)
+        {
             return Err(RuntimeError::NotTerminal);
         }
         let binding = self
@@ -855,13 +943,16 @@ impl RuntimeAgentSupervisor {
                             return Err(RuntimeError::UnknownSchema);
                         }
                     }
-                    self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(
-                        agent_run.clone(),
-                        AgentStartRecord {
-                            session: session.clone(),
-                            generation: generation.clone(),
-                        },
-                    );
+                    self.accepted
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .insert(
+                            agent_run.clone(),
+                            AgentStartRecord {
+                                session: session.clone(),
+                                generation: generation.clone(),
+                            },
+                        );
                     // An accepted-but-not-started child is still an open
                     // admission. Treat it as recoverable lifecycle evidence;
                     // an absent host process will be fenced below.
@@ -891,13 +982,16 @@ impl RuntimeAgentSupervisor {
                             return Err(RuntimeError::UnknownSchema);
                         }
                     }
-                    self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(
-                        agent_run.clone(),
-                        AgentStartRecord {
-                            session: session.clone(),
-                            generation: effective_generation.clone().unwrap_or(Generation(1)),
-                        },
-                    );
+                    self.accepted
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .insert(
+                            agent_run.clone(),
+                            AgentStartRecord {
+                                session: session.clone(),
+                                generation: effective_generation.clone().unwrap_or(Generation(1)),
+                            },
+                        );
                     started.insert(agent_run, entry);
                 }
                 crate::RuntimeEvent::AgentRunSettled {
@@ -923,7 +1017,10 @@ impl RuntimeAgentSupervisor {
                     decision,
                     ..
                 } => {
-                    self.recoveries.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(agent_run, decision);
+                    self.recoveries
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .insert(agent_run, decision);
                 }
                 crate::RuntimeEvent::AgentRunMailbox {
                     agent_run,
@@ -975,24 +1072,34 @@ impl RuntimeAgentSupervisor {
                             })
                     });
             if terminal_matches_generation
-                || self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(&agent_run)
+                || self
+                    .terminals
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .contains_key(&agent_run)
             {
-                self.observed_starts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(
+                self.observed_starts
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(
+                        agent_run.clone(),
+                        AgentStartRecord {
+                            session: session.clone(),
+                            generation: generation.clone(),
+                        },
+                    );
+                continue;
+            }
+            self.observed_starts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(
                     agent_run.clone(),
                     AgentStartRecord {
                         session: session.clone(),
                         generation: generation.clone(),
                     },
                 );
-                continue;
-            }
-            self.observed_starts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(
-                agent_run.clone(),
-                AgentStartRecord {
-                    session: session.clone(),
-                    generation: generation.clone(),
-                },
-            );
             if !settle_orphans {
                 recovered += 1;
                 continue;
@@ -1022,26 +1129,29 @@ impl RuntimeAgentSupervisor {
             );
             recovered += 1;
         }
-        self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).extend(
-            terminal
-                .into_iter()
-                .filter(|(agent_run, (_, _, terminal_generation))| {
-                    // A terminal from another generation is stale evidence;
-                    // the loop above has already fenced this run as
-                    // Interrupted when no matching receipt existed.
-                    started_generations
-                        .get(agent_run)
-                        .is_some_and(|(_, started_generation)| {
-                            terminal_generation
-                                .as_ref()
-                                .is_none_or(|terminal_generation| {
-                                    terminal_generation
-                                        == &started_generation.clone().unwrap_or(Generation(1))
-                                })
-                        })
-                })
-                .map(|(agent_run, (_, value, _))| (agent_run, value)),
-        );
+        self.terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .extend(
+                terminal
+                    .into_iter()
+                    .filter(|(agent_run, (_, _, terminal_generation))| {
+                        // A terminal from another generation is stale evidence;
+                        // the loop above has already fenced this run as
+                        // Interrupted when no matching receipt existed.
+                        started_generations
+                            .get(agent_run)
+                            .is_some_and(|(_, started_generation)| {
+                                terminal_generation
+                                    .as_ref()
+                                    .is_none_or(|terminal_generation| {
+                                        terminal_generation
+                                            == &started_generation.clone().unwrap_or(Generation(1))
+                                    })
+                            })
+                    })
+                    .map(|(agent_run, (_, value, _))| (agent_run, value)),
+            );
         Ok(recovered)
     }
 
@@ -1099,10 +1209,32 @@ impl RuntimeAgentSupervisor {
     /// runs because a restart can occur between those lifecycle receipts.
     pub fn active_runs(&self) -> Vec<AgentRunId> {
         let mut active = std::collections::HashSet::new();
-        active.extend(self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).keys().cloned());
-        active.extend(self.observed_starts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).keys().cloned());
-        active.extend(self.bindings.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).keys().cloned());
-        let terminals = self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        active.extend(
+            self.accepted
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .keys()
+                .cloned(),
+        );
+        active.extend(
+            self.observed_starts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .keys()
+                .cloned(),
+        );
+        active.extend(
+            self.bindings
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .keys()
+                .cloned(),
+        );
+        let terminals = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let mut active = active
             .into_iter()
             .filter(|agent_run| !terminals.contains_key(agent_run))
@@ -1117,9 +1249,17 @@ impl RuntimeAgentSupervisor {
     /// it to fence an accepted/started run whose rich host projection was lost
     /// before commit; `active_runs` alone cannot see that distinction.
     pub fn open_lifecycle_runs(&self) -> Vec<(AgentRunId, Generation)> {
-        let terminals = self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let terminals = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut runs = HashMap::<AgentRunId, Generation>::new();
-        for (agent_run, record) in self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).iter() {
+        for (agent_run, record) in self
+            .accepted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+        {
             if !terminals.contains_key(agent_run) {
                 runs.insert(agent_run.clone(), record.generation.clone());
             }
@@ -1127,12 +1267,22 @@ impl RuntimeAgentSupervisor {
         // Older/replayed callers may publish Started without a separate
         // Accepted receipt. Keep that lifecycle evidence visible to startup
         // reconciliation as well.
-        for (agent_run, record) in self.observed_starts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).iter() {
+        for (agent_run, record) in self
+            .observed_starts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+        {
             if !terminals.contains_key(agent_run) {
                 runs.insert(agent_run.clone(), record.generation.clone());
             }
         }
-        for (agent_run, binding) in self.bindings.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).iter() {
+        for (agent_run, binding) in self
+            .bindings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+        {
             if !terminals.contains_key(agent_run) {
                 runs.insert(agent_run.clone(), binding.generation.clone());
             }
@@ -1184,13 +1334,28 @@ impl RuntimeAgentSupervisor {
     /// the original admission session rather than reconstructing it from the
     /// projected row.
     pub fn session(&self, agent_run: &AgentRunId) -> Result<SessionId, RuntimeError> {
-        if let Some(start) = self.accepted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run) {
+        if let Some(start) = self
+            .accepted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+        {
             return Ok(start.session.clone());
         }
-        if let Some(start) = self.observed_starts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run) {
+        if let Some(start) = self
+            .observed_starts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+        {
             return Ok(start.session.clone());
         }
-        if let Some(binding) = self.bindings.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run) {
+        if let Some(binding) = self
+            .bindings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+        {
             return Ok(binding.parent_session.clone());
         }
         Err(RuntimeError::AgentRunNotFound)
@@ -1258,14 +1423,19 @@ impl RuntimeAgentSupervisor {
 
     /// Cancel a run through its pinned backend.
     pub async fn cancel(&self, agent_run: &AgentRunId) -> Result<(), RuntimeError> {
-        let binding = self.bindings.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run).map(|binding| {
-            (
-                binding.backend.clone(),
-                binding.backend_run.clone(),
-                binding.parent_session.clone(),
-                binding.generation.clone(),
-            )
-        });
+        let binding = self
+            .bindings
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+            .map(|binding| {
+                (
+                    binding.backend.clone(),
+                    binding.backend_run.clone(),
+                    binding.parent_session.clone(),
+                    binding.generation.clone(),
+                )
+            });
         let (backend, backend_run, session, generation) = match binding {
             Some(binding) => binding,
             None => {
@@ -1316,7 +1486,12 @@ impl RuntimeAgentSupervisor {
         message: DelegateMessage,
     ) -> Result<crate::DelegateMessageReceipt, RuntimeError> {
         message.validate()?;
-        if self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(agent_run) {
+        if self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(agent_run)
+        {
             return Err(RuntimeError::AlreadyTerminal);
         }
         let binding = self
@@ -1353,7 +1528,12 @@ impl RuntimeAgentSupervisor {
         receipt: &crate::DelegateMessageReceipt,
     ) -> Result<(), RuntimeError> {
         let _write_guard = self.terminal_write_lock.lock().await;
-        if self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(agent_run) {
+        if self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(agent_run)
+        {
             return Err(RuntimeError::AlreadyTerminal);
         }
         if receipt
@@ -1505,7 +1685,13 @@ impl RuntimeAgentSupervisor {
         terminal: TurnTerminal,
     ) -> Result<(), RuntimeError> {
         let _write_guard = self.terminal_write_lock.lock().await;
-        if let Some(existing) = self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run).cloned() {
+        if let Some(existing) = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+            .cloned()
+        {
             if existing == terminal {
                 return Ok(());
             }
@@ -1555,7 +1741,11 @@ impl RuntimeAgentSupervisor {
     /// idempotent without attempting a second `Started` transition after the
     /// Runtime has already fenced the orphan.
     pub fn terminal(&self, agent_run: &AgentRunId) -> Option<TurnTerminal> {
-        self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(agent_run).cloned()
+        self.terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(agent_run)
+            .cloned()
     }
 
     pub fn registry(&self) -> &DelegateBackendRegistry {
@@ -1597,7 +1787,10 @@ mod tests {
     #[async_trait::async_trait]
     impl crate::AgentEventSink for RecordingSink {
         async fn append(&self, event: crate::AgentStreamEvent) -> Result<(), RuntimeError> {
-            self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(event);
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(event);
             Ok(())
         }
     }
@@ -1791,7 +1984,10 @@ mod tests {
         started_left.unwrap();
         started_right.unwrap();
 
-        let events = sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let events = sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(
             events
                 .iter()
@@ -1972,7 +2168,10 @@ mod tests {
             supervisor.wait(&receipt.agent_run).await.unwrap(),
             TurnTerminal::Completed
         );
-        let events = sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let events = sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].sequence, 1);
         assert_eq!(events[1].sequence, 2);
@@ -2042,7 +2241,11 @@ mod tests {
             )
             .await
             .unwrap();
-        let before_duplicate = sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).len();
+        let before_duplicate = sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len();
         supervisor
             .record_mailbox_delivery(
                 &run,
@@ -2053,7 +2256,13 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).len(), before_duplicate);
+        assert_eq!(
+            sink.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
+            before_duplicate
+        );
         supervisor
             .record_recovery(&run, "Interrupt".into())
             .await
@@ -2062,7 +2271,10 @@ mod tests {
             .record_recovery(&run, "Interrupt".into())
             .await
             .unwrap();
-        let events = sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let events = sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert!(matches!(
             events[0].event.as_ref(),
             RuntimeEvent::AgentRunAccepted { .. }
@@ -2169,7 +2381,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_empty());
+        assert!(sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty());
     }
 
     #[tokio::test]
@@ -2226,7 +2442,11 @@ mod tests {
                 .await,
             Err(RuntimeError::AlreadyTerminal)
         );
-        assert!(sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_empty());
+        assert!(sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty());
     }
 
     #[tokio::test]
@@ -2316,7 +2536,10 @@ mod tests {
             },
         );
         assert_eq!(supervisor.recover_from_stream([replayed]).await.unwrap(), 1);
-        let events = sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let events = sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].sequence, 42);
         assert_eq!(events[1].sequence, 43);
@@ -2390,7 +2613,10 @@ mod tests {
             .record_recovery(&run, "host:resume".into())
             .await
             .unwrap();
-        let events = sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let events = sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].sequence, 8);
         assert!(matches!(
@@ -2517,7 +2743,13 @@ mod tests {
                 .await,
             Ok(())
         );
-        assert_eq!(sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).len(), 2);
+        assert_eq!(
+            sink.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -2633,18 +2865,28 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().any(|event| matches!(
-            event.event.as_ref(),
-            RuntimeEvent::AgentRunMessage { kind, .. } if kind == "input"
-        )));
-        assert!(sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).iter().any(|event| matches!(
-            event.event.as_ref(),
-            RuntimeEvent::AgentRunMailbox {
-                delivery_id,
-                delivery: crate::AgentMailboxDelivery::Delivered,
-                ..
-            } if delivery_id == "delivery-observed"
-        )));
+        assert!(sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .any(|event| matches!(
+                event.event.as_ref(),
+                RuntimeEvent::AgentRunMessage { kind, .. } if kind == "input"
+            )));
+        assert!(sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .any(|event| matches!(
+                event.event.as_ref(),
+                RuntimeEvent::AgentRunMailbox {
+                    delivery_id,
+                    delivery: crate::AgentMailboxDelivery::Delivered,
+                    ..
+                } if delivery_id == "delivery-observed"
+            )));
         assert_eq!(
             supervisor.wait(&identity.agent_run).await.unwrap(),
             TurnTerminal::Completed
@@ -2702,7 +2944,10 @@ mod tests {
         assert!(poisoned.is_err());
 
         // Read path: a poisoned lock must still serve the current (empty) state.
-        assert_eq!(supervisor.terminal(&AgentRunId("never-started".into())), None);
+        assert_eq!(
+            supervisor.terminal(&AgentRunId("never-started".into())),
+            None
+        );
 
         // Write path: admission must still proceed through the recovered lock.
         supervisor
@@ -2715,7 +2960,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            supervisor.generation(&AgentRunId("post-poison".into())).unwrap(),
+            supervisor
+                .generation(&AgentRunId("post-poison".into()))
+                .unwrap(),
             Generation(1)
         );
     }

@@ -1,8 +1,6 @@
 //! R1 acceptance contracts for layered Robot/Policy configuration.
 
-use aletheon::config::{
-    merge_layers, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind,
-};
+use aletheon::config::{merge_layers, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind};
 
 fn layer(kind: ConfigSourceKind, locator: &str, text: &str) -> ConfigLayer {
     ConfigLayer::from_toml(ConfigSource::new(kind, locator), text).unwrap()

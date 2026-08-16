@@ -5,10 +5,10 @@ use ::contracts::{
     NamespaceId, SchemaId, SessionId, SessionReadStore, SessionRecord, SessionStatus, TurnId,
     SESSION_SCHEMA_VERSION,
 };
-use adapters_sqlite::{event_spine::SqliteEventSpine, projection_set::DefaultEventProjectionSet};
 use adapters_sqlite::session::{
     canonical_store::CanonicalSessionStore, event_sourced_store::reconcile_committed_session_events,
 };
+use adapters_sqlite::{event_spine::SqliteEventSpine, projection_set::DefaultEventProjectionSet};
 use runtime::{
     EventId, EventIdentity, EventPayload, EventSpine, EventTreeId, EventVisibility,
     UnsequencedEvent,

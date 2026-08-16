@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use corpus::hook::{HookContext, HookResult};
 use dasein::Verdict;
 
-use crate::wiring::application::governed_capability::{CapabilityExecutionContext, TurnCapabilityInvoker};
+use crate::wiring::application::governed_capability::{
+    CapabilityExecutionContext, TurnCapabilityInvoker,
+};
 
 #[async_trait]
 pub trait TurnHookPort: Send + Sync {

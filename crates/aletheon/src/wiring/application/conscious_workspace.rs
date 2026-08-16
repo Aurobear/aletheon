@@ -566,7 +566,10 @@ impl ConsciousWorkspaceRegistry {
                     "aletheon.workspace.governed-action-outcome/v1",
                 ],
                 VisibilityScope::PrivateProcess {
-                    process: crate::wiring::application::conscious::processor_source(space, "mnemosyne"),
+                    process: crate::wiring::application::conscious::processor_source(
+                        space,
+                        "mnemosyne",
+                    ),
                 },
             ),
             (

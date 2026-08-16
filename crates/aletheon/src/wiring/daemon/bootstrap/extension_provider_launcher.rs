@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use crate::wiring::application::agent_control::{
     AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput, AgentRuntimeLauncher,
 };
+use async_trait::async_trait;
 
 pub struct ExtensionProviderLauncher {
     router: Arc<crate::extensions::extension_runtime_router::ExtensionRuntimeRouter>,

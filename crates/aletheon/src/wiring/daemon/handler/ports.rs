@@ -5,20 +5,19 @@ use std::sync::Arc;
 use mnemosyne::FactUseCases;
 use serde_json::Value;
 
-use crate::wiring::approval_service::ApprovalUseCases;
-use crate::wiring::daemon::debug_handler::DebugHandler;
-use crate::wiring::daemon::legacy_session::LegacySessionUseCases;
 use crate::wiring::application::request_use_cases::{
     ExternalSourceUseCases, HealthUseCases, ReflectionUseCases, SessionLifecycleUseCases,
     TurnUseCases, WorkflowUseCases,
 };
 use crate::wiring::application::{AdminUseCases, GoalUseCases};
+use crate::wiring::approval_service::ApprovalUseCases;
+use crate::wiring::daemon::debug_handler::DebugHandler;
+use crate::wiring::daemon::legacy_session::LegacySessionUseCases;
 
 pub(crate) struct TransportPorts {
     pub(crate) corpus: Arc<dyn corpus::CorpusService>,
     pub(crate) capabilities_grant: corpus::ExtensionGrant,
-    pub(crate) capabilities:
-        Arc<dyn kernel::capability::governed::CapabilityService>,
+    pub(crate) capabilities: Arc<dyn kernel::capability::governed::CapabilityService>,
     pub(crate) clock: Arc<dyn ::contracts::Clock>,
 }
 

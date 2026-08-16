@@ -489,23 +489,22 @@ async fn main() -> Result<()> {
                 idempotency_key: idempotency_key.clone(),
                 timeout: timeout_seconds.map(Duration::from_secs),
             };
-            let outcome =
-                match output {
-                    ExecOutputArg::Jsonl => match aletheon::launcher::run_exec_streaming(
-                        request,
-                        std::sync::Arc::new(aletheon::launcher::JsonlExecEventWriter::default()),
-                    )
-                    .await
-                    {
-                        Ok(outcome) => outcome,
-                        Err(error) => {
-                            emit_exec_validation_failure(ExecOutputArg::Jsonl, &error.to_string())
-                        }
-                    },
-                    ExecOutputArg::Json | ExecOutputArg::Text => {
-                        aletheon::launcher::run_exec(request).await?
+            let outcome = match output {
+                ExecOutputArg::Jsonl => match aletheon::launcher::run_exec_streaming(
+                    request,
+                    std::sync::Arc::new(aletheon::launcher::JsonlExecEventWriter::default()),
+                )
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        emit_exec_validation_failure(ExecOutputArg::Jsonl, &error.to_string())
                     }
-                };
+                },
+                ExecOutputArg::Json | ExecOutputArg::Text => {
+                    aletheon::launcher::run_exec(request).await?
+                }
+            };
             match output {
                 ExecOutputArg::Jsonl => {}
                 ExecOutputArg::Json => {

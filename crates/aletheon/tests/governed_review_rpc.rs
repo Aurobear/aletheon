@@ -1,5 +1,5 @@
-use aletheon::wiring::governed_review::{GovernedReviewLimits, ReviewCapabilities};
 use aletheon::config::{AppConfig, GovernedReviewSettings};
+use aletheon::wiring::governed_review::{GovernedReviewLimits, ReviewCapabilities};
 
 #[test]
 fn rpc_dispatch_exposes_exact_governed_lifecycle_methods() {

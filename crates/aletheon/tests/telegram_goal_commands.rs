@@ -3,10 +3,10 @@ use gateway::ports::{ChannelTurnApplicationPort, ChannelTurnRequest};
 use std::sync::Arc;
 
 use adapters_sqlite::ChannelStore;
-use aletheon::wiring::application::goal::ObjectiveStore;
 use aletheon::wiring::adapters::channel::daemon_adapter::{
     DaemonChannelGoalApplicationPort, DaemonChannelGoalCommandAdapter,
 };
+use aletheon::wiring::application::goal::ObjectiveStore;
 use gateway::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,

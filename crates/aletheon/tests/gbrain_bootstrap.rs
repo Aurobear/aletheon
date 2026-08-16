@@ -2,14 +2,12 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use aletheon::config::{SupplementalDestinationAttestationConfig, SupplementalMemoryConfig};
+use aletheon::wiring::adapters::gbrain::build_supplemental_memory_runtime;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
-use aletheon::config::{
-    SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
-};
-use aletheon::wiring::adapters::gbrain::build_supplemental_memory_runtime;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;

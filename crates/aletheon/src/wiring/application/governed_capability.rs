@@ -8,8 +8,8 @@
 
 pub use kernel::capability::governed::{
     ActionModulationSnapshot, AuthorizedInvocation, CapabilityExecutionContext,
-    CapabilityRuntimeFactory, CapabilityService, GovernedActionDecision,
-    GovernedActionLoop, GovernedActionLoopResolver, GovernedCapabilityInvoker,
-    RegistryAuthorityProvider, SelectedActionContext, SelectedActionOutcomeReceipt,
-    TurnAuthorityProvider, TurnCapabilityInvoker,
+    CapabilityRuntimeFactory, CapabilityService, GovernedActionDecision, GovernedActionLoop,
+    GovernedActionLoopResolver, GovernedCapabilityInvoker, RegistryAuthorityProvider,
+    SelectedActionContext, SelectedActionOutcomeReceipt, TurnAuthorityProvider,
+    TurnCapabilityInvoker,
 };

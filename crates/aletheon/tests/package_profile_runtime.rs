@@ -5,16 +5,16 @@ use std::sync::Arc;
 use ::contracts::{
     InferenceUsage, LlmProvider, LlmResponse, LlmStream, Message, StopReason, ToolDefinition,
 };
-use aletheon::wiring::daemon::bootstrap::extension_publisher::{
-    DaemonExtensionRuntimePublisher, PackageProfileRuntime,
-};
 use aletheon::config::CognitiveRuntimeConfig;
 use aletheon::extensions::extension_coordinator::ExtensionCoordinator;
 use aletheon::extensions::extension_snapshot::{ExtensionRuntimeView, ExtensionSnapshotCompiler};
+use aletheon::wiring::adapters::runtime::AgentProfileRegistry;
+use aletheon::wiring::daemon::bootstrap::extension_publisher::{
+    DaemonExtensionRuntimePublisher, PackageProfileRuntime,
+};
 use async_trait::async_trait;
 use cognit::ports::inference::{CoreInferenceRequest, InferenceError, InferencePort};
 use corpus::tools::tools::skill_tools::SharedSkills;
-use aletheon::wiring::adapters::runtime::AgentProfileRegistry;
 use flate2::{write::GzEncoder, Compression};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;

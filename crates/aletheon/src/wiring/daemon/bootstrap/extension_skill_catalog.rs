@@ -13,7 +13,9 @@ impl ExtensionSkillCatalog {
 }
 
 #[async_trait::async_trait]
-impl crate::wiring::application::admin_service::ExtensionSkillCatalogPort for ExtensionSkillCatalog {
+impl crate::wiring::application::admin_service::ExtensionSkillCatalogPort
+    for ExtensionSkillCatalog
+{
     async fn list_extension_skills(
         &self,
     ) -> Vec<crate::wiring::application::admin_service::SkillDescriptor> {

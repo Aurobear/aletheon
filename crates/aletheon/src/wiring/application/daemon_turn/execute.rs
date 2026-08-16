@@ -57,21 +57,26 @@ fn prompt_admission_mode(enabled: bool) -> PromptAdmissionMode {
 }
 
 fn turn_failure_response(id: serde_json::Value, error: anyhow::Error) -> serde_json::Value {
-    let (code, typed_code, retryable) = match error
-        .downcast_ref::<crate::wiring::application::turn_engine::TurnEngineError>()
-    {
-        Some(engine_error) => {
-            let code = match engine_error {
-                crate::wiring::application::turn_engine::TurnEngineError::Unavailable(_)
-                | crate::wiring::application::turn_engine::TurnEngineError::ProfileNotFound(_) => -32004,
-                crate::wiring::application::turn_engine::TurnEngineError::AdmissionRejected(_) => -32005,
-                crate::wiring::application::turn_engine::TurnEngineError::InvalidContext(_) => -32602,
-                crate::wiring::application::turn_engine::TurnEngineError::Internal(_) => -32603,
-            };
-            (code, engine_error.code(), engine_error.retryable())
-        }
-        None => (-32603, "turn_failed", false),
-    };
+    let (code, typed_code, retryable) =
+        match error.downcast_ref::<crate::wiring::application::turn_engine::TurnEngineError>() {
+            Some(engine_error) => {
+                let code = match engine_error {
+                    crate::wiring::application::turn_engine::TurnEngineError::Unavailable(_)
+                    | crate::wiring::application::turn_engine::TurnEngineError::ProfileNotFound(
+                        _,
+                    ) => -32004,
+                    crate::wiring::application::turn_engine::TurnEngineError::AdmissionRejected(
+                        _,
+                    ) => -32005,
+                    crate::wiring::application::turn_engine::TurnEngineError::InvalidContext(_) => {
+                        -32602
+                    }
+                    crate::wiring::application::turn_engine::TurnEngineError::Internal(_) => -32603,
+                };
+                (code, engine_error.code(), engine_error.retryable())
+            }
+            None => (-32603, "turn_failed", false),
+        };
     json!({"jsonrpc": "2.0", "id": id, "error": {
         "code": code,
         "message": error.to_string(),
@@ -761,22 +766,24 @@ mod tests {
         let runner = Arc::new(move |_request: TurnRequest, _cancel| {
             Box::pin(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                Ok(crate::wiring::application::turn_coordinator::TurnExecution {
-                    result: ::contracts::TurnResult {
-                        output: "detached answer".into(),
-                        stop: ::contracts::TurnStop::Completed,
-                        failure: None,
-                        usage: Default::default(),
-                        metrics: ::contracts::TurnMetrics {
-                            completed_normally: true,
-                            ..Default::default()
+                Ok(
+                    crate::wiring::application::turn_coordinator::TurnExecution {
+                        result: ::contracts::TurnResult {
+                            output: "detached answer".into(),
+                            stop: ::contracts::TurnStop::Completed,
+                            failure: None,
+                            usage: Default::default(),
+                            metrics: ::contracts::TurnMetrics {
+                                completed_normally: true,
+                                ..Default::default()
+                            },
                         },
+                        items: Vec::new(),
+                        projection: None,
+                        context_projection: None,
+                        evaluation_artifacts: Default::default(),
                     },
-                    items: Vec::new(),
-                    projection: None,
-                    context_projection: None,
-                    evaluation_artifacts: Default::default(),
-                })
+                )
             }) as futures::future::BoxFuture<'static, _>
         });
         let harness = DaemonTurnTestBuilder::new(runner).build().await;
@@ -882,22 +889,24 @@ mod tests {
                     request.execution_target.clone(),
                 ));
                 Box::pin(async move {
-                    Ok(crate::wiring::application::turn_coordinator::TurnExecution {
-                        result: ::contracts::TurnResult {
-                            output: "typed turn".into(),
-                            stop: ::contracts::TurnStop::Completed,
-                            failure: None,
-                            usage: Default::default(),
-                            metrics: ::contracts::TurnMetrics {
-                                completed_normally: true,
-                                ..Default::default()
+                    Ok(
+                        crate::wiring::application::turn_coordinator::TurnExecution {
+                            result: ::contracts::TurnResult {
+                                output: "typed turn".into(),
+                                stop: ::contracts::TurnStop::Completed,
+                                failure: None,
+                                usage: Default::default(),
+                                metrics: ::contracts::TurnMetrics {
+                                    completed_normally: true,
+                                    ..Default::default()
+                                },
                             },
+                            items: Vec::new(),
+                            projection: None,
+                            context_projection: None,
+                            evaluation_artifacts: Default::default(),
                         },
-                        items: Vec::new(),
-                        projection: None,
-                        context_projection: None,
-                        evaluation_artifacts: Default::default(),
-                    })
+                    )
                 }) as futures::future::BoxFuture<'static, _>
             });
             let harness = DaemonTurnTestBuilder::new(runner)

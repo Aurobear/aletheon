@@ -13,11 +13,11 @@ use hardware::{
     GrpcProviderConfig, MonotonicClock, ProviderRegistry, SimulatedEmbodiment,
 };
 
-use crate::wiring::embodiment::build_embodiment_invoker;
-use crate::wiring::embodiment::EmbodimentService;
 use crate::config::{
     EmbodimentProviderConfig, ResolvedRobotDeploymentGateConfig, ResolvedRobotIntegrationConfig,
 };
+use crate::wiring::embodiment::build_embodiment_invoker;
+use crate::wiring::embodiment::EmbodimentService;
 use hardware::progress_projection::EmbodimentProgressPort;
 
 pub struct HardwareClockAdapter(pub Arc<dyn ::contracts::Clock>);

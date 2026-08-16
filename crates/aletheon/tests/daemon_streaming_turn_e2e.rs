@@ -11,10 +11,10 @@ use std::time::Duration;
 
 use ::contracts::ipc::{TurnEventStream, TurnEventV1};
 use ::contracts::{Message, OperationId, SpawnSpec, TurnRequest, TurnStop};
-use cognit::{CognitError, CognitErrorKind};
 use aletheon::wiring::application::daemon_react::{
     submit_streaming_daemon_turn, DaemonStreamingTurnContext,
 };
+use cognit::{CognitError, CognitErrorKind};
 use support::mock_llm_provider::{MockLlmProvider, MockTurnResponse, MockTurnSequence};
 use support::test_aletheon_builder::{TestAletheon, TestAletheonBuilder};
 use tokio_util::sync::CancellationToken;

@@ -1,16 +1,16 @@
 use ::contracts::PrincipalId;
+use aletheon::wiring::adapters::external::ExternalIdentityRepository;
+use aletheon::wiring::adapters::google::{
+    GoogleEventDispatcher, GoogleEventSink, GooglePollBatch, GooglePollFailure, GoogleSyncManager,
+    GoogleSyncManagerConfig, GoogleSyncPoller, GoogleSyncRegistration, GoogleSyncStore,
+    ProjectionWrite, SyncCommit, SyncStream,
+};
 use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::{
     ExternalEvent, ExternalEventDraft, ExternalEventEnvelope, ExternalEventId, ExternalObjectRef,
     ExternalRecordRef, MailChange, MailMessageSummary, OpaqueCursor, OpaqueProviderObjectId,
-};
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
-use aletheon::wiring::adapters::google::{
-    GoogleEventDispatcher, GoogleEventSink, GooglePollBatch, GooglePollFailure, GoogleSyncManager,
-    GoogleSyncManagerConfig, GoogleSyncPoller, GoogleSyncRegistration, GoogleSyncStore,
-    ProjectionWrite, SyncCommit, SyncStream,
 };
 use kernel::chronos::TestClock;
 use std::collections::{HashSet, VecDeque};

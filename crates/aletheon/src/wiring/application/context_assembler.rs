@@ -83,8 +83,10 @@ impl PreparedContext {
     pub fn budget_costs(
         &self,
         raw_input: &str,
-    ) -> Result<crate::wiring::application::turn_runtime_ports::TurnContextBudgetCosts, ContextAssemblyError>
-    {
+    ) -> Result<
+        crate::wiring::application::turn_runtime_ports::TurnContextBudgetCosts,
+        ContextAssemblyError,
+    > {
         let system_tokens = Message::system(self.system_prefix.clone()).estimate_tokens();
         let effective_input_tokens =
             Message::user(self.effective_user_message.clone()).estimate_tokens();

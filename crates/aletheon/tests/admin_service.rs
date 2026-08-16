@@ -1,13 +1,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use application::turn_control::{CollaborationMode, InterruptReason};
-use corpus::security::approval::ApprovalDecision;
 use aletheon::wiring::application::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases,
     ApprovalOwner, ModeChange, PendingApprovals, ScopedApprovalCache, SkillAdminPort,
     SkillDescriptor, TransientApprovalRequest,
 };
+use application::turn_control::{CollaborationMode, InterruptReason};
+use corpus::security::approval::ApprovalDecision;
 use tempfile::tempdir;
 use tokio::sync::{oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -42,13 +42,15 @@ impl aletheon::wiring::application::admin_service::SkillAdminPort for TestSkillA
             .await
             .skills()
             .iter()
-            .map(|s| aletheon::wiring::application::admin_service::SkillDescriptor {
-                id: format!("{}:{}", s.source, s.name),
-                name: s.name.clone(),
-                description: s.description.clone(),
-                enabled: true,
-                extension_id: s.source.clone(),
-            })
+            .map(
+                |s| aletheon::wiring::application::admin_service::SkillDescriptor {
+                    id: format!("{}:{}", s.source, s.name),
+                    name: s.name.clone(),
+                    description: s.description.clone(),
+                    enabled: true,
+                    extension_id: s.source.clone(),
+                },
+            )
             .collect()
     }
 }
@@ -77,8 +79,9 @@ fn test_runtime() -> Arc<dyn AdminRuntimePort> {
     })
 }
 
-fn noop_runtime_shutdown(
-) -> Arc<dyn Fn() -> aletheon::wiring::application::admin_service::RuntimeShutdownFuture + Send + Sync> {
+fn noop_runtime_shutdown() -> Arc<
+    dyn Fn() -> aletheon::wiring::application::admin_service::RuntimeShutdownFuture + Send + Sync,
+> {
     Arc::new(|| Box::pin(async { Ok(()) }))
 }
 
@@ -451,7 +454,8 @@ async fn scoped_session_grant_survives_reopen_and_never_widens_to_tool_grant() {
         .allow_path_for_thread(principal.clone(), thread.clone(), "apply_patch", &hint)
         .await
         .unwrap();
-    let reopened = aletheon::wiring::application::admin_service::ScopedApprovalCache::open(&path).unwrap();
+    let reopened =
+        aletheon::wiring::application::admin_service::ScopedApprovalCache::open(&path).unwrap();
     assert!(
         !reopened
             .is_allowed(&principal, &thread, "apply_patch")

@@ -1,11 +1,8 @@
 use ::contracts::{ApprovalCategory, ApprovalStatus, GoalState, PrincipalId};
+use adapters_sqlite::approval_repository::{ApprovalDecision, ApprovalResolutionContext};
+use adapters_sqlite::artifact::{ArtifactRecord, ArtifactScanStatus};
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
 use adapters_sqlite::ChannelStore;
-use application::{ExternalCapabilityId, ExternalIdentityId};
-use corpus::tools::google::oauth::GoogleBinding;
-use adapters_sqlite::approval_repository::{ApprovalDecision, ApprovalResolutionContext};
-use aletheon::wiring::application::goal::ObjectiveStore;
-use adapters_sqlite::artifact::{ArtifactRecord, ArtifactScanStatus};
 use aletheon::wiring::adapters::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonChannelApprovalCallbackAdapter,
     DaemonExternalDraftApprovalExecutor,
@@ -20,6 +17,9 @@ use aletheon::wiring::adapters::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
 };
 use aletheon::wiring::adapters::external::ExternalIdentityRepository;
+use aletheon::wiring::application::goal::ObjectiveStore;
+use application::{ExternalCapabilityId, ExternalIdentityId};
+use corpus::tools::google::oauth::GoogleBinding;
 use gateway::ports::ChannelTurnApplicationPort;
 use gateway::ports::{ApprovalResolver, ApprovalResolverRegistry, ChannelTurnRequest};
 use gateway::router::{ChannelRouter, ChannelTransport, ProviderEnvelope};

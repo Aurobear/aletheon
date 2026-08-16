@@ -1,17 +1,22 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+#[path = "../src/wiring/composition/dasein_workspace.rs"]
+mod dasein_workspace;
+
 use ::contracts::{
     AgentId, AgentProfileId, AgoraSpaceId, CapabilityCall, CapabilityResult,
     ConsciousArbitrationMode, LatestConsciousContextPort, NamespaceId, PermitId, SpawnSpec,
     UsageReport, WorkspaceAttribution, WorkspaceContent,
 };
-use async_trait::async_trait;
-use aletheon::wiring::application::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
-use aletheon::wiring::composition::dasein_workspace::DaseinWorkspaceAdapter;
+use aletheon::wiring::application::conscious_workspace::{
+    ConsciousTurnPort, ConsciousWorkspaceRegistry,
+};
 use aletheon::wiring::application::governed_capability::{
     GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
+use async_trait::async_trait;
+use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};

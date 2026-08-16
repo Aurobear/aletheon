@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+#[path = "../src/wiring/composition/dasein_workspace.rs"]
+mod dasein_workspace;
+
 use ::contracts::{
     AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentHandle, AgentId,
     AgentProfileId, AgentResult, AgentRunStatus, AgentSpawnRequest, AgoraSpaceId, AttemptEvidence,
@@ -7,14 +10,14 @@ use ::contracts::{
     ProcessId, RuntimeId, SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceContent,
 };
 use adapters_sqlite::event_spine::{EventReadFilter, SqliteEventSpine};
-use async_trait::async_trait;
 use aletheon::wiring::application::agent_control::{
     AgentCandidateProjector, AgentCandidateSubmissionPort, AgentContextProjection, AgentEventSink,
     AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput, NoopAgentEventSink,
     SpineAgentEventSink,
 };
 use aletheon::wiring::application::conscious_workspace::ConsciousWorkspaceRegistry;
-use aletheon::wiring::composition::dasein_workspace::DaseinWorkspaceAdapter;
+use async_trait::async_trait;
+use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};

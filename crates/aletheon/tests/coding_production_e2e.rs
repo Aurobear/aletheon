@@ -1,14 +1,8 @@
 use ::contracts::*;
-use anyhow::Result;
-use async_trait::async_trait;
-use base64::Engine;
-use contracts::CodingAttemptRequest;
-use aletheon::wiring::application::verification::{
-    ArchitecturePolicy, VerificationService, VerificationServiceConfig,
-};
 use adapters_sqlite::approval_repository::{
     ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
 };
+use aletheon::wiring::adapters::runtime::PI_CODER_RUNTIME_ID;
 use aletheon::wiring::application::approval::{
     ApplyCoordinationOutcome, ApplyCoordinatorConfig, ManagedWorktreeCleaner,
 };
@@ -16,7 +10,13 @@ use aletheon::wiring::application::goal::{
     AttemptCoordinationOutcome, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
     RetryPolicy,
 };
-use aletheon::wiring::adapters::runtime::PI_CODER_RUNTIME_ID;
+use aletheon::wiring::application::verification::{
+    ArchitecturePolicy, VerificationService, VerificationServiceConfig,
+};
+use anyhow::Result;
+use async_trait::async_trait;
+use base64::Engine;
+use contracts::CodingAttemptRequest;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -271,7 +271,10 @@ impl Fixture {
         &self,
         pass_verify: bool,
         tamper_hash: bool,
-    ) -> Result<AttemptCoordinationOutcome, aletheon::wiring::application::goal::AttemptCoordinatorError> {
+    ) -> Result<
+        AttemptCoordinationOutcome,
+        aletheon::wiring::application::goal::AttemptCoordinatorError,
+    > {
         GoalCoordinator::new(self.store.clone())
             .approval_coding_attempt_coordinator(
                 Arc::new(FixedCodingExecutor {

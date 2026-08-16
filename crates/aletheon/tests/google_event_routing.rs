@@ -1,19 +1,21 @@
 use ::contracts::goal::{GoalBudget, GoalSpec, GoalState, GoalWaitReason};
 use ::contracts::PrincipalId;
 use adapters_sqlite::ChannelStore;
-use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
-use corpus::tools::google::oauth::GoogleBinding;
-use corpus::tools::google::{
-    ExternalEvent, ExternalEventDraft, ExternalEventEnvelope, ExternalEventId, ExternalObjectRef,
-    ExternalRecordRef, MailChange, MailMessageSummary, OpaqueCursor, OpaqueProviderObjectId,
-};
-use aletheon::wiring::application::goal::coordinator::{ExternalEventWaitCondition, GoalCoordinator};
-use aletheon::wiring::application::goal::ObjectiveStore;
 use aletheon::wiring::adapters::external::ExternalIdentityRepository;
 use aletheon::wiring::adapters::google::{
     DurableGoogleNotificationSink, GoogleCurrentTaskProjection, GoogleEventDispatcher,
     GoogleEventRouter, GoogleMemoryProposalSink, GoogleSubscription, GoogleSubscriptionQuery,
     GoogleSyncStore, ProjectionWrite, SyncCommit, SyncStream,
+};
+use aletheon::wiring::application::goal::coordinator::{
+    ExternalEventWaitCondition, GoalCoordinator,
+};
+use aletheon::wiring::application::goal::ObjectiveStore;
+use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
+use corpus::tools::google::oauth::GoogleBinding;
+use corpus::tools::google::{
+    ExternalEvent, ExternalEventDraft, ExternalEventEnvelope, ExternalEventId, ExternalObjectRef,
+    ExternalRecordRef, MailChange, MailMessageSummary, OpaqueCursor, OpaqueProviderObjectId,
 };
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};

@@ -1,4 +1,6 @@
 use agora::{ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult};
+#[path = "../src/wiring/composition/dasein_workspace.rs"]
+mod dasein_workspace;
 mod support {
     pub mod conscious_core_harness;
 }
@@ -14,7 +16,7 @@ use agora::conscious_core_ports::{CandidateCause, CandidateSubmission, Conscious
 use aletheon::wiring::application::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
 };
-use aletheon::wiring::composition::dasein_workspace::DaseinWorkspaceAdapter;
+use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use metacog::evaluation::{FieldMetricHistory, FieldMetricSnapshot, MAX_FIELD_METRIC_HISTORY};

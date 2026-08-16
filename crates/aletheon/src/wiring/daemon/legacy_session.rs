@@ -4,8 +4,8 @@
 //! mutation dispatch through Runtime while `sessions.db` remains read-only.
 
 use ::contracts::{Clock, ContentBlock, LlmProvider, Message, Role, SessionId};
-use async_trait::async_trait;
 use adapters_sqlite::session::store::SessionStore;
+use async_trait::async_trait;
 use runtime::{ContextCompactorFactory, ContextWorkingSet};
 use std::{
     collections::{HashMap, HashSet},

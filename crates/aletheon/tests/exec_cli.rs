@@ -85,8 +85,7 @@ fn u_cli_003_jsonl_is_ordered_terminal_and_idempotently_replayable() {
     assert_eq!(replay.status.code(), Some(20));
     assert!(replay.stderr.is_empty());
     let replay_events = String::from_utf8(replay.stdout).unwrap();
-    let replay_event: serde_json::Value =
-        serde_json::from_str(replay_events.trim()).unwrap();
+    let replay_event: serde_json::Value = serde_json::from_str(replay_events.trim()).unwrap();
     assert_eq!(replay_event["type"], "terminal");
     assert_eq!(replay_event["status"], "blocked");
 }

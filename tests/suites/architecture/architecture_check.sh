@@ -364,7 +364,10 @@ fi
 if grep -qE 'RequestHandler|ToolRegistry|Sandbox' "$ROOT/crates/aletheon/src/wiring/core_runtime.rs"; then
   echo 'system core exposes user execution authority' >&2; exit 1
 fi
-test "$(rg -l 'resolve_and_create' "$ROOT/crates/aletheon/src/wiring" | wc -l)" -eq 1
+# The adapter registry owns the factory definition; exactly one host wiring
+# file may call it, and that caller must remain the machine core.
+test "$(rg -l 'resolve_and_create' "$ROOT/crates/aletheon/src/wiring" \
+  -g '!**/adapters/inference/registry.rs' | wc -l)" -eq 1
 rg -q 'resolve_and_create' "$ROOT/crates/aletheon/src/wiring/core_runtime.rs"
 echo 'multi-user runtime architecture boundary: pass'
 python3 "$ROOT/scripts/verify-approval-closure.py"

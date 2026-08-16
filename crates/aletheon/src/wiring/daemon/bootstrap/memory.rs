@@ -9,11 +9,11 @@ use mnemosyne::runtime::{CoreMemory, FactStore, RecallMemory};
 use tokio::sync::Mutex;
 
 use crate::wiring::domain::MemoryGroup;
-use mnemosyne::supplemental_memory::MemoryConfig;
-use mnemosyne::MemoryGatewayService;
 use mnemosyne::memory_maintenance::{
     AgentControlMemorySemanticProposal, MemoryMaintenanceController,
 };
+use mnemosyne::supplemental_memory::MemoryConfig;
+use mnemosyne::MemoryGatewayService;
 
 pub(super) struct MemoryCompositionInput<'a> {
     pub(super) data_dir: &'a Path,

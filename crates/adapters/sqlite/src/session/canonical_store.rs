@@ -888,10 +888,9 @@ mod tests {
     #[tokio::test]
     async fn recovery_fact_persists_through_the_single_session_authority() {
         let read_model = std::sync::Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-        let store =
-            crate::session::event_sourced_store::EventSourcedSessionStore::in_memory(
-                read_model.clone(),
-            );
+        let store = crate::session::event_sourced_store::EventSourcedSessionStore::in_memory(
+            read_model.clone(),
+        );
         let session_id = SessionId("recovery-test".into());
         create_incomplete_turn(store.as_ref(), &session_id.0).await;
         let report = runtime::turn_recovery::scan_incomplete_turns(store.as_ref(), true)
@@ -920,10 +919,9 @@ mod tests {
     #[tokio::test]
     async fn startup_recovery_enumerates_all_durable_sessions() {
         let read_model = std::sync::Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-        let store =
-            crate::session::event_sourced_store::EventSourcedSessionStore::in_memory(
-                read_model.clone(),
-            );
+        let store = crate::session::event_sourced_store::EventSourcedSessionStore::in_memory(
+            read_model.clone(),
+        );
         create_incomplete_turn(store.as_ref(), "session-a").await;
         create_incomplete_turn(store.as_ref(), "session-b").await;
         let report = runtime::turn_recovery::scan_incomplete_turns(store.as_ref(), true)
@@ -1062,12 +1060,9 @@ mod tests {
                 crate::session::event_sourced_store::EventSourcedSessionStore::in_memory(
                     reopened.clone(),
                 );
-            let report = runtime::turn_recovery::scan_incomplete_turns(
-                authority.as_ref(),
-                true,
-            )
-            .await
-            .unwrap();
+            let report = runtime::turn_recovery::scan_incomplete_turns(authority.as_ref(), true)
+                .await
+                .unwrap();
             assert_eq!(report.incomplete_turns.len(), 1);
             let expected = if matches!(boundary, CrashBoundary::Tool) {
                 RecoveryClassification::Failed

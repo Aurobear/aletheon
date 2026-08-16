@@ -7,12 +7,12 @@ use ::contracts::{
     ConsciousArbitrationMode, InvocationControl, PrincipalId, SandboxRequirement, ToolEventSink,
     ToolProgress, ToolResult, ToolResultMeta, UsageReport,
 };
-use anyhow::{bail, Result};
-use async_trait::async_trait;
 use aletheon::wiring::application::governed_capability::{
     AuthorizedInvocation, GovernedCapabilityInvoker, RegistryAuthorityProvider,
     TurnAuthorityProvider, TurnCapabilityInvoker,
 };
+use anyhow::{bail, Result};
+use async_trait::async_trait;
 
 struct RecordingAuthority {
     events: Arc<Mutex<Vec<&'static str>>>,

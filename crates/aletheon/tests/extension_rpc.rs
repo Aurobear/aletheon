@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use aletheon::extensions::extension_coordinator::{ExtensionCoordinator, ExtensionRuntimePublisher};
+use aletheon::extensions::extension_coordinator::{
+    ExtensionCoordinator, ExtensionRuntimePublisher,
+};
 use aletheon::extensions::extension_snapshot::{
     ExtensionRuntimeSnapshot, ExtensionRuntimeView, ExtensionSnapshotCompiler,
 };

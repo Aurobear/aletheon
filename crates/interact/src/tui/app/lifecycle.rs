@@ -410,10 +410,7 @@ async fn drive_typed_events(app: &mut TuiModel, recorder: &mut Option<EventRecor
         match event {
             gateway::protocol::Event::Progress(progress) => {
                 if let Some(recorder) = recorder {
-                    recorder.write(
-                        &progress.payload,
-                        app.app_state.session_id.as_deref(),
-                    );
+                    recorder.write(&progress.payload, app.app_state.session_id.as_deref());
                 }
                 super::super::response::handle_event(app, &progress.payload);
             }
@@ -599,12 +596,14 @@ async fn typed_line_command(
 ) -> anyhow::Result<bool> {
     if let Some(CommandType::Skill { name, args }) = registry.parse(trimmed) {
         let outcome = client
-            .send(Command::InvokeSkill(gateway::protocol::SkillInvokeRequest {
-                skill_id: name,
-                user_args: args,
-                session: session.clone(),
-                workspace: Some(workspace.cwd().to_string_lossy().into_owned()),
-            }))
+            .send(Command::InvokeSkill(
+                gateway::protocol::SkillInvokeRequest {
+                    skill_id: name,
+                    user_args: args,
+                    session: session.clone(),
+                    workspace: Some(workspace.cwd().to_string_lossy().into_owned()),
+                },
+            ))
             .await?;
         match outcome {
             GatewayCommandOutcome::Submitted { turn } => {

@@ -2,14 +2,16 @@ use ::contracts::{
     CapabilityCall, CapabilityResult, Clock, ItemPayload, RecallRequest, RecallSet, Timer,
     TurnEventSink, TurnRequest, TurnServices,
 };
-use anyhow::Result;
-use async_trait::async_trait;
-use cognit::harness::HarnessConfig;
 use aletheon::wiring::adapters::session::canonical_store::CanonicalSessionStore;
 use aletheon::wiring::application::harness_factory::{
     CognitiveSessionFactory, LinearCognitiveSessionFactory,
 };
-use aletheon::wiring::application::turn_coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
+use aletheon::wiring::application::turn_coordinator::{
+    cancelled_result, TurnCoordinator, TurnExecution,
+};
+use anyhow::Result;
+use async_trait::async_trait;
+use cognit::harness::HarnessConfig;
 use kernel::chronos::SystemTimer;
 use kernel::KernelRuntime;
 use runtime::turn_policy::TurnPolicy;

@@ -1,5 +1,4 @@
 use ::contracts::*;
-use async_trait::async_trait;
 use adapters_sqlite::approval_repository::{
     ApprovalCreate, ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
 };
@@ -7,6 +6,7 @@ use aletheon::wiring::application::approval::{
     ApplyCoordinationOutcome, ApplyCoordinatorConfig, ManagedWorktreeCleaner,
 };
 use aletheon::wiring::application::goal::{GoalCoordinator, ObjectiveStore};
+use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -250,7 +250,12 @@ impl Fixture {
         }
     }
 
-    async fn coordinator(&self) -> (aletheon::wiring::application::approval::ApplyCoordinator, ProcessId) {
+    async fn coordinator(
+        &self,
+    ) -> (
+        aletheon::wiring::application::approval::ApplyCoordinator,
+        ProcessId,
+    ) {
         let goal = GoalCoordinator::new(self.store.clone());
         let kernel = Arc::new(::kernel::KernelRuntime::with_clock(Arc::new(TestClock)));
         let owner = kernel

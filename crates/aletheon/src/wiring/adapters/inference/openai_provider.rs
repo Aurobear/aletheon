@@ -1053,22 +1053,27 @@ mod tests {
         use ::contracts::llm_types::CacheTelemetry;
 
         const DEEPSEEK_HIT_MISS: &str =
-            include_str!("../../../tests/fixtures/usage/deepseek_hit_miss.json");
+            include_str!("../../../../../cognit/tests/fixtures/usage/deepseek_hit_miss.json");
         const DEEPSEEK_HIT_ONLY: &str =
-            include_str!("../../../tests/fixtures/usage/deepseek_hit_only.json");
-        const DEEPSEEK_EXPLICIT_ZERO_HIT: &str =
-            include_str!("../../../tests/fixtures/usage/deepseek_explicit_zero_hit.json");
+            include_str!("../../../../../cognit/tests/fixtures/usage/deepseek_hit_only.json");
+        const DEEPSEEK_EXPLICIT_ZERO_HIT: &str = include_str!(
+            "../../../../../cognit/tests/fixtures/usage/deepseek_explicit_zero_hit.json"
+        );
         const OPENAI_CACHED_TOKENS: &str =
-            include_str!("../../../tests/fixtures/usage/openai_cached_tokens.json");
-        const OPENAI_EXPLICIT_ZERO_CACHED: &str =
-            include_str!("../../../tests/fixtures/usage/openai_explicit_zero_cached.json");
-        const NEITHER: &str = include_str!("../../../tests/fixtures/usage/neither.json");
-        const DEEPSEEK_HIT_GREATER_THAN_TOTAL: &str =
-            include_str!("../../../tests/fixtures/usage/deepseek_hit_greater_than_total.json");
-        const DEEPSEEK_MISS_NOT_CONSERVED: &str =
-            include_str!("../../../tests/fixtures/usage/deepseek_miss_not_conserved.json");
+            include_str!("../../../../../cognit/tests/fixtures/usage/openai_cached_tokens.json");
+        const OPENAI_EXPLICIT_ZERO_CACHED: &str = include_str!(
+            "../../../../../cognit/tests/fixtures/usage/openai_explicit_zero_cached.json"
+        );
+        const NEITHER: &str =
+            include_str!("../../../../../cognit/tests/fixtures/usage/neither.json");
+        const DEEPSEEK_HIT_GREATER_THAN_TOTAL: &str = include_str!(
+            "../../../../../cognit/tests/fixtures/usage/deepseek_hit_greater_than_total.json"
+        );
+        const DEEPSEEK_MISS_NOT_CONSERVED: &str = include_str!(
+            "../../../../../cognit/tests/fixtures/usage/deepseek_miss_not_conserved.json"
+        );
         const FORMAT_CONFLICT: &str =
-            include_str!("../../../tests/fixtures/usage/format_conflict.json");
+            include_str!("../../../../../cognit/tests/fixtures/usage/format_conflict.json");
 
         fn parse_result(json: &str) -> anyhow::Result<InferenceUsage> {
             let usage: ApiUsage = serde_json::from_str(json).unwrap();

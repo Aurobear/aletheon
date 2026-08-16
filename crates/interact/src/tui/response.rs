@@ -2274,9 +2274,11 @@ mod tests {
         );
         handle_event(
             &mut app,
-            &serde_json::to_value(gateway::protocol::legacy_progress::ClientEvent::Reflection {
-                summary: "Inspecting known entry files before scoped discovery".into(),
-            })
+            &serde_json::to_value(
+                gateway::protocol::legacy_progress::ClientEvent::Reflection {
+                    summary: "Inspecting known entry files before scoped discovery".into(),
+                },
+            )
             .unwrap(),
         );
         assert!(app.app_state.activities.iter().any(|activity| {

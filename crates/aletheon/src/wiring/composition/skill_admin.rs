@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::wiring::composition::prefix_builder::PrefixBuilder;
 use crate::wiring::application::admin_service::{AdminServiceError, SkillAdminPort};
+use crate::wiring::composition::prefix_builder::PrefixBuilder;
 
 pub struct DefaultSkillAdmin {
     loader: Arc<Mutex<corpus::SkillLoader>>,
@@ -45,13 +45,15 @@ impl SkillAdminPort for DefaultSkillAdmin {
             .await
             .skills()
             .iter()
-            .map(|s| crate::wiring::application::admin_service::SkillDescriptor {
-                id: format!("{}:{}", s.source, s.name),
-                name: s.name.clone(),
-                description: s.description.clone(),
-                enabled: true,
-                extension_id: s.source.clone(),
-            })
+            .map(
+                |s| crate::wiring::application::admin_service::SkillDescriptor {
+                    id: format!("{}:{}", s.source, s.name),
+                    name: s.name.clone(),
+                    description: s.description.clone(),
+                    enabled: true,
+                    extension_id: s.source.clone(),
+                },
+            )
             .collect()
     }
 }

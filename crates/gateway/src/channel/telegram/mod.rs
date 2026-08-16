@@ -5,12 +5,12 @@
 
 pub mod types;
 
-use anyhow::{bail, Context, Result};
-use async_trait::async_trait;
 use crate::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
 };
+use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::router::{ChannelTransport, ProviderEnvelope};

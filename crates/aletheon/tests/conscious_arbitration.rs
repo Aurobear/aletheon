@@ -9,13 +9,13 @@ use ::contracts::{
     InvocationControl, PrincipalId, ProcessId, SalienceVector, SandboxRequirement, UsageReport,
     WorkspaceAttribution,
 };
-use anyhow::Result;
-use async_trait::async_trait;
 use aletheon::wiring::application::governed_capability::{
     ActionModulationSnapshot, AuthorizedInvocation, GovernedActionDecision, GovernedActionLoop,
     GovernedCapabilityInvoker, SelectedActionContext, SelectedActionOutcomeReceipt,
     TurnAuthorityProvider, TurnCapabilityInvoker,
 };
+use anyhow::Result;
+use async_trait::async_trait;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -340,8 +340,7 @@ async fn ac_r3_3_empty_field_proceed_matches_legacy_execution() {
 #[test]
 fn conscious_arbitration_mode_is_strict_and_observe_first() {
     assert_eq!(
-        aletheon::config::CognitiveRuntimeConfig::default()
-            .conscious_arbitration_mode,
+        aletheon::config::CognitiveRuntimeConfig::default().conscious_arbitration_mode,
         ConsciousArbitrationMode::Observe
     );
 }

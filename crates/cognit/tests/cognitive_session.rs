@@ -1,7 +1,7 @@
 use ::contracts::{
     CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider, LlmResponse,
-    LlmStream, Message, NoopTurnEventSink, OperationId, ProcessId, Role, StopReason, StubTurnServices,
-    ToolDefinition, TurnRequest, TurnServices, TurnStop,
+    LlmStream, Message, NoopTurnEventSink, OperationId, ProcessId, Role, StopReason,
+    StubTurnServices, ToolDefinition, TurnRequest, TurnServices, TurnStop,
 };
 use async_trait::async_trait;
 use cognit::harness::session_log::{HarnessSessionEventKind, HarnessSessionId};

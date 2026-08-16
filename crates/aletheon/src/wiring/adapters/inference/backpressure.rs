@@ -197,6 +197,14 @@ pub(crate) fn state_for(
         .clone()
 }
 
+pub fn provider_backpressure_snapshot(provider_key: &str) -> Option<ProviderBackpressureSnapshot> {
+    registry()
+        .lock()
+        .expect("provider registry lock poisoned")
+        .get(provider_key)
+        .map(|state| state.snapshot())
+}
+
 pub fn all_provider_backpressure_snapshots() -> HashMap<String, ProviderBackpressureSnapshot> {
     registry()
         .lock()

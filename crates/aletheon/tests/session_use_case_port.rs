@@ -4,15 +4,15 @@ use ::contracts::{
     Clock, ContentBlock, InferenceUsage, LlmProvider, LlmResponse, LlmStream, Message, SessionId,
     StopReason, ToolDefinition,
 };
+use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
+use adapters_sqlite::session::store::SessionStore;
 use aletheon::wiring::daemon::legacy_session::{
     LegacySessionResources, LegacySessionService, LegacySessionUseCases,
 };
 use async_trait::async_trait;
-use runtime::session_service::SessionService;
-use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
-use adapters_sqlite::session::store::SessionStore;
 use kernel::chronos::TestClock;
 use mnemosyne::context_compactor::MnemosyneContextCompactorFactory;
+use runtime::session_service::SessionService;
 use runtime::ContextCompactorFactory;
 use runtime::ContextWorkingSet;
 use tokio::sync::Mutex;

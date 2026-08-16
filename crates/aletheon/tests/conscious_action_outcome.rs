@@ -2,6 +2,9 @@ use kernel::capability::CapabilityInvoker;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[path = "../src/wiring/composition/dasein_workspace.rs"]
+mod dasein_workspace;
+
 use ::contracts::types::admission::RiskLevel;
 use ::contracts::{
     AgentId, AgentProfileId, AgoraSpaceId, CapabilityAuthority, CapabilityCall, CapabilityRequest,
@@ -12,18 +15,18 @@ use agora::{
     BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, CandidatePoolConfig, SelectionPolicy,
     SqliteBroadcastStore,
 };
-use anyhow::Result;
-use async_trait::async_trait;
 use aletheon::wiring::application::conscious_action::ConsciousActionBridge;
 use aletheon::wiring::application::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
 };
-use aletheon::wiring::composition::dasein_workspace::DaseinWorkspaceAdapter;
 use aletheon::wiring::application::governed_capability::{
     ActionModulationSnapshot, AuthorizedInvocation, GovernedActionDecision, GovernedActionLoop,
     GovernedCapabilityInvoker, SelectedActionContext, SelectedActionOutcomeReceipt,
     TurnAuthorityProvider, TurnCapabilityInvoker,
 };
+use anyhow::Result;
+use async_trait::async_trait;
+use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use sha2::{Digest, Sha256};

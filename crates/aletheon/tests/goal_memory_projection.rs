@@ -7,10 +7,12 @@ use adapters_sqlite::{
     event_spine::{EventReadFilter, SqliteEventSpine},
     projection_set::DefaultEventProjectionSet,
 };
+use aletheon::wiring::application::goal::{
+    GoalApprovalOutcomeSummary, GoalCompletionSummary, GoalProjectionEvidence,
+};
 use aletheon::wiring::application::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
-use aletheon::wiring::application::goal::{GoalApprovalOutcomeSummary, GoalCompletionSummary, GoalProjectionEvidence};
 use mnemosyne::MemorySensitivity;
 use runtime::{EventSpine, EventTreeId, SpineEvent, UnsequencedEvent};
 use uuid::Uuid;

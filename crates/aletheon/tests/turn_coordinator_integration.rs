@@ -241,22 +241,21 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
         clock as Arc<dyn ::contracts::Clock>,
     ));
     let projection_store: Arc<dyn SessionProjectionStore> = Arc::new(TerminalFailingStore {
-        inner: adapters_sqlite::session::canonical_store::CanonicalSessionStore::open(
-            ":memory:",
-        )
-        .unwrap(),
+        inner: adapters_sqlite::session::canonical_store::CanonicalSessionStore::open(":memory:")
+            .unwrap(),
     });
     let spine = Arc::new(adapters_sqlite::event_spine::SqliteEventSpine::open(":memory:").unwrap());
     let hardening = aletheon::config::GrokHardeningConfig {
         compaction_v2: true,
         ..Default::default()
     };
-    let coordinator = aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-        kernel.clone(),
-        projection_store,
-        spine,
-        hardening,
-    );
+    let coordinator =
+        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+            kernel.clone(),
+            projection_store,
+            spine,
+            hardening,
+        );
     let store = coordinator.store();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
@@ -307,19 +306,18 @@ async fn terminal_settlement_retry_is_idempotent_after_ambiguous_ack() {
     ));
     let terminal_attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let projection_store: Arc<dyn SessionProjectionStore> = Arc::new(AmbiguousTerminalAckStore {
-        inner: adapters_sqlite::session::canonical_store::CanonicalSessionStore::open(
-            ":memory:",
-        )
-        .unwrap(),
+        inner: adapters_sqlite::session::canonical_store::CanonicalSessionStore::open(":memory:")
+            .unwrap(),
         terminal_attempts: terminal_attempts.clone(),
     });
     let spine = Arc::new(adapters_sqlite::event_spine::SqliteEventSpine::open(":memory:").unwrap());
-    let coordinator = aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-        kernel.clone(),
-        projection_store,
-        spine,
-        aletheon::config::GrokHardeningConfig::default(),
-    );
+    let coordinator =
+        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+            kernel.clone(),
+            projection_store,
+            spine,
+            aletheon::config::GrokHardeningConfig::default(),
+        );
     let store = coordinator.store();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())

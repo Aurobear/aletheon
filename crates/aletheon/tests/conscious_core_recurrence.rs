@@ -3,6 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "../src/wiring/composition/dasein_workspace.rs"]
+mod dasein_workspace;
+
 use ::contracts::dasein::{
     ExperienceProvenance, ExperienceSource, InterpretedExperience, SelfEventId,
     SelfTransitionRequest, SelfVersion,
@@ -21,11 +24,11 @@ use agora::{
     BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, CandidatePoolConfig, SelectionPolicy,
     SqliteBroadcastStore,
 };
-use async_trait::async_trait;
 use aletheon::wiring::application::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
 };
-use aletheon::wiring::composition::dasein_workspace::DaseinWorkspaceAdapter;
+use async_trait::async_trait;
+use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use uuid::Uuid;

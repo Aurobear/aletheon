@@ -45,7 +45,9 @@ impl ExtensionBootstrap {
         &self,
         supervisor: Arc<runtime::RuntimeAgentSupervisor>,
         backend: Arc<dyn runtime::DelegateBackend>,
-        agent_host: std::sync::Weak<dyn crate::wiring::application::agent_control::AgentHostEffects>,
+        agent_host: std::sync::Weak<
+            dyn crate::wiring::application::agent_control::AgentHostEffects,
+        >,
     ) -> anyhow::Result<()> {
         self.publisher
             .bind_runtime_agent_supervisor(supervisor, backend, agent_host)

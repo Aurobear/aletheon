@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 
-use crate::wiring::governed_review::{GovernedReviewService, GovernedReviewStore};
 use crate::config::GovernedReviewSettings;
+use crate::wiring::governed_review::{GovernedReviewService, GovernedReviewStore};
 use cognit::ports::inference::InferencePort;
 
 pub(super) async fn compose_governed_review(

@@ -177,11 +177,11 @@ pub use selector::{
     RuntimeCandidateRejection, RuntimeSelectionDecision, RuntimeSelectionError,
     RuntimeSelectionRequest, RuntimeSelector,
 };
-pub use session_service::SessionService;
 pub use session_authority::{
     SessionAuthority, SessionMaintenanceReceipt, SessionWritePermit, TurnProjection,
 };
 pub use session_head::{PendingAppend, SessionHead, SessionHeadIndex};
+pub use session_service::SessionService;
 pub use session_shadow::{SessionShadowVerifier, ShadowReport};
 pub use session_writer::RuntimeSessionWriter;
 pub use settlement_engine::{

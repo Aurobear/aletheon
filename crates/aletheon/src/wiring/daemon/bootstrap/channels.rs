@@ -7,9 +7,6 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use ::contracts::ApprovalCategory;
-use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
-use adapters_sqlite::ChannelStore;
 use crate::wiring::adapters::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonChannelApprovalCallbackAdapter, DaemonChannelApprovalExecutor,
     DaemonChannelGoalApplicationPort, DaemonChannelGoalCommandAdapter,
@@ -18,6 +15,9 @@ use crate::wiring::adapters::channel::daemon_adapter::{
 use crate::wiring::adapters::channel::gmail::GmailGoalDraftCoordinator;
 use crate::wiring::adapters::external::GoogleIntegration;
 use crate::wiring::application::goal::ObjectiveStore;
+use ::contracts::ApprovalCategory;
+use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
+use adapters_sqlite::ChannelStore;
 use gateway::capability::chat::ChatHandler;
 use gateway::capability::greeting::GreetingHandler;
 use gateway::external_read::ExternalReadPreprocessor;
@@ -132,11 +132,10 @@ pub(super) fn init_telegram_channel(
         approval_application_port.clone(),
         approval_resolvers,
     ));
-    let router =
-        ChannelRouter::with_registry(SqliteChannelProjectionStore::new(store), registry)
-            .with_goal_command_port(goal_command_port)
-            .with_approval_callback_port(approval_callback_port)
-            .with_approval_delivery_port(approval_delivery_port);
+    let router = ChannelRouter::with_registry(SqliteChannelProjectionStore::new(store), registry)
+        .with_goal_command_port(goal_command_port)
+        .with_approval_callback_port(approval_callback_port)
+        .with_approval_delivery_port(approval_delivery_port);
 
     tokio::spawn(async move {
         telegram_poll_loop(

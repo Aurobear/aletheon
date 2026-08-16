@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use ::contracts::{GoalSpec, GoalState, PrincipalId};
+use aletheon::wiring::application::goal::ObjectiveStore;
 use aletheon::wiring::application::goal_service::{
     GoalAction, GoalService, GoalServiceError, GoalUseCases,
 };
-use aletheon::wiring::application::goal::ObjectiveStore;
 use tempfile::tempdir;
 use tokio::sync::Mutex;
 

@@ -8,8 +8,10 @@ use ::contracts::{
     WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
     WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
+use aletheon::wiring::application::conscious::{
+    AgentAdapter, CorpusProcessor, MetacogProcessor, MnemosyneProcessor,
+};
 use async_trait::async_trait;
-use aletheon::wiring::application::conscious::{AgentAdapter, CorpusProcessor, MetacogProcessor, MnemosyneProcessor};
 use kernel::chronos::TestClock;
 use mnemosyne::{
     ForgetPolicy, ForgetReceipt, MemoryAuthority, MemoryMetadata, MemoryScope, MemoryService,

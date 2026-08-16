@@ -10,11 +10,11 @@ use ::contracts::{
 };
 use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
 use agent_control_support::{fixture, spawn_request, TestLauncher, TEST_RUNTIME};
+use aletheon::wiring::adapters::runtime::test_registry::AgentExecutionRegistry;
 use aletheon::wiring::application::agent_control::AgentRuntimeLauncher;
 use aletheon::wiring::application::agent_control::{
     AgentHostAdapter, BoundedAgentAdmission, SettlementReceiptStore,
 };
-use aletheon::wiring::adapters::runtime::test_registry::AgentExecutionRegistry;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use std::collections::BTreeSet;

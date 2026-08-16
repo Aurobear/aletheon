@@ -2,11 +2,11 @@ use ::contracts::{
     AttemptEvidence, AttemptUsage, CognitiveRole, FailureClass, GoalBudget, GoalId, GoalSpec,
     GoalState, GoalWaitReason, PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult,
 };
-use async_trait::async_trait;
 use aletheon::wiring::application::goal::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
     AttemptRequest, ObjectiveStore, RetryDecision, RetryPolicy,
 };
+use async_trait::async_trait;
 use kernel::chronos::TestClock;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};

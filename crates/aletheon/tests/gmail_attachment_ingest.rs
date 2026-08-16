@@ -1,13 +1,13 @@
 use ::contracts::PrincipalId;
-use application::{ExternalCapabilityId, ExternalIdentityId};
-use async_trait::async_trait;
-use corpus::tools::google::oauth::GoogleBinding;
 use adapters_sqlite::artifact::ArtifactStore;
 use aletheon::wiring::adapters::channel::gmail::ingest::{
     ExternalEventIngestConfig, ExternalEventIngestMessage, GmailAttachmentFetcher,
     GmailMessageIngester, GmailMimePart,
 };
 use aletheon::wiring::adapters::external::ExternalIdentityRepository;
+use application::{ExternalCapabilityId, ExternalIdentityId};
+use async_trait::async_trait;
+use corpus::tools::google::oauth::GoogleBinding;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_util::sync::CancellationToken;

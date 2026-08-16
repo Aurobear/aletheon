@@ -25,8 +25,9 @@ pub struct EvaluationService {
     store: Arc<dyn EvaluationReceiptStore>,
     max_evaluation_ms: u64,
     projection: Option<Arc<EvaluationProjection>>,
-    capability_rollups:
-        Option<Arc<crate::wiring::application::capability_benchmark::CapabilityRollupProjectionSink>>,
+    capability_rollups: Option<
+        Arc<crate::wiring::application::capability_benchmark::CapabilityRollupProjectionSink>,
+    >,
 }
 
 impl EvaluationService {
@@ -55,7 +56,9 @@ impl EvaluationService {
 
     pub fn with_capability_rollups(
         mut self,
-        rollups: Arc<crate::wiring::application::capability_benchmark::CapabilityRollupProjectionSink>,
+        rollups: Arc<
+            crate::wiring::application::capability_benchmark::CapabilityRollupProjectionSink,
+        >,
     ) -> Self {
         self.capability_rollups = Some(rollups);
         self

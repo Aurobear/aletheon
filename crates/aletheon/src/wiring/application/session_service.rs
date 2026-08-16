@@ -6,5 +6,5 @@
 //! compiling while the cutover completes. No new implementation is added here.
 
 pub use runtime::session_service::{
-    InterruptOutcome, ResumeResult, SessionService, session_visible_to,
+    session_visible_to, InterruptOutcome, ResumeResult, SessionService,
 };

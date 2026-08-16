@@ -7,7 +7,6 @@
 //! translates; it never executes business logic.  This seam is additive: the
 //! legacy daemon handlers remain authoritative until the CGP-03 route cutover.
 
-use async_trait::async_trait;
 use crate::protocol::{
     CancelActiveTurn, Command, ExecuteShellRequest, ExtensionRequest, ForkSessionRequest,
     ProtocolError, Query, RequestSessionCreation, RequestedCollaborationMode,
@@ -17,6 +16,7 @@ use crate::protocol::{
     SubmitPromptRequest, TurnRef, WireRequest, WireRequestBody, WireResponse, WireResponseBody,
     WorkspaceRestoreOutcome, PROTOCOL_VERSION,
 };
+use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Re-export to keep the typed surface self-contained (the unused alias is

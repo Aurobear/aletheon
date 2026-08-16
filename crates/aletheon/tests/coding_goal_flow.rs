@@ -1,10 +1,10 @@
-use async_trait::async_trait;
-use base64::Engine;
-use contracts::CodingAttemptRequest;
 use aletheon::wiring::application::goal::{
     AttemptCoordinationOutcome, AttemptCoordinatorError, AttemptExecutor, AttemptRequest,
     CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
+use async_trait::async_trait;
+use base64::Engine;
+use contracts::CodingAttemptRequest;
 const TEST_CODING_RUNTIME_ID: &str = "fake-coding-runtime";
 use ::contracts::{
     AttemptEvidence, AttemptId, AttemptUsage, Clock, CodingJobId, CodingJobReport, CodingJobSpec,

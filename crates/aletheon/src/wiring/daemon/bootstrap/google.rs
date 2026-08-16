@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::wiring::adapters::channel::gmail::{load_gmail_ingress_policies, GmailGoalEventIngress};
 use crate::wiring::adapters::external::{
-    GoogleAccountResolverAdapter, GoogleCredentialSourceAdapter, ExternalIdentityRepository,
+    ExternalIdentityRepository, GoogleAccountResolverAdapter, GoogleCredentialSourceAdapter,
     GoogleIntegration,
 };
 

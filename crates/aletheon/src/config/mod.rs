@@ -16,11 +16,11 @@ mod provider;
 mod robot;
 pub mod schema;
 
+pub use ::contracts::EvaluationSettings;
 pub use agent::{
-    AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, CognitiveRuntimeConfig,
+    AgentConfig, AgentLoopConfig, CircuitBreakerConfig, CognitiveRuntimeConfig, EvolutionSettings,
     HooksConfig, MultiAgentConfig, PerceptionConfig,
 };
-pub use runtime::backpressure::BackpressureConfig;
 pub use channel::TelegramChannelConfig;
 pub use cognit::config::CodingRuntimeConfig;
 pub use cognit::config::{
@@ -29,8 +29,6 @@ pub use cognit::config::{
     DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, RoleRuntimeConfig,
 };
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
-pub use ::contracts::EvaluationSettings;
-pub use metacog::genome::GenomeConfig;
 pub use governed_review::{GovernedReviewLimits, GovernedReviewSettings};
 pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{DaemonConfig, McpServerConfig, PluginsConfig, SandboxConfig};
@@ -40,7 +38,11 @@ pub use integrations::{
     ResolvedIntegrations, ResolvedSearchIntegration, RuntimeBootstrapConfig, SecretRef,
     SecretValue, SessionWriterMode,
 };
+pub use metacog::genome::GenomeConfig;
 pub use mnemosyne::memory_policy::MemoryPolicyConfig;
+pub use mnemosyne::supplemental_memory::{
+    MemoryConfig, SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
+};
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{
     CacheReportingMode, ModelRoutingConfig, PrefixCacheCapability, ProviderConfig, Transport,
@@ -50,9 +52,7 @@ pub use robot::{
     ResolvedRobotPerceptionConfig, ResolvedRobotPolicyConfig, RobotDeploymentGateConfig,
     RobotIntegrationConfig, RobotObservationSchemaConfig, RobotPerceptionConfig, RobotPolicyConfig,
 };
-pub use mnemosyne::supplemental_memory::{
-    MemoryConfig, SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
-};
+pub use runtime::backpressure::BackpressureConfig;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

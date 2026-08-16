@@ -5,8 +5,8 @@ use ::contracts::{
     PrincipalContext, PrincipalId, ThreadId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
     WorkspacePolicy,
 };
-use aletheon::wiring::application::turn_coordinator::{ActiveTurnKey, TurnExecution};
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
+use aletheon::wiring::application::turn_coordinator::{ActiveTurnKey, TurnExecution};
 use kernel::KernelRuntime;
 use runtime::turn_policy::TurnPolicy;
 use tokio::sync::{mpsc, Barrier, Mutex, Semaphore};
@@ -182,12 +182,10 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         )
-        .with_backpressure(
-            aletheon::config::BackpressureConfig {
-                max_concurrent_turns: Some(1),
-                ..Default::default()
-            },
-        ),
+        .with_backpressure(aletheon::config::BackpressureConfig {
+            max_concurrent_turns: Some(1),
+            ..Default::default()
+        }),
     );
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())

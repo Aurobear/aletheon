@@ -84,7 +84,9 @@ impl DaemonExtensionRuntimePublisher {
         &self,
         supervisor: Arc<runtime::RuntimeAgentSupervisor>,
         backend: Arc<dyn runtime::DelegateBackend>,
-        agent_host: std::sync::Weak<dyn crate::wiring::application::agent_control::AgentHostEffects>,
+        agent_host: std::sync::Weak<
+            dyn crate::wiring::application::agent_control::AgentHostEffects,
+        >,
     ) -> Result<()> {
         let executables = self.executables.read().await.clone();
         if let Some(runtime) = executables {
@@ -124,7 +126,12 @@ impl PackageProfileRuntime {
         snapshot: &ExtensionRuntimeSnapshot,
         definitions: &[::contracts::ToolDefinition],
         profile_definitions: &[::contracts::ToolDefinition],
-    ) -> Result<Vec<(String, crate::wiring::adapters::runtime::ResolvedAgentProfile)>> {
+    ) -> Result<
+        Vec<(
+            String,
+            crate::wiring::adapters::runtime::ResolvedAgentProfile,
+        )>,
+    > {
         let mut paths = BTreeMap::<String, Vec<PathBuf>>::new();
         for profile in snapshot.agent_profiles.iter() {
             paths
@@ -169,7 +176,10 @@ impl PackageProfileRuntime {
     fn publish(
         &self,
         owners: &[String],
-        prepared: Vec<(String, crate::wiring::adapters::runtime::ResolvedAgentProfile)>,
+        prepared: Vec<(
+            String,
+            crate::wiring::adapters::runtime::ResolvedAgentProfile,
+        )>,
     ) -> Result<()> {
         self.registry
             .replace_package_profiles(owners, prepared)

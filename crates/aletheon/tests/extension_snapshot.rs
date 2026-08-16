@@ -134,7 +134,8 @@ fn administrator_mcp_ids_are_reserved() {
 async fn runtime_view_publishes_complete_snapshots() {
     let view = aletheon::extensions::extension_snapshot::ExtensionRuntimeView::default();
     let before = view.load().await;
-    let mut replacement = aletheon::extensions::extension_snapshot::ExtensionRuntimeSnapshot::empty();
+    let mut replacement =
+        aletheon::extensions::extension_snapshot::ExtensionRuntimeSnapshot::empty();
     replacement.digest = "replacement".into();
     view.publish(replacement).await;
     assert_ne!(view.load().await.digest, before.digest);

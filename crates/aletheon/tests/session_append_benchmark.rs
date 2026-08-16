@@ -11,8 +11,8 @@ use ::contracts::{
     ItemId, ItemPayload, ItemRecord, SessionId, SessionRecord, SessionStatus, TurnId,
     SESSION_SCHEMA_VERSION,
 };
-use adapters_sqlite::{event_spine::SqliteEventSpine, projection_set::DefaultEventProjectionSet};
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
+use adapters_sqlite::{event_spine::SqliteEventSpine, projection_set::DefaultEventProjectionSet};
 use rusqlite::{params, Connection};
 
 fn percentile(sorted_micros: &[u128], percentile: usize) -> u128 {
@@ -106,11 +106,12 @@ async fn s1_append_scale_matrix_reports_percentiles_and_throughput() {
             let directory = tempfile::tempdir().unwrap();
             let session_path = directory.path().join("sessions.db");
             seed(&session_path, total_events, session_count);
-            let store = aletheon::wiring::adapters::session::test_composition::compose_session_store(
-                Arc::new(CanonicalSessionStore::open(&session_path).unwrap()),
-                Arc::new(SqliteEventSpine::open(directory.path().join("events.db")).unwrap()),
-                Arc::new(DefaultEventProjectionSet::in_memory()),
-            );
+            let store =
+                aletheon::wiring::adapters::session::test_composition::compose_session_store(
+                    Arc::new(CanonicalSessionStore::open(&session_path).unwrap()),
+                    Arc::new(SqliteEventSpine::open(directory.path().join("events.db")).unwrap()),
+                    Arc::new(DefaultEventProjectionSet::in_memory()),
+                );
             let mut heads = HashMap::new();
             let base = total_events / session_count;
             let remainder = total_events % session_count;

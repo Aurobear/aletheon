@@ -1,9 +1,9 @@
+use crate::config::{CognitiveRuntimeConfig, GenomeConfig};
 use crate::wiring::evolution_coordinator::{
     EvolutionConfig, EvolutionCoordinator, EvolutionSummary,
 };
 use crate::wiring::mode_router::ModeRouter;
 use ::contracts::Clock;
-use crate::config::{CognitiveRuntimeConfig, GenomeConfig};
 use anyhow::Result;
 use cognit::harness::interrupt::InterruptFlag;
 use std::sync::Arc;

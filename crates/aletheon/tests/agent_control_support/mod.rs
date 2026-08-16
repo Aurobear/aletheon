@@ -11,11 +11,11 @@ use ::contracts::{
     AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind, AgentControlPort,
     AgentId, AgentProfileId, AgentResult, AgentSpawnRequest, AttemptUsage, ProcessId, RuntimeId,
 };
-use async_trait::async_trait;
 use aletheon::wiring::application::agent_control::{
     AgentEventSink, AgentHostAdapter, AgentRuntimeInput, AgentRuntimeLauncher,
     BoundedAgentAdmission,
 };
+use async_trait::async_trait;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use tokio::sync::Notify;
@@ -145,7 +145,9 @@ pub fn fixture_with_task_admission(
     let service = Arc::new(service);
     Fixture {
         port: Arc::new(
-            aletheon::wiring::application::agent_control::RuntimeAgentControlFacade::new(service.clone()),
+            aletheon::wiring::application::agent_control::RuntimeAgentControlFacade::new(
+                service.clone(),
+            ),
         ),
         service,
         kernel,

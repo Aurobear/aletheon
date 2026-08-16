@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use ::contracts::*;
-use adapters_sqlite::{event_spine::SqliteEventSpine, projection_set::DefaultEventProjectionSet};
 use adapters_sqlite::session::canonical_store::{project_messages, CanonicalSessionStore};
+use adapters_sqlite::{event_spine::SqliteEventSpine, projection_set::DefaultEventProjectionSet};
 
 fn session(id: &str, parent: Option<SessionFork>) -> SessionRecord {
     SessionRecord {
@@ -98,9 +98,10 @@ async fn append_is_transactional_idempotent_and_restart_durable() {
 
 #[tokio::test]
 async fn fork_copies_bounded_history_with_new_item_identity() {
-    let store = aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
-        Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
-    );
+    let store =
+        aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
+            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
+        );
     let parent = SessionId("parent".into());
     let turn = TurnId::new();
     store.create(session("parent", None)).await.unwrap();

@@ -39,9 +39,9 @@ pub(super) mod session_infrastructure;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
+use crate::config::GrokHardeningConfig;
 use crate::wiring::daemon::handler::ports::HandlerPorts;
 use crate::wiring::daemon::handler::RequestHandler;
-use crate::config::GrokHardeningConfig;
 
 /// Transient, non-cloneable result of daemon composition.
 ///

@@ -2,20 +2,7 @@
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::DaemonConfig;
 use super::approval_gate::{bootstrap_workspace_trust_resolver, DurableSocketApprovalGate};
-use crate::wiring::composition::prefix_builder::PrefixBuilder;
-use crate::wiring::daemon::handler::RequestHandler;
-use crate::wiring::evolution_coordinator::EvolutionConfig;
-use crate::wiring::cognitive_runtime::AletheonCognitiveRuntime;
-use ::contracts::{Clock, Subsystem};
 use crate::config::CognitiveRuntimeConfig;
-use anyhow::Context;
-use cognit::ports::inference::InferencePort;
-use corpus::hook::builtin::audit_hook;
-use corpus::security::socket_approval::SocketApprovalGate;
-use corpus::security::storm_breaker::StormBreaker;
-use corpus::skill::plugin::register_skill;
-use corpus::Registry;
-use corpus::{HookRegistry, SkillLoader, SkillRouter};
 use crate::wiring::adapters::channel::gmail::GmailGoalDraftCoordinator;
 use crate::wiring::adapters::runtime::worktree_recovery::{
     WorktreeRecoveryConfig, WorktreeRecoveryService,
@@ -24,6 +11,19 @@ use crate::wiring::adapters::runtime::{
     pi_rpc_environment_from_process, LinuxProcessController, PiDelegateBackend,
 };
 use crate::wiring::application::goal::ObjectiveStore;
+use crate::wiring::cognitive_runtime::AletheonCognitiveRuntime;
+use crate::wiring::composition::prefix_builder::PrefixBuilder;
+use crate::wiring::daemon::handler::RequestHandler;
+use crate::wiring::evolution_coordinator::EvolutionConfig;
+use ::contracts::{Clock, Subsystem};
+use anyhow::Context;
+use cognit::ports::inference::InferencePort;
+use corpus::hook::builtin::audit_hook;
+use corpus::security::socket_approval::SocketApprovalGate;
+use corpus::security::storm_breaker::StormBreaker;
+use corpus::skill::plugin::register_skill;
+use corpus::Registry;
+use corpus::{HookRegistry, SkillLoader, SkillRouter};
 use kernel::capability::governed::CapabilityService;
 use runtime::event_projection::CanonicalEventBus;
 use std::collections::HashMap;
@@ -372,9 +372,10 @@ impl RequestHandler {
         }
 
         // One approval gate is shared by guarded tools and MCP elicitation.
-        let session_approvals = crate::wiring::application::admin_service::ScopedApprovalCache::open(
-            &data_dir.join("transient_session_grants.db"),
-        )?;
+        let session_approvals =
+            crate::wiring::application::admin_service::ScopedApprovalCache::open(
+                &data_dir.join("transient_session_grants.db"),
+            )?;
         let (socket_approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
         let approval_gate: Arc<dyn corpus::security::approval::ApprovalGate> =
             Arc::new(DurableSocketApprovalGate {
@@ -778,7 +779,8 @@ impl RequestHandler {
         let admin_hooks = hook_registry.clone();
         let cached_prefix = Arc::new(Mutex::new(cached_prefix));
         let admin_cached_prefix = cached_prefix.clone();
-        let pending_approvals = crate::wiring::application::admin_service::PendingApprovals::default();
+        let pending_approvals =
+            crate::wiring::application::admin_service::PendingApprovals::default();
         let admin_pending_approvals = pending_approvals.clone();
         let admin_session_approvals = session_approvals.clone();
         let memory_queue = Arc::new(Mutex::new(Vec::new()));
@@ -963,9 +965,11 @@ impl RequestHandler {
             runtime_bindings.push(super::services::RuntimeLauncherBinding {
                 id: crate::wiring::adapters::runtime::NativeCognitRuntime::runtime_id(),
                 launcher: native,
-                manifest: Some(crate::wiring::adapters::runtime::NativeCognitRuntime::manifest(
-                    composition.profiles.names(),
-                )),
+                manifest: Some(
+                    crate::wiring::adapters::runtime::NativeCognitRuntime::manifest(
+                        composition.profiles.names(),
+                    ),
+                ),
             });
             composition
         };
@@ -1239,7 +1243,8 @@ impl RequestHandler {
         let external_sync = external_sync.map(|handle| {
             Arc::new(crate::wiring::adapters::google::GoogleSyncWorkerPort::new(
                 handle,
-            )) as Arc<dyn crate::wiring::application::admin_service::BackgroundWorkerPort>
+            ))
+                as Arc<dyn crate::wiring::application::admin_service::BackgroundWorkerPort>
         });
         let supplemental_memory_worker_task =
             supplemental_memory_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
@@ -1394,27 +1399,28 @@ impl RequestHandler {
             .with_event_bus(event_bus.clone())
             .with_session_service(turn_orchestrator.session_service.clone()),
         );
-        let health_use_cases: Arc<dyn crate::wiring::application::request_use_cases::HealthUseCases> =
-            Arc::new(
-                crate::wiring::application::request_use_cases::ProductionHealthUseCases::new(
-                    crate::wiring::application::request_use_cases::ProductionHealthResources {
-                        runtime_port: request_facades.runtime_port.clone(),
-                        reflections: request_facades.reflections.clone(),
-                        self_status: request_facades.self_status,
-                        supplemental: request_facades.supplemental,
-                        data_root: data_dir.clone(),
-                        registry: health_registry,
-                        clock: clock.clone(),
-                        started_at,
-                        active_connections: active_connections.clone(),
-                        daemon_cancel: cancel_token.clone(),
-                        channel_task: channel_task.clone(),
-                        external_sync: external_sync.clone(),
-                        goal_worker: goal_worker_task.clone(),
-                        agent_recovery: agent_recovery.clone(),
-                    },
-                ),
-            );
+        let health_use_cases: Arc<
+            dyn crate::wiring::application::request_use_cases::HealthUseCases,
+        > = Arc::new(
+            crate::wiring::application::request_use_cases::ProductionHealthUseCases::new(
+                crate::wiring::application::request_use_cases::ProductionHealthResources {
+                    runtime_port: request_facades.runtime_port.clone(),
+                    reflections: request_facades.reflections.clone(),
+                    self_status: request_facades.self_status,
+                    supplemental: request_facades.supplemental,
+                    data_root: data_dir.clone(),
+                    registry: health_registry,
+                    clock: clock.clone(),
+                    started_at,
+                    active_connections: active_connections.clone(),
+                    daemon_cancel: cancel_token.clone(),
+                    channel_task: channel_task.clone(),
+                    external_sync: external_sync.clone(),
+                    goal_worker: goal_worker_task.clone(),
+                    agent_recovery: agent_recovery.clone(),
+                },
+            ),
+        );
         let reflection_use_cases: Arc<
             dyn crate::wiring::application::request_use_cases::ReflectionUseCases,
         > = Arc::new(

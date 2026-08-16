@@ -6,7 +6,5 @@
 //! tests keep compiling while the cutover completes. No new implementation is
 //! added here.
 
-pub use application::capability_benchmark::{
-    CapabilityReceiptRollup, CapabilityRollupKey,
-};
 pub use adapters_sqlite::SqliteCapabilityRollupProjectionSink as CapabilityRollupProjectionSink;
+pub use application::capability_benchmark::{CapabilityReceiptRollup, CapabilityRollupKey};

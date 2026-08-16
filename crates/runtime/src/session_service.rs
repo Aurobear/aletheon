@@ -274,10 +274,7 @@ impl SessionService {
         }
         Ok(())
     }
-    pub fn new(
-        store: Arc<dyn SessionAppendStore>,
-        active: Arc<ActiveTurnRegistry>,
-    ) -> Self {
+    pub fn new(store: Arc<dyn SessionAppendStore>, active: Arc<ActiveTurnRegistry>) -> Self {
         Self::with_protocol_journal(store, active, ":memory:").expect("in-memory protocol journal")
     }
 

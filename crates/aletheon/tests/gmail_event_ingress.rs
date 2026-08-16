@@ -1,4 +1,12 @@
 use ::contracts::PrincipalId;
+use aletheon::wiring::adapters::channel::gmail::sender_policy::{
+    AuthenticationRequirement, GmailSenderPolicy,
+};
+use aletheon::wiring::adapters::channel::gmail::{
+    load_gmail_ingress_policies, GmailGoalEventIngress, GmailIngressPolicy,
+};
+use aletheon::wiring::adapters::external::ExternalIdentityRepository;
+use aletheon::wiring::application::goal::ObjectiveStore;
 use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
@@ -10,14 +18,6 @@ use corpus::tools::google::{
     GmailIngressCapability, GmailIngressHeader, GmailIngressMessage, GmailIngressPart,
     GoogleApiError,
 };
-use aletheon::wiring::application::goal::ObjectiveStore;
-use aletheon::wiring::adapters::channel::gmail::sender_policy::{
-    AuthenticationRequirement, GmailSenderPolicy,
-};
-use aletheon::wiring::adapters::channel::gmail::{
-    load_gmail_ingress_policies, GmailGoalEventIngress, GmailIngressPolicy,
-};
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;

@@ -4,12 +4,12 @@ use ::contracts::{
     ItemPayload, OperationId, OperationState, SessionAppendStore, SessionId, TurnMetrics,
     TurnRequest, TurnResult, TurnStop,
 };
-use async_trait::async_trait;
+use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
 use aletheon::wiring::application::post_turn_projection::{
     PostTurnDispatch, PostTurnOutcome, PostTurnProjection,
 };
 use aletheon::wiring::application::turn_coordinator::TurnExecution;
-use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
+use async_trait::async_trait;
 use kernel::KernelRuntime;
 use runtime::turn_policy::TurnPolicy;
 use tokio::sync::{oneshot, Mutex};

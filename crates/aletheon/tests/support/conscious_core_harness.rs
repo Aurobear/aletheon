@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+#[path = "../../src/wiring/composition/dasein_workspace.rs"]
+mod dasein_workspace;
 use mnemosyne::memory_job_projection::MemoryJobProjection;
 use runtime::event_projection::agent_tree::AgentTreeProjection;
 use runtime::event_projection::debug::DebugProjection;
@@ -24,17 +26,19 @@ use ::contracts::{
     SESSION_SCHEMA_VERSION,
 };
 use adapters_sqlite::event_projection::SqliteProjectionStore;
-use anyhow::Context;
-use async_trait::async_trait;
 use aletheon::wiring::application::agent_control::{
     AgentEventSink, AgentHostAdapter, AgentRunProjection, AgentRuntimeInput, AgentRuntimeLauncher,
     BoundedAgentAdmission,
 };
-use aletheon::wiring::application::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
-use aletheon::wiring::composition::dasein_workspace::DaseinWorkspaceAdapter;
+use aletheon::wiring::application::conscious_workspace::{
+    ConsciousTurnPort, ConsciousWorkspaceRegistry,
+};
 use aletheon::wiring::application::governed_capability::{
     GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
+use anyhow::Context;
+use async_trait::async_trait;
+use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallItem, RecallRequest, RecallSet};
@@ -843,7 +847,8 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
             ::contracts::ProcessId(Uuid::from_u128(804)),
             kernel.clone(),
             Arc::new(agora::AgoraRegistry::new(kernel.clock())),
-            aletheon::wiring::application::conscious_core_coordinator::ConsciousCoreConfig::default(),
+            aletheon::wiring::application::conscious_core_coordinator::ConsciousCoreConfig::default(
+            ),
         )?;
     coordinator.register_processor(
         Arc::new(FeedbackProcessor {

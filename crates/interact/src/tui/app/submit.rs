@@ -265,10 +265,14 @@ pub(super) async fn typed_set_collaboration_mode(
     {
         Ok(GatewayCommandOutcome::CollaborationModeUpdated { mode }) => {
             app.app_state.mode = match mode {
-                gateway::protocol::RequestedCollaborationMode::Default => CollaborationMode::Default,
+                gateway::protocol::RequestedCollaborationMode::Default => {
+                    CollaborationMode::Default
+                }
                 gateway::protocol::RequestedCollaborationMode::Plan => CollaborationMode::Plan,
                 gateway::protocol::RequestedCollaborationMode::Auto => CollaborationMode::Auto,
-                gateway::protocol::RequestedCollaborationMode::Sandbox => CollaborationMode::Sandbox,
+                gateway::protocol::RequestedCollaborationMode::Sandbox => {
+                    CollaborationMode::Sandbox
+                }
             };
             true
         }
@@ -444,12 +448,14 @@ async fn typed_skill_run(app: &mut TuiModel, name: String, args: String) -> bool
         return false;
     };
     let outcome = client
-        .send(Command::InvokeSkill(gateway::protocol::SkillInvokeRequest {
-            skill_id: name,
-            user_args: args,
-            session: app.app_state.session_id.clone().map(SessionRef),
-            workspace: Some(app.workspace.cwd().to_string_lossy().into_owned()),
-        }))
+        .send(Command::InvokeSkill(
+            gateway::protocol::SkillInvokeRequest {
+                skill_id: name,
+                user_args: args,
+                session: app.app_state.session_id.clone().map(SessionRef),
+                workspace: Some(app.workspace.cwd().to_string_lossy().into_owned()),
+            },
+        ))
         .await;
     match outcome {
         Ok(GatewayCommandOutcome::Submitted { turn }) => mark_typed_turn_submitted(app, turn),

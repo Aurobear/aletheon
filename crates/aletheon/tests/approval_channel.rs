@@ -1,12 +1,12 @@
 use ::contracts::*;
+use adapters_sqlite::approval_repository::{ApprovalCreate, ApprovalRepository};
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
 use adapters_sqlite::ChannelStore;
-use async_trait::async_trait;
-use adapters_sqlite::approval_repository::{ApprovalCreate, ApprovalRepository};
-use aletheon::wiring::application::goal::ObjectiveStore;
 use aletheon::wiring::adapters::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonChannelApprovalCallbackAdapter,
 };
+use aletheon::wiring::application::goal::ObjectiveStore;
+use async_trait::async_trait;
 use gateway::channel::*;
 use gateway::ports::{ApprovalResolverRegistry, ChannelTurnApplicationPort, ChannelTurnRequest};
 use gateway::router::{ChannelRouter, ChannelTransport, ProviderEnvelope};
@@ -129,12 +129,9 @@ impl Fixture {
             adapter.clone(),
             Arc::new(ApprovalResolverRegistry::new()),
         ));
-        ChannelRouter::new(
-            SqliteChannelProjectionStore::new(store),
-            Arc::new(NoTurn),
-        )
-        .with_approval_callback_port(callback)
-        .with_approval_delivery_port(adapter)
+        ChannelRouter::new(SqliteChannelProjectionStore::new(store), Arc::new(NoTurn))
+            .with_approval_callback_port(callback)
+            .with_approval_delivery_port(adapter)
     }
     fn callback(&self, message: &str, sender: &str, action: String, time: i64) -> ProviderEnvelope {
         ProviderEnvelope {

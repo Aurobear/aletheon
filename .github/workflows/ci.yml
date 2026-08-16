@@ -78,7 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check io_uring contract
-        run: bash scripts/cargo-agent.sh +stable check -p fabric --all-targets --features io_uring
+        run: bash scripts/cargo-agent.sh +stable check -p contracts --all-targets --features io_uring
       - name: Check Linux integration contracts
         run: bash scripts/cargo-agent.sh +stable check -p corpus --all-targets --features dbus,input,display,a11y,ocr,sandbox-primitives
       - name: Check memory feature contracts

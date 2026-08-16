@@ -9,11 +9,10 @@
 use std::sync::Arc;
 
 use crate::config::CognitiveRuntimeConfig;
-use contracts::Clock;
 use cognit::harness::{
-    CognitiveSessionFactory, HarnessCognitiveSessionFactory, HarnessConfig,
-    selected_harness_kind,
+    selected_harness_kind, CognitiveSessionFactory, HarnessCognitiveSessionFactory, HarnessConfig,
 };
+use contracts::Clock;
 
 /// Assemble the General production cognitive-session factory from effective
 /// daemon configuration. `memory` and `dasein` are accepted for signature

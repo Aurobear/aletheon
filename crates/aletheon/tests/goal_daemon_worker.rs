@@ -1,8 +1,8 @@
 use ::contracts::{
     GoalBudget, GoalSpec, GoalState, PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult,
 };
-use async_trait::async_trait;
 use aletheon::wiring::application::goal::{AttemptExecutor, GoalWorker, ObjectiveStore};
+use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tempfile::NamedTempFile;
 use tokio::sync::mpsc;

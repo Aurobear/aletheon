@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aletheon::wiring::daemon::bootstrap::extension_publisher::DaemonExtensionRuntimePublisher;
 use aletheon::extensions::extension_coordinator::ExtensionCoordinator;
 use aletheon::extensions::extension_snapshot::{ExtensionRuntimeView, ExtensionSnapshotCompiler};
+use aletheon::wiring::daemon::bootstrap::extension_publisher::DaemonExtensionRuntimePublisher;
 use corpus::tools::tools::skill_tools::SharedSkills;
 use flate2::{write::GzEncoder, Compression};
 use http_body_util::{BodyExt, Full};

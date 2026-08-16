@@ -90,9 +90,7 @@ impl DomainServices {
         self.corpus.clone()
     }
 
-    pub(crate) fn cognition(
-        &self,
-    ) -> Arc<dyn cognit::harness::CognitiveSessionFactory> {
+    pub(crate) fn cognition(&self) -> Arc<dyn cognit::harness::CognitiveSessionFactory> {
         self.cognition.clone()
     }
 }

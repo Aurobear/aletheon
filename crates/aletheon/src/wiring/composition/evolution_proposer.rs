@@ -2,13 +2,13 @@
 //! owns neither admission nor apply authority.
 #![allow(clippy::items_after_test_module)]
 
-use ::contracts::{
-    ApprovalCategory, ApprovalRisk, ApprovalSubject, GoalBudget, GoalSpec, PrincipalId,
-};
 use crate::wiring::application::capability_benchmark::CapabilityRollupProjectionSink;
 use crate::wiring::application::{
     approval::{ApprovalCreate, ApprovalRepository},
     goal::ObjectiveStore,
+};
+use ::contracts::{
+    ApprovalCategory, ApprovalRisk, ApprovalSubject, GoalBudget, GoalSpec, PrincipalId,
 };
 use rusqlite::OptionalExtension;
 use sha2::Digest;

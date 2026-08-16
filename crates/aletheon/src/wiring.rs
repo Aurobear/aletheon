@@ -5,9 +5,9 @@
 //! see the facade in [`crate::launcher`].
 
 pub mod approval_service;
+pub mod cognitive_runtime;
 pub mod embodiment;
 pub mod evolution_coordinator;
-pub mod cognitive_runtime;
 pub mod governed_review;
 pub mod mode_router;
 pub mod workspace_trust;
@@ -21,9 +21,9 @@ use tracing::info;
 
 use crate::launcher::{CoreLaunch, DaemonLaunch, EnsureUserDaemon, EnsureUserDaemonError};
 
-pub(crate) mod composition;
-pub mod application;
 pub mod adapters;
+pub mod application;
+pub(crate) mod composition;
 pub mod core_rpc;
 pub mod core_runtime;
 pub mod daemon;

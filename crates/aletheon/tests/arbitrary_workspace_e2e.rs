@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ::contracts::{
+    ContentBlock, InferenceUsage, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk,
+};
 use aletheon::wiring::core_rpc::{CorePeerPolicy, CoreRpcServer};
 use cognit::ports::inference::{
     CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
-};
-use ::contracts::{
-    ContentBlock, InferenceUsage, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk,
 };
 use futures::stream;
 use tempfile::TempDir;

@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
 use aletheon::wiring::application::evaluation::{
     EvaluationProjection, EvaluationProjectionContext, EvaluationProjectionMetrics,
     EvaluationProjectionRecord, EvaluationProjectionSink,
 };
+use async_trait::async_trait;
 
 struct RecordingSink {
     name: &'static str,

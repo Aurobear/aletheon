@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use ::contracts::{SessionId, TurnRequest};
 use adapters_sqlite::event_spine::{EventReadFilter, SqliteEventSpine};
-use aletheon::wiring::application::session_service::{InterruptOutcome, SessionService};
-use aletheon::wiring::application::turn_coordinator::{cancelled_result, ActiveTurnKey, TurnExecution};
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
+use aletheon::wiring::application::session_service::{InterruptOutcome, SessionService};
+use aletheon::wiring::application::turn_coordinator::{
+    cancelled_result, ActiveTurnKey, TurnExecution,
+};
 use kernel::KernelRuntime;
 use runtime::turn_policy::TurnPolicy;
 

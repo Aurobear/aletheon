@@ -10,11 +10,11 @@
 mod legacy;
 pub use legacy::{LegacyJsonRpcClient, LegacyJsonRpcEventStream, LegacyProtocolClient};
 
-use async_trait::async_trait;
 use crate::protocol::{
     Command, Cursor, Event, ProtocolError, Query, SessionRef, SessionSnapshotQuery, TurnRef,
     WireRequest, WireRequestBody, WireResponse, WireResponseBody, PROTOCOL_VERSION,
 };
+use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::{sleep, Duration};

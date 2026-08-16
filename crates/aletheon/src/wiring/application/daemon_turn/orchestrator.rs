@@ -1,10 +1,10 @@
 //! Daemon turn orchestration over narrow lifecycle and pipeline resources.
 
+use crate::config::GrokHardeningConfig;
 use crate::wiring::application::turn_coordinator::TurnCoordinator;
 use crate::wiring::application::turn_runtime_ports::ActiveAgentProfilePort;
 use crate::wiring::application::TurnPipeline;
 use ::contracts::{OperationId, PrincipalId, ProcessId, ProcessSignal, ThreadId, TurnId};
-use crate::config::GrokHardeningConfig;
 use kernel::KernelRuntime;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};

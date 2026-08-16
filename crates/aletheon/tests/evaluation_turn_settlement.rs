@@ -6,11 +6,11 @@ use ::contracts::{
     SessionId, TaskKind, TurnMetrics, TurnRequest, TurnResult, TurnStop,
 };
 use adapters_sqlite::evaluation::SqliteEvaluationStore;
+use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
 use aletheon::wiring::application::evaluation::{
     EvaluationReceiptStore, EvaluationService, TurnEvaluationArtifacts,
 };
 use aletheon::wiring::application::turn_coordinator::{TurnCoordinator, TurnExecution};
-use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
 use kernel::KernelRuntime;
 use runtime::turn_diff_tracker::TurnFileDeltaSnapshot;
 use runtime::turn_policy::TurnPolicy;

@@ -1,12 +1,12 @@
 use ::contracts::PrincipalId;
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
 use adapters_sqlite::ChannelStore;
+use aletheon::wiring::adapters::external::{ExternalIdentityRepository, GoogleIntegration};
 use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::oauth::{GoogleCapability, GoogleOAuthProvider, OAuthClientConfig};
 use corpus::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
-use aletheon::wiring::adapters::external::{ExternalIdentityRepository, GoogleIntegration};
 use gateway::capability::chat::ChatHandler;
 use gateway::capability::greeting::GreetingHandler;
 use gateway::channel::{

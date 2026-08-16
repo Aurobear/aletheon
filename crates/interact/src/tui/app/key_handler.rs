@@ -211,10 +211,12 @@ pub async fn handle_key(app: &mut TuiModel, key: KeyEvent) {
                 };
                 if let Some(client) = app.controller.typed_gateway.as_mut() {
                     let outcome = client
-                        .send(Command::ForkSession(gateway::protocol::ForkSessionRequest {
-                            session: SessionRef(session_id.clone()),
-                            through_sequence,
-                        }))
+                        .send(Command::ForkSession(
+                            gateway::protocol::ForkSessionRequest {
+                                session: SessionRef(session_id.clone()),
+                                through_sequence,
+                            },
+                        ))
                         .await;
                     match outcome {
                         Ok(GatewayCommandOutcome::Forked { session }) => {

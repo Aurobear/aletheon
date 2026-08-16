@@ -13,10 +13,10 @@ use anyhow::Context;
 use kernel::chronos::SystemClock;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::ModelRoutingConfig;
 use crate::wiring::daemon::handler::RequestHandler;
 use crate::wiring::daemon::server::{process_inherited_listener, UnixServer};
 use crate::wiring::daemon::DaemonConfig;
-use crate::config::ModelRoutingConfig;
 use cognit::ports::inference::InferencePort;
 
 pub struct UserRuntimeConfig {

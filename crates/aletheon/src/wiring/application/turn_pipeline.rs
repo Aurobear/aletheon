@@ -3,7 +3,9 @@
 //! Extracted from DaemonTurnOrchestrator::execute_turn so both the daemon
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
-use crate::wiring::application::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
+use crate::wiring::application::daemon_react::{
+    submit_streaming_daemon_turn, DaemonStreamingTurnContext,
+};
 use crate::wiring::application::governed_capability::CapabilityExecutionContext;
 use crate::wiring::application::post_turn_projection::{PostTurnDispatch, PostTurnOutcome};
 use crate::wiring::application::turn_coordinator::TurnExecution;
@@ -84,10 +86,13 @@ pub struct TurnPipeline {
     pub daemon_cancel_token: Option<CancellationToken>,
     pub context_assembler: Arc<crate::wiring::application::context_assembler::ContextAssembler>,
     pub canonical_sessions: Arc<crate::wiring::application::session_service::SessionService>,
-    pub post_turn_projection: Arc<dyn crate::wiring::application::post_turn_projection::PostTurnProjection>,
+    pub post_turn_projection:
+        Arc<dyn crate::wiring::application::post_turn_projection::PostTurnProjection>,
     pub runtime_ports: Arc<crate::wiring::application::turn_runtime_ports::TurnRuntimePorts>,
-    pub cognitive_sessions: Arc<dyn crate::wiring::application::harness_factory::CognitiveSessionFactory>,
-    pub conscious_core: Option<Arc<dyn crate::wiring::application::conscious_workspace::ConsciousTurnPort>>,
+    pub cognitive_sessions:
+        Arc<dyn crate::wiring::application::harness_factory::CognitiveSessionFactory>,
+    pub conscious_core:
+        Option<Arc<dyn crate::wiring::application::conscious_workspace::ConsciousTurnPort>>,
     pub session_input: Arc<application::session_input::SessionInputCoordinator>,
     pub prompt_queue_enabled: bool,
     pub workspace_checkpoint:
@@ -97,7 +102,8 @@ pub struct TurnPipeline {
     pub event_bus: Option<Arc<CanonicalEventBus>>,
     pub role_workflow_factory:
         Option<Arc<crate::wiring::application::cognitive_role_workflow::RoleWorkflowFactory>>,
-    pub active_profile: Arc<dyn crate::wiring::application::turn_runtime_ports::ActiveAgentProfilePort>,
+    pub active_profile:
+        Arc<dyn crate::wiring::application::turn_runtime_ports::ActiveAgentProfilePort>,
     pub memory_gateway: Arc<crate::wiring::application::memory_gateway::MemoryGatewayService>,
     /// Previous stable prefix shape per canonical thread. Diagnostic only; it
     /// never gates inference or claims a provider-side cache hit.
@@ -114,8 +120,10 @@ pub struct TurnPipelineResources {
     pub canonical_sessions: Arc<crate::wiring::application::session_service::SessionService>,
     pub projection: Arc<dyn crate::wiring::application::post_turn_projection::PostTurnProjection>,
     pub runtime: Arc<crate::wiring::application::turn_runtime_ports::TurnRuntimePorts>,
-    pub cognitive_sessions: Arc<dyn crate::wiring::application::harness_factory::CognitiveSessionFactory>,
-    pub conscious_core: Option<Arc<dyn crate::wiring::application::conscious_workspace::ConsciousTurnPort>>,
+    pub cognitive_sessions:
+        Arc<dyn crate::wiring::application::harness_factory::CognitiveSessionFactory>,
+    pub conscious_core:
+        Option<Arc<dyn crate::wiring::application::conscious_workspace::ConsciousTurnPort>>,
     pub session_input: Arc<application::session_input::SessionInputCoordinator>,
     pub prompt_queue_enabled: bool,
     pub workspace_checkpoint:
@@ -125,7 +133,8 @@ pub struct TurnPipelineResources {
     pub event_bus: Option<Arc<CanonicalEventBus>>,
     pub role_workflow_factory:
         Option<Arc<crate::wiring::application::cognitive_role_workflow::RoleWorkflowFactory>>,
-    pub active_profile: Arc<dyn crate::wiring::application::turn_runtime_ports::ActiveAgentProfilePort>,
+    pub active_profile:
+        Arc<dyn crate::wiring::application::turn_runtime_ports::ActiveAgentProfilePort>,
     pub memory_gateway: Arc<crate::wiring::application::memory_gateway::MemoryGatewayService>,
 }
 
@@ -418,8 +427,9 @@ impl TurnPipeline {
                 cancellation,
             },
         )?;
-        let risk_level =
-            crate::wiring::application::cognitive_role_workflow::classify_task_risk(&allowed_capabilities);
+        let risk_level = crate::wiring::application::cognitive_role_workflow::classify_task_risk(
+            &allowed_capabilities,
+        );
         Ok(Some((
             workflow,
             crate::wiring::application::cognitive_role_workflow::CodingWorkflowRequest {
@@ -1895,7 +1905,10 @@ impl TurnPipeline {
     }
 }
 
-fn role_graph_requested(request: &TurnRequest, config: &crate::config::CognitiveRuntimeConfig) -> bool {
+fn role_graph_requested(
+    request: &TurnRequest,
+    config: &crate::config::CognitiveRuntimeConfig,
+) -> bool {
     request.requirements.iter().any(|requirement| {
         matches!(
             requirement,
@@ -2471,54 +2484,5 @@ mod terminal_event_tests {
 }
 
 #[cfg(test)]
-mod turn_pipeline_outcome_tests {
-    use super::{TurnPipelineOutcome, TurnPipelineRejection};
-
-    #[test]
-    fn rejection_messages_preserve_the_former_json_error_text() {
-        assert_eq!(
-            TurnPipelineRejection::IntentDeniedBySelfField {
-                reason: "read denied".into()
-            }
-            .message(),
-            "Intent denied by SelfField: read denied"
-        );
-        assert_eq!(
-            TurnPipelineRejection::SelfFieldReviewFailed {
-                reason: "provider down".into()
-            }
-            .message(),
-            "SelfField review failed (fail-closed): provider down"
-        );
-        assert_eq!(
-            TurnPipelineRejection::HookBlocked {
-                reason: "guard rejected".into()
-            }
-            .message(),
-            "Blocked by hook: guard rejected"
-        );
-    }
-
-    #[test]
-    fn rejection_variants_are_distinct_domain_values() {
-        let denied = TurnPipelineRejection::IntentDeniedBySelfField {
-            reason: "same".into(),
-        };
-        let hook = TurnPipelineRejection::HookBlocked {
-            reason: "same".into(),
-        };
-        assert_ne!(denied, hook);
-    }
-
-    #[test]
-    fn outcome_carries_the_typed_rejection() {
-        let outcome = TurnPipelineOutcome::Rejected(TurnPipelineRejection::HookBlocked {
-            reason: "block".into(),
-        });
-        assert!(matches!(
-            outcome,
-            TurnPipelineOutcome::Rejected(TurnPipelineRejection::HookBlocked { reason })
-                if reason == "block"
-        ));
-    }
-}
+#[path = "turn_pipeline_outcome_tests.rs"]
+mod turn_pipeline_outcome_tests;

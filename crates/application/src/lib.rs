@@ -92,8 +92,8 @@ pub use workflow::{
     NodeStatus, OnExhausted, WorkflowDef,
 };
 pub use workspace_checkpoint::{
-    CheckpointFileEntry, CheckpointFinalizeState, CheckpointId, FsDomainRef, MAX_CHECKPOINT_FILES,
-    RestoreOutcome, TurnCheckpoint,
+    CheckpointFileEntry, CheckpointFinalizeState, CheckpointId, FsDomainRef, RestoreOutcome,
+    TurnCheckpoint, MAX_CHECKPOINT_FILES,
 };
 pub use workspace_identity::WorkspaceIdentity;
 pub use workspace_trust::{

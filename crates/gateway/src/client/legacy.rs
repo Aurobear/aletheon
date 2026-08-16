@@ -5,11 +5,11 @@
 //! the Memory Agent and explicitly bounded rollback/debug routes; they are not
 //! part of the typed Gateway client API.
 
+use crate::protocol::ProtocolError;
 use ::contracts::protocol::client::{
     ClientCapabilities, ClientEvent, ClientMessage, ClientRequest, InitializeParams,
     InitializedResult, CLIENT_PROTOCOL_VERSION,
 };
-use crate::protocol::ProtocolError;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 

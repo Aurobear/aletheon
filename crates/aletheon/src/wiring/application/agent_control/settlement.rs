@@ -40,10 +40,11 @@ pub struct AgentEvaluationProjectionSink {
 impl AgentEvaluationProjectionSink {
     pub fn new(spine: Arc<dyn EventSpine>) -> Self {
         Self {
-            inner: crate::wiring::application::post_turn_projection::DurableDomainEvaluationSink::new(
-                "agent_control",
-                spine,
-            ),
+            inner:
+                crate::wiring::application::post_turn_projection::DurableDomainEvaluationSink::new(
+                    "agent_control",
+                    spine,
+                ),
         }
     }
 }

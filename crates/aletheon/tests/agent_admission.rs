@@ -2,10 +2,10 @@ use ::contracts::{
     AgentBudget, AgentContextFork, AgentControlErrorKind, AgentId, AgentProfileId,
     AgentSpawnRequest, RuntimeId,
 };
-use cognit::config::AgentAdmissionConfig;
 use aletheon::wiring::application::agent_control::{
     AgentAdmissionPort, AgentAdmissionRequest, AgentStorageRequest, BoundedAgentAdmission,
 };
+use cognit::config::AgentAdmissionConfig;
 use std::sync::Arc;
 use std::time::Duration;
 

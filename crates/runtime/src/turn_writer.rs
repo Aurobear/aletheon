@@ -120,7 +120,12 @@ impl RuntimeTurnWriter {
         if started_session != *session {
             return Err(RuntimeError::WrongSession);
         }
-        let current = self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(turn).cloned();
+        let current = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(turn)
+            .cloned();
         if current.as_ref() == Some(&terminal) {
             // The host execution facade may retry the same settlement after
             // the Runtime writer already fenced it. Idempotent same-terminal
@@ -201,7 +206,12 @@ impl RuntimeTurnWriter {
         if started_session != *session {
             return Err(RuntimeError::WrongSession);
         }
-        let current = self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(turn).cloned();
+        let current = self
+            .terminals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(turn)
+            .cloned();
         let outcome = self.reducer.apply(current.as_ref(), &transition)?;
         let kind = match &transition {
             TurnTransition::Cancel { .. } => "cancel",
@@ -316,7 +326,10 @@ impl RuntimeTurnWriter {
 
     /// Typed events emitted so far (test/observability).
     pub fn events(&self) -> Vec<RuntimeEvent> {
-        self.emitted.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        self.emitted
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Reconcile a replayed Runtime turn stream after restart. A started turn
@@ -366,10 +379,18 @@ impl RuntimeTurnWriter {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .insert(turn.clone(), session.clone());
             if let Some((_, terminal)) = settled.get(&turn).cloned() {
-                self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(turn, terminal);
+                self.terminals
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(turn, terminal);
                 continue;
             }
-            if self.terminals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(&turn) {
+            if self
+                .terminals
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .contains_key(&turn)
+            {
                 continue;
             }
             self.settle(&session, &turn, TurnTerminal::Interrupted)
@@ -490,7 +511,10 @@ mod tests {
     #[async_trait::async_trait]
     impl crate::TurnEventSink for RecordingSink {
         async fn append(&self, event: crate::TurnStreamEvent) -> Result<(), RuntimeError> {
-            self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(event);
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(event);
             Ok(())
         }
     }
@@ -602,7 +626,10 @@ mod tests {
             .unwrap();
         let late = writer.late_receipt(&session, &turn).await.unwrap();
         assert!(matches!(late, TransitionOutcome::Terminal { .. }));
-        let events = sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let events = sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(events.len(), 4);
         assert!(events.iter().all(|event| event.validate().is_ok()));
         assert!(matches!(
@@ -684,7 +711,10 @@ mod tests {
             },
         );
         assert_eq!(writer.recover_from_stream([event]).await.unwrap(), 1);
-        let events = sink.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let events = sink
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(events[0].sequence, 18);
         assert!(matches!(
             events[0].event.as_ref(),
