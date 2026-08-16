@@ -2978,7 +2978,7 @@ fi
   rg -l 'pub struct TurnService' crates/aletheon/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnService#' || true
   rg -l 'pub struct TurnPipeline\b' crates/aletheon/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnPipeline#' || true
   rg -l 'impl TurnServices for ExecTurnServices' crates/aletheon/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|ExecTurnServices#' || true
-  rg -l 'CapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
+  rg -l '\bCapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
     | sed 's#^#capability_path|#; s#$#|CapabilityInvoker#' || true
   rg -l '\bAdmissionRequest \{' crates/aletheon/src -g '*.rs' 2>/dev/null \
     | grep -v 'crates/aletheon/src/wiring/application/governed_capability.rs' \
@@ -3024,8 +3024,18 @@ if [[ -n ${ARCH_BASE_REF:-} ]]; then
     git show "$ARCH_BASE_REF:$file" > "$base_snapshot"
     growth=$(
       awk -F'|' '
-        NR == FNR { base[$1]++; next }
-        { current[$1]++ }
+        function canonical_category(category) {
+          # The Executive retirement renamed the same application-layer debt
+          # category without changing its semantics. Compare the migrated
+          # Aletheon ledger against that existing budget rather than treating
+          # the crate rename as two new findings.
+          if (category == "executive_store_import") {
+            return "application_store_import"
+          }
+          return category
+        }
+        NR == FNR { base[canonical_category($1)]++; next }
+        { current[canonical_category($1)]++ }
         END {
           for (category in current) {
             if (current[category] > base[category]) {

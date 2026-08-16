@@ -32,6 +32,7 @@ concrete_clock|crates/dasein/src/lib.rs|fn clock() { SystemClock::new(); }
 core_systems_field|crates/executive/src/lib.rs|fn fields(x: X) { let _ = x.runtime; }
 direct_tool|crates/corpus/src/legacy/mod.rs|tool.execute(x)
 duplicate_kernel|crates/executive/src/lib.rs|use executive::impl::kernel::Table;
+executive_store_import|crates/executive/src/application/verification/command.rs|use corpus::tools::subagent::CommandRunner;
 legacy_event|crates/executive/src/lib.rs|use contracts::envelope::Envelope;
 BASE
 : > "$tmp/config/architecture-dependencies.txt"
@@ -46,10 +47,21 @@ git -C "$tmp" config user.name architecture-fixture
 git -C "$tmp" config user.email architecture-fixture@example.invalid
 git -C "$tmp" add config
 git -C "$tmp" commit -qm baseline
+# Renaming Executive to Aletheon relocates the same ledgered application debt;
+# it must retain the old category budget rather than appear as new debt.
+mkdir -p "$tmp/crates/aletheon/src/wiring/application/verification"
+printf 'use corpus::tools::subagent::CommandRunner;\n' \
+  > "$tmp/crates/aletheon/src/wiring/application/verification/command.rs"
+sed -i \
+  's#executive_store_import|crates/executive/src/application/verification/command.rs#application_store_import|crates/aletheon/src/wiring/application/verification/command.rs#' \
+  "$tmp/config/architecture-allowlist.txt"
+sort -o "$tmp/config/architecture-allowlist.txt" "$tmp/config/architecture-allowlist.txt"
 mv "$tmp/crates/corpus/src/legacy/mod.rs" "$tmp/crates/corpus/src/legacy/moved.rs"
 sed -i 's#legacy/mod.rs#legacy/moved.rs#' "$tmp/config/architecture-allowlist.txt"
 ARCH_ROOT="$tmp" ARCH_BASE_REF=HEAD ARCH_SKIP_PHASE0_GATES=1 ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+  ARCH_SKIP_X1_GATES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null
+rm -r "$tmp/crates/aletheon"
 printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/moved.rs"
 printf 'direct_tool|crates/corpus/src/legacy/moved.rs|tool.execute(y)\n' \
   >> "$tmp/config/architecture-allowlist.txt"
