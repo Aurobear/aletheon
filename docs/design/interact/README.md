@@ -1,7 +1,7 @@
 # Aletheon CLI
 
 > 用户交互入口，支持单消息和 TUI 两种模式。通过 Unix socket 与 aletheon daemon 通信。
-> CLI 与 TUI 逻辑都在 `interact` crate（`crates/interact/src/tui/`、`crates/interact/src/acix/`）。
+> CLI 与 TUI 逻辑位于 `aletheon` 与 `interact` crate；ACIX 已归属 `corpus` crate（`crates/corpus/src/acix/`）。
 
 **模块编号:** CLI
 **关联模块:** [daemon](../executive/daemon.md), [ui](ui.md)
