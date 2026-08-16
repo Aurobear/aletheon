@@ -115,7 +115,7 @@ impl HarnessLifecycleHooks for StepBudgetHook {
         &self,
         context: HarnessStepContext,
     ) -> Result<HarnessPreStepDecision, HarnessPortError> {
-        if context.step > self.max_steps {
+        if context.step >= self.max_steps {
             Ok(HarnessPreStepDecision::End(TurnEndReason::Error {
                 code: "step_budget_exhausted".into(),
                 message: format!("step budget {} exhausted", self.max_steps),
@@ -233,13 +233,13 @@ mod tests {
     async fn one_step_budget_allows_the_first_model_step() {
         let hook = StepBudgetHook::new(1);
         assert_eq!(
-            hook.pre_step(HarnessStepContext { turn: 1, step: 1 })
+            hook.pre_step(HarnessStepContext { turn: 1, step: 0 })
                 .await
                 .unwrap(),
             HarnessPreStepDecision::Continue
         );
         assert!(matches!(
-            hook.pre_step(HarnessStepContext { turn: 1, step: 2 })
+            hook.pre_step(HarnessStepContext { turn: 1, step: 1 })
                 .await
                 .unwrap(),
             HarnessPreStepDecision::End(TurnEndReason::Error { ref code, .. })

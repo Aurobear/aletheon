@@ -131,7 +131,7 @@
         },
         "compaction_threshold": {
           "default": 80,
-          "description": "Percent of the context window (e.g. `80` = 80%) at which automatic\ncompaction triggers. Carried through to the compressor threshold via\n`ExecutiveConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.",
+          "description": "Percent of the context window (e.g. `80` = 80%) at which automatic\ncompaction triggers. Carried through to the compressor threshold via\n`CognitiveRuntimeConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
