@@ -36,6 +36,5 @@ tonic-build = "0.12"
 [dev-dependencies]
 tokio-stream = { version = "0.1", features = ["net"] }
 kernel = { path = "../kernel" }
-runtime = { path = "../runtime" }
 tokio = { version = "1", features = ["full", "test-util"] }
 toml = "0.8"

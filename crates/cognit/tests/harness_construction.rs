@@ -3,10 +3,10 @@ use cognit::harness::{
     CognitiveSession, CognitiveSessionFactory, ExecutionTargetRoutingError, HarnessConfig,
     RobotSessionCapability, TargetRoutedCognitiveSessionFactory,
 };
+use contracts::turn_policy::TurnPolicy;
 use contracts::{
     ExecutionTargetSelection, ExecutionTargetSource, SessionRecord, SESSION_SCHEMA_VERSION,
 };
-use runtime::turn_policy::TurnPolicy;
 use tokio_util::sync::CancellationToken;
 
 struct MarkerFactory(&'static str);
