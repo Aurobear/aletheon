@@ -38,7 +38,7 @@ A-TURN-001	X7	test	crates/aletheon/tests/turn_service_equivalence.rs
 A-MEM-001	X14	test	crates/mnemosyne/tests/unified_memory_contract.rs
 A-MEM-002	X14	test	crates/mnemosyne/tests/unified_memory_contract.rs
 A-MEM-003	X14	test	crates/mnemosyne/tests/unified_memory_contract.rs
-U-CHK-003	X8a	test	crates/application/src/workspace_checkpoint.rs
+U-CHK-003	X8a	test	crates/application/src/workspace_checkpoint/mod.rs
 U-CHK-004	X8a	test	crates/application/src/checkpoint_projection.rs
 U-CHK-001	X8b	test	crates/corpus/src/tools/tools/change_transaction.rs
 U-CHK-002	X8b	test	crates/corpus/src/tools/tools/change_transaction.rs
@@ -53,7 +53,7 @@ U-RESUME-001	X9a	test	crates/aletheon/tests/session_protocol_reconnect.rs
 U-RESUME-002	X9a	test	crates/aletheon/tests/session_protocol_reconnect.rs
 U-RESUME-003	X9b	test	crates/aletheon/tests/agent_control_spawn.rs
 U-RESUME-004	X9a	test	crates/aletheon/tests/session_protocol_reconnect.rs
-U-RESUME-005	X9a	test	crates/aletheon/src/wiring/application/agent_control/settlement/tests/audit_tests.rs
+U-RESUME-005	X9a	test	crates/aletheon/src/composition/agent_control/settlement/tests/audit_tests.rs
 U-RESUME-006	X9a	test	crates/runtime/src/session_service.rs
 A-AGENT-001	X9b	test	crates/aletheon/tests/agent_control_spawn.rs
 A-AGENT-002	X9b	test	crates/aletheon/tests/agent_recovery.rs

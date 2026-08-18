@@ -1657,7 +1657,7 @@
             "inject_into_context": true,
             "max_bytes": 65536,
             "max_items": 4,
-            "timeout_ms": 500
+            "timeout_ms": 3000
           }
         },
         "supplemental": {
@@ -1984,7 +1984,7 @@
           "type": "integer"
         },
         "timeout_ms": {
-          "default": 500,
+          "default": 3000,
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -3355,7 +3355,7 @@
           "inject_into_context": true,
           "max_bytes": 65536,
           "max_items": 4,
-          "timeout_ms": 500
+          "timeout_ms": 3000
         },
         "supplemental": {
           "delivery_batch_size": 20,

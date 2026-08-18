@@ -1,8 +1,8 @@
 # Aletheon 架构总览
 
-> **Status:** Current design overview
+> **Status:** Current implementation plus active ownership-migration target
 >
-> **Verified:** 2026-08-16
+> **Verified:** 2026-08-17
 
 ## 1. 系统定位
 
@@ -12,6 +12,11 @@ Aletheon 是 native-first、长期运行、受治理的 Agent 系统。它维护
 当前架构边界由本文件、`config/architecture/` 门禁、
 `docs/arch/CORE_REFACTOR_COMPLETION_REPORT.md` 和实际 workspace 共同约束。
 代码事实优先于历史架构快照。
+
+当前已完成旧 `executive` 的物理 cutover，但 `crates/aletheon/src/wiring/**` 的所有权迁移
+仍在进行，不能把“文件已搬到 aletheon”描述为领域边界已经收敛。实施状态、唯一 owner
+和 packet 以 `docs/plans/2026-08-16-aletheon-wiring-ownership-migration.md`、
+`config/architecture/wiring-ownership.tsv` 及当前代码共同为准。
 
 ## 2. 运行结构
 
@@ -47,6 +52,31 @@ User / Channel / Automation
 （`crates/aletheon/src/wiring.rs:141`）、`TransactionReviewService` 和
 `SessionInputCoordinator`
 （`crates/aletheon/src/wiring/daemon/handler/ports.rs:44-45`）。
+
+### 2.1 迁移目标
+
+```text
+Gateway / Interact
+        |
+        v
+application use cases ---------> runtime / cognit / domain authorities
+        |                                      |
+        +-------------- ports -----------------+
+                       |
+                       v
+adapters-sqlite / adapters-inference / adapters-gbrain / adapters-google
+adapters-agent-backend / Corpus / Platform / Execd
+                       ^
+                       |
+              aletheon composition
+                       |
+              aletheon host lifecycle
+```
+
+目标边界中，`aletheon` 只构造对象、连接 ports 并管理 CLI、socket、systemd、process 和
+shutdown 生命周期；它不拥有 repository、状态 reducer、ID mint、provider HTTP policy 或
+跨领域 use-case 顺序。迁移期间 current 与 target 的逐路径差异见 ownership ledger，不能
+通过兼容 re-export、双写或新的 god crate 隐藏。
 
 ## 3. 核心边界
 

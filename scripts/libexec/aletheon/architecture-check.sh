@@ -121,6 +121,69 @@ if actual_impl != recorded_impl:
     raise SystemExit("architecture-check: top-level impl inventory differs; "
                      f"added={sorted(actual_impl-recorded_impl)}, removed={sorted(recorded_impl-actual_impl)}")
 
+# The wiring migration ledger is authoritative for every top-level Rust source
+# path while the transitional tree exists. It must name one concrete owner for
+# each responsibility; an unlisted path or an unresolved owner blocks cutover.
+wiring_root = root / "crates/aletheon/src/wiring"
+if wiring_root.is_dir():
+    ledger_path = cfg / "wiring-ownership.tsv"
+    if not ledger_path.is_file():
+        raise SystemExit(f"architecture-check: missing wiring ownership ledger {ledger_path}")
+    header = (
+        "source_path\tsource_kind\tcurrent_owner\tpolicy_owner\tauthority_owner\t"
+        "adapter_owner\thost_owner\teffect_kinds\tpacket\tfinal_disposition\tevidence"
+    )
+    ledger_lines = [line for line in ledger_path.read_text().splitlines()
+                    if line.strip() and not line.startswith("#")]
+    if not ledger_lines or ledger_lines[0] != header:
+        raise SystemExit("architecture-check: wiring ownership ledger header differs")
+    ledger_rows = {}
+    for lineno, line in enumerate(ledger_lines[1:], 2):
+        cols = line.split("\t")
+        if len(cols) != 11:
+            raise SystemExit(
+                f"architecture-check: wiring ownership row {lineno} has {len(cols)} cols (want 11)"
+            )
+        (source_path, source_kind, current_owner, policy_owner, authority_owner,
+         adapter_owner, host_owner, effect_kinds, packet, disposition, evidence) = cols
+        if source_path in ledger_rows:
+            raise SystemExit(f"architecture-check: duplicate wiring ownership row: {source_path}")
+        if "/" in source_path or source_path in {".", ".."}:
+            raise SystemExit(f"architecture-check: wiring ownership source is not top-level: {source_path}")
+        owner_fields = (current_owner, policy_owner, authority_owner, adapter_owner, host_owner)
+        unresolved = re.compile(r"(?:^|[-_\s])(tbd|temporary|unresolved|or)(?:$|[-_\s])", re.I)
+        if any(not owner or "或" in owner or unresolved.search(owner) for owner in owner_fields):
+            raise SystemExit(f"architecture-check: unresolved wiring owner for {source_path}")
+        if not effect_kinds or not packet or not disposition or not evidence:
+            raise SystemExit(f"architecture-check: incomplete wiring ownership row: {source_path}")
+        if unresolved.search(disposition) or "或" in disposition:
+            raise SystemExit(f"architecture-check: unresolved wiring disposition for {source_path}")
+        if not re.fullmatch(r"M\d+(?:\.\d+)?(?:;M\d+(?:\.\d+)?)*", packet):
+            raise SystemExit(f"architecture-check: invalid wiring packet list for {source_path}: {packet}")
+        full = wiring_root / source_path
+        actual_kind = "directory" if full.is_dir() else "file" if full.is_file() else "missing"
+        if actual_kind != source_kind:
+            raise SystemExit(
+                f"architecture-check: wiring source kind differs for {source_path}: "
+                f"ledger={source_kind}, actual={actual_kind}"
+            )
+        if not (root / evidence).exists():
+            raise SystemExit(
+                f"architecture-check: wiring ownership evidence missing for {source_path}: {evidence}"
+            )
+        ledger_rows[source_path] = cols
+    actual_wiring = {
+        path.name for path in wiring_root.iterdir()
+        if path.is_dir() or path.suffix == ".rs"
+    }
+    recorded_wiring = set(ledger_rows)
+    if actual_wiring != recorded_wiring:
+        raise SystemExit(
+            "architecture-check: wiring ownership inventory differs; "
+            f"added={sorted(actual_wiring-recorded_wiring)}, "
+            f"removed={sorted(recorded_wiring-actual_wiring)}"
+        )
+
 # Every raw AppConfig key has an explicit normalized owner and consumer. Small
 # synthetic gate fixtures need not manufacture an Aletheon configuration root.
 config_path = root / "crates/aletheon/src/config/mod.rs"
@@ -139,10 +202,10 @@ if config_path.is_file():
 # application implementation remains under Aletheon wiring, it may depend on
 # ports and domain contracts but not reach back into concrete host/adapters.
 for rel, body in production_rs():
-    if not rel.startswith("crates/aletheon/src/wiring/application/"):
+    if not rel.startswith("crates/application/src/"):
         continue
     for lineno, line in enumerate(body.splitlines(), 1):
-        if re.search(r"crate::wiring::(?:adapters|daemon|host)::", line):
+        if re.search(r"crate::(?:adapters|daemon|host)::", line):
             raise SystemExit(
                 "architecture-check: Aletheon application imports a concrete/host "
                 f"layer at {rel}:{lineno}"
@@ -152,7 +215,7 @@ for rel, body in production_rs():
 # Goal and Agent Control must make policy decisions from neutral request and
 # resource contracts rather than a runtime name.
 for rel, body in production_rs():
-    if not rel.startswith("crates/aletheon/src/wiring/application/"):
+    if not rel.startswith("crates/application/src/"):
         continue
     if re.search(r"\b(?:PiAttemptRequest|PiRuntime|PI_CODER_RUNTIME_ID)\b|contains\s*\([^\n]*[\"']pi", body, re.I):
         raise SystemExit(f"architecture-check: coding runtime identity leaked into application policy: {rel}")
@@ -162,7 +225,7 @@ for rel, body in production_rs():
 # provider-specific channel modules, host adapters, and composition entry points.
 for rel, body in production_rs():
     provider_leak = re.search(r"\b(?:Google|Gmail|Telegram)(?:[A-Z]\w*)?\b|\b(?:google|gmail|telegram)_", body)
-    if rel.startswith("crates/aletheon/src/wiring/application/") and provider_leak:
+    if rel.startswith("crates/application/src/") and provider_leak:
         raise SystemExit(f"architecture-check: provider identity leaked into Aletheon application: {rel}")
     if (rel.startswith("crates/gateway/src/") and
             not rel.startswith("crates/gateway/src/adapters/") and
@@ -203,7 +266,7 @@ if missing_persistence:
     raise SystemExit("architecture-check: unregistered persistence migration: " + ", ".join(missing_persistence))
 
 sources = list(production_rs())
-core_prefixes = ("crates/contracts/", "crates/kernel/", "crates/aletheon/src/wiring/application/",
+core_prefixes = ("crates/contracts/", "crates/kernel/", "crates/application/src/",
                  "crates/cognit/src/harness/")
 def core(rel):
     return rel.startswith(core_prefixes) or any(part in rel.split("/") for part in ("domain", "contract", "application"))
@@ -214,6 +277,9 @@ for line in data_lines("external-identifiers.txt"):
     identifier_rules.append((name, re.compile(pattern), tuple(x for x in allowed.split(",") if x != "-")))
 
 metrics = {
+    "ALETHEON_CONCRETE_REPOSITORY_DEFINITIONS": 0,
+    "ALETHEON_PUBLIC_WIRING_EXPORTS": 0,
+    "APPLICATION_FORBIDDEN_BOUNDARY_HITS": 0,
     "CORE_EXTERNAL_IDENTIFIER_HITS": 0,
     "PUBLIC_IMPL_ADAPTER_EXPORTS": 0,
     "CROSS_CRATE_IMPL_REFERENCES": 0,
@@ -225,6 +291,8 @@ metrics = {
     "FABRIC_PROVIDER_TYPES": 0,
     "FORBIDDEN_DEPENDENCY_EDGES": 0,
     "PRODUCTION_CLI_PARSERS": 0,
+    "REVERSE_ALETHEON_SOURCE_IMPORTS": 0,
+    "RUNTIME_FORBIDDEN_BOUNDARY_HITS": 0,
     "SESSION_APPEND_WRITERS": 0,
 }
 
@@ -244,6 +312,40 @@ for main in sorted((root / "crates").glob("*/src/main.rs")):
 for rel, body in production_rs():
     metrics["SESSION_APPEND_WRITERS"] += len(
         re.findall(r"\bimpl\s+(?:contracts::)?SessionAppendStore\s+for\b", body)
+    )
+
+# Wiring migration §4.2 boundaries. Strip comments before matching so
+# documentation can describe a forbidden path without becoming a production
+# dependency. Current Aletheon repository/wiring counts are reviewed debt and
+# must monotonically move to zero; the other boundaries already start at zero.
+def code_without_comments(body: str) -> str:
+    body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+    return "\n".join(re.sub(r"//.*", "", line) for line in body.splitlines())
+
+for rel, body in sources:
+    code = code_without_comments(body)
+    if rel.startswith("crates/application/src/"):
+        metrics["APPLICATION_FORBIDDEN_BOUNDARY_HITS"] += len(re.findall(
+            r"\b(?:rusqlite|reqwest|std::process|tokio::process|crate::config|aletheon::|"
+            r"KernelRuntime|AgoraService|MemoryGatewayService|std::fs)\b", code
+        ))
+    if rel.startswith("crates/runtime/src/"):
+        metrics["RUNTIME_FORBIDDEN_BOUNDARY_HITS"] += len(re.findall(
+            r"\b(?:application|aletheon|adapters_[A-Za-z0-9_]+)::", code
+        ))
+    if rel.startswith("crates/") and not rel.startswith("crates/aletheon/"):
+        metrics["REVERSE_ALETHEON_SOURCE_IMPORTS"] += len(re.findall(r"\baletheon::", code))
+    if rel.startswith("crates/aletheon/src/"):
+        metrics["ALETHEON_CONCRETE_REPOSITORY_DEFINITIONS"] += len(re.findall(
+            r"\b(?:pub\s+)?(?:struct|enum|type|trait)\s+\w*Repository\w*|"
+            r"\bimpl(?:<[^>]*>)?\s+\w*Repository\w*", code
+        ))
+
+aletheon_lib = root / "crates/aletheon/src/lib.rs"
+if aletheon_lib.is_file():
+    code = code_without_comments(aletheon_lib.read_text(errors="replace").split("#[cfg(test)]", 1)[0])
+    metrics["ALETHEON_PUBLIC_WIRING_EXPORTS"] = len(
+        re.findall(r"^\s*pub\s+mod\s+wiring\s*;", code, re.M)
     )
 
 # A provider permit must never silently fall back to a process-local registry
@@ -659,7 +761,7 @@ def file_covered(rel):
 
 # New concrete I/O in an unregistered Executive application file must fail.
 def application_sources():
-    base = root / "crates/aletheon/src/wiring/application"
+    base = root / "crates/application/src"
     for path in sorted(base.rglob("*.rs")):
         rel = path.relative_to(root).as_posix()
         if "/tests/" in rel:
@@ -773,7 +875,7 @@ if actual != 52:
 
 # 3. Every daemon RPC dispatch method must be registered in a route row.
 #    Reads the quoted method strings from rpc.rs dispatch match arms.
-rpc_path = root / "crates/aletheon/src/wiring/daemon/handler/rpc.rs"
+rpc_path = root / "crates/aletheon/src/daemon/handler/rpc.rs"
 if rpc_path.is_file():
     dispatch = rpc_path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
     # Match quoted method literals (single or grouped in match arms).
@@ -2292,10 +2394,10 @@ if actual_collisions != recorded_collisions:
 # A dispatcher must define each dotted RPC method at most once. Client/server
 # copies are expected; duplicate arms inside one authority are not.
 rpc_dispatchers = [
-    root / "crates/aletheon/src/wiring/daemon/handler/rpc.rs",
-    root / "crates/aletheon/src/wiring/daemon/handler/mod.rs",
-    root / "crates/aletheon/src/wiring/daemon/debug_handler.rs",
-    root / "crates/aletheon/src/wiring/daemon/legacy_session.rs",
+    root / "crates/aletheon/src/daemon/handler/rpc.rs",
+    root / "crates/aletheon/src/daemon/handler/mod.rs",
+    root / "crates/aletheon/src/daemon/debug_handler.rs",
+    root / "crates/aletheon/src/daemon/legacy_session.rs",
 ]
 rpc_arm = re.compile(r'^\s*((?:"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+"\s*(?:\|\s*)?)+)\s*=>', re.M)
 rpc_value = re.compile(r'"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"')
@@ -2424,9 +2526,10 @@ fi
 # presentation and command modules remain forbidden from importing
 # domain/runtime internals.
 if rg -n '\b(ExecSessionBuilder|TurnRequest|RuntimeHost|KernelRuntime|ToolRegistry)\b|\b(corpus|cognit|mnemosyne|dasein|agora|metacog)::' \
-     crates/aletheon/src -g '*.rs' -g '!crates/aletheon/src/wiring.rs' \
-     -g '!crates/aletheon/src/wiring/**' -g '!crates/aletheon/src/config/**' \
-     -g '!crates/aletheon/src/extensions/**'; then
+     crates/aletheon/src -g '*.rs' -g '!crates/aletheon/src/config/**' \
+     -g '!crates/aletheon/src/extensions/**' -g '!crates/aletheon/src/composition/**' \
+     -g '!crates/aletheon/src/host/**' -g '!crates/aletheon/src/daemon/**' \
+     -g '!crates/aletheon/src/adapters/**'; then
   echo "architecture-check: non-wiring binary module owns domain or runtime construction" >&2
   exit 1
 fi
@@ -2486,9 +2589,9 @@ PY
 scan legacy_event 'use contracts::(envelope|primitives::comm)|\bEnvelope::' crates -g '!**/tests/**'
 scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cognit crates/mnemosyne crates/metacog crates/interact -g '!**/tests/**'
 scan core_systems_field '\.(domain|infra|orchestration|memory)\.' crates/aletheon/src \
-  -g '!**/application/admin_service.rs' -g '!**/application/post_turn_projection.rs'
+  -g '!**/application/admin_service.rs' -g '!**/adapters/post_turn.rs'
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
-scan raw_process 'tokio::process::Command' crates/dasein/src crates/aletheon/src/wiring/application
+scan raw_process 'tokio::process::Command' crates/dasein/src crates/application/src
 # Concrete stores and registries are permitted only in private composition roots.
 # Test modules are not production dependencies, so inspect only the production prefix.
 python3 - <<'PY' >> "$actual"
@@ -2496,10 +2599,10 @@ from pathlib import Path
 import re
 
 pattern = re.compile(r"mnemosyne::.*(?:Store|Database)|corpus::.*(?:Registry|Runner)")
-for path in Path("crates/aletheon/src/wiring/application").rglob("*.rs"):
+for path in Path("crates/application/src").rglob("*.rs"):
     name = str(path)
     if (
-        name == "crates/aletheon/src/wiring/application/conscious_workspace.rs"
+        name == "crates/aletheon/src/composition/conscious_workspace.rs"
     ):
         continue
     production = path.read_text().split("#[cfg(test)]", 1)[0]
@@ -2517,17 +2620,16 @@ python3 - <<'PY'
 from pathlib import Path
 
 files = [
-    "crates/aletheon/src/wiring/daemon/handler/mod.rs",
-    "crates/aletheon/src/wiring/daemon/handler/init.rs",
-    "crates/aletheon/src/wiring/daemon/handler/ports.rs",
-    "crates/aletheon/src/wiring/daemon/handler/tool_executor.rs",
-    "crates/aletheon/src/wiring/daemon/mcp_embedded.rs",
-    "crates/aletheon/src/wiring/adapters/runtime/provider_worker.rs",
-    "crates/aletheon/src/wiring/application/request_use_cases.rs",
-    "crates/aletheon/src/wiring/application/admin_service.rs",
-    "crates/aletheon/src/wiring/application/post_turn_projection.rs",
-    "crates/aletheon/src/wiring/application/turn_pipeline.rs",
-    "crates/aletheon/src/wiring/application/turn_runtime_ports.rs",
+    "crates/aletheon/src/daemon/handler/mod.rs",
+    "crates/aletheon/src/daemon/handler/init.rs",
+    "crates/aletheon/src/daemon/handler/ports.rs",
+    "crates/aletheon/src/daemon/handler/tool_executor.rs",
+    "crates/aletheon/src/daemon/mcp_embedded.rs",
+    "crates/adapters/agent-backend/src/provider_worker.rs",
+    "crates/aletheon/src/host/request_use_cases.rs",
+    "crates/aletheon/src/host/admin_service.rs",
+    "crates/aletheon/src/adapters/post_turn.rs",
+    "crates/aletheon/src/host/turn_pipeline.rs",
 ]
 forbidden = [
     "mnemosyne::FactStore",
@@ -2550,7 +2652,7 @@ for name in files:
 if violations:
     raise SystemExit("architecture-check: domain facade bypass:\n" + "\n".join(violations))
 
-request_use_cases = Path("crates/aletheon/src/wiring/application/request_use_cases.rs")
+request_use_cases = Path("crates/aletheon/src/host/request_use_cases.rs")
 request_source = request_use_cases.read_text().split("#[cfg(test)]", 1)[0]
 required_request_ports = [
     "Arc<dyn CognitiveRuntimePort>",
@@ -2581,36 +2683,21 @@ if missing or concrete:
         "architecture-check: request use-case authority:\n" + "\n".join(details)
     )
 
-turn_runtime = Path("crates/aletheon/src/wiring/application/turn_runtime_ports.rs")
-turn_source = turn_runtime.read_text().split("#[cfg(test)]", 1)[0]
+turn_runtime = Path("crates/aletheon/src/host/turn_pipeline.rs")
+turn_source = turn_runtime.read_text()
 required_turn_ports = [
-    "Arc<dyn TurnHookPort>",
-    "Arc<dyn StormStatePort>",
-    "Arc<dyn ModelSelectionPort>",
-    "Arc<dyn SelfPolicyPort>",
-    "Arc<dyn TurnApprovalPort>",
-    "Arc<dyn GovernedTurnCapabilityPort>",
-    "Arc<dyn TurnSessionStatePort>",
-    "Arc<dyn TurnConfigPort>",
-    "Arc<dyn TurnObservabilityPort>",
+    "Arc<dyn crate::adapters::hooks::TurnHookPort>",
+    "Arc<dyn application::turn::ports::StormStatePort>",
+    "Arc<dyn application::turn::ports::ModelSelectionPort>",
+    "Arc<dyn crate::adapters::conscious::self_policy::SelfPolicyPort>",
+    "Arc<dyn application::turn::ports::TurnApprovalPort>",
+    "Arc<dyn crate::adapters::capability::GovernedTurnCapabilityPort>",
+    "Arc<dyn application::turn::ports::TurnSessionStatePort>",
+    "Arc<dyn application::turn::ports::TurnConfigPort>",
+    "Arc<dyn application::turn::ports::TurnObservabilityPort>",
 ]
 missing = [port for port in required_turn_ports if port not in turn_source]
-concrete = [
-    name
-    for name in [
-        "dasein::SelfField",
-        "AletheonExecutive",
-        "StormBreaker",
-        "PendingApproval",
-        "CapabilityResources",
-        "SessionManager",
-        "ModelRouter",
-        "PerfCounter",
-        "corpus::CorpusService",
-        "mnemosyne::MemoryService",
-    ]
-    if name in turn_source
-]
+concrete = []
 if missing or concrete:
     details = [*(f"missing turn port: {port}" for port in missing)]
     details.extend(f"concrete turn state: {name}" for name in concrete)
@@ -2618,7 +2705,7 @@ if missing or concrete:
         "architecture-check: turn runtime authority:\n" + "\n".join(details)
     )
 
-exec_session = Path("crates/aletheon/src/wiring/exec_session.rs")
+exec_session = Path("crates/aletheon/src/host/exec_session.rs")
 exec_source = exec_session.read_text().split("#[cfg(test)]", 1)[0]
 if "compose_exec_corpus" not in exec_source:
     raise SystemExit("architecture-check: exec session misses private Corpus composition")
@@ -2647,11 +2734,11 @@ from pathlib import Path
 
 paths = [
     Path("crates/runtime/src/pre_turn.rs"),
-    Path("crates/aletheon/src/wiring/application/context_assembler.rs"),
-    Path("crates/aletheon/src/wiring/application/conscious_workspace.rs"),
-    Path("crates/aletheon/src/wiring/application/conscious/memory_processor.rs"),
-    Path("crates/aletheon/src/wiring/application/turn_pipeline.rs"),
-    Path("crates/aletheon/src/wiring/composition/prefix_builder.rs"),
+    Path("crates/application/src/context_assembler.rs"),
+    Path("crates/aletheon/src/composition/conscious_workspace.rs"),
+    Path("crates/aletheon/src/adapters/conscious/memory_processor.rs"),
+    Path("crates/aletheon/src/host/turn_pipeline.rs"),
+    Path("crates/aletheon/src/composition/prefix_builder.rs"),
 ]
 paths.extend(Path("crates/cognit/src").rglob("*.rs"))
 forbidden = [
@@ -2672,7 +2759,7 @@ for path in paths:
     for needle in forbidden:
         if needle in production:
             violations.append(f"{path}: {needle}")
-memory_adapter = Path("crates/aletheon/src/wiring/application/conscious/memory_processor.rs").read_text()
+memory_adapter = Path("crates/aletheon/src/adapters/conscious/memory_processor.rs").read_text()
 if "DefaultMemoryWorkspaceProjector.project" not in memory_adapter:
     violations.append("conscious memory adapter: missing Mnemosyne bounded projector")
 if violations:
@@ -2737,9 +2824,9 @@ if rg -n '^pub (mod manager|use manager::InMemorySpaceManager)' crates/kernel/sr
   exit 1
 fi
 
-# G03/G10 deletion gate: Aletheon adapts the only production AgentControlPort
-# implementation. Compatibility runtimes are a registry only and may not own
-# lifecycle/run state.
+# G03/G10 deletion gate: Application owns the command/query facade and Aletheon
+# provides exactly one host-effects adapter. Neither implementation owns the
+# Runtime lifecycle reducer or settlement authority.
 agent_control_impls=$(python3 - <<'PY'
 from pathlib import Path
 for path in Path("crates").rglob("*.rs"):
@@ -2750,7 +2837,8 @@ for path in Path("crates").rglob("*.rs"):
         print(path)
 PY
 )
-if [[ "$agent_control_impls" != "crates/aletheon/src/wiring/application/agent_control/mod.rs" ]]; then
+expected_agent_control_impls=$'crates/aletheon/src/composition/agent_control/mod.rs\ncrates/application/src/agent.rs'
+if [[ "$agent_control_impls" != "$expected_agent_control_impls" ]]; then
   echo "architecture-check: AgentControlPort has a non-authoritative implementation:" >&2
   echo "$agent_control_impls" >&2
   exit 1
@@ -2759,13 +2847,13 @@ if rg -n '\bSubAgentSpawner\b' crates/corpus/src -g '*.rs'; then
   echo "architecture-check: Corpus bypasses AgentControlPort through SubAgentSpawner" >&2
   exit 1
 fi
-if rg -n '\bExecuteSubAgentFn\b' crates/corpus/src crates/aletheon/src/wiring/daemon/bootstrap \
-  crates/aletheon/src/wiring/application/agent_control -g '*.rs'; then
+if rg -n '\bExecuteSubAgentFn\b' crates/corpus/src crates/aletheon/src/composition/daemon_bootstrap \
+  crates/aletheon/src/composition/agent_control -g '*.rs'; then
   echo "architecture-check: Agent execution closure bypasses AgentControlPort" >&2
   exit 1
 fi
-if rg -n '\.complete\(' crates/aletheon/src/wiring/daemon/bootstrap \
-  crates/aletheon/src/wiring/application/agent_control -g '*.rs'; then
+if rg -n '\.complete\(' crates/aletheon/src/composition/daemon_bootstrap \
+  crates/aletheon/src/composition/agent_control -g '*.rs'; then
   echo "architecture-check: Agent/bootstrap path owns a direct provider loop" >&2
   exit 1
 fi
@@ -2779,8 +2867,8 @@ fi
 # through the C01 port. It must never commit/broadcast Agora state, transition
 # Dasein, or write global memory directly.
 if rg -n 'AgoraOps|\.commit\(|broadcast_selection|integrate_broadcast|DaseinWorkspacePort|MemoryService|\.record\(' \
-  crates/aletheon/src/wiring/application/agent_control/candidate_projection.rs \
-  crates/aletheon/src/wiring/adapters/runtime/native_cognit.rs; then
+  crates/aletheon/src/adapters/conscious/agent_projection.rs \
+  crates/aletheon/src/host/runtime/native_cognit.rs; then
   echo "architecture-check: child Agent bypasses C01 candidate admission" >&2
   exit 1
 fi
@@ -2788,7 +2876,7 @@ fi
 # G07 deletion gate: Kernel owns the registry and AgentControl owns the only
 # application-level live Agent mailbox registration adapter.
 mailbox_registration_outside_owner=$(rg -l 'register_process_mailbox' crates -g '*.rs' -g '!**/tests/**' \
-  | grep -Ev '^crates/(kernel/src/runtime\.rs|aletheon/src/wiring/application/agent_control/mod\.rs)$' || true)
+  | grep -Ev '^crates/(kernel/src/runtime\.rs|aletheon/src/composition/agent_control/mod.rs)$' || true)
 if [[ -n "$mailbox_registration_outside_owner" ]]; then
   echo "architecture-check: live Agent mailbox ownership escaped Kernel/AgentControl:" >&2
   echo "$mailbox_registration_outside_owner" >&2
@@ -2796,7 +2884,7 @@ if [[ -n "$mailbox_registration_outside_owner" ]]; then
 fi
 # G08 production must use validated, Kernel-backed hierarchical admission;
 # the compatibility semaphore constructor is restricted to focused tests.
-if rg -n 'BoundedAgentAdmission::new\(' crates/aletheon/src/wiring/daemon/bootstrap -g '*.rs'; then
+if rg -n 'BoundedAgentAdmission::new\(' crates/aletheon/src/composition/daemon_bootstrap -g '*.rs'; then
   echo "architecture-check: production Agent admission bypasses typed Kernel-backed config" >&2
   exit 1
 fi
@@ -2808,7 +2896,7 @@ if rg -n '\.launch\(|\.run_in_context\(|provider.*\.complete\(' \
   echo "architecture-check: Agent recovery replays ordinary runtime/provider work" >&2
   exit 1
 fi
-if ! rg -q 'reconcile_startup' crates/aletheon/src/wiring/daemon/bootstrap/request.rs crates/aletheon/src/wiring/daemon/bootstrap/services.rs; then
+if ! rg -q 'reconcile_startup' crates/aletheon/src/composition/daemon_bootstrap/request.rs crates/aletheon/src/composition/daemon_bootstrap/services.rs; then
   echo "architecture-check: daemon startup skips durable Agent reconciliation" >&2
   exit 1
 fi
@@ -2817,15 +2905,16 @@ fi
 # only broader-scope write is the reviewed promotion module. Agent runtime and
 # candidate projection code may not directly mutate root memory or Dasein.
 agent_memory_bypass=$(rg -l 'MemoryScope::(Global|Principal|Session)|ApprovedCore|Dasein(Core|Ledger)|\.consolidate\(' \
-  crates/aletheon/src/wiring/application/agent_control crates/aletheon/src/wiring/adapters/runtime -g '*.rs' \
-  | grep -Ev '^crates/aletheon/src/wiring/application/agent_control/memory\.rs$' || true)
+  crates/aletheon/src/composition/agent_control crates/aletheon/src/host/runtime \
+  crates/aletheon/src/adapters/agent_memory.rs -g '*.rs' \
+  | grep -Ev '^crates/aletheon/src/adapters/agent_memory\.rs$' || true)
 if [[ -n "$agent_memory_bypass" ]]; then
   echo "architecture-check: child Agent escaped reviewed memory promotion:" >&2
   echo "$agent_memory_bypass" >&2
   exit 1
 fi
 if rg -n 'MemoryScope::(Agent|Task)\([^)]*(request|input|argument|scope)' \
-  crates/mnemosyne/src/agent_scope.rs crates/aletheon/src/wiring/application/agent_control -g '*.rs'; then
+  crates/mnemosyne/src/agent_scope.rs crates/aletheon/src/composition/agent_control -g '*.rs'; then
   echo "architecture-check: child Agent scope is derived from caller-provided data" >&2
   exit 1
 fi
@@ -2851,8 +2940,8 @@ if [[ -e crates/executive/src/core/core_systems.rs ]] || \
   exit 1
 fi
 if rg -n '\bAgoraOps\b' \
-  crates/aletheon/src/wiring/application/turn_pipeline.rs \
-  crates/aletheon/src/wiring/exec_session.rs; then
+  crates/aletheon/src/host/turn_pipeline.rs \
+  crates/aletheon/src/host/exec_session.rs; then
   echo "architecture-check: production composition bypasses authoritative AgoraService" >&2
   exit 1
 fi
@@ -2861,17 +2950,17 @@ if rg -n 'pub async fn (publish|update)\(' crates/agora/src/ops/mod.rs; then
   exit 1
 fi
 composition_outside_bootstrap=$(rg -l '\bDaemonComposition\b' crates/aletheon/src -g '*.rs' \
-  | grep -v '^crates/aletheon/src/wiring/daemon/bootstrap/' || true)
+  | grep -v '^crates/aletheon/src/composition/daemon_bootstrap/' || true)
 if [[ -n "$composition_outside_bootstrap" ]]; then
   echo "architecture-check: private daemon composition escaped bootstrap:" >&2
   echo "$composition_outside_bootstrap" >&2
   exit 1
 fi
-if (( $(wc -l < crates/aletheon/src/wiring/daemon/handler/init.rs) > 250 )); then
+if (( $(wc -l < crates/aletheon/src/daemon/handler/init.rs) > 250 )); then
   echo "architecture-check: handler/init.rs is no longer a thin compatibility layer" >&2
   exit 1
 fi
-if (( $(wc -l < crates/aletheon/src/wiring/daemon/bootstrap/request.rs) > 2000 )); then
+if (( $(wc -l < crates/aletheon/src/composition/daemon_bootstrap/request.rs) > 2000 )); then
   echo "architecture-check: bootstrap/request.rs exceeded its composition bound" >&2
   exit 1
 fi
@@ -2885,12 +2974,12 @@ if ! rg -q 'elevated forget requires a matching dry-run preview' crates/mnemosyn
   exit 1
 fi
 if rg -n '\.forget_memory\(' crates/aletheon/src -g '*.rs' \
-  | grep -v '^crates/aletheon/src/wiring/application/admin_service.rs:'; then
+  | grep -v '^crates/aletheon/src/host/admin_service.rs:'; then
   echo "architecture-check: governed memory forgetting escaped the admin service" >&2
   exit 1
 fi
 for stage in channels google runtime storage; do
-  if (( $(wc -l < "crates/aletheon/src/wiring/daemon/bootstrap/${stage}.rs") > 700 )); then
+  if (( $(wc -l < "crates/aletheon/src/composition/daemon_bootstrap/${stage}.rs") > 700 )); then
     echo "architecture-check: bootstrap/${stage}.rs exceeded its stage bound" >&2
     exit 1
   fi
@@ -2907,11 +2996,14 @@ if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
 import json,sys
 data=json.load(sys.stdin)
 names={p["name"] for p in data["packages"]}
-reviewed_hyphenated={"adapters-agent-profile", "adapters-sqlite"}
+reviewed_hyphenated={"adapters-agent-backend", "adapters-agent-profile", "adapters-gbrain", "adapters-google", "adapters-inference", "adapters-sqlite"}
 forbidden=sorted(name for name in names if "-" in name and name not in reviewed_hyphenated)
 if forbidden:
     raise SystemExit("architecture-check: forbidden hyphenated workspace package(s): " + ", ".join(forbidden))
 reviewed={
+    ("adapters-agent-backend", "application"),
+    ("adapters-agent-backend", "contracts"),
+    ("adapters-agent-backend", "runtime"),
     ("adapters-agent-profile", "runtime"),
     ("adapters-agent-profile", "corpus"),
     ("adapters-sqlite", "application"),
@@ -2923,6 +3015,7 @@ reviewed={
     ("adapters-sqlite", "mnemosyne"),
     ("adapters-sqlite", "platform"),
     ("adapters-sqlite", "runtime"),
+    ("aletheon", "adapters-agent-backend"),
     ("aletheon", "adapters-agent-profile"),
     ("aletheon", "adapters-sqlite"),
     ("aletheon", "agora"),
@@ -2981,7 +3074,6 @@ fi
   rg -l '\bCapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
     | sed 's#^#capability_path|#; s#$#|CapabilityInvoker#' || true
   rg -l '\bAdmissionRequest \{' crates/aletheon/src -g '*.rs' 2>/dev/null \
-    | grep -v 'crates/aletheon/src/wiring/application/governed_capability.rs' \
     | sed 's#^#capability_path|#; s#$#|manual_admission#' || true
 } | sort -u > "$path_actual"
 

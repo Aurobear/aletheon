@@ -94,10 +94,39 @@ cmd_install() {
   [[ -x "$ALETHEON_RELEASE_BINARY" ]] || aletheon_die "missing release binary; run build first"
   local args=()
   ((enable)) || args+=(--no-enable)
+  local user_manifest
+  user_manifest=$(python3 - "$ALETHEON_CONFIG_FILE" "$HOME" <<'PY'
+import pathlib
+import sys
+import tomllib
+
+config_path = pathlib.Path(sys.argv[1])
+home = pathlib.Path(sys.argv[2]).resolve()
+with config_path.open("rb") as source:
+    config = tomllib.load(source)
+state = config.get("deployment", {}).get("paths", {}).get("state", "~/.aletheon/state")
+if state == "~":
+    state_path = home
+elif state.startswith("~/"):
+    state_path = home / state[2:]
+else:
+    state_path = pathlib.Path(state)
+if not state_path.is_absolute():
+    raise SystemExit("deployment.paths.state must resolve to an absolute path")
+try:
+    state_path.resolve().relative_to(home)
+except ValueError:
+    raise SystemExit("user deployment.paths.state must remain under the invoking user's home")
+print(state_path / "deployment-manifest.json")
+PY
+  )
   aletheon_info "installing reviewed system assets (sudo boundary)"
   sudo env ALETHEON_BINARY="$ALETHEON_RELEASE_BINARY" \
     ALETHEON_CONFIG="$ALETHEON_ROOT/config/production.toml.example" \
+    ALETHEON_USER_CONFIG="$ALETHEON_CONFIG_FILE" \
     bash "$ALETHEON_LIBEXEC/install-systemd.sh" "${args[@]}"
+  install -d -m 0700 "$(dirname -- "$user_manifest")"
+  install -m 0600 /var/lib/aletheon/state/deployment-manifest.json "$user_manifest"
   # Migrate legacy per-user installs which shadow the reviewed unit in
   # /usr/lib/systemd/user and keep the daemon on a stale ~/.local binary.
   local user_unit_dir=${ALETHEON_USER_UNIT_DIR:-$HOME/.config/systemd/user}

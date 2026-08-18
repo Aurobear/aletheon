@@ -1,0 +1,9 @@
+# Aletheon wiring ownership migration ledger v1
+# Frozen against HEAD 85704ed3f641419f86dd08c5be8d26c52c64c19b and reviewed plan c9b927bd7a21a01309d05ae31bbc41ff8024988fb0b3417cf799f3a673f76039.
+# One row exists for every top-level Rust file/directory under crates/aletheon/src/wiring.
+# Multiple named targets indicate an explicit split by responsibility, never an unresolved owner choice.
+source_path	source_kind	current_owner	policy_owner	authority_owner	adapter_owner	host_owner	effect_kinds	packet	final_disposition	evidence
+adapters	directory	aletheon-wiring-adapters	application;cognit;mnemosyne;gateway;runtime	cognit;mnemosyne;runtime	adapters-inference;adapters-gbrain;adapters-google;adapters-agent-backend;adapters-sqlite;platform	aletheon-composition	HTTP;SQLite;process;filesystem;MCP	M2;M7	split-by-adapter-family	crates/aletheon/src/wiring/adapters
+composition	directory	aletheon-composition	application	cognit;kernel;runtime;mnemosyne;agora;metacog	none	aletheon-composition	object-construction;port-binding	M1;M2;M3;M4;M5;M6;M7;M8	retain-as-crate-private-composition	crates/aletheon/src/wiring/composition
+daemon	directory	aletheon-daemon	application;gateway	kernel;runtime;gateway	corpus;adapters-sqlite;adapters-inference;adapters-gbrain;adapters-google	aletheon-host-user-daemon;aletheon-host-unix-server;aletheon-composition	Unix-socket;SQLite;filesystem;process;HTTP;MCP	M6;M8	split-transport-use-cases-and-composition	crates/aletheon/src/wiring/daemon
+host	directory	aletheon-host-turn	application	runtime;cognit	corpus;agora;mnemosyne;dasein	aletheon-host-turn	cross-domain-orchestration;process;notification	M6	split-turn-coordinator-and-effect-adapters	crates/aletheon/src/wiring/host
