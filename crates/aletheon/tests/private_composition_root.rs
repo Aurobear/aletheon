@@ -36,7 +36,7 @@ fn retired_god_container_cannot_return() {
 
 #[test]
 fn concrete_groups_are_crate_private() {
-    let domain = fs::read_to_string("../aletheon/src/wiring/domain.rs").expect("domain wiring");
+    let domain = fs::read_to_string("../aletheon/src/host/domain.rs").expect("domain wiring");
     for group in [
         "CorpusGroup",
         "MemoryGroup",
@@ -50,7 +50,7 @@ fn concrete_groups_are_crate_private() {
 #[test]
 fn composition_is_private_and_bootstrap_confined() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../aletheon");
-    let bootstrap = root.join("src/wiring/daemon/bootstrap");
+    let bootstrap = root.join("src/composition/daemon_bootstrap");
     let expected = [
         "mod.rs",
         "storage.rs",
@@ -79,7 +79,7 @@ fn composition_is_private_and_bootstrap_confined() {
         "DaemonComposition escaped bootstrap: {locations:?}"
     );
 
-    let init = fs::read_to_string(root.join("src/wiring/daemon/handler/init.rs")).unwrap();
+    let init = fs::read_to_string(root.join("src/daemon/handler/init.rs")).unwrap();
     assert!(
         init.lines().count() <= 250,
         "handler init is no longer thin"

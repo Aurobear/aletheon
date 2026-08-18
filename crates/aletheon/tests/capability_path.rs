@@ -88,12 +88,15 @@ fn production_has_one_governed_capability_construction() {
 #[test]
 fn external_and_provider_paths_use_the_capability_service() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let provider = production_source(&root.join("src/wiring/adapters/runtime/provider_worker.rs"));
-    let mcp = production_source(&root.join("../aletheon/src/wiring/daemon/mcp_embedded.rs"));
+    // The provider worker moved to the agent-backend adapter crate during the
+    // wiring-ownership migration (M7.4 host/runtime 归位).
+    let provider =
+        production_source(&root.join("../adapters/agent-backend/src/provider_worker.rs"));
+    let mcp = production_source(&root.join("../aletheon/src/daemon/mcp_embedded.rs"));
     // The configured-agent execution path moved with the daemon composition
     // owner. Keep this architecture assertion aimed at the shipping path
     // rather than a retired Executive source locator.
-    let configured = production_source(&root.join("../aletheon/src/wiring/exec_session.rs"));
+    let configured = production_source(&root.join("../aletheon/src/host/exec_session.rs"));
 
     for (name, source) in [
         ("provider worker", provider),

@@ -5,7 +5,7 @@ use ::contracts::{
     AgentSpawnRequest, OperationId, ProcessId, RuntimeId, AGENT_MESSAGE_SCHEMA_V1,
 };
 use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
-use aletheon::wiring::application::agent_control::{AgentRunProjection, AgentRunRecord};
+use aletheon::composition::agent_control::{AgentRunProjection, AgentRunRecord};
 use runtime::mailbox::{InProcessMailbox, Mailbox};
 use tokio_util::sync::CancellationToken;
 
@@ -53,7 +53,7 @@ fn run(root: AgentId) -> AgentRunRecord {
             last_error: None,
         },
         request_hash: SqliteAgentRunProjection::request_hash(&request).unwrap(),
-        workspace_id: aletheon::wiring::application::agent_control::agent_workspace_id(root),
+        workspace_id: aletheon::composition::agent_control::agent_workspace_id(root),
         root_process_id: process,
         broadcast_refs: vec![],
         request,
@@ -223,4 +223,4 @@ async fn normal_overload_never_drops_the_reserved_high_priority_signal() {
 }
 use std::sync::Arc;
 
-use aletheon::wiring::application::agent_control::AgentMailboxBridge;
+use aletheon::composition::agent_control::AgentMailboxBridge;

@@ -28,7 +28,7 @@ fn delegated_host_success_propagates_to_process_status() {
 
 #[test]
 fn conscious_arbitration_mode_is_strict_and_observe_first() {
-    use aletheon::wiring::daemon::parse_conscious_arbitration_mode;
+    use aletheon::daemon::parse_conscious_arbitration_mode;
     use contracts::ConsciousArbitrationMode;
     assert_eq!(
         parse_conscious_arbitration_mode(None).unwrap(),

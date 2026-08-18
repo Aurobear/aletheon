@@ -2,10 +2,10 @@ use ::contracts::*;
 use adapters_sqlite::approval_repository::{
     ApprovalCreate, ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
 };
-use aletheon::wiring::application::approval::{
-    ApplyCoordinationOutcome, ApplyCoordinatorConfig, ManagedWorktreeCleaner,
-};
-use aletheon::wiring::application::goal::{GoalCoordinator, ObjectiveStore};
+use adapters_sqlite::goal::ObjectiveStore;
+use aletheon::adapters::approved_apply::{ApplyCoordinator, ApplyCoordinatorConfig};
+use application::approval::ApplyCoordinationOutcome;
+use application::approval::ManagedWorktreeCleaner;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -253,28 +253,28 @@ impl Fixture {
     async fn coordinator(
         &self,
     ) -> (
-        aletheon::wiring::application::approval::ApplyCoordinator,
+        aletheon::adapters::approved_apply::ApplyCoordinator,
         ProcessId,
     ) {
-        let goal = GoalCoordinator::new(self.store.clone());
         let kernel = Arc::new(::kernel::KernelRuntime::with_clock(Arc::new(TestClock)));
         let owner = kernel
             .spawn_process(::contracts::SpawnSpec::default())
             .await
             .unwrap()
             .id;
-        let coordinator = goal
-            .approved_apply_coordinator(
-                self.approvals.clone(),
-                kernel,
-                Arc::new(TestClock),
-                ApplyCoordinatorConfig {
-                    worktree_base: self.worktree_base.clone(),
-                    timeout: Duration::from_secs(5),
-                },
-                self.cleaner.clone(),
-            )
-            .unwrap();
+        let coordinator = ApplyCoordinator::new(
+            self.store.clone(),
+            self.approvals.clone(),
+            kernel,
+            Arc::new(TestClock),
+            ApplyCoordinatorConfig {
+                worktree_base: self.worktree_base.clone(),
+                timeout: Duration::from_secs(5),
+            },
+            self.cleaner.clone(),
+            Arc::new(platform::temporary_artifact::HostTemporaryArtifactStore),
+        )
+        .unwrap();
         (coordinator, owner)
     }
 }

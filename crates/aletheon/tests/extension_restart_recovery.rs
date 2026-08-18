@@ -2,13 +2,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use aletheon::composition::daemon_bootstrap::extensions::reconcile_extension_snapshot;
 use aletheon::extensions::extension_coordinator::ExtensionRuntimePublisher;
 use aletheon::extensions::extension_install::ExtensionInstallService;
 use aletheon::extensions::extension_manage::ExtensionManageService;
 use aletheon::extensions::extension_snapshot::{
     ExtensionRuntimeSnapshot, ExtensionSnapshotCompiler,
 };
-use aletheon::wiring::daemon::bootstrap::extensions::reconcile_extension_snapshot;
 use flate2::{write::GzEncoder, Compression};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;

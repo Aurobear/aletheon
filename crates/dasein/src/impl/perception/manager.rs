@@ -62,7 +62,7 @@ impl PerceptionManager {
         }
 
         // Start journald reader
-        if let Some(ref journald) = self.journald_source {
+        if let Some(ref mut journald) = self.journald_source {
             journald.start().await?;
             info!("Journald reader started");
         }

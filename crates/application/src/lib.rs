@@ -1,22 +1,27 @@
 //! Aletheon narrow Application contracts and wired use cases.
 //!
 //! This crate owns pure use-case types, typed errors, and use cases that are
-//! wired into production. Host orchestration for Turn, Goal, and Agent Control
-//! lives under `aletheon::wiring::application`; this crate does **not** own a
-//! concrete repository or mint Runtime IDs. It depends only on `contracts` and
-//! `runtime`, with no concrete host adapter.
+//! wired into production. Concrete construction remains in the binary-owned
+//! composition layer; this crate does **not** own a repository or mint Runtime
+//! IDs. It depends only on `contracts` and `runtime`, with no concrete adapter.
 
+pub mod agent;
 pub mod approval;
 pub mod cache;
 pub mod capability_benchmark;
 pub mod checkpoint_projection;
 pub mod command_dispatcher;
+pub mod conscious;
 pub mod daemon_lifecycle;
 pub mod data_governance;
 pub mod error;
+pub mod evaluation;
 pub mod evaluation_projection;
+pub mod evolution;
 pub mod extension;
 pub mod external_identity;
+pub mod goal;
+pub mod goal_artifact;
 pub mod goal_attempt;
 pub mod goal_draft;
 pub mod goal_frame;
@@ -29,8 +34,10 @@ pub mod objective;
 pub mod session_input;
 pub mod settlement;
 pub mod thread_authority;
+pub mod turn;
 pub mod turn_control;
 pub mod use_case;
+pub mod verification;
 pub mod workflow;
 pub mod workspace_checkpoint;
 pub mod workspace_identity;

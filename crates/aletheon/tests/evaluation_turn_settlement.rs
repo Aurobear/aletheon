@@ -2,22 +2,23 @@ use std::sync::Arc;
 
 use ::contracts::{
     CapabilityRetryDisposition, CapabilityTerminalReceipt, CapabilityTerminalStatus,
-    EvaluationDecision, EvaluationMode, ItemPayload, MonoTime, OperationId, SessionAppendStore,
-    SessionId, TaskKind, TurnMetrics, TurnRequest, TurnResult, TurnStop,
+    EvaluationDecision, EvaluationMode, ItemPayload, MonoTime, OperationId, SessionId, TaskKind,
+    TurnMetrics, TurnRequest, TurnResult, TurnStop,
 };
 use adapters_sqlite::evaluation::SqliteEvaluationStore;
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
-use aletheon::wiring::application::evaluation::{
-    EvaluationReceiptStore, EvaluationService, TurnEvaluationArtifacts,
+use application::evaluation::{
+    DefaultCodingEvidenceCollector, DefaultTaskEvaluationContractIssuer, EvaluationReceiptStore,
+    EvaluationService, TurnEvaluationArtifacts,
 };
-use aletheon::wiring::application::turn_coordinator::{TurnCoordinator, TurnExecution};
+use application::turn::coordinator::{TurnCoordinator, TurnExecution};
 use kernel::KernelRuntime;
 use runtime::turn_diff_tracker::TurnFileDeltaSnapshot;
 use runtime::turn_policy::TurnPolicy;
 
 struct Fixture {
     kernel: Arc<KernelRuntime>,
-    store: Arc<dyn SessionAppendStore>,
+    store: Arc<dyn application::turn::ports::TurnSessionPort>,
     evaluations: Arc<SqliteEvaluationStore>,
     coordinator: TurnCoordinator,
     process_id: ::contracts::ProcessId,
@@ -33,16 +34,35 @@ impl Fixture {
             default_mode: mode,
             ..Default::default()
         };
+        let clock = kernel.clock();
+        let max_evaluation_ms = settings.max_evaluation_ms;
         let evaluation = Arc::new(
-            EvaluationService::new(kernel.clone(), settings, evaluations.clone()).unwrap(),
+            EvaluationService::new(
+                Arc::new(
+                    DefaultTaskEvaluationContractIssuer::new(settings, clock.clone()).unwrap(),
+                ),
+                Arc::new(DefaultCodingEvidenceCollector::new(
+                    clock.clone(),
+                    Arc::new(platform::evaluation_path::PlatformEvaluationPathResolver),
+                )),
+                Arc::new(aletheon::adapters::evaluation::CodingV2Scorer),
+                Arc::new(aletheon::adapters::evaluation::MetacogCodingV2Engine),
+                Arc::new(
+                    aletheon::adapters::evaluation::KernelEvaluationOperations::new(kernel.clone()),
+                ),
+                evaluations.clone(),
+                clock,
+                max_evaluation_ms,
+            )
+            .unwrap(),
         );
         let coordinator =
-            aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
+            aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
                 kernel.clone(),
                 Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
             )
             .with_evaluation_service(evaluation);
-        let store = coordinator.store();
+        let store = coordinator.session_port();
         let process_id = kernel
             .spawn_process(::contracts::SpawnSpec::default())
             .await

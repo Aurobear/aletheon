@@ -3,8 +3,8 @@ use std::sync::Arc;
 use ::contracts::types::embodiment::{
     DeviceId, EmbodimentExecutionPort, SkillId, SkillOutcome, SkillRequest,
 };
-use aletheon::wiring::embodiment::build_embodiment_invoker;
-use aletheon::wiring::embodiment::EmbodimentService;
+use aletheon::host::embodiment::build_embodiment_invoker;
+use aletheon::host::embodiment::EmbodimentService;
 use hardware::progress_projection::RecordingEmbodimentProgress;
 use hardware::{Broker, ManualClock, ProviderRegistry, SimulatedEmbodiment};
 use kernel::chronos::TestClock;

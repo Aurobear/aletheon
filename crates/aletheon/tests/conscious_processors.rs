@@ -8,7 +8,7 @@ use ::contracts::{
     WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
     WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
-use aletheon::wiring::application::conscious::{
+use aletheon::adapters::conscious::{
     AgentAdapter, CorpusProcessor, MetacogProcessor, MnemosyneProcessor,
 };
 use async_trait::async_trait;

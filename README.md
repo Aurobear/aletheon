@@ -232,19 +232,19 @@ execd     ---> platform
 | Capability | Status | Production Code | E2E Evidence | Recovery Evidence |
 |---|---|---|---|---|
 | DaemonHost (Unix socket JSON-RPC) | ✅ Stable | `crates/application/src/daemon_lifecycle.rs` | `crates/aletheon/tests/daemon_lifecycle.rs` | `crates/aletheon/tests/daemon_lifecycle.rs` |
-| SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/aletheon/src/wiring/daemon/server.rs` | `crates/aletheon/tests/production_health.rs` | `crates/aletheon/tests/supervision.rs` |
-| ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/aletheon/src/wiring/daemon/server.rs` | `crates/aletheon/tests/daemon_lifecycle.rs` | — |
-| JSON-RPC server (line-delimited) | ✅ Stable | `crates/aletheon/src/wiring/daemon/server.rs` | `crates/aletheon/tests/daemon_streaming_turn_e2e.rs` | `crates/aletheon/tests/session_protocol_reconnect.rs` |
+| SystemdHost (sd_notify, watchdog) | ✅ Stable | `crates/aletheon/src/daemon/server.rs` | `crates/aletheon/tests/production_health.rs` | `crates/aletheon/tests/supervision.rs` |
+| ContainerHost (Docker/Podman) | 🔧 Experimental | `crates/aletheon/src/daemon/server.rs` | `crates/aletheon/tests/daemon_lifecycle.rs` | — |
+| JSON-RPC server (line-delimited) | ✅ Stable | `crates/aletheon/src/daemon/server.rs` | `crates/aletheon/tests/daemon_streaming_turn_e2e.rs` | `crates/aletheon/tests/session_protocol_reconnect.rs` |
 | TUI client (`interact`, assembled by `bin`) | ✅ Stable | `crates/interact/src/tui/task_console.rs` | `crates/interact/tests/tui_snapshots.rs` | `crates/interact/tests/tui_reducer.rs` |
 | ReActLoop inference engine | ✅ Stable | `crates/cognit/src/harness/linear/mod.rs` | `crates/aletheon/tests/turn_service_equivalence.rs` | `crates/aletheon/tests/goal_restart_recovery.rs` |
 | Multi-session support | ✅ Stable | `crates/adapters/sqlite/src/session/event_sourced_store.rs` | `crates/aletheon/tests/session_lifecycle_commands.rs` | `crates/aletheon/tests/session_protocol_reconnect.rs` |
-| Health check endpoint | ✅ Stable | `crates/aletheon/src/wiring/daemon/handler/mod.rs` | `crates/aletheon/tests/production_health.rs` | `crates/aletheon/tests/daemon_lifecycle.rs` |
+| Health check endpoint | ✅ Stable | `crates/aletheon/src/daemon/handler/mod.rs` | `crates/aletheon/tests/production_health.rs` | `crates/aletheon/tests/daemon_lifecycle.rs` |
 | Bash/File/Grep tools | ✅ Stable | `crates/corpus/src/tools/tools/bash_exec.rs` | `crates/corpus/tests/capability_executor.rs` | `crates/corpus/tests/controlled_apply.rs` |
 | Provider abstraction (Anthropic / OpenAI compatible) | ✅ Stable | `crates/cognit/src/composition/provider_registry.rs` | `crates/aletheon/tests/inference_port_contract.rs` | `crates/cognit/src/adapters/inference/backpressure.rs` |
 | Session persistence (EventSpine + SQLite projection) | ✅ Stable | `crates/adapters/sqlite/src/session/event_sourced_store.rs` | `crates/aletheon/tests/session_append_store.rs` | `crates/aletheon/tests/session_event_recovery.rs` |
 | Hook system (extension-owned lifecycle hooks) | ✅ Stable | `crates/corpus/src/hook/mod.rs` | `crates/aletheon/tests/package_skill_hook_runtime.rs` | `crates/aletheon/tests/extension_restart_recovery.rs` |
 | Bubblewrap Sandbox | ✅ Stable | `crates/corpus/src/security/sandbox/bubblewrap.rs` | `crates/corpus/tests/workspace_sandbox.rs` | `crates/corpus/src/security/runner/tests.rs` |
-| Multi-agent Collaboration | ✅ Stable | `crates/aletheon/src/wiring/application/agent_control/mod.rs` | `crates/aletheon/tests/agent_control_spawn.rs` | `crates/aletheon/tests/agent_recovery.rs` |
+| Multi-agent Collaboration | ✅ Stable | `crates/aletheon/src/composition/agent_control/mod.rs` | `crates/aletheon/tests/agent_control_spawn.rs` | `crates/aletheon/tests/agent_recovery.rs` |
 | io_uring IPC backend | 🔧 Experimental | `crates/contracts/Cargo.toml` | `crates/contracts/Cargo.toml` | — |
 | Local/Offline Model | 🔧 Experimental | — | — | — |
 | Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/evolution_loop/` | `crates/aletheon/tests/self_evolution_loop_test.rs` | — |
@@ -293,7 +293,7 @@ evidence cannot be presented as physical-robot acceptance.
 
 These have code but are gated behind features, environment variables, or exist only as examples:
 
-- **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/aletheon/src/wiring/daemon/server.rs` and is selected through `aletheon daemon --container <runtime>`.
+- **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/aletheon/src/daemon/server.rs` and is selected through `aletheon daemon --container <runtime>`.
 - **io_uring backend** — High-performance IPC backend using Linux io_uring. Code exists but not yet the default transport.
 - **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/evolution_loop/`. Requires explicit opt-in.
 - **eBPF probes** — Kernel-level perception via eBPF. Partial implementation in `kernel_bus.rs`.

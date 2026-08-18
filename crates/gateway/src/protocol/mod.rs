@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// R3 typed command-output surface (closure plan §11).
 pub mod command_output;
+pub mod connection;
 pub mod conscious_core;
 pub mod exec;
 pub mod extension;

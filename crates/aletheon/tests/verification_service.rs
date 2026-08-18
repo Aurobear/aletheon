@@ -2,11 +2,14 @@ use ::contracts::{
     AttemptId, ChangedFile, ChangedFileKind, CodingJobId, GoalId, VerificationCheck,
     VerificationReport,
 };
-use aletheon::wiring::application::verification::{
+use application::verification::{
     ArchitecturePolicy, CapabilityAuditSummary, ForbiddenDependencyEdge, VerificationCheckKind,
     VerificationContext, VerificationSelection, VerificationService, VerificationServiceConfig,
 };
 use kernel::chronos::SystemClock;
+use platform::verification_command::{
+    PlatformVerificationCommandExecutor, PlatformVerificationWorkspaceReader,
+};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -193,14 +196,26 @@ const COMMAND_CHECKS: [VerificationCheckKind; 4] = [
     VerificationCheckKind::Clippy,
 ];
 
+fn verification_service(
+    config: VerificationServiceConfig,
+    clock: Arc<dyn contracts::Clock>,
+) -> VerificationService {
+    VerificationService::new(
+        config,
+        clock,
+        Arc::new(PlatformVerificationCommandExecutor),
+        Arc::new(PlatformVerificationWorkspaceReader),
+    )
+    .unwrap()
+}
+
 #[tokio::test]
 async fn trusted_commands_use_exact_argv_and_full_report_passes() {
     let fixture = Fixture::new();
-    let service = VerificationService::with_clock(
+    let service = verification_service(
         fixture.config(Duration::from_secs(2), 4096),
         Arc::new(SystemClock::new()),
-    )
-    .unwrap();
+    );
     let report = service
         .verify(&fixture.default_context(), CancellationToken::new())
         .await
@@ -221,14 +236,13 @@ async fn every_cargo_check_reports_failure_timeout_and_output_truncation() {
         for mode in ["fail", "timeout", "output"] {
             let fixture = Fixture::new();
             fixture.set_mode(command_name(kind), mode);
-            let service = VerificationService::with_clock(
+            let service = verification_service(
                 // Process startup plus the output-producing shell pipeline can
                 // exceed 40 ms on a busy workspace runner. Keep this far below
                 // the fixture's 30-second hang while avoiding false timeouts.
                 fixture.config(Duration::from_millis(250), 64),
                 Arc::new(SystemClock::new()),
-            )
-            .unwrap();
+            );
             let report = service
                 .verify(&fixture.default_context(), CancellationToken::new())
                 .await
@@ -266,11 +280,10 @@ async fn every_cargo_check_is_cancellable() {
         let fixture = Fixture::new();
         let command = command_name(kind);
         fixture.set_mode(command, "timeout");
-        let service = VerificationService::with_clock(
+        let service = verification_service(
             fixture.config(Duration::from_secs(30), 128),
             Arc::new(SystemClock::new()),
-        )
-        .unwrap();
+        );
         let context = fixture.default_context();
         let cancel = CancellationToken::new();
         let task = tokio::spawn({
@@ -293,7 +306,10 @@ async fn every_cargo_check_is_cancellable() {
 #[tokio::test]
 async fn diff_scope_uses_fresh_status_and_enforces_path_policy() {
     let fixture = Fixture::new();
-    let service = VerificationService::new(fixture.config(Duration::from_secs(2), 4096)).unwrap();
+    let service = verification_service(
+        fixture.config(Duration::from_secs(2), 4096),
+        Arc::new(SystemClock::new()),
+    );
     let report = service
         .verify(&fixture.default_context(), CancellationToken::new())
         .await
@@ -327,7 +343,10 @@ async fn diff_scope_uses_fresh_status_and_enforces_path_policy() {
 #[tokio::test]
 async fn missing_or_disallowed_capability_audit_is_required_failure() {
     let fixture = Fixture::new();
-    let service = VerificationService::new(fixture.config(Duration::from_secs(2), 4096)).unwrap();
+    let service = verification_service(
+        fixture.config(Duration::from_secs(2), 4096),
+        Arc::new(SystemClock::new()),
+    );
     let mut context = fixture.default_context();
     context.capability_audit.audit_present = false;
     let report = service
@@ -370,7 +389,7 @@ async fn architecture_rules_cover_paths_imports_and_dependency_direction_as_advi
             to: "executive".into(),
         }],
     };
-    let service = VerificationService::new(config).unwrap();
+    let service = verification_service(config, Arc::new(SystemClock::new()));
     let context = fixture.context(vec![
         changed("src/lib.rs", ChangedFileKind::Modified),
         changed("Cargo.toml", ChangedFileKind::Modified),
@@ -392,7 +411,7 @@ async fn relevant_tests_require_explicit_trusted_argv() {
     let fixture = Fixture::new();
     let mut config = fixture.config(Duration::from_secs(2), 4096);
     config.relevant_test_args.clear();
-    let service = VerificationService::new(config).unwrap();
+    let service = verification_service(config, Arc::new(SystemClock::new()));
     let report = service
         .verify(&fixture.default_context(), CancellationToken::new())
         .await

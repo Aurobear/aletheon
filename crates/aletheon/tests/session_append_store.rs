@@ -32,7 +32,7 @@ async fn append_is_transactional_idempotent_and_restart_durable() {
     let path = dir.path().join("sessions.db");
     let session_id = SessionId("s1".into());
     let turn = TurnId::new();
-    let store = aletheon::wiring::adapters::session::test_composition::compose_session_store(
+    let store = aletheon::host::session::test_composition::compose_session_store(
         Arc::new(CanonicalSessionStore::open(&path).unwrap()),
         Arc::new(SqliteEventSpine::open(dir.path().join("events.db")).unwrap()),
         Arc::new(DefaultEventProjectionSet::in_memory()),
@@ -98,10 +98,9 @@ async fn append_is_transactional_idempotent_and_restart_durable() {
 
 #[tokio::test]
 async fn fork_copies_bounded_history_with_new_item_identity() {
-    let store =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
-            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
-        );
+    let store = aletheon::host::session::test_composition::compose_in_memory_session_store(
+        Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
+    );
     let parent = SessionId("parent".into());
     let turn = TurnId::new();
     store.create(session("parent", None)).await.unwrap();
@@ -199,7 +198,7 @@ fn projection_is_deterministic_ordered_and_correlated() {
 #[tokio::test]
 async fn different_sessions_append_concurrently_with_contiguous_per_session_sequences() {
     let dir = tempfile::tempdir().unwrap();
-    let store = aletheon::wiring::adapters::session::test_composition::compose_session_store(
+    let store = aletheon::host::session::test_composition::compose_session_store(
         Arc::new(CanonicalSessionStore::open(dir.path().join("sessions.db")).unwrap()),
         Arc::new(SqliteEventSpine::open(dir.path().join("events.db")).unwrap()),
         Arc::new(DefaultEventProjectionSet::in_memory()),
@@ -265,7 +264,7 @@ async fn different_sessions_append_concurrently_with_contiguous_per_session_sequ
 async fn same_session_concurrent_appends_retry_to_one_contiguous_sequence() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_session_store(
+        aletheon::host::session::test_composition::compose_session_store(
             Arc::new(CanonicalSessionStore::open(dir.path().join("sessions.db")).unwrap()),
             Arc::new(SqliteEventSpine::open(dir.path().join("events.db")).unwrap()),
             Arc::new(DefaultEventProjectionSet::in_memory()),
@@ -319,7 +318,7 @@ async fn append_admission_uses_the_head_not_a_full_history_scan() {
     // full-history `load_items` scan. This test asserts head-consistent
     // admission: a stale expected sequence is rejected once the head advances.
     let dir = tempfile::tempdir().unwrap();
-    let store = aletheon::wiring::adapters::session::test_composition::compose_session_store(
+    let store = aletheon::host::session::test_composition::compose_session_store(
         Arc::new(CanonicalSessionStore::open(dir.path().join("sessions.db")).unwrap()),
         Arc::new(SqliteEventSpine::open(dir.path().join("events.db")).unwrap()),
         Arc::new(DefaultEventProjectionSet::in_memory()),

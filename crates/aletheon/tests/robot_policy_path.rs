@@ -99,8 +99,8 @@ fn policy_boundary_has_no_execution_capability_symbols() {
 
 #[test]
 fn child_agent_runtime_is_pinned_to_linear_cognitive_sessions() {
-    let bootstrap = include_str!("../../aletheon/src/wiring/daemon/bootstrap/request.rs");
-    let robot_bootstrap = include_str!("../../aletheon/src/wiring/daemon/bootstrap/robot.rs");
+    let bootstrap = include_str!("../../aletheon/src/composition/daemon_bootstrap/request.rs");
+    let robot_bootstrap = include_str!("../../aletheon/src/composition/daemon_bootstrap/robot.rs");
     let native_start = bootstrap
         .find("NativeCognitRuntimeResources {")
         .expect("native Cognit runtime composition must remain explicit");

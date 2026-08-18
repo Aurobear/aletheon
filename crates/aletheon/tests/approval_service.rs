@@ -5,13 +5,11 @@ use ::contracts::{
     ApprovalCategory, ApprovalRisk, ApprovalSubject, Clock, GoalSpec, GoalState, PrincipalId,
     ThreadId, TurnId,
 };
-use adapters_sqlite::approval_repository::{ApprovalCreate, ApprovalDecision, ApprovalRepository};
-use aletheon::wiring::application::admin_service::{
-    ApprovalOwner, PendingApprovals, ScopedApprovalCache,
-};
-use aletheon::wiring::application::goal::ObjectiveStore;
-use aletheon::wiring::approval_service::{
-    ApprovalContext, ApprovalService, ApprovalServiceError, ApprovalUseCases,
+use adapters_sqlite::approval_repository::{ApprovalCreate, ApprovalRepository};
+use adapters_sqlite::goal::ObjectiveStore;
+use aletheon::host::admin_service::{ApprovalOwner, PendingApprovals, ScopedApprovalCache};
+use application::approval::{
+    ApprovalContext, ApprovalDecision, ApprovalService, ApprovalServiceError, ApprovalUseCases,
     ResolveApprovalRequest,
 };
 use kernel::chronos::TestClock;
@@ -111,10 +109,11 @@ impl Fixture {
         let repository = Arc::new(Mutex::new(ApprovalRepository::open(&path).unwrap()));
         let clock: Arc<dyn Clock> = Arc::new(TestClock::new(now_ms, 0));
         let service = ApprovalService::new(
-            repository.clone(),
+            Arc::new(adapters_sqlite::approval::SqliteApprovalRepository::new(
+                repository.clone(),
+            )),
             None,
             clock,
-            Arc::new(tokio::sync::Mutex::new(None)),
         );
         Self {
             service,
@@ -262,7 +261,7 @@ async fn list_is_owner_scoped_expiry_aware_and_bounded() {
 
 #[test]
 fn approval_rpc_has_no_repository_clock_or_lock_access() {
-    let source = include_str!("../../aletheon/src/wiring/daemon/handler/rpc/rpc_approval.rs");
+    let source = include_str!("../../aletheon/src/daemon/handler/rpc/rpc_approval.rs");
     assert!(source.contains("self.ports.approvals"));
     for forbidden in [
         "subsystems",

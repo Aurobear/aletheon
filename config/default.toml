@@ -194,7 +194,7 @@ enabled = true
 inject_into_context = true
 max_items = 4
 max_bytes = 65536
-timeout_ms = 500
+timeout_ms = 3000
 
 # Post-turn fact extraction.  Feeds into the background consolidation worker.
 [memory.extraction]

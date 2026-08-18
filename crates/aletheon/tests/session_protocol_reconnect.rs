@@ -10,13 +10,12 @@ use adapters_sqlite::session::{
     canonical_store::CanonicalSessionStore, event_sourced_store::reconcile_committed_session_events,
 };
 use adapters_sqlite::{event_spine::SqliteEventSpine, projection_set::DefaultEventProjectionSet};
-use aletheon::wiring::application::session_service::SessionService;
+use runtime::session_service::SessionService;
 
 async fn fixture() -> (Arc<dyn SessionAppendStore>, SessionService, SessionId) {
-    let store =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
-            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
-        );
+    let store = aletheon::host::session::test_composition::compose_in_memory_session_store(
+        Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
+    );
     let session_id = SessionId("daemon-protocol-reconnect".into());
     store
         .create(SessionRecord {
@@ -190,10 +189,9 @@ async fn live_and_durable_item_phases_share_one_reconnect_cursor() {
     let temp = tempfile::tempdir().unwrap();
     let canonical_path = temp.path().join("sessions.db");
     let journal_path = temp.path().join("protocol.db");
-    let store =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
-            Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap()),
-        );
+    let store = aletheon::host::session::test_composition::compose_in_memory_session_store(
+        Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap()),
+    );
     let session_id = SessionId("live-reconnect".into());
     store
         .create(SessionRecord {
@@ -205,12 +203,13 @@ async fn live_and_durable_item_phases_share_one_reconnect_cursor() {
         })
         .await
         .unwrap();
-    let service = SessionService::with_protocol_journal(
+    let service = SessionService::with_protocol_store(
         store.clone(),
         Arc::new(runtime::ActiveTurnRegistry::new()),
-        &journal_path,
-    )
-    .unwrap();
+        Arc::new(
+            adapters_sqlite::session::SqliteSessionProtocolEventStore::open(&journal_path).unwrap(),
+        ),
+    );
     let turn_id = TurnId::new();
     let logical_id = format!("turn:{}:assistant", turn_id.0);
     let started = service
@@ -260,12 +259,13 @@ async fn live_and_durable_item_phases_share_one_reconnect_cursor() {
         _ => unreachable!(),
     };
     drop(service);
-    let reopened = SessionService::with_protocol_journal(
+    let reopened = SessionService::with_protocol_store(
         store,
         Arc::new(runtime::ActiveTurnRegistry::new()),
-        &journal_path,
-    )
-    .unwrap();
+        Arc::new(
+            adapters_sqlite::session::SqliteSessionProtocolEventStore::open(&journal_path).unwrap(),
+        ),
+    );
     let replay = reopened
         .protocol_events_after(&session_id, &started_cursor)
         .await
@@ -291,10 +291,9 @@ async fn live_and_durable_item_phases_share_one_reconnect_cursor() {
 async fn a_session_001_interruption_at_each_item_boundary_replays_the_same_task_snapshot() {
     let temp = tempfile::tempdir().unwrap();
     let canonical_path = temp.path().join("sessions.db");
-    let store =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
-            Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap()),
-        );
+    let store = aletheon::host::session::test_composition::compose_in_memory_session_store(
+        Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap()),
+    );
     let session_id = SessionId("a-session-001".into());
     store
         .create(SessionRecord {
@@ -366,25 +365,33 @@ async fn a_session_001_interruption_at_each_item_boundary_replays_the_same_task_
             .await,
             AppendOutcome::Appended
         );
-        let before = SessionService::with_protocol_journal(
+        let before = SessionService::with_protocol_store(
             store.clone(),
             Arc::new(runtime::ActiveTurnRegistry::new()),
-            temp.path().join(format!("before-{sequence}.db")),
+            Arc::new(
+                adapters_sqlite::session::SqliteSessionProtocolEventStore::open(
+                    temp.path().join(format!("before-{sequence}.db")),
+                )
+                .unwrap(),
+            ),
         )
-        .unwrap()
         .protocol_read_snapshot(&session_id)
         .await
         .unwrap();
         let replayed_store =
-            aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
-                Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap()),
-            );
-        let after = SessionService::with_protocol_journal(
+            aletheon::host::session::test_composition::compose_in_memory_session_store(Arc::new(
+                CanonicalSessionStore::open(&canonical_path).unwrap(),
+            ));
+        let after = SessionService::with_protocol_store(
             replayed_store,
             Arc::new(runtime::ActiveTurnRegistry::new()),
-            temp.path().join(format!("after-{sequence}.db")),
+            Arc::new(
+                adapters_sqlite::session::SqliteSessionProtocolEventStore::open(
+                    temp.path().join(format!("after-{sequence}.db")),
+                )
+                .unwrap(),
+            ),
         )
-        .unwrap()
         .protocol_read_snapshot(&session_id)
         .await
         .unwrap();
@@ -496,7 +503,7 @@ async fn u_resume_001_daemon_restart_preserves_goal_plan_budget_and_checkpoint()
     let read_model = Arc::new(CanonicalSessionStore::open(temp.path().join("live.db")).unwrap());
     let spine = Arc::new(SqliteEventSpine::open(&event_path).unwrap());
     let projections = Arc::new(DefaultEventProjectionSet::in_memory());
-    let store = aletheon::wiring::adapters::session::test_composition::compose_session_store(
+    let store = aletheon::host::session::test_composition::compose_session_store(
         read_model.clone(),
         spine.clone(),
         projections.clone(),
@@ -569,12 +576,11 @@ async fn u_resume_001_daemon_restart_preserves_goal_plan_budget_and_checkpoint()
     // Session creation, two items, and the durable local-principal binding
     // emitted while reading the authenticated snapshot are all replayed.
     assert_eq!(report.materialized, 4);
-    let reopened_store =
-        aletheon::wiring::adapters::session::test_composition::compose_session_store(
-            reopened_read,
-            reopened_spine,
-            reopened_projections,
-        );
+    let reopened_store = aletheon::host::session::test_composition::compose_session_store(
+        reopened_read,
+        reopened_spine,
+        reopened_projections,
+    );
     let after = SessionService::new(reopened_store, Arc::new(runtime::ActiveTurnRegistry::new()))
         .protocol_read_snapshot(&session_id)
         .await
@@ -598,9 +604,7 @@ async fn u_resume_001_daemon_restart_preserves_goal_plan_budget_and_checkpoint()
 async fn u_resume_002_restart_recovery_marks_unsettled_commands_lost() {
     let read_model = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let store =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
-            read_model,
-        );
+        aletheon::host::session::test_composition::compose_in_memory_session_store(read_model);
     let session_id = SessionId("u-resume-002".into());
     store
         .create(SessionRecord {
@@ -683,7 +687,7 @@ async fn u_resume_004_duplicate_patch_item_is_not_applied_twice_after_store_reop
     let read_model = Arc::new(CanonicalSessionStore::open(&session_path).unwrap());
     let spine = Arc::new(SqliteEventSpine::open(&event_path).unwrap());
     let projections = Arc::new(DefaultEventProjectionSet::in_memory());
-    let store = aletheon::wiring::adapters::session::test_composition::compose_session_store(
+    let store = aletheon::host::session::test_composition::compose_session_store(
         read_model.clone(),
         spine.clone(),
         projections.clone(),
@@ -731,12 +735,11 @@ async fn u_resume_004_duplicate_patch_item_is_not_applied_twice_after_store_reop
     )
     .await
     .unwrap();
-    let reopened_store =
-        aletheon::wiring::adapters::session::test_composition::compose_session_store(
-            reopened_read,
-            reopened_spine,
-            reopened_projections,
-        );
+    let reopened_store = aletheon::host::session::test_composition::compose_session_store(
+        reopened_read,
+        reopened_spine,
+        reopened_projections,
+    );
     assert_eq!(
         append_record(reopened_store.as_ref(), patch_item).await,
         AppendOutcome::AlreadyPresent

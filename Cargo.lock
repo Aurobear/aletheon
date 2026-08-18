@@ -3,6 +3,26 @@
 version = 4
 
 [[package]]
+name = "adapters-agent-backend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "application",
+ "async-trait",
+ "cognit",
+ "contracts",
+ "corpus",
+ "kernel",
+ "runtime",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "adapters-agent-profile"
 version = "0.1.0"
 dependencies = [
@@ -12,6 +32,74 @@ dependencies = [
  "serde",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "adapters-gbrain"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "application",
+ "async-trait",
+ "chrono",
+ "contracts",
+ "corpus",
+ "mnemosyne",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "adapters-google"
+version = "0.1.0"
+dependencies = [
+ "adapters-sqlite",
+ "anyhow",
+ "application",
+ "async-trait",
+ "chrono",
+ "contracts",
+ "corpus",
+ "gateway",
+ "platform",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "adapters-inference"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cognit",
+ "contracts",
+ "futures",
+ "reqwest",
+ "runtime",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -131,7 +219,11 @@ dependencies = [
 name = "aletheon"
 version = "0.1.0"
 dependencies = [
+ "adapters-agent-backend",
  "adapters-agent-profile",
+ "adapters-gbrain",
+ "adapters-google",
+ "adapters-inference",
  "adapters-sqlite",
  "agora",
  "anyhow",
@@ -259,6 +351,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "contracts",
  "regex",
  "runtime",
@@ -268,6 +361,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
+ "toml",
  "tracing",
  "uuid",
 ]
@@ -1103,6 +1198,7 @@ dependencies = [
  "kernel",
  "libc",
  "parking_lot",
+ "platform",
  "regex",
  "runtime",
  "rusqlite",
@@ -2736,7 +2832,11 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
+ "tracing",
  "url",
+ "uuid",
+ "which 7.0.3",
 ]
 
 [[package]]
@@ -3195,7 +3295,6 @@ dependencies = [
  "contracts",
  "parking_lot",
  "proptest",
- "rusqlite",
  "schemars",
  "serde",
  "serde_json",

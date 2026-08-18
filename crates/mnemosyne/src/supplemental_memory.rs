@@ -332,7 +332,7 @@ fn default_recall_max_bytes() -> usize {
     65536
 }
 fn default_recall_timeout_ms() -> u64 {
-    500
+    3_000
 }
 fn default_recall_cache_enabled() -> bool {
     true

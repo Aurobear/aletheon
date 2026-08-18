@@ -1,4 +1,4 @@
-use aletheon::wiring::daemon::bootstrap::production_embodiment::ProductionStartupGate;
+use aletheon::composition::daemon_bootstrap::production_embodiment::ProductionStartupGate;
 
 #[test]
 fn full_gate_sequence_passes() {

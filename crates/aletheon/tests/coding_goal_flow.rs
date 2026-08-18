@@ -1,7 +1,10 @@
-use aletheon::wiring::application::goal::{
-    AttemptCoordinationOutcome, AttemptCoordinatorError, AttemptExecutor, AttemptRequest,
-    CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
+use adapters_sqlite::goal::ObjectiveStore;
+use application::goal::{
+    AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptRequest,
+    CodingVerifier,
 };
+use application::goal_attempt::GoalAttemptPort;
+use application::goal_retry::RetryPolicy;
 use async_trait::async_trait;
 use base64::Engine;
 use contracts::CodingAttemptRequest;
@@ -12,7 +15,7 @@ use ::contracts::{
     PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult, VerificationCheck, VerificationReport,
     VerificationSeverity, WorkspaceBoundary,
 };
-use aletheon::wiring::application::verification::{VerificationCheckKind, VerificationContext};
+use application::verification::{VerificationCheckKind, VerificationContext};
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -112,7 +115,7 @@ struct FakeCodingExecutor {
     task_inputs: Mutex<Vec<String>>,
 }
 #[async_trait]
-impl AttemptExecutor for FakeCodingExecutor {
+impl GoalAttemptPort for FakeCodingExecutor {
     fn is_available(&self, runtime_id: &RuntimeId) -> bool {
         runtime_id.0 == TEST_CODING_RUNTIME_ID
     }
@@ -164,7 +167,7 @@ struct Harness {
     goal_id: GoalId,
     executor: Arc<FakeCodingExecutor>,
     verifier: Arc<FakeVerifier>,
-    coordinator: aletheon::wiring::application::goal::AttemptCoordinator,
+    coordinator: application::goal::AttemptCoordinator,
 }
 impl Harness {
     fn new(results: Vec<VerifyResult>) -> Self {
@@ -215,15 +218,21 @@ impl Harness {
             results: Mutex::new(results.into()),
             calls: AtomicUsize::new(0),
         });
-        let coordinator = GoalCoordinator::new(store.clone())
-            .coding_attempt_coordinator(
-                executor.clone(),
-                Arc::new(TestClock),
-                RetryPolicy::default(),
-                verifier.clone(),
-                worktrees.path(),
-            )
-            .unwrap();
+        let coordinator = AttemptCoordinator::new(
+            Arc::new(adapters_sqlite::goal::SqliteGoalAttemptPersistence::new(
+                store.clone(),
+            )),
+            executor.clone(),
+            Arc::new(TestClock),
+            RetryPolicy::default(),
+        )
+        .with_coding_verification(
+            verifier.clone(),
+            Arc::new(
+                platform::goal_worktree::HostCodingWorktreeResolver::new(worktrees.path()).unwrap(),
+            ),
+        )
+        .unwrap();
         Self {
             _db: db,
             _repo: repo,

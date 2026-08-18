@@ -7,7 +7,7 @@ use ::contracts::{
     WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use agent_control_support::{fixture, spawn_request, TestLauncher};
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentContextItemKind, AgentContextProjection, AgentContextProjectionBuilder, AgentRunProjection,
 };
 

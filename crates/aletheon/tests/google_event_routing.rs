@@ -1,16 +1,14 @@
 use ::contracts::goal::{GoalBudget, GoalSpec, GoalState, GoalWaitReason};
 use ::contracts::PrincipalId;
-use adapters_sqlite::ChannelStore;
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
-use aletheon::wiring::adapters::google::{
+use adapters_google::{
     DurableGoogleNotificationSink, GoogleCurrentTaskProjection, GoogleEventDispatcher,
     GoogleEventRouter, GoogleMemoryProposalSink, GoogleSubscription, GoogleSubscriptionQuery,
     GoogleSyncStore, ProjectionWrite, SyncCommit, SyncStream,
 };
-use aletheon::wiring::application::goal::coordinator::{
-    ExternalEventWaitCondition, GoalCoordinator,
-};
-use aletheon::wiring::application::goal::ObjectiveStore;
+use adapters_sqlite::goal::ObjectiveStore;
+use adapters_sqlite::ChannelStore;
+use aletheon::adapters::external::ExternalIdentityRepository;
+use application::goal::{ExternalEventWaitCondition, GoalCoordinator};
 use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
 use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::{
@@ -298,7 +296,11 @@ async fn subscriptions_route_once_wake_explicit_goals_and_keep_memory_as_proposa
     let router = Arc::new(
         GoogleEventRouter::new_with_notifications(
             google_store.clone(),
-            Arc::new(GoalCoordinator::new(objective_store.clone())),
+            Arc::new(GoalCoordinator::new(Arc::new(
+                adapters_sqlite::goal::SqliteGoalCoordinatorRepository::new(
+                    objective_store.clone(),
+                ),
+            ))),
             notifications,
         )
         .with_current_tasks(tasks.clone())

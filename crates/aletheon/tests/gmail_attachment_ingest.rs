@@ -1,10 +1,10 @@
 use ::contracts::PrincipalId;
-use adapters_sqlite::artifact::ArtifactStore;
-use aletheon::wiring::adapters::channel::gmail::ingest::{
+use adapters_google::gmail::ingest::{
     ExternalEventIngestConfig, ExternalEventIngestMessage, GmailAttachmentFetcher,
     GmailMessageIngester, GmailMimePart,
 };
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
+use adapters_sqlite::artifact::ArtifactStore;
+use aletheon::adapters::external::ExternalIdentityRepository;
 use application::{ExternalCapabilityId, ExternalIdentityId};
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;

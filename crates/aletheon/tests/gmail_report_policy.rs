@@ -1,13 +1,13 @@
 use ::contracts::{ApprovalId, GoalBudget, GoalSpec, PrincipalId};
-use adapters_sqlite::approval_repository::{
-    ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
-};
-use aletheon::wiring::adapters::channel::gmail::report::{
+use adapters_google::gmail::report::{
     GmailDeliveryOutcome, GmailReconciliation, GmailReportBoundary, GmailReportProvider,
     GmailSendResult,
 };
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
-use aletheon::wiring::application::goal::ObjectiveStore;
+use adapters_sqlite::approval_repository::{
+    ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
+};
+use adapters_sqlite::goal::ObjectiveStore;
+use aletheon::adapters::external::ExternalIdentityRepository;
 use application::{ExternalCapabilityId, ExternalIdentityId};
 use corpus::tools::google::oauth::GoogleBinding;
 use std::collections::VecDeque;

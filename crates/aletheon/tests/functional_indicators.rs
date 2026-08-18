@@ -1,5 +1,5 @@
 use agora::{ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult};
-#[path = "../src/wiring/composition/dasein_workspace.rs"]
+#[path = "../src/composition/dasein_workspace.rs"]
 mod dasein_workspace;
 mod support {
     pub mod conscious_core_harness;
@@ -12,10 +12,10 @@ use ::contracts::{
     SalienceVector, SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceCandidate,
     WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
-use agora::conscious_core_ports::{CandidateCause, CandidateSubmission, ConsciousCandidatePort};
-use aletheon::wiring::application::conscious_core_coordinator::{
-    ConsciousCoreConfig, ConsciousCoreCoordinator,
+use agora::conscious_core_ports::{
+    CandidateCause, CandidateSubmission, ConsciousCandidatePort, ConsciousCoreConfig,
 };
+use aletheon::composition::conscious_core_coordinator::ConsciousCoreCoordinator;
 use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;

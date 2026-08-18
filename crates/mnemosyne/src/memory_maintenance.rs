@@ -737,3 +737,35 @@ fn byte_token_budget(bytes: usize) -> u64 {
     // profile and model context limits still apply in the runtime.
     u64::try_from(bytes).unwrap_or(u64::MAX).max(1)
 }
+
+/// Consumer-owned memory-maintenance port (M8.4 HandlerPorts narrowing).
+#[async_trait::async_trait]
+pub trait MemoryMaintenancePort: Send + Sync {
+    async fn status(
+        &self,
+        request: ::contracts::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory_maintenance::MemoryMaintenanceStatusV1>;
+    async fn run(
+        &self,
+        owner_id: &str,
+        request: ::contracts::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1>;
+}
+
+#[async_trait::async_trait]
+impl MemoryMaintenancePort for MemoryMaintenanceController {
+    async fn status(
+        &self,
+        request: ::contracts::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory_maintenance::MemoryMaintenanceStatusV1> {
+        self.status(request).await
+    }
+    async fn run(
+        &self,
+        owner_id: &str,
+        request: ::contracts::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1>
+    {
+        self.run(owner_id, request).await
+    }
+}

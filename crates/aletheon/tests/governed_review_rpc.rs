@@ -1,9 +1,9 @@
 use aletheon::config::{AppConfig, GovernedReviewSettings};
-use aletheon::wiring::governed_review::{GovernedReviewLimits, ReviewCapabilities};
+use aletheon::host::governed_review::{GovernedReviewLimits, ReviewCapabilities};
 
 #[test]
 fn rpc_dispatch_exposes_exact_governed_lifecycle_methods() {
-    let dispatch = include_str!("../src/wiring/daemon/handler/rpc.rs");
+    let dispatch = include_str!("../src/daemon/handler/rpc.rs");
     for method in [
         "review.capabilities",
         "review.submit",
@@ -13,7 +13,7 @@ fn rpc_dispatch_exposes_exact_governed_lifecycle_methods() {
     ] {
         assert_eq!(dispatch.matches(&format!("\"{method}\"")).count(), 1);
     }
-    let handler = include_str!("../src/wiring/daemon/handler/rpc/rpc_review.rs");
+    let handler = include_str!("../src/daemon/handler/rpc/rpc_review.rs");
     assert!(handler.contains("connection.principal_id"));
     assert!(handler.contains("receipt.status.is_terminal()"));
     assert!(handler.contains("INCOMPATIBLE_SCHEMA: i64 = -32044"));

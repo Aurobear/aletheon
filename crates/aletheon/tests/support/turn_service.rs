@@ -2,16 +2,12 @@ use ::contracts::{
     CapabilityCall, CapabilityResult, Clock, ItemPayload, RecallRequest, RecallSet, Timer,
     TurnEventSink, TurnRequest, TurnServices,
 };
-use aletheon::wiring::adapters::session::canonical_store::CanonicalSessionStore;
-use aletheon::wiring::application::harness_factory::{
-    CognitiveSessionFactory, LinearCognitiveSessionFactory,
-};
-use aletheon::wiring::application::turn_coordinator::{
-    cancelled_result, TurnCoordinator, TurnExecution,
-};
+use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
 use anyhow::Result;
+use application::turn::coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
 use async_trait::async_trait;
 use cognit::harness::HarnessConfig;
+use cognit::harness::{CognitiveSessionFactory, LinearCognitiveSessionFactory};
 use kernel::chronos::SystemTimer;
 use kernel::KernelRuntime;
 use runtime::turn_policy::TurnPolicy;
@@ -41,7 +37,7 @@ impl TurnService {
         let store =
             Arc::new(CanonicalSessionStore::open(":memory:").expect("in-memory session store"));
         let coordinator = Arc::new(
-            aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
+            aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
                 kernel.clone(),
                 store,
             ),
@@ -99,7 +95,7 @@ impl TurnService {
         let clock = self.clock.clone();
         let policy = self.policy.clone();
         let runner_policy = policy.clone();
-        let history_store = self.coordinator.store();
+        let history_store = self.coordinator.session_port();
         let result = self
             .coordinator
             .submit_with(request, &policy, move |request, cancel| async move {

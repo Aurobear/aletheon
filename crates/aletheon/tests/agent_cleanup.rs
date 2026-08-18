@@ -6,7 +6,7 @@ use ::contracts::{
     AgentSnapshot, AgentSpawnRequest, AgoraSpaceId, OperationId, ProcessId, RuntimeId,
     RuntimeResumability,
 };
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentCleanupCoordinator, AgentResourceLease, AgentResourceLeaseKind, AgentRunProjection,
     AgentRunRecord, AgentWorktreeReclaimer,
 };

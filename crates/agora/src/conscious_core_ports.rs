@@ -1,4 +1,4 @@
-//! Executive ports for the recurrent conscious workspace coordinator.
+//! Agora-owned ports and policy configuration for the recurrent conscious workspace.
 
 use ::contracts::dasein::SelfTransitionReceipt;
 use ::contracts::{
@@ -6,10 +6,76 @@ use ::contracts::{
     WorkspaceBroadcast, WorkspaceCandidate,
 };
 use async_trait::async_trait;
+use std::{sync::Arc, time::Duration};
 
-/// Compatibility exports for conscious-core callers. The Agent projection
-/// contract itself is owned by Runtime; only the conscious implementation
-/// remains in Executive.
+#[derive(Debug, Clone)]
+pub struct ConsciousCoreConfig {
+    pub arbitration_mode: ::contracts::ConsciousArbitrationMode,
+    pub max_processors: usize,
+    pub max_processor_concurrency: usize,
+    pub max_candidates_per_processor: usize,
+    pub max_recurrence_depth: u16,
+    pub cycle_timeout: Duration,
+    pub processor_timeout: Duration,
+    pub candidate_ttl: Duration,
+}
+
+impl Default for ConsciousCoreConfig {
+    fn default() -> Self {
+        Self {
+            arbitration_mode: ::contracts::ConsciousArbitrationMode::Observe,
+            max_processors: 16,
+            max_processor_concurrency: 4,
+            max_candidates_per_processor: 8,
+            max_recurrence_depth: 4,
+            cycle_timeout: Duration::from_secs(10),
+            processor_timeout: Duration::from_secs(2),
+            candidate_ttl: Duration::from_secs(60),
+        }
+    }
+}
+
+impl ConsciousCoreConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (1..=256).contains(&self.max_processors),
+            "conscious processor capacity is invalid"
+        );
+        anyhow::ensure!(
+            (1..=self.max_processors).contains(&self.max_processor_concurrency),
+            "conscious processor concurrency is invalid"
+        );
+        anyhow::ensure!(
+            (1..=::contracts::MAX_PROCESSOR_RESPONSE_CANDIDATES)
+                .contains(&self.max_candidates_per_processor),
+            "processor candidate budget is invalid"
+        );
+        anyhow::ensure!(
+            self.max_recurrence_depth > 0,
+            "recurrence depth budget is zero"
+        );
+        anyhow::ensure!(
+            !self.cycle_timeout.is_zero()
+                && !self.processor_timeout.is_zero()
+                && !self.candidate_ttl.is_zero(),
+            "conscious timing budget is zero"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct ProcessorRegistration {
+    pub processor: Arc<dyn ::contracts::ConsciousProcessor>,
+    pub recipient: ::contracts::ProcessId,
+    pub agent_root: ::contracts::ProcessId,
+    pub schemas: Vec<::contracts::SchemaId>,
+    pub capacity: usize,
+    pub deadline_ms: u64,
+    pub response_visibility: ::contracts::VisibilityScope,
+}
+
+/// Candidate admission contracts are owned by Runtime and consumed here.
 pub use runtime::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, CandidateSubmissionReceipt,
 };

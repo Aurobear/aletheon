@@ -1,19 +1,19 @@
 use ::contracts::*;
+use adapters_agent_backend::PI_CODER_RUNTIME_ID;
 use adapters_sqlite::approval_repository::{
     ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
 };
-use aletheon::wiring::adapters::runtime::PI_CODER_RUNTIME_ID;
-use aletheon::wiring::application::approval::{
-    ApplyCoordinationOutcome, ApplyCoordinatorConfig, ManagedWorktreeCleaner,
-};
-use aletheon::wiring::application::goal::{
-    AttemptCoordinationOutcome, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
-    RetryPolicy,
-};
-use aletheon::wiring::application::verification::{
+use adapters_sqlite::goal::ObjectiveStore;
+use aletheon::adapters::approved_apply::{ApplyCoordinator, ApplyCoordinatorConfig};
+use anyhow::Result;
+use application::approval::ApplyCoordinationOutcome;
+use application::approval::ManagedWorktreeCleaner;
+use application::goal::{AttemptCoordinationOutcome, AttemptCoordinator, AttemptRequest};
+use application::goal_attempt::GoalAttemptPort;
+use application::goal_retry::RetryPolicy;
+use application::verification::{
     ArchitecturePolicy, VerificationService, VerificationServiceConfig,
 };
-use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
 use contracts::CodingAttemptRequest;
@@ -42,7 +42,7 @@ struct FixedCodingExecutor {
 }
 
 #[async_trait]
-impl AttemptExecutor for FixedCodingExecutor {
+impl GoalAttemptPort for FixedCodingExecutor {
     fn is_available(&self, runtime_id: &RuntimeId) -> bool {
         runtime_id.0 == PI_CODER_RUNTIME_ID
     }
@@ -253,16 +253,21 @@ impl Fixture {
             std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         Arc::new(
-            VerificationService::new(VerificationServiceConfig {
-                cargo_program: command.canonicalize().unwrap(),
-                git_program: which::which("git").unwrap().canonicalize().unwrap(),
-                compile_args: vec!["check".into()],
-                relevant_test_args: vec![vec!["test".into()]],
-                command_timeout: Duration::from_secs(5),
-                output_cap_bytes: 64 * 1024,
-                environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
-                architecture: ArchitecturePolicy::default(),
-            })
+            VerificationService::new(
+                VerificationServiceConfig {
+                    cargo_program: command.canonicalize().unwrap(),
+                    git_program: which::which("git").unwrap().canonicalize().unwrap(),
+                    compile_args: vec!["check".into()],
+                    relevant_test_args: vec![vec!["test".into()]],
+                    command_timeout: Duration::from_secs(5),
+                    output_cap_bytes: 64 * 1024,
+                    environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+                    architecture: ArchitecturePolicy::default(),
+                },
+                Arc::new(kernel::chronos::SystemClock::new()),
+                Arc::new(platform::verification_command::PlatformVerificationCommandExecutor),
+                Arc::new(platform::verification_command::PlatformVerificationWorkspaceReader),
+            )
             .unwrap(),
         )
     }
@@ -271,25 +276,31 @@ impl Fixture {
         &self,
         pass_verify: bool,
         tamper_hash: bool,
-    ) -> Result<
-        AttemptCoordinationOutcome,
-        aletheon::wiring::application::goal::AttemptCoordinatorError,
-    > {
-        GoalCoordinator::new(self.store.clone())
-            .approval_coding_attempt_coordinator(
-                Arc::new(FixedCodingExecutor {
-                    worktree_base: self.worktrees.clone(),
-                    tamper_hash,
-                }),
-                Arc::new(TestClock),
-                RetryPolicy::default(),
-                self.verifier(pass_verify),
-                &self.worktrees,
-                self.approvals.clone(),
-            )
-            .unwrap()
-            .execute_one(self.request(CodingJobId::new()), CancellationToken::new())
-            .await
+    ) -> Result<AttemptCoordinationOutcome, application::goal::AttemptCoordinatorError> {
+        AttemptCoordinator::new(
+            Arc::new(adapters_sqlite::goal::SqliteGoalAttemptPersistence::new(
+                self.store.clone(),
+            )),
+            Arc::new(FixedCodingExecutor {
+                worktree_base: self.worktrees.clone(),
+                tamper_hash,
+            }),
+            Arc::new(TestClock),
+            RetryPolicy::default(),
+        )
+        .with_coding_verification(
+            self.verifier(pass_verify),
+            Arc::new(
+                platform::goal_worktree::HostCodingWorktreeResolver::new(&self.worktrees).unwrap(),
+            ),
+        )
+        .unwrap()
+        .with_approval_port(Arc::new(
+            adapters_sqlite::approval::SqliteGoalApprovalPort::new(self.approvals.clone()),
+        ))
+        .unwrap()
+        .execute_one(self.request(CodingJobId::new()), CancellationToken::new())
+        .await
     }
 }
 
@@ -326,18 +337,19 @@ async fn disposable_goal_verifies_approves_applies_and_settles_once() {
         .unwrap();
     let kernel = Arc::new(::kernel::KernelRuntime::with_clock(Arc::new(TestClock)));
     let owner = kernel.spawn_process(SpawnSpec::default()).await.unwrap().id;
-    let coordinator = GoalCoordinator::new(fixture.store.clone())
-        .approved_apply_coordinator(
-            fixture.approvals.clone(),
-            kernel,
-            Arc::new(TestClock),
-            ApplyCoordinatorConfig {
-                worktree_base: fixture.worktrees.clone(),
-                timeout: Duration::from_secs(5),
-            },
-            Arc::new(Cleaner),
-        )
-        .unwrap();
+    let coordinator = ApplyCoordinator::new(
+        fixture.store.clone(),
+        fixture.approvals.clone(),
+        kernel,
+        Arc::new(TestClock),
+        ApplyCoordinatorConfig {
+            worktree_base: fixture.worktrees.clone(),
+            timeout: Duration::from_secs(5),
+        },
+        Arc::new(Cleaner),
+        Arc::new(platform::temporary_artifact::HostTemporaryArtifactStore),
+    )
+    .unwrap();
     assert!(matches!(
         coordinator
             .coordinate(approval.id, owner, CancellationToken::new())

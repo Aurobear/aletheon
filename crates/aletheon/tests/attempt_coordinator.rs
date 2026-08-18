@@ -2,10 +2,12 @@ use ::contracts::{
     AttemptEvidence, AttemptUsage, CognitiveRole, FailureClass, GoalBudget, GoalId, GoalSpec,
     GoalState, GoalWaitReason, PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult,
 };
-use aletheon::wiring::application::goal::{
-    AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
-    AttemptRequest, ObjectiveStore, RetryDecision, RetryPolicy,
+use adapters_sqlite::goal::ObjectiveStore;
+use application::goal::{
+    AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptRequest,
 };
+use application::goal_attempt::GoalAttemptPort;
+use application::goal_retry::{RetryDecision, RetryPolicy};
 use async_trait::async_trait;
 use kernel::chronos::TestClock;
 use std::collections::{HashSet, VecDeque};
@@ -46,7 +48,7 @@ impl Drop for ActiveGuard {
 }
 
 #[async_trait]
-impl AttemptExecutor for FakeExecutor {
+impl GoalAttemptPort for FakeExecutor {
     fn is_available(&self, runtime_id: &RuntimeId) -> bool {
         self.available.contains(runtime_id)
     }
@@ -115,7 +117,9 @@ fn harness(budget: GoalBudget, outcomes: Vec<Result<RuntimeResult, RuntimeFailur
         outcomes,
     ));
     let coordinator = AttemptCoordinator::new(
-        store.clone(),
+        Arc::new(adapters_sqlite::goal::SqliteGoalAttemptPersistence::new(
+            store.clone(),
+        )),
         executor.clone(),
         Arc::new(TestClock::new(10_000, 0)),
         RetryPolicy::default(),

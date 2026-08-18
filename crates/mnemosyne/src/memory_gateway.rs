@@ -314,8 +314,24 @@ impl MemoryGatewayService {
                 Ok(true) => {
                     if let Some(port) = &self.supplemental_recall {
                         match port.recall(&binding, &local_request).await {
-                            Ok(remote) => {
-                                recalled.items.extend(remote.items);
+                            Ok(mut remote) => {
+                                // A bounded local result set can otherwise
+                                // consume every slot before the explicitly
+                                // bound supplemental source is considered.
+                                // Reserve the remote source's top-ranked item
+                                // without widening the caller's item/byte
+                                // budgets; the common filters below still
+                                // enforce requested kinds, deduplication and
+                                // the final item/byte limits.
+                                if !remote.items.is_empty() {
+                                    let mut merged = Vec::with_capacity(
+                                        recalled.items.len() + remote.items.len(),
+                                    );
+                                    merged.push(remote.items.remove(0));
+                                    merged.append(&mut recalled.items);
+                                    merged.append(&mut remote.items);
+                                    recalled.items = merged;
+                                }
                                 recalled.degraded_sources.extend(remote.degraded_sources);
                             }
                             Err(error) => {
@@ -839,5 +855,104 @@ fn sensitivity(value: MemorySensitivity) -> MemorySensitivityV1 {
         MemorySensitivity::Internal => MemorySensitivityV1::Internal,
         MemorySensitivity::Confidential => MemorySensitivityV1::Confidential,
         MemorySensitivity::Restricted => MemorySensitivityV1::Restricted,
+    }
+}
+
+/// Consumer-owned memory-gateway port (M8.4 HandlerPorts narrowing).
+#[async_trait::async_trait]
+pub trait MemoryGatewayPort: Send + Sync {
+    async fn observe(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        source: &str,
+        request: ::contracts::protocol::memory::MemoryObservationRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryObservationReceiptV1>;
+    async fn receipt(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        request: ::contracts::protocol::memory::MemoryReceiptGetRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryLifecycleReceiptV1>;
+    async fn feedback(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        source: &str,
+        request: ::contracts::protocol::memory::MemoryFeedbackRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryFeedbackReceiptV1>;
+    async fn recall(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        source: &str,
+        request: ::contracts::protocol::memory::MemoryRecallRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryRecallResultV1>;
+    async fn preview_workspace_bind(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        request: ::contracts::protocol::memory::MemoryWorkspacePreviewBindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingPreviewV1>;
+    async fn bind_workspace(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        request: ::contracts::protocol::memory::MemoryWorkspaceBindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingViewV1>;
+    async fn unbind_workspace(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        request: ::contracts::protocol::memory::MemoryWorkspaceUnbindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingViewV1>;
+}
+
+#[async_trait::async_trait]
+impl MemoryGatewayPort for MemoryGatewayService {
+    async fn observe(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        source: &str,
+        request: ::contracts::protocol::memory::MemoryObservationRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryObservationReceiptV1> {
+        self.observe(principal_id, source, request).await
+    }
+    async fn receipt(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        request: ::contracts::protocol::memory::MemoryReceiptGetRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryLifecycleReceiptV1> {
+        self.receipt(principal_id, request).await
+    }
+    async fn feedback(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        source: &str,
+        request: ::contracts::protocol::memory::MemoryFeedbackRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryFeedbackReceiptV1> {
+        self.feedback(principal_id, source, request).await
+    }
+    async fn recall(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        source: &str,
+        request: ::contracts::protocol::memory::MemoryRecallRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryRecallResultV1> {
+        self.recall(principal_id, source, request).await
+    }
+    async fn preview_workspace_bind(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        request: ::contracts::protocol::memory::MemoryWorkspacePreviewBindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingPreviewV1> {
+        self.preview_workspace_bind(principal_id, request).await
+    }
+    async fn bind_workspace(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        request: ::contracts::protocol::memory::MemoryWorkspaceBindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingViewV1> {
+        self.bind_workspace(principal_id, request).await
+    }
+    async fn unbind_workspace(
+        &self,
+        principal_id: &::contracts::PrincipalId,
+        request: ::contracts::protocol::memory::MemoryWorkspaceUnbindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingViewV1> {
+        self.unbind_workspace(principal_id, request).await
     }
 }

@@ -1,10 +1,10 @@
 use ::contracts::PrincipalId;
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
-use aletheon::wiring::adapters::google::{
+use adapters_google::{
     GoogleEventDispatcher, GoogleEventSink, GooglePollBatch, GooglePollFailure, GoogleSyncManager,
     GoogleSyncManagerConfig, GoogleSyncPoller, GoogleSyncRegistration, GoogleSyncStore,
     ProjectionWrite, SyncCommit, SyncStream,
 };
+use aletheon::adapters::external::ExternalIdentityRepository;
 use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
@@ -232,7 +232,7 @@ impl GoogleSyncPoller for ScriptedPoller {
     async fn poll(
         &self,
         _principal: &PrincipalId,
-        _cursor: &aletheon::wiring::adapters::google::GoogleSyncCursor,
+        _cursor: &adapters_google::GoogleSyncCursor,
         cancel: &CancellationToken,
     ) -> Result<GooglePollBatch, GooglePollFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -392,7 +392,7 @@ impl GoogleSyncPoller for ConcurrencyPoller {
     async fn poll(
         &self,
         _principal: &PrincipalId,
-        cursor: &aletheon::wiring::adapters::google::GoogleSyncCursor,
+        cursor: &adapters_google::GoogleSyncCursor,
         cancel: &CancellationToken,
     ) -> Result<GooglePollBatch, GooglePollFailure> {
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;

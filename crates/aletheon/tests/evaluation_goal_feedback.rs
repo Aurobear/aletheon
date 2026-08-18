@@ -2,7 +2,7 @@ use ::contracts::{
     AttemptId, CognitiveRole, EvaluationContractId, EvaluationDecision, EvaluationReceiptId,
     EvaluationReceiptRef, GoalBudget, GoalSpec, PrincipalId, RuntimeId, EVALUATION_SCHEMA_V1,
 };
-use aletheon::wiring::application::goal::ObjectiveStore;
+use adapters_sqlite::goal::ObjectiveStore;
 use tempfile::NamedTempFile;
 
 fn receipt(

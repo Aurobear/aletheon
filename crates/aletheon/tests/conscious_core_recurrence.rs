@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-#[path = "../src/wiring/composition/dasein_workspace.rs"]
+#[path = "../src/composition/dasein_workspace.rs"]
 mod dasein_workspace;
 
 use ::contracts::dasein::{
@@ -17,6 +17,7 @@ use ::contracts::{
     SalienceVector, SpawnSpec, VisibilityScope, WallTime, WorkspaceBroadcast, WorkspaceCandidate,
     WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
+use agora::conscious_core_ports::ConsciousCoreConfig;
 use agora::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, ConsciousCandidatePort,
 };
@@ -24,9 +25,7 @@ use agora::{
     BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, CandidatePoolConfig, SelectionPolicy,
     SqliteBroadcastStore,
 };
-use aletheon::wiring::application::conscious_core_coordinator::{
-    ConsciousCoreConfig, ConsciousCoreCoordinator,
-};
+use aletheon::composition::conscious_core_coordinator::ConsciousCoreCoordinator;
 use async_trait::async_trait;
 use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;

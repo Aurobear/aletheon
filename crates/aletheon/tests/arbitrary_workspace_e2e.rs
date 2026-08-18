@@ -4,7 +4,7 @@ use std::sync::Arc;
 use ::contracts::{
     ContentBlock, InferenceUsage, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk,
 };
-use aletheon::wiring::core_rpc::{CorePeerPolicy, CoreRpcServer};
+use adapters_inference::{CorePeerPolicy, CoreRpcServer};
 use cognit::ports::inference::{
     CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
 };

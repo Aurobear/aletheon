@@ -1,6 +1,6 @@
 #[test]
 fn retired_governance_methods_are_unknown() {
-    let dispatcher = include_str!("../../aletheon/src/wiring/daemon/handler/rpc.rs");
+    let dispatcher = include_str!("../../aletheon/src/daemon/handler/rpc.rs");
 
     for method in [
         "reflect",

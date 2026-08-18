@@ -844,8 +844,8 @@ outbox，避免状态已变但 event 丢失。
 
 ### 8.6 Aletheon 对应代码
 
-- `crates/aletheon/src/wiring/application/turn_engine.rs`；
-- `crates/aletheon/src/wiring/application/turn_coordinator.rs` 与 `crates/aletheon/src/wiring/adapters/session/test_composition.rs`；
+- `crates/aletheon/src/daemon/turn_engine.rs`；
+- `crates/aletheon/src/composition/turn_coordinator.rs` 与 `crates/aletheon/src/host/session/test_composition.rs`；
 - `crates/runtime/src/event_projection/`；
 - `crates/adapters/sqlite/src/runtime_agent/mod.rs`；
 - `crates/kernel/src/runtime.rs`。
@@ -1404,7 +1404,7 @@ Production eval  安装态真实依赖和 provenance
 建议按此顺序阅读：
 
 ```text
-crates/aletheon/src/wiring/application/turn_engine.rs
+crates/aletheon/src/daemon/turn_engine.rs
 crates/aletheon/tests/support/turn_service.rs
 crates/cognit/src/harness/session.rs
 crates/cognit/src/harness/linear/step.rs
@@ -1495,10 +1495,10 @@ ROS 消息和公司专有类型留在 bridge，Fabric 只保留稳定 skill/obse
 - `crates/contracts/src/types/embodiment.rs`；
 - `crates/hardware/`；
 - `crates/corpus/src/tools/tools/robot.rs`；
-- `crates/aletheon/src/wiring/embodiment/service.rs`；
+- `crates/aletheon/src/host/embodiment/service.rs`；
 - `crates/cognit/src/harness/robot/`；
 - `crates/cognit/src/ports/policy_provider.rs`；
-- `crates/cognit/src/harness/robot/` 与 `crates/aletheon/src/wiring/composition/robot_harness.rs`。
+- `crates/cognit/src/harness/robot/` 与 `crates/aletheon/src/composition/robot_harness.rs`。
 
 ---
 

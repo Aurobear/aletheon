@@ -1,5 +1,5 @@
-use aletheon::wiring::application::daemon_turn_engine::map_turn_execution;
-use aletheon::wiring::application::turn_coordinator::TurnExecution;
+use aletheon::daemon::turn_engine::map_turn_execution;
+use application::turn::coordinator::TurnExecution;
 
 fn execution(stop: ::contracts::TurnStop, items: Vec<::contracts::ItemPayload>) -> TurnExecution {
     let usage =

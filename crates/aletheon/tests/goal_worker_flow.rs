@@ -3,12 +3,13 @@ use ::contracts::{
     GoalState, PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult,
 };
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
+use adapters_sqlite::goal::ObjectiveStore;
 use adapters_sqlite::ChannelStore;
-use aletheon::wiring::application::goal::{
-    goal_progress_from_outcome, AttemptCoordinationOutcome, AttemptCoordinator,
-    AttemptCoordinatorError, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
-    RetryDecision, RetryPolicy,
+use application::goal::{
+    AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptRequest,
 };
+use application::goal_attempt::GoalAttemptPort;
+use application::goal_retry::{RetryDecision, RetryPolicy};
 use async_trait::async_trait;
 use gateway::channel::{ConversationId, OutboundMessage};
 use gateway::ports::{ChannelTurnApplicationPort, ChannelTurnRequest};
@@ -28,7 +29,7 @@ struct QueueExecutor {
 }
 
 #[async_trait]
-impl AttemptExecutor for QueueExecutor {
+impl GoalAttemptPort for QueueExecutor {
     fn is_available(&self, runtime_id: &RuntimeId) -> bool {
         matches!(runtime_id.0.as_str(), "worker" | "reviewer")
     }
@@ -108,7 +109,6 @@ struct Harness {
     _goal_file: NamedTempFile,
     _channel_dir: TempDir,
     store: Arc<Mutex<ObjectiveStore>>,
-    goal: GoalCoordinator,
     attempts: AttemptCoordinator,
     executor: Arc<QueueExecutor>,
     router: ChannelRouter,
@@ -156,8 +156,10 @@ fn harness(outcomes: Vec<Result<RuntimeResult, RuntimeFailure>>) -> Harness {
         outcomes: Mutex::new(outcomes.into()),
         calls: AtomicUsize::new(0),
     });
-    let goal = GoalCoordinator::new(store.clone());
-    let attempts = goal.attempt_coordinator(
+    let attempts = AttemptCoordinator::new(
+        Arc::new(adapters_sqlite::goal::SqliteGoalAttemptPersistence::new(
+            store.clone(),
+        )),
         executor.clone(),
         Arc::new(TestClock::new(20_000, 0)),
         RetryPolicy::default(),
@@ -178,7 +180,6 @@ fn harness(outcomes: Vec<Result<RuntimeResult, RuntimeFailure>>) -> Harness {
         _goal_file: goal_file,
         _channel_dir: channel_dir,
         store,
-        goal,
         attempts,
         executor,
         router,
@@ -230,7 +231,7 @@ fn failure(class: FailureClass, retryable: bool) -> RuntimeFailure {
 }
 
 async fn notify(h: &Harness, outcome: &AttemptCoordinationOutcome) {
-    let progress = goal_progress_from_outcome(outcome);
+    let progress = aletheon::adapters::goal_progress::from_outcome(outcome);
     assert!(h
         .router
         .notify_goal_progress(&h.transport, ConversationId("owner-chat".into()), &progress,)
@@ -265,12 +266,8 @@ fn resume(store: &Arc<Mutex<ObjectiveStore>>, goal_id: GoalId) {
 async fn success_event_and_outbox_are_persisted_before_bounded_notification() {
     let h = harness(vec![Ok(success())]);
     let outcome = h
-        .goal
-        .tick_attempt(
-            &h.attempts,
-            request(&h.store, h.goal_id, 1),
-            CancellationToken::new(),
-        )
+        .attempts
+        .execute_one(request(&h.store, h.goal_id, 1), CancellationToken::new())
         .await
         .unwrap();
     notify(&h, &outcome).await;
@@ -288,12 +285,8 @@ async fn success_event_and_outbox_are_persisted_before_bounded_notification() {
 async fn retry_backoff_notification_contains_ids_without_raw_error() {
     let h = harness(vec![Err(failure(FailureClass::ProviderTransient, true))]);
     let outcome = h
-        .goal
-        .tick_attempt(
-            &h.attempts,
-            request(&h.store, h.goal_id, 1),
-            CancellationToken::new(),
-        )
+        .attempts
+        .execute_one(request(&h.store, h.goal_id, 1), CancellationToken::new())
         .await
         .unwrap();
     assert!(matches!(
@@ -320,9 +313,8 @@ async fn third_tick_escalates_and_notifies_once() {
     let mut last = None;
     for sequence in 1..=3 {
         let outcome = h
-            .goal
-            .tick_attempt(
-                &h.attempts,
+            .attempts
+            .execute_one(
                 request(&h.store, h.goal_id, sequence),
                 CancellationToken::new(),
             )
@@ -355,12 +347,8 @@ async fn third_tick_escalates_and_notifies_once() {
 async fn permission_failure_awaits_human_and_notifies() {
     let h = harness(vec![Err(failure(FailureClass::PermissionDenied, false))]);
     let outcome = h
-        .goal
-        .tick_attempt(
-            &h.attempts,
-            request(&h.store, h.goal_id, 1),
-            CancellationToken::new(),
-        )
+        .attempts
+        .execute_one(request(&h.store, h.goal_id, 1), CancellationToken::new())
         .await
         .unwrap();
     let AttemptCoordinationOutcome::Failed { ref goal, .. } = outcome else {
@@ -381,8 +369,8 @@ async fn cancellation_notifies_without_starting_another_attempt() {
     let h = harness(vec![]);
     let cancel = CancellationToken::new();
     let future = h
-        .goal
-        .tick_attempt(&h.attempts, request(&h.store, h.goal_id, 1), cancel.clone());
+        .attempts
+        .execute_one(request(&h.store, h.goal_id, 1), cancel.clone());
     tokio::pin!(future);
     while h.executor.calls.load(Ordering::SeqCst) == 0 {
         tokio::select! {
@@ -407,9 +395,7 @@ async fn duplicate_tick_hits_version_conflict_and_invokes_runtime_only_once() {
     let h = harness(vec![]);
     let req = request(&h.store, h.goal_id, 1);
     let cancel = CancellationToken::new();
-    let running = h
-        .goal
-        .tick_attempt(&h.attempts, req.clone(), cancel.clone());
+    let running = h.attempts.execute_one(req.clone(), cancel.clone());
     tokio::pin!(running);
     while h.executor.calls.load(Ordering::SeqCst) == 0 {
         tokio::select! {
@@ -418,8 +404,8 @@ async fn duplicate_tick_hits_version_conflict_and_invokes_runtime_only_once() {
         }
     }
     let duplicate = h
-        .goal
-        .tick_attempt(&h.attempts, req, CancellationToken::new())
+        .attempts
+        .execute_one(req, CancellationToken::new())
         .await
         .unwrap_err();
     assert!(matches!(
@@ -467,15 +453,16 @@ async fn daemon_restart_between_attempts_does_not_repeat_the_first_runtime_call(
         outcomes: Mutex::new(vec![Err(failure(FailureClass::ProviderTransient, true))].into()),
         calls: AtomicUsize::new(0),
     });
-    let first_goal = GoalCoordinator::new(first_store.clone());
-    let first_attempts = first_goal.attempt_coordinator(
+    let first_attempts = AttemptCoordinator::new(
+        Arc::new(adapters_sqlite::goal::SqliteGoalAttemptPersistence::new(
+            first_store.clone(),
+        )),
         first_executor.clone(),
         Arc::new(TestClock::new(100, 0)),
         RetryPolicy::default(),
     );
-    first_goal
-        .tick_attempt(
-            &first_attempts,
+    first_attempts
+        .execute_one(
             request(&first_store, snapshot.id, 1),
             CancellationToken::new(),
         )
@@ -483,7 +470,6 @@ async fn daemon_restart_between_attempts_does_not_repeat_the_first_runtime_call(
         .unwrap();
     assert_eq!(first_executor.calls.load(Ordering::SeqCst), 1);
     drop(first_attempts);
-    drop(first_goal);
     drop(first_store);
 
     let reopened = Arc::new(Mutex::new(ObjectiveStore::open(&path).unwrap()));

@@ -6,7 +6,7 @@ use ::contracts::{
     WorkspacePolicy,
 };
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
-use aletheon::wiring::application::turn_coordinator::{ActiveTurnKey, TurnExecution};
+use application::turn::coordinator::{ActiveTurnKey, TurnExecution};
 use kernel::KernelRuntime;
 use runtime::turn_policy::TurnPolicy;
 use tokio::sync::{mpsc, Barrier, Mutex, Semaphore};
@@ -27,7 +27,7 @@ fn context(uid: u32, thread: &str, cwd: &str) -> PrincipalContext {
 async fn concurrent_principals_keep_distinct_thread_authority() {
     let kernel = Arc::new(KernelRuntime::new());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
+        aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         ),
@@ -178,7 +178,7 @@ fn completed() -> TurnExecution {
 async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
     let kernel = Arc::new(KernelRuntime::new());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
+        aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         )
@@ -240,7 +240,7 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
 async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelled() {
     let kernel = Arc::new(KernelRuntime::new());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
+        aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         ),

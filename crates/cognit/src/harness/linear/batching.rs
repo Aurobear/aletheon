@@ -3,6 +3,27 @@ use ::contracts::tool::ConcurrencyClass;
 /// Maximum number of tools to execute in a single parallel batch.
 const MAX_PARALLEL_TOOLS: usize = 8;
 
+/// Sort bounded cognitive priorities descending while retaining provider order for ties.
+pub fn stable_priority_order(priorities: &[(String, f32)]) -> anyhow::Result<Vec<String>> {
+    anyhow::ensure!(
+        priorities
+            .iter()
+            .all(|(_, priority)| priority.is_finite() && (0.0..=1.0).contains(priority)),
+        "cognitive batch priority is outside [0,1]"
+    );
+    let mut indices: Vec<usize> = (0..priorities.len()).collect();
+    indices.sort_by(|left, right| {
+        priorities[*right]
+            .1
+            .total_cmp(&priorities[*left].1)
+            .then_with(|| left.cmp(right))
+    });
+    Ok(indices
+        .into_iter()
+        .map(|index| priorities[index].0.clone())
+        .collect())
+}
+
 /// A batch of tool calls classified for parallel or serial execution.
 pub enum ToolBatch {
     /// Read-only tools safe to execute concurrently.

@@ -6,9 +6,9 @@ use ::contracts::{
 use adapters_sqlite::event_spine::{EventReadFilter, SqliteEventSpine};
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
 use aletheon::config::GrokHardeningConfig;
-use aletheon::wiring::application::harness_factory::CognitiveSessionFactory;
-use aletheon::wiring::application::turn_coordinator::TurnExecution;
+use application::turn::coordinator::TurnExecution;
 use async_trait::async_trait;
+use cognit::harness::CognitiveSessionFactory;
 use runtime::turn_policy::*;
 use runtime::{post_turn::PostTurnPipeline, pre_turn::PreTurnPipeline};
 #[path = "support/turn_service.rs"]
@@ -49,14 +49,13 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
     let kernel = Arc::new(KernelRuntime::new());
     let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
-    let coordinator =
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-            kernel.clone(),
-            read_store,
-            event_spine.clone(),
-            aletheon::config::GrokHardeningConfig::default(),
-        );
-    let store = coordinator.store();
+    let coordinator = aletheon::host::session::test_composition::compose_with_event_spine(
+        kernel.clone(),
+        read_store,
+        event_spine.clone(),
+        aletheon::config::GrokHardeningConfig::default(),
+    );
+    let store = coordinator.session_port();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -209,12 +208,11 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
 #[tokio::test]
 async fn general_robot_general_turn_starts_remain_ordered_and_target_scoped() {
     let kernel = Arc::new(KernelRuntime::new());
-    let coordinator =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
-            kernel.clone(),
-            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
-        );
-    let store = coordinator.store();
+    let coordinator = aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
+        kernel.clone(),
+        Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
+    );
+    let store = coordinator.session_port();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -284,12 +282,12 @@ async fn general_robot_general_turn_starts_remain_ordered_and_target_scoped() {
 async fn concurrent_general_and_robot_turns_do_not_share_target_or_settlement() {
     let kernel = Arc::new(KernelRuntime::new());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
+        aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         ),
     );
-    let store = coordinator.store();
+    let store = coordinator.session_port();
     let general_process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -392,12 +390,11 @@ async fn concurrent_general_and_robot_turns_do_not_share_target_or_settlement() 
 #[tokio::test]
 async fn failure_is_terminal_and_remains_replayable() {
     let kernel = Arc::new(KernelRuntime::new());
-    let coordinator =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
-            kernel.clone(),
-            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
-        );
-    let store = coordinator.store();
+    let coordinator = aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
+        kernel.clone(),
+        Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
+    );
+    let store = coordinator.session_port();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -423,7 +420,7 @@ async fn failure_is_terminal_and_remains_replayable() {
 async fn compatibility_cancel_reaches_active_turn_for_principal() {
     let kernel = Arc::new(KernelRuntime::new());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
+        aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
         ),
@@ -553,7 +550,7 @@ async fn daemon_then_exec_restart_projects_prior_canonical_context() {
     for policy in [TurnPolicy::daemon(), TurnPolicy::exec()] {
         let kernel = Arc::new(KernelRuntime::new());
         let coordinator = Arc::new(
-            aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
+            aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
                 kernel.clone(),
                 Arc::new(CanonicalSessionStore::open(&db).unwrap()),
             ),
@@ -590,19 +587,18 @@ mod turn_request_support;
 #[tokio::test]
 async fn deadline_cancels_a_never_ending_turn_and_settles_exactly_once() {
     use ::contracts::TurnStop;
-    use aletheon::wiring::application::turn_coordinator::TurnExecution;
+    use application::turn::coordinator::TurnExecution;
     use runtime::turn_policy::*;
 
     let kernel = Arc::new(KernelRuntime::new());
     let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
-    let coordinator =
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-            kernel.clone(),
-            read_store,
-            event_spine.clone(),
-            GrokHardeningConfig::default(),
-        );
+    let coordinator = aletheon::host::session::test_composition::compose_with_event_spine(
+        kernel.clone(),
+        read_store,
+        event_spine.clone(),
+        GrokHardeningConfig::default(),
+    );
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -685,7 +681,7 @@ async fn deadline_cancels_a_never_ending_turn_and_settles_exactly_once() {
 #[tokio::test]
 async fn deadline_forcibly_drops_an_uncooperative_runner_after_bounded_grace() {
     use ::contracts::{OperationExitReason, TurnStop};
-    use aletheon::wiring::application::turn_coordinator::TurnExecution;
+    use application::turn::coordinator::TurnExecution;
     use runtime::turn_policy::*;
 
     let kernel = Arc::new(KernelRuntime::new());
@@ -694,13 +690,15 @@ async fn deadline_forcibly_drops_an_uncooperative_runner_after_bounded_grace() {
     let clock = Arc::new(kernel::chronos::TestClock::default());
     let timer = Arc::new(kernel::chronos::TestTimer::new(clock));
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+        aletheon::host::session::test_composition::compose_with_event_spine(
             kernel.clone(),
             read_store,
             event_spine,
             GrokHardeningConfig::default(),
         )
-        .with_shared_test_timer(timer.clone()),
+        .with_timer(Arc::new(
+            aletheon::host::runtime::turn_operations::KernelTurnTimer::shared_test(timer.clone()),
+        )),
     );
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
@@ -760,14 +758,14 @@ async fn deadline_forcibly_drops_an_uncooperative_runner_after_bounded_grace() {
 #[tokio::test]
 async fn user_cancel_on_deadline_bearing_turn_preserves_user_reason() {
     use ::contracts::{OperationExitReason, TurnStop};
-    use aletheon::wiring::application::turn_coordinator::TurnExecution;
+    use application::turn::coordinator::TurnExecution;
     use runtime::turn_policy::*;
 
     let kernel = Arc::new(KernelRuntime::new());
     let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+        aletheon::host::session::test_composition::compose_with_event_spine(
             kernel.clone(),
             read_store,
             event_spine,
@@ -837,14 +835,14 @@ async fn cancellation_refreshes_the_terminal_sequence_after_runner_fragments() {
     let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+        aletheon::host::session::test_composition::compose_with_event_spine(
             kernel.clone(),
             read_store,
             event_spine,
             GrokHardeningConfig::default(),
         ),
     );
-    let store = coordinator.store();
+    let store = coordinator.session_port();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -934,14 +932,14 @@ async fn cancellation_refreshes_the_terminal_sequence_after_runner_fragments() {
 #[tokio::test]
 async fn connection_scoped_cancel_touches_only_that_connections_turn() {
     use ::contracts::TurnStop;
-    use aletheon::wiring::application::turn_coordinator::TurnExecution;
+    use application::turn::coordinator::TurnExecution;
     use runtime::turn_policy::*;
 
     let kernel = Arc::new(KernelRuntime::new());
     let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+        aletheon::host::session::test_composition::compose_with_event_spine(
             kernel.clone(),
             read_store,
             event_spine.clone(),
@@ -1063,12 +1061,12 @@ async fn connection_scoped_cancel_touches_only_that_connections_turn() {
 #[tokio::test]
 async fn daemon_shutdown_cancels_and_settles_every_active_turn() {
     use ::contracts::{OperationExitReason, TurnStop};
-    use aletheon::wiring::application::turn_coordinator::TurnExecution;
+    use application::turn::coordinator::TurnExecution;
     use runtime::turn_policy::*;
 
     let kernel = Arc::new(KernelRuntime::new());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+        aletheon::host::session::test_composition::compose_with_event_spine(
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
             Arc::new(SqliteEventSpine::open(":memory:").unwrap()),
@@ -1131,7 +1129,7 @@ async fn panicking_runner_is_failed_and_guard_removes_active_turn() {
 
     let kernel = Arc::new(KernelRuntime::new());
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+        aletheon::host::session::test_composition::compose_with_event_spine(
             kernel.clone(),
             Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
             Arc::new(SqliteEventSpine::open(":memory:").unwrap()),
@@ -1153,21 +1151,19 @@ async fn panicking_runner_is_failed_and_guard_removes_active_turn() {
                     let _ = started_tx.send(request.operation_id);
                     panic!("injected runner panic");
                     #[allow(unreachable_code)]
-                    Ok(
-                        aletheon::wiring::application::turn_coordinator::TurnExecution {
-                            result: TurnResult {
-                                output: String::new(),
-                                stop: ::contracts::TurnStop::Failed,
-                                failure: None,
-                                usage: Default::default(),
-                                metrics: TurnMetrics::default(),
-                            },
-                            items: Vec::new(),
-                            projection: None,
-                            context_projection: None,
-                            evaluation_artifacts: Default::default(),
+                    Ok(application::turn::coordinator::TurnExecution {
+                        result: TurnResult {
+                            output: String::new(),
+                            stop: ::contracts::TurnStop::Failed,
+                            failure: None,
+                            usage: Default::default(),
+                            metrics: TurnMetrics::default(),
                         },
-                    )
+                        items: Vec::new(),
+                        projection: None,
+                        context_projection: None,
+                        evaluation_artifacts: Default::default(),
+                    })
                 },
             )
             .await

@@ -1,8 +1,8 @@
 #[test]
 fn official_runtime_roots_create_one_kernel_clock_each() {
-    let machine = include_str!("../../aletheon/src/wiring/core_runtime.rs");
-    let user = include_str!("../../aletheon/src/wiring/user_runtime.rs");
-    let handler = include_str!("../../aletheon/src/wiring/daemon/bootstrap/request.rs");
+    let machine = include_str!("../../aletheon/src/host/core.rs");
+    let user = include_str!("../../aletheon/src/host/user_runtime.rs");
+    let handler = include_str!("../../aletheon/src/composition/daemon_bootstrap/request.rs");
 
     assert_eq!(
         machine.matches("SystemClock::new()").count(),

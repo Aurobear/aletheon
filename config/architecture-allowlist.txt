@@ -1,4 +1,0 @@
-application_store_import|crates/aletheon/src/wiring/application/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {
-application_store_import|crates/aletheon/src/wiring/application/verification/command.rs|use corpus::tools::subagent::{CommandOutput, CommandRequest, CommandRunner};
-raw_process|crates/aletheon/src/wiring/application/approval/apply_coordinator.rs| let status = tokio::process::Command::new("git")
-raw_process|crates/dasein/src/impl/perception/sources/journald_source.rs| let mut child = match tokio::process::Command::new("journalctl")

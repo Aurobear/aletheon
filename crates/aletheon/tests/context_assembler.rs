@@ -3,9 +3,11 @@ use ::contracts::{
     AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, Message, OperationId,
     ProcessId, StructuredSelfView, TurnRequest,
 };
-use aletheon::wiring::application::context_assembler::{
-    working_directory_policy_prompt, ContextAssembler, ContextAssemblyError, ContextFragments,
-    ContextSource, ProductionContextSource,
+use aletheon::adapters::context_source::{
+    working_directory_policy_prompt, CorpusSkillContext, ProductionContextSource,
+};
+use application::turn::context::{
+    ContextAssembler, ContextAssemblyError, ContextFragments, ContextSource,
 };
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
@@ -74,10 +76,12 @@ async fn production_source_allows_first_turn_without_conscious_projection() {
     let skills = tempfile::tempdir().unwrap();
     let source = ProductionContextSource {
         cached_prefix: Arc::new(Mutex::new("system".into())),
-        skill_loader: Arc::new(Mutex::new(corpus::SkillLoader::new(
-            skills.path().to_path_buf(),
-        ))),
-        skill_router: Arc::new(Mutex::new(corpus::SkillRouter::new())),
+        skills: Arc::new(CorpusSkillContext::new(
+            Arc::new(Mutex::new(corpus::SkillLoader::new(
+                skills.path().to_path_buf(),
+            ))),
+            Arc::new(Mutex::new(corpus::SkillRouter::new())),
+        )),
         conscious: Arc::new(UnavailableConsciousContext),
         memory_service: None,
         recall_enabled: false,
@@ -277,30 +281,39 @@ fn working_directory_prompt_distinguishes_policy_from_host_mounts() {
 
 #[test]
 fn turn_pipeline_prepares_and_assembles_context_once() {
-    let pipeline = include_str!("../src/wiring/application/turn_pipeline.rs");
-    assert!(pipeline.contains(".context_assembler"));
+    let pipeline = include_str!("../src/host/turn_pipeline.rs");
+    // During the wiring-ownership migration the pre-cognitive context
+    // preparation consolidated into `prepare_pre_cognitive` (application
+    // crate), which internally prepares the projected context exactly once and
+    // computes its budget costs before budget planning.  The host pipeline must
+    // call that single entry point once per turn.
     assert_eq!(
-        pipeline.matches(".prepare(&context_request)").count(),
+        pipeline.matches("prepare_pre_cognitive").count(),
         1,
         "the exact projected context must be prepared once before budget planning"
     );
+    assert!(pipeline.contains("budget_costs: context_costs"));
+    // Assembly after history budgeting moved into the cognitive preparation
+    // adapter; it must assemble the prepared context exactly once.
+    let preparation = include_str!("../src/adapters/cognitive/turn_preparation.rs");
     assert_eq!(
-        pipeline.matches(".assemble_prepared(").count(),
+        preparation.matches(".assemble_prepared(").count(),
         1,
         "the prepared context must be assembled once after history budgeting"
     );
-    assert!(pipeline.contains("prepared_context.budget_costs(&context_request.input)"));
-    assert!(pipeline.contains("\"prompt_construction_profile\": prompt_profile"));
-    assert!(pipeline.contains("\"tool_count\": tool_defs.len()"));
-    assert!(!pipeline.contains("serde_json::json!({\"tool_count\": 0})"));
+    assert!(preparation.contains("prompt_construction_profile"));
+    // The prompt construction profile must carry the real tool count (from the
+    // parameter), never a hardcoded zero.
+    let lifecycle = include_str!("../src/daemon/turn_lifecycle_adapter.rs");
+    assert!(lifecycle.contains("\"tool_count\": tool_count"));
+    assert!(!lifecycle.contains("{\"tool_count\": 0}"));
     assert_eq!(
         pipeline.matches("self.active_profile.snapshot()").count(),
         1,
         "one immutable profile snapshot must govern the entire turn"
     );
     assert!(pipeline.contains(".canonical_sessions"));
-    assert!(pipeline.contains("let canonical_session = ::contracts::SessionId"));
-    assert!(pipeline.contains(".resume(&canonical_session)"));
+    assert!(pipeline.contains("self.canonical_sessions.as_ref()"));
     for removed in [
         "inject_keyword_skills",
         "inject_composite_recall",
@@ -314,7 +327,7 @@ fn turn_pipeline_prepares_and_assembles_context_once() {
             "duplicate context route: {removed}"
         );
     }
-    let daemon_modules = include_str!("../src/wiring/application/daemon_turn/mod.rs");
+    let daemon_modules = include_str!("../src/daemon/turn/mod.rs");
     assert!(!daemon_modules.contains("mod injection"));
 }
 mod turn_request_support;

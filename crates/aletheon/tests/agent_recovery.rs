@@ -1,5 +1,5 @@
 use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
-use aletheon::wiring::adapters::runtime::test_registry::AgentExecutionRegistry;
+use aletheon::host::runtime::test_registry::AgentExecutionRegistry;
 use std::sync::Arc;
 
 use ::contracts::{
@@ -7,7 +7,7 @@ use ::contracts::{
     AgentRecoveryReceipt, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId,
     OperationId, ProcessId, RuntimeId, RuntimeResumability,
 };
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentHostAdapter, AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRunProjection,
     AgentRunRecord, BoundedAgentAdmission, RuntimeAgentRunProjection, RuntimeProcessReclaimOutcome,
     RuntimeProcessSupervisor,
@@ -381,7 +381,7 @@ async fn startup_reconciles_open_rows_before_admission_and_never_replays_native_
     let repository = Arc::new(SqliteAgentRunProjection::in_memory().unwrap());
     let run = record(AgentRunStatus::Queued, RuntimeResumability::Never);
     persist(&repository, &run).await;
-    let service = AgentHostAdapter::new_legacy(
+    let service = AgentHostAdapter::new_fixture(
         kernel,
         clock,
         repository.clone(),
@@ -419,7 +419,7 @@ async fn startup_recovery_visits_every_page_and_records_the_current_generation()
         agents.push(run.agent_id());
         persist(&repository, &run).await;
     }
-    let service = AgentHostAdapter::new_legacy(
+    let service = AgentHostAdapter::new_fixture(
         kernel,
         clock,
         repository.clone(),
@@ -501,7 +501,7 @@ async fn a_agent_002_startup_reclaims_and_clears_a_durable_external_process_befo
         start_time_ticks: 99,
     };
     repository.put_runtime_process(&identity).await.unwrap();
-    let service = AgentHostAdapter::new_legacy(
+    let service = AgentHostAdapter::new_fixture(
         kernel,
         clock,
         repository.clone(),

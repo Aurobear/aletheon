@@ -1,10 +1,14 @@
 # frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
 # crate|path|local_dependencies|public_modules|top_level_impl|adapter_like_dirs
 agora|crates/agora|application,contracts,gateway,kernel,runtime|attention,blackboard,broadcast,competition,ops,persistence,scratchpad,task_graph,trace,workspace|false|-
-adapters-sqlite|crates/adapters/sqlite|application,cognit,contracts,gateway,kernel,metacog,mnemosyne,platform,runtime|channel,runtime_agent,settlement|false|-
+adapters-sqlite|crates/adapters/sqlite|application,cognit,contracts,gateway,kernel,metacog,mnemosyne,platform,runtime|session,turn_event_journal,turn_history,turn_identity,turn_session_port,channel,runtime_agent,settlement|false|-
 adapters-agent-profile|crates/adapters/agent-profile|corpus,runtime|lib|false|-
+adapters-agent-backend|crates/adapters/agent-backend|application,cognit,contracts,corpus,kernel,runtime|pi,pi_protocol,provider_worker|false|-
+adapters-inference|crates/adapters/inference|cognit,contracts,runtime|backpressure,core_rpc,factory,providers,registry,runtime_facts|false|-
+adapters-gbrain|crates/adapters/gbrain|application,contracts,corpus,mnemosyne|bootstrap,context_memory,mcp_adapter|false|-
+adapters-google|crates/adapters/google|adapters-sqlite,application,contracts,corpus,gateway,platform|gmail,gmail_classification,sync|false|-
 basic_agent|examples/basic_agent|aletheon,contracts|-|false|-
-aletheon|crates/aletheon|adapters-agent-profile,adapters-sqlite,agora,application,cognit,contracts,corpus,dasein,gateway,hardware,interact,kernel,metacog,mnemosyne,platform,runtime|workspace|false|-
+aletheon|crates/aletheon|adapters-agent-backend,adapters-agent-profile,adapters-gbrain,adapters-google,adapters-inference,adapters-sqlite,agora,application,cognit,contracts,corpus,dasein,gateway,hardware,interact,kernel,metacog,mnemosyne,platform,runtime|workspace|false|-
 application|crates/application|contracts,runtime|error,use_case|false|-
 cognit|crates/cognit|contracts,dasein,kernel|bridge,composition,config,core,event_handlers,harness,inference,learning,policy,ports,ports_cognitive_run,testing|false|adapters
 corpus|crates/corpus|agora,application,contracts,kernel,platform,runtime|acix,catalog,core,drivers,hook,security,service,skill,tools|false|drivers

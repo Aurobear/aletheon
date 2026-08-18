@@ -5,6 +5,7 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 binary=${ALETHEON_BINARY:-"$repo_root/target/release/aletheon"}
 config_source=${ALETHEON_CONFIG:-"$repo_root/config/production.toml.example"}
+user_config=${ALETHEON_USER_CONFIG:-}
 enable=1
 [[ ${1-} == --no-enable ]] && enable=0
 
@@ -12,7 +13,6 @@ enable=1
 [[ -f "$config_source" && ! -L "$config_source" ]] || {
   echo "missing or symlinked config: $config_source" >&2; exit 1;
 }
-
 getent group aletheon >/dev/null || groupadd --system aletheon
 id -u aletheon >/dev/null 2>&1 || useradd --system --gid aletheon \
   --home-dir /var/lib/aletheon --shell /usr/sbin/nologin aletheon
@@ -21,6 +21,27 @@ install -d -o root -g aletheon -m 0750 /etc/aletheon /etc/aletheon/policy /etc/a
 install -d -o aletheon -g aletheon -m 0750 \
   /var/lib/aletheon/{state,goals,sessions,mnemosyne,artifacts,worktrees,audit} \
   /var/cache/aletheon /run/aletheon
+deployment_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+rollback_dir=/var/lib/aletheon/state/deployments/$deployment_id
+install -d -o root -g aletheon -m 0750 "$rollback_dir"
+
+backup_artifact() {
+  local source=$1 fallback=$2 target=$3 mode=$4
+  if [[ -n "$source" && -f "$source" && ! -L "$source" ]]; then
+    install -o root -g aletheon -m "$mode" "$source" "$target"
+  elif [[ -n "$fallback" ]]; then
+    install -o root -g aletheon -m "$mode" "$fallback" "$target"
+  else
+    install -o root -g aletheon -m "$mode" /dev/null "$target"
+  fi
+}
+
+previous_binary=$rollback_dir/aletheon
+previous_core_config=$rollback_dir/core-config.toml
+previous_user_config=$rollback_dir/user-config.toml
+backup_artifact /usr/bin/aletheon "$binary" "$previous_binary" 0750
+backup_artifact /etc/aletheon/config.toml "$config_source" "$previous_core_config" 0640
+backup_artifact "$user_config" '' "$previous_user_config" 0640
 install -d -o aletheon -g aletheon -m 0700 /var/cache/aletheon/backup
 for secret in provider.env telegram.env gbrain.env; do
   if [[ ! -e /etc/aletheon/credentials/$secret ]]; then
@@ -106,3 +127,42 @@ if ((enable)); then
     echo "backup timer disabled: configure restic and non-empty protected credentials to enable it" >&2
   fi
 fi
+
+version_json=$(/usr/bin/aletheon version --json)
+manifest_tmp=$(mktemp /var/lib/aletheon/state/.deployment-manifest.XXXXXX)
+python3 - "$version_json" "$manifest_tmp" \
+  "$previous_binary" "$previous_core_config" "$previous_user_config" \
+  "$user_config" <<'PY'
+import json
+import sys
+
+version = json.loads(sys.argv[1])
+source_revision = version.get("source_revision", "")
+if not source_revision or source_revision == "unknown":
+    raise SystemExit("installed binary has no source revision")
+binary_version = version.get("version", "")
+if not binary_version:
+    raise SystemExit("installed binary has no package version")
+user_config = sys.argv[6]
+if not user_config:
+    raise SystemExit("system deployment requires the invoking user's config path")
+manifest = {
+    "installed_sha": source_revision,
+    "core_runtime_version": binary_version,
+    "user_runtime_version": binary_version,
+    "previous_core_binary": sys.argv[3],
+    "previous_user_binary": sys.argv[3],
+    "previous_core_config": sys.argv[4],
+    "previous_user_config": sys.argv[5],
+    "core_binary": "/usr/bin/aletheon",
+    "user_binary": "/usr/bin/aletheon",
+    "core_config": "/etc/aletheon/config.toml",
+    "user_config": user_config,
+}
+with open(sys.argv[2], "w", encoding="utf-8") as target:
+    json.dump(manifest, target, sort_keys=True, indent=2)
+    target.write("\n")
+PY
+install -o root -g aletheon -m 0640 "$manifest_tmp" \
+  /var/lib/aletheon/state/deployment-manifest.json
+rm -f -- "$manifest_tmp"

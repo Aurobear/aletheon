@@ -10,11 +10,11 @@ use ::contracts::{
 };
 use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
 use agent_control_support::{fixture, spawn_request, TestLauncher, TEST_RUNTIME};
-use aletheon::wiring::adapters::runtime::test_registry::AgentExecutionRegistry;
-use aletheon::wiring::application::agent_control::AgentRuntimeLauncher;
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::AgentRuntimeLauncher;
+use aletheon::composition::agent_control::{
     AgentHostAdapter, BoundedAgentAdmission, SettlementReceiptStore,
 };
+use aletheon::host::runtime::test_registry::AgentExecutionRegistry;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use std::collections::BTreeSet;
@@ -185,7 +185,7 @@ async fn assert_child_success_requires_host_receipt() {
         .register(RuntimeId(TEST_RUNTIME.into()), launcher.clone())
         .unwrap();
     let service = Arc::new(
-        AgentHostAdapter::new_legacy(
+        AgentHostAdapter::new_fixture(
             kernel,
             clock,
             repository,
@@ -359,7 +359,7 @@ async fn host_resolves_child_profile_tools_and_preserves_separate_delegation_aut
         ),
     ]);
     let service = Arc::new(
-        AgentHostAdapter::new_legacy(
+        AgentHostAdapter::new_fixture(
             kernel,
             clock,
             repository,

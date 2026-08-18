@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use ::contracts::ipc::{TurnEventStream, TurnEventV1};
 use ::contracts::{Message, OperationId, SpawnSpec, TurnRequest, TurnStop};
-use aletheon::wiring::application::daemon_react::{
+use aletheon::adapters::cognitive::daemon_session::{
     submit_streaming_daemon_turn, DaemonStreamingTurnContext,
 };
 use cognit::{CognitError, CognitErrorKind};
@@ -51,7 +51,7 @@ fn context(
     fn(&str, &str, &serde_json::Value) -> std::future::Ready<(String, bool)>,
 > {
     DaemonStreamingTurnContext {
-        config: aletheon::config::CognitiveRuntimeConfig::default(),
+        config: aletheon::config::CognitiveRuntimeConfig::default().into(),
         llm,
         tool_defs: vec![],
         execute_tool: execute_noop,

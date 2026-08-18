@@ -149,5 +149,5 @@ data_change = false
 backup_required = true
 forward = "reopen_and_resume_idempotent_approval"
 rollback = "matching_data_and_binary"
-evidence = "crates/aletheon/src/wiring/composition/evolution_proposer.rs"
+evidence = "crates/aletheon/src/composition/evolution_proposer.rs"
 integrity_query = "PRAGMA integrity_check"

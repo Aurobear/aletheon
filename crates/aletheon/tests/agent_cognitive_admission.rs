@@ -10,7 +10,7 @@ use ::contracts::{
     AgentControlError, AgentControlErrorKind, AgentId, AgentResult, AgentWaitRequest, AgoraSpaceId,
     AttemptUsage, ProcessId, WorkspacePolicy,
 };
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentEventSink, AgentRuntimeInput, AgentRuntimeLauncher, CognitiveTaskAdmissionPort,
 };
 use async_trait::async_trait;

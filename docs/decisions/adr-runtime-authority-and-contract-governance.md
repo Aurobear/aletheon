@@ -96,7 +96,7 @@ SessionAppendStore -> EventSourcedSessionStore -> EventSpine durable commit
    `fabric::RuntimeProcessId` (`crates/contracts/src/types/process.rs:37-47`), and
    change/checkpoint identities retain their own types
    (`crates/contracts/src/types/change_transaction.rs:9-24`;
-   `crates/application/src/workspace_checkpoint.rs:22-35`).
+   `crates/application/src/workspace_checkpoint/mod.rs:30-42`).
 3. Hardware reuses `fabric::PrincipalId`; it does not define a parallel
    principal wrapper (`crates/hardware/src/device.rs:4`). New generic ID or
    receipt wrappers require demonstrated shared semantics and registry review.

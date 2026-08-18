@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
 use ::contracts::{GoalSpec, GoalState, PrincipalId};
-use aletheon::wiring::application::goal::ObjectiveStore;
-use aletheon::wiring::application::goal_service::{
-    GoalAction, GoalService, GoalServiceError, GoalUseCases,
-};
+use adapters_sqlite::goal::ObjectiveStore;
+use application::goal::{GoalAction, GoalService, GoalServiceError, GoalUseCases};
 use tempfile::tempdir;
 use tokio::sync::Mutex;
 
@@ -14,7 +12,12 @@ fn setup() -> (GoalService, Arc<Mutex<ObjectiveStore>>) {
     let store = Arc::new(Mutex::new(
         ObjectiveStore::open(&path).expect("open objective store"),
     ));
-    (GoalService::new(store.clone()), store)
+    (
+        GoalService::new(Arc::new(adapters_sqlite::goal::SqliteGoalRepository::new(
+            store.clone(),
+        ))),
+        store,
+    )
 }
 
 fn spec(intent: &str) -> GoalSpec {
@@ -157,7 +160,7 @@ async fn illegal_and_stale_transitions_are_sanitized() {
 
 #[test]
 fn goal_rpc_has_no_concrete_store_or_lock_access() {
-    let source = include_str!("../../aletheon/src/wiring/daemon/handler/rpc/rpc_goal.rs");
+    let source = include_str!("../../aletheon/src/daemon/handler/rpc/rpc_goal.rs");
     assert!(source.contains("self.ports.goals"));
     for forbidden in ["subsystems", "ObjectiveStore", "objective_store", ".lock()"] {
         assert!(

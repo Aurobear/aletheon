@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ::contracts::{AgentId, AgentRunStatus, AgentTaskId, OperationId, ProcessId};
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentEventSink, AgentRuntimeEvent, MemoryRecordingAgentEventSink, NoopAgentEventSink,
 };
 use mnemosyne::{AgentMemoryContext, AgentMemoryVault, MemoryScope};

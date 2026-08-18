@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-#[path = "../src/wiring/composition/dasein_workspace.rs"]
+#[path = "../src/composition/dasein_workspace.rs"]
 mod dasein_workspace;
 
 use ::contracts::{
@@ -10,12 +10,12 @@ use ::contracts::{
     ProcessId, RuntimeId, SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceContent,
 };
 use adapters_sqlite::event_spine::{EventReadFilter, SqliteEventSpine};
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentCandidateProjector, AgentCandidateSubmissionPort, AgentContextProjection, AgentEventSink,
     AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput, NoopAgentEventSink,
     SpineAgentEventSink,
 };
-use aletheon::wiring::application::conscious_workspace::ConsciousWorkspaceRegistry;
+use aletheon::composition::conscious_workspace::ConsciousWorkspaceRegistry;
 use async_trait::async_trait;
 use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
@@ -99,7 +99,10 @@ fn input() -> AgentRuntimeInput {
 #[test]
 fn progress_is_private_bounded_and_never_targets_root() {
     let input = input();
-    let projector = AgentCandidateProjector::new(input.clone(), Arc::new(TestClock::default()));
+    let projector = AgentCandidateProjector::new(
+        input.candidate_projection_context(),
+        Arc::new(TestClock::default()),
+    );
     let projected = projector
         .project(&AgentRuntimeEvent::Progress {
             agent_id: input.handle.agent_id,
@@ -218,7 +221,10 @@ async fn agent_lifecycle_and_tool_events_append_to_root_tree() {
 #[test]
 fn only_explicit_evidence_and_terminal_result_enter_root_agent_tree() {
     let input = input();
-    let projector = AgentCandidateProjector::new(input.clone(), Arc::new(TestClock::default()));
+    let projector = AgentCandidateProjector::new(
+        input.candidate_projection_context(),
+        Arc::new(TestClock::default()),
+    );
     let result = AgentResult {
         output: "done".into(),
         usage: AttemptUsage::default(),
@@ -273,7 +279,10 @@ fn only_explicit_evidence_and_terminal_result_enter_root_agent_tree() {
 #[test]
 fn large_terminal_output_crosses_only_as_validated_artifact_reference() {
     let input = input();
-    let projector = AgentCandidateProjector::new(input.clone(), Arc::new(TestClock::default()));
+    let projector = AgentCandidateProjector::new(
+        input.candidate_projection_context(),
+        Arc::new(TestClock::default()),
+    );
     let artifact = AgentArtifact {
         kind: "log".into(),
         reference: "artifact://sha256/abc".into(),
@@ -303,7 +312,10 @@ fn large_terminal_output_crosses_only_as_validated_artifact_reference() {
 #[test]
 fn content_fingerprint_deduplicates_repeated_events_but_not_distinct_progress() {
     let input = input();
-    let projector = AgentCandidateProjector::new(input.clone(), Arc::new(TestClock::default()));
+    let projector = AgentCandidateProjector::new(
+        input.candidate_projection_context(),
+        Arc::new(TestClock::default()),
+    );
     let event = |summary: &str| AgentRuntimeEvent::Progress {
         agent_id: input.handle.agent_id,
         process_id: input.handle.process_id,
@@ -332,7 +344,10 @@ fn content_fingerprint_deduplicates_repeated_events_but_not_distinct_progress() 
 #[test]
 fn projection_source_contains_child_process_operation_and_agent_identity() {
     let input = input();
-    let projector = AgentCandidateProjector::new(input.clone(), Arc::new(TestClock::default()));
+    let projector = AgentCandidateProjector::new(
+        input.candidate_projection_context(),
+        Arc::new(TestClock::default()),
+    );
     let candidate = projector
         .project(&AgentRuntimeEvent::Started {
             agent_id: input.handle.agent_id,
@@ -421,21 +436,22 @@ async fn root_broadcast_child_candidate_and_later_c01_selection_are_replayable()
     runtime_input.handle.process_id = child;
     runtime_input.root_process_id = root;
     let dependency = runtime_input.request.broadcast_refs[0].content_id;
-    let submission = AgentCandidateProjector::new(runtime_input.clone(), clock)
-        .project(&AgentRuntimeEvent::Terminal {
-            agent_id: runtime_input.handle.agent_id,
-            process_id: child,
-            operation_id: runtime_input.handle.operation_id,
-            status: AgentRunStatus::Succeeded,
-            result: Some(AgentResult {
-                output: "exported result".into(),
-                usage: AttemptUsage::default(),
-                evidence: vec![],
-                artifacts: vec![],
-            }),
-        })
-        .unwrap()
-        .remove(0);
+    let submission =
+        AgentCandidateProjector::new(runtime_input.candidate_projection_context(), clock)
+            .project(&AgentRuntimeEvent::Terminal {
+                agent_id: runtime_input.handle.agent_id,
+                process_id: child,
+                operation_id: runtime_input.handle.operation_id,
+                status: AgentRunStatus::Succeeded,
+                result: Some(AgentResult {
+                    output: "exported result".into(),
+                    usage: AttemptUsage::default(),
+                    evidence: vec![],
+                    artifacts: vec![],
+                }),
+            })
+            .unwrap()
+            .remove(0);
     let candidate_id = submission.candidate.id;
 
     registry

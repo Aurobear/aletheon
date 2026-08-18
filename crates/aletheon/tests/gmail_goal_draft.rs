@@ -1,23 +1,21 @@
 use ::contracts::{ApprovalCategory, ApprovalStatus, GoalState, PrincipalId};
+use adapters_google::gmail::ingest::{
+    ExternalEventIngestResult, GmailOriginalReference, IngestedAttachment,
+};
+use adapters_google::gmail::sender_policy::{
+    AuthenticationRequirement, GmailHeader, GmailSenderPolicy,
+};
+use adapters_google::gmail::{GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator};
 use adapters_sqlite::approval_repository::{ApprovalDecision, ApprovalResolutionContext};
 use adapters_sqlite::artifact::{ArtifactRecord, ArtifactScanStatus};
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
+use adapters_sqlite::goal::ObjectiveStore;
 use adapters_sqlite::ChannelStore;
-use aletheon::wiring::adapters::channel::daemon_adapter::{
+use aletheon::adapters::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonChannelApprovalCallbackAdapter,
     DaemonExternalDraftApprovalExecutor,
 };
-use aletheon::wiring::adapters::channel::gmail::ingest::{
-    ExternalEventIngestResult, GmailOriginalReference, IngestedAttachment,
-};
-use aletheon::wiring::adapters::channel::gmail::sender_policy::{
-    AuthenticationRequirement, GmailHeader, GmailSenderPolicy,
-};
-use aletheon::wiring::adapters::channel::gmail::{
-    GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
-};
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
-use aletheon::wiring::application::goal::ObjectiveStore;
+use aletheon::adapters::external::ExternalIdentityRepository;
 use application::{ExternalCapabilityId, ExternalIdentityId};
 use corpus::tools::google::oauth::GoogleBinding;
 use gateway::ports::ChannelTurnApplicationPort;
@@ -73,7 +71,7 @@ impl Fixture {
         }
     }
 
-    fn accepted(&self, id: &str) -> aletheon::wiring::adapters::channel::gmail::GmailInboxRecord {
+    fn accepted(&self, id: &str) -> adapters_google::gmail::GmailInboxRecord {
         let store = GmailChannelStore::open(&self.path).unwrap();
         store
             .authenticate_and_persist(
@@ -147,7 +145,7 @@ impl Fixture {
 
     fn resolve(
         &self,
-        draft: &aletheon::wiring::adapters::channel::gmail::GmailGoalDraft,
+        draft: &adapters_google::gmail::GmailGoalDraft,
         principal: &PrincipalId,
         decision: ApprovalDecision,
         now: i64,

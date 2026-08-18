@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use aletheon::wiring::application::evaluation::{
+use application::evaluation_projection::{
     EvaluationProjection, EvaluationProjectionContext, EvaluationProjectionMetrics,
     EvaluationProjectionRecord, EvaluationProjectionSink,
 };

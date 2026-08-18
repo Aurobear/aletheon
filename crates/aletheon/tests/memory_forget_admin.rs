@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
-use aletheon::wiring::application::admin_service::{
+use aletheon::host::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases, ModeChange,
     SkillAdminPort, SkillDescriptor,
 };
-use aletheon::wiring::application::request_use_cases::{
-    ProductionMemoryAdminUseCases, RetentionAdminPort,
-};
+use aletheon::host::request_use_cases::{ProductionMemoryAdminUseCases, RetentionAdminPort};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use mnemosyne::{
@@ -130,10 +128,8 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         skills: Arc::new(NoopSkills),
         tool_catalog: Arc::new(|| Box::pin(async { vec![] })),
         hook_catalog: Arc::new(|| Box::pin(async { vec![] })),
-        pending_approvals: aletheon::wiring::application::admin_service::PendingApprovals::default(
-        ),
-        session_approvals:
-            aletheon::wiring::application::admin_service::ScopedApprovalCache::default(),
+        pending_approvals: aletheon::host::admin_service::PendingApprovals::default(),
+        session_approvals: aletheon::host::admin_service::ScopedApprovalCache::default(),
         daemon_cancel: CancellationToken::new(),
         external_sync: None,
         supplemental_memory_worker: None,
@@ -144,9 +140,7 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         agent_timeline: None,
         agent_profiles: None,
         current_profile: None,
-        profile_switch_events: Arc::new(
-            aletheon::wiring::application::admin_service::NoopProfileSwitchEventSink,
-        ),
+        profile_switch_events: Arc::new(aletheon::host::admin_service::NoopProfileSwitchEventSink),
         deployment_rollback: None,
     });
     assert!(

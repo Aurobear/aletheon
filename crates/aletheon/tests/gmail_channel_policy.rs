@@ -1,12 +1,10 @@
 use ::contracts::PrincipalId;
-use aletheon::extensions::gmail::GmailClassification;
-use aletheon::wiring::adapters::channel::gmail::sender_policy::{
+use adapters_google::gmail::sender_policy::{
     AuthenticationRequirement, GmailHeader, GmailSenderPolicy, SenderPolicyError,
 };
-use aletheon::wiring::adapters::channel::gmail::{
-    GmailChannelMessage, GmailChannelStore, GmailInsertOutcome,
-};
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
+use adapters_google::gmail::{GmailChannelMessage, GmailChannelStore, GmailInsertOutcome};
+use aletheon::adapters::external::ExternalIdentityRepository;
+use aletheon::extensions::gmail::GmailClassification;
 use application::{ExternalCapabilityId, ExternalIdentityId};
 use corpus::tools::google::oauth::GoogleBinding;
 use std::collections::HashSet;

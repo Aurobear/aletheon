@@ -5,10 +5,16 @@
 
 pub mod artifact_store;
 pub mod backend;
+mod bounded_command;
 pub mod deployment;
 pub mod desktop;
 pub mod error;
+pub mod evaluation_path;
 pub mod filesystem;
+pub mod goal_artifact;
+pub mod goal_storage_admission;
+pub mod goal_worktree;
+pub mod journald;
 pub mod manifest;
 pub mod path;
 pub mod process;
@@ -22,7 +28,11 @@ pub mod service;
 pub mod storage_health;
 pub mod storage_quota;
 pub mod structured_patch;
+pub mod temporary_artifact;
+pub mod verification_command;
 pub mod workflow_store;
+pub mod workspace_checkpoint;
+pub mod worktree;
 
 pub use desktop::DesktopHost;
 pub use error::{HostError, HostErrorKind};
@@ -30,6 +40,7 @@ pub use filesystem::{
     AtomicWrite, EntryMetadata, FilesystemAccess, FilesystemHost, FilesystemScope, FsEvent,
     FsEventStream, RemoveFile, SymlinkPolicy, WriteReceipt,
 };
+pub use journald::JournalLineStream;
 pub use manifest::{FeatureState, HostCapabilityManifest, HostFeature};
 pub use path::HostPath;
 pub use process::{ProcessHost, ProcessId, ProcessSignal, ProcessSnapshot, SpawnSpec};

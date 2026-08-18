@@ -137,7 +137,8 @@ fi
 phase0="$tmp/phase0"
 mkdir -p "$phase0/config/architecture" "$phase0/config" "$phase0/target" \
   "$phase0/crates/contracts/src/protocol" "$phase0/crates/contracts/src/application" \
-  "$phase0/crates/contracts/src/composition" "$phase0/crates/contracts/src/adapter"
+  "$phase0/crates/contracts/src/composition" "$phase0/crates/contracts/src/adapter" \
+  "$phase0/crates/aletheon/src/wiring"
 cp "$ROOT/config/architecture/retired-authorities.tsv" \
   "$phase0/config/architecture/retired-authorities.tsv"
 cat > "$phase0/Cargo.toml" <<'TOML'
@@ -155,6 +156,8 @@ cat > "$phase0/crates/contracts/src/lib.rs" <<'RS'
 pub fn stable_contract() {}
 RS
 printf 'pub struct Request;\n' > "$phase0/crates/contracts/src/protocol/client.rs"
+printf 'pub fn host_binding() {}\n' > "$phase0/crates/aletheon/src/wiring/foo.rs"
+printf 'pub fn binary_facade() {}\n' > "$phase0/crates/aletheon/src/lib.rs"
 cat > "$phase0/crates/contracts/src/composition/registry.rs" <<'RS'
 fn construct(adapter_id: &str) { match adapter_id { "messages-http" => (), _ => () } }
 RS
@@ -171,6 +174,11 @@ TOML
 cat > "$phase0/config/architecture/module-boundaries.txt" <<'EOF'
 # frozen_commit=fixture
 contracts|crates/contracts|-|protocol|false|adapter
+EOF
+cat > "$phase0/config/architecture/wiring-ownership.tsv" <<'EOF'
+# fixture wiring owner ledger
+source_path	source_kind	current_owner	policy_owner	authority_owner	adapter_owner	host_owner	effect_kinds	packet	final_disposition	evidence
+foo.rs	file	fixture-current	none	fixture-authority	none	fixture-host	object-binding	M0	retain-under-host	crates/aletheon/src/wiring/foo.rs
 EOF
 cat > "$phase0/config/architecture/executive-layers.tsv" <<'EOF'
 # frozen_commit=fixture
@@ -194,6 +202,9 @@ legacy	crates/contracts/src/lib.rs	LEGACY	fixture debt	stable contract	0	1
 EOF
 cat > "$phase0/config/architecture/metrics.env" <<'EOF'
 # frozen_commit=fixture
+ALETHEON_CONCRETE_REPOSITORY_DEFINITIONS=0
+ALETHEON_PUBLIC_WIRING_EXPORTS=0
+APPLICATION_FORBIDDEN_BOUNDARY_HITS=0
 CORE_EXTERNAL_IDENTIFIER_HITS=0
 CORE_OPAQUE_VALUE_INSPECTIONS=0
 CROSS_CRATE_IMPL_REFERENCES=0
@@ -204,6 +215,8 @@ PRODUCTION_CLI_PARSERS=0
 PROVIDER_ERROR_TEXT_BRANCHES=0
 PROVIDER_NAME_BRANCHES=0
 PUBLIC_IMPL_ADAPTER_EXPORTS=0
+REVERSE_ALETHEON_SOURCE_IMPORTS=0
+RUNTIME_FORBIDDEN_BOUNDARY_HITS=0
 SESSION_APPEND_WRITERS=0
 URL_PROVIDER_INFERENCE=0
 EOF
@@ -220,6 +233,11 @@ phase0_check || {
 expect_phase0_rejection() {
   if phase0_check; then echo "expected Phase 0 gate to reject $1" >&2; exit 1; fi
 }
+printf 'pub fn unowned() {}\n' > "$phase0/crates/aletheon/src/wiring/unowned.rs"
+expect_phase0_rejection 'unregistered wiring source'; rm "$phase0/crates/aletheon/src/wiring/unowned.rs"
+sed -i 's/fixture-current/TBD/' "$phase0/config/architecture/wiring-ownership.tsv"
+expect_phase0_rejection 'unresolved wiring owner'
+sed -i 's/TBD/fixture-current/' "$phase0/config/architecture/wiring-ownership.tsv"
 mkdir -p "$phase0/crates/extra/src"; printf 'pub fn extra() {}\n' > "$phase0/crates/extra/src/lib.rs"
 cat > "$phase0/crates/extra/Cargo.toml" <<'TOML'
 [package]
@@ -254,6 +272,15 @@ printf 'impl SessionAppendStore for Rogue {}\n' > "$phase0/crates/contracts/src/
 expect_phase0_rejection 'additional Session append writer'; rm "$phase0/crates/contracts/src/application/leak.rs"
 printf 'fn bypass() { hardware::grpc::provider::connect(); }\n' > "$phase0/crates/contracts/src/application/leak.rs"
 expect_phase0_rejection 'hardware adapter bypass'; rm "$phase0/crates/contracts/src/application/leak.rs"
+mkdir -p "$phase0/crates/application/src"
+printf 'fn leak() { std::process::Command::new("x"); }\n' > "$phase0/crates/application/src/leak.rs"
+expect_phase0_rejection 'Application host process import'; rm -r "$phase0/crates/application"
+printf 'use aletheon::wiring::Host;\n' > "$phase0/crates/contracts/src/application/leak.rs"
+expect_phase0_rejection 'reverse Aletheon source import'; rm "$phase0/crates/contracts/src/application/leak.rs"
+printf 'struct RogueRepository;\n' >> "$phase0/crates/aletheon/src/wiring/foo.rs"
+expect_phase0_rejection 'Aletheon concrete repository definition'; sed -i '$d' "$phase0/crates/aletheon/src/wiring/foo.rs"
+printf 'pub mod wiring;\n' >> "$phase0/crates/aletheon/src/lib.rs"
+expect_phase0_rejection 'Aletheon public wiring export'; sed -i '$d' "$phase0/crates/aletheon/src/lib.rs"
 mkdir -p "$phase0/crates/interact"
 cat > "$phase0/crates/interact/Cargo.toml" <<'TOML'
 [package]
@@ -274,7 +301,7 @@ echo 'architecture-check fixture: pass'
 x1="$tmp/x1"
 mkdir -p "$x1/config/architecture" "$x1/config" "$x1/target" \
   "$x1/crates/contracts/src" "$x1/crates/contracts/tests" "$x1/docs" \
-  "$x1/crates/aletheon/src/wiring/daemon/handler"
+  "$x1/crates/aletheon/src/daemon/handler"
 cp "$ROOT/config/architecture/retired-authorities.tsv" \
   "$x1/config/architecture/retired-authorities.tsv"
 : > "$x1/config/architecture-allowlist.txt"
@@ -342,7 +369,7 @@ mkdir -p "$x1/crates/alpha/src" "$x1/crates/beta/src"
 printf 'pub struct DuplicateId(pub u64);\n' > "$x1/crates/alpha/src/lib.rs"
 printf 'pub struct DuplicateId(pub String);\n' > "$x1/crates/beta/src/lib.rs"
 expect_x1_rejection 'unregistered duplicate ID wrapper'; rm -r "$x1/crates/alpha" "$x1/crates/beta"
-cat > "$x1/crates/aletheon/src/wiring/daemon/handler/rpc.rs" <<'RS'
+cat > "$x1/crates/aletheon/src/daemon/handler/rpc.rs" <<'RS'
 fn dispatch(method: &str) {
     match method {
         "test.method" => (),
@@ -351,7 +378,7 @@ fn dispatch(method: &str) {
     }
 }
 RS
-expect_x1_rejection 'duplicate RPC method arm'; rm "$x1/crates/aletheon/src/wiring/daemon/handler/rpc.rs"
+expect_x1_rejection 'duplicate RPC method arm'; rm "$x1/crates/aletheon/src/daemon/handler/rpc.rs"
 sed -i '/a_dep_003_fixture/d' "$x1/crates/contracts/tests/architecture_contract.rs"
 expect_x1_rejection 'acceptance ID without a test function'
 echo 'X1 contract negative fixtures: pass'
@@ -370,17 +397,28 @@ fi
 if git -C "$ROOT" grep -n 'default_session_id.lock' -- crates/executive/src/application/daemon_turn; then
   echo 'turn path still rereads the default session' >&2; exit 1
 fi
-if grep -qE 'ProviderRegistry|api_key|api_url' "$ROOT/crates/aletheon/src/wiring/user_runtime.rs"; then
+# Post-wiring-ownership (M7.4/M8/M9) the checked files live under
+# crates/aletheon/src/host.  A checked path that no longer exists must fail the
+# suite rather than pass because grep on a missing file reports no match.
+for _host_path in \
+  "$ROOT/crates/aletheon/src/host/user_runtime.rs" \
+  "$ROOT/crates/aletheon/src/host/core.rs"; do
+  test -f "$_host_path" || {
+    echo "architecture suite: missing checked path $_host_path" >&2
+    exit 1
+  }
+done
+if grep -qE 'ProviderRegistry|api_key|api_url' "$ROOT/crates/aletheon/src/host/user_runtime.rs"; then
   echo 'user runtime exposes machine provider authority' >&2; exit 1
 fi
-if grep -qE 'RequestHandler|ToolRegistry|Sandbox' "$ROOT/crates/aletheon/src/wiring/core_runtime.rs"; then
+if grep -qE 'RequestHandler|ToolRegistry|Sandbox' "$ROOT/crates/aletheon/src/host/core.rs"; then
   echo 'system core exposes user execution authority' >&2; exit 1
 fi
-# The adapter registry owns the factory definition; exactly one host wiring
-# file may call it, and that caller must remain the machine core.
-test "$(rg -l 'resolve_and_create' "$ROOT/crates/aletheon/src/wiring" \
-  -g '!**/adapters/inference/registry.rs' | wc -l)" -eq 1
-rg -q 'resolve_and_create' "$ROOT/crates/aletheon/src/wiring/core_runtime.rs"
+# The adapter registry owns the factory definition and its single caller, both
+# inside `adapters-inference`; the host never calls `resolve_and_create`
+# directly — the machine core goes through the adapter's inference port.
+test "$(rg -l 'resolve_and_create' "$ROOT/crates/adapters/inference/src" | wc -l)" -eq 2
+! rg -n 'resolve_and_create' "$ROOT/crates/aletheon/src/host"
 echo 'multi-user runtime architecture boundary: pass'
 python3 "$ROOT/scripts/verify-approval-closure.py"
 

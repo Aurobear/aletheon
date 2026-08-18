@@ -3,8 +3,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aletheon::config::SupplementalDestinationAttestationConfig;
-use aletheon::wiring::adapters::gbrain::{
+use adapters_gbrain::{
     McpSupplementalBindingNegotiator, SupplementalAdapterErrorCategory, SupplementalHealthState,
     SupplementalMcpAdapter, SupplementalSchemaStatus,
 };
@@ -17,6 +16,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use mnemosyne::supplemental::SupplementalDocument;
+use mnemosyne::supplemental_memory::SupplementalDestinationAttestationConfig;
 use mnemosyne::{
     MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
     RecallRequest, WorkspaceMemoryBinding, WorkspaceMemoryBindingState, WorkspaceMemoryKey,
@@ -350,27 +350,24 @@ async fn destination_negotiator_caches_verified_marker_and_rejects_source_drift(
     let router =
         McpSupplementalBindingNegotiator::new(manager, Duration::from_secs(1), &[policy]).unwrap();
     for _ in 0..2 {
-        let grant =
-            aletheon::wiring::application::memory_gateway::SupplementalBindingNegotiator::negotiate(
-                &router,
-                "gbrain",
-                "supplemental/gbrain",
-                "project",
-            )
-            .await
-            .unwrap();
-        assert_eq!(grant.read_sources, ["project"]);
-    }
-    assert!(
-        aletheon::wiring::application::memory_gateway::SupplementalBindingNegotiator::negotiate(
+        let grant = mnemosyne::SupplementalBindingNegotiator::negotiate(
             &router,
             "gbrain",
             "supplemental/gbrain",
-            "different-source",
+            "project",
         )
         .await
-        .is_err()
-    );
+        .unwrap();
+        assert_eq!(grant.read_sources, ["project"]);
+    }
+    assert!(mnemosyne::SupplementalBindingNegotiator::negotiate(
+        &router,
+        "gbrain",
+        "supplemental/gbrain",
+        "different-source",
+    )
+    .await
+    .is_err());
     let calls = state.calls.lock().unwrap();
     assert_eq!(calls.iter().filter(|(name, _)| name == "whoami").count(), 1);
     assert_eq!(
@@ -464,22 +461,21 @@ async fn bound_recall_uses_only_verified_sources_and_relabels_remote_authority()
         revision: 1,
         updated_at_ms: 1,
     };
-    let recalled =
-        aletheon::wiring::application::memory_gateway::SupplementalBindingRecallPort::recall(
-            &router,
-            &binding,
-            &RecallRequest {
-                session: "session".into(),
-                query: "memory".into(),
-                max_items: 4,
-                max_content_bytes: 4096,
-                current_at: Some(now),
-                include_historical: false,
-                mode: None,
-            },
-        )
-        .await
-        .unwrap();
+    let recalled = mnemosyne::SupplementalBindingRecallPort::recall(
+        &router,
+        &binding,
+        &RecallRequest {
+            session: "session".into(),
+            query: "memory".into(),
+            max_items: 4,
+            max_content_bytes: 4096,
+            current_at: Some(now),
+            include_historical: false,
+            mode: None,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(recalled.items.len(), 1);
     let item = &recalled.items[0];
     assert!(item.metadata.record_id.starts_with("supplemental:sha256:"));
@@ -564,22 +560,21 @@ async fn bound_recall_skips_foreign_pages_without_degrading_the_source() {
         updated_at_ms: 1,
     };
 
-    let recalled =
-        aletheon::wiring::application::memory_gateway::SupplementalBindingRecallPort::recall(
-            &router,
-            &binding,
-            &RecallRequest {
-                session: "session".into(),
-                query: "memory".into(),
-                max_items: 4,
-                max_content_bytes: 4096,
-                current_at: Some(now),
-                include_historical: false,
-                mode: None,
-            },
-        )
-        .await
-        .unwrap();
+    let recalled = mnemosyne::SupplementalBindingRecallPort::recall(
+        &router,
+        &binding,
+        &RecallRequest {
+            session: "session".into(),
+            query: "memory".into(),
+            max_items: 4,
+            max_content_bytes: 4096,
+            current_at: Some(now),
+            include_historical: false,
+            mode: None,
+        },
+    )
+    .await
+    .unwrap();
 
     assert_eq!(recalled.items.len(), 1);
     assert!(recalled.degraded_sources.is_empty());
