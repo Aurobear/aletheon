@@ -5,8 +5,8 @@ packages are composed and supervised by the Aletheon host, with package assets
 resolved through Corpus:
 
 - `crates/aletheon/src/extensions/mod.rs`
-- `crates/aletheon/src/wiring/daemon/bootstrap/extensions.rs`
-- `crates/aletheon/src/wiring/daemon/bootstrap/extension_provider_launcher.rs`
+- `crates/aletheon/src/composition/daemon_bootstrap/extensions.rs`
+- `crates/aletheon/src/composition/daemon_bootstrap/extension_provider_launcher.rs`
 - `crates/corpus/src/extension/mod.rs`
 
 Extension manifests, skills, hooks, connectors, executables, lifecycle state,

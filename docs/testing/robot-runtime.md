@@ -271,7 +271,7 @@ physical/local estop -----------------------------> direct stop callback
 - HIL/real profile 必须 pin device serial、canonical safety manifest digest 与 driver limits digest；real
   还要求未过期 evidence 和非 loopback TLS endpoint。live snapshot 在 provider 注册前逐项比较
   （`crates/aletheon/src/config/robot.rs:438-632`、
-  `crates/aletheon/src/wiring/daemon/bootstrap/embodiment.rs:85-237`）；
+  `crates/aletheon/src/composition/daemon_bootstrap/embodiment.rs:85-237`）；
 - high-risk skill 只接受与 principal/device/skill/完整参数 digest/expiry 绑定的 operator receipt，默认 adapter
   拒绝；approval schema 不含 VLA confidence（`crates/hardware/src/approval.rs:10-85`）；
 - Bridge 用本地 monotonic clock 管理独占 owner、heartbeat、operation deadline 与 lease；daemon/heartbeat

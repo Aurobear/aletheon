@@ -47,11 +47,11 @@ User / Channel / Automation
 
 `aletheon` 是二进制 composition root 和 host。它可以依赖多个领域 crate，但不应
 成为新的领域 authority。当前主要编排仍在
-`crates/aletheon/src/wiring/application/`；selected pure use cases 已进入
+`crates/application/src/`；selected pure use cases 已进入
 `crates/application` 并有生产调用，例如 `DaemonLifecycleService`
-（`crates/aletheon/src/wiring.rs:141`）、`TransactionReviewService` 和
+（`crates/aletheon/src/lib.rs:141`）、`TransactionReviewService` 和
 `SessionInputCoordinator`
-（`crates/aletheon/src/wiring/daemon/handler/ports.rs:44-45`）。
+（`crates/aletheon/src/daemon/handler/ports.rs:44-45`）。
 
 ### 2.1 迁移目标
 
@@ -100,7 +100,7 @@ shutdown 生命周期；它不拥有 repository、状态 reducer、ID mint、pro
 | `interact` | TUI、ACP 和用户交互 adapter |
 
 `crates/application` 是窄纯契约/已接线用例 owner；Turn、Goal、Agent Control 的 host
-编排唯一位于 `crates/aletheon/src/wiring/application/`。无生产调用的
+编排唯一位于 `crates/application/src/`。无生产调用的
 `ApplicationFacade` 已删除，不再作为入口或兼容层。
 
 当前 workspace 列表以 `Cargo.toml:3-24` 为准。
@@ -125,11 +125,11 @@ Input
 ```
 
 `TurnEngine` 的权威接口位于
-`crates/aletheon/src/wiring/application/turn_engine.rs:16-46`。daemon 由
+`crates/aletheon/src/daemon/turn_engine.rs:16-46`。daemon 由
 `DaemonTurnEngine` 实现该接口并调用 `TurnPipeline`
-（`crates/aletheon/src/wiring/application/daemon_turn_engine.rs:44`）；`aletheon exec`
+（`crates/aletheon/tests/daemon_turn_engine.rs:44`）；`aletheon exec`
 由 `ExecTurnEngine` 实现同一接口并复用 `TurnCoordinator` reducer
-（`crates/aletheon/src/wiring/exec_session.rs`）。保留的 `TurnService`
+（`crates/aletheon/src/host/exec_session.rs`）。保留的 `TurnService`
 只是 CLI exec 到 `TurnEngine` 的薄适配，不再拥有独立编排。`aletheon -m` 继续进入
 daemon 路径。
 
@@ -147,9 +147,9 @@ machine provider registry
 ```
 
 共享事实类型位于 `crates/contracts/src/types/llm_types.rs:128-185`；provider 从当前
-路由对象返回事实（`crates/aletheon/src/wiring/adapters/inference/factory.rs:203`），
+路由对象返回事实（`crates/adapters/inference/src/factory.rs:203`），
 `TurnPipeline` 消费并绑定它们
-（`crates/aletheon/src/wiring/application/turn_pipeline.rs`）。模型不得根据
+（`crates/aletheon/src/host/turn_pipeline.rs`）。模型不得根据
 训练先验猜测厂商、版本或上下文窗口。
 
 同一原则适用于 Session ID、Agent runtime、capability 与预算：authority/projection
@@ -164,7 +164,7 @@ execd     单次低层副作用的隔离执行进程，不理解 Prompt/Goal
 ```
 
 Runtime receipt 是证据，不是最终成功裁决。Admission、cancel、verification 和
-settlement 的编排当前仍由 `crates/aletheon/src/wiring/application/` 组合，持久化 authority
+settlement 的编排当前仍由 `crates/application/src/` 组合，持久化 authority
 必须通过 Runtime 或明确的 durable adapter，而不能由模型输出覆盖。
 
 ## 6. 状态与恢复
@@ -181,7 +181,7 @@ settlement 的编排当前仍由 `crates/aletheon/src/wiring/application/` 组�
 ### 7.1 Application 与 Turn 边界（已于 2026-08-16 收敛）
 
 - `crates/application` 只承载窄纯契约与已接线用例；host 编排继续由
-  `crates/aletheon/src/wiring/application/` 负责，`ApplicationFacade` 已删除。
+  `crates/application/src/` 负责，`ApplicationFacade` 已删除。
 - daemon 与 `aletheon exec` 均通过 `TurnEngine`；`TurnService` 仅为薄适配。
 
 ### 7.2 通用 Governed Review 服务
@@ -200,8 +200,8 @@ review.submit
 ```
 
 Wire-safe DTO 位于 `crates/application/src/governed_review.rs`；幂等、执行、取消和终态
-结算位于 `crates/aletheon/src/wiring/governed_review/`；daemon RPC 仅投影该 authority
-（`crates/aletheon/src/wiring/daemon/handler/rpc/rpc_review.rs`）。`queued` 和
+结算位于 `crates/aletheon/src/host/governed_review/`；daemon RPC 仅投影该 authority
+（`crates/aletheon/src/daemon/handler/rpc/rpc_review.rs`）。`queued` 和
 `running` 不是成功，调用方必须观察 terminal receipt。
 
 ### 7.3 仍需收敛或验收的现行路径
@@ -211,15 +211,15 @@ Wire-safe DTO 位于 `crates/application/src/governed_review.rs`；幂等、执�
   （`crates/platform/src/backend/linux/sandbox_host.rs:31-51`）。安装态工具执行由 Corpus
   `SandboxExecutor` 选择 backend
   （`crates/corpus/src/security/sandbox/executor.rs:11-54`）；coding runtime 只在
-  Bubblewrap probe 成功后注册（`crates/aletheon/src/wiring/daemon/bootstrap/request.rs:1025-1045`）。
+  Bubblewrap probe 成功后注册（`crates/aletheon/src/composition/daemon_bootstrap/request.rs:1025-1045`）。
 - Machine/provider permit 和 cooldown 已有静态实现，包括 core RPC socket lease
-  （`crates/aletheon/src/wiring/core_rpc/server.rs:228-243`）及 remote embedding 接线
-  （`crates/aletheon/src/wiring/daemon/bootstrap/request.rs:657-669`）；完整生产调用方和
+  （`crates/adapters/inference/src/core_rpc/server.rs:228-243`）及 remote embedding 接线
+  （`crates/aletheon/src/composition/daemon_bootstrap/request.rs:657-669`）；完整生产调用方和
   安装态并发证据仍按 Finding F 保持 `NEEDS EVIDENCE`，不是当前实现包。
 - Pi RPC 已回收 terminal assistant text 与 usage，但 `AgentResult.artifacts` 仍为空
-  （`crates/aletheon/src/wiring/adapters/runtime/pi_rpc.rs:697-706`）。
+  （`crates/aletheon/src/host/runtime/pi_rpc.rs:697-706`）。
 - Hardware 已由 daemon 的 production embodiment composition 组装并注册受治理工具
-  （`crates/aletheon/src/wiring/daemon/bootstrap/request.rs:754-767`）。具体真实 provider
+  （`crates/aletheon/src/composition/daemon_bootstrap/request.rs:754-767`）。具体真实 provider
   是否可用仍由有效配置与运行 probe 决定。
 - Coding fixture/harness/receipt 与 deterministic/release gate 已落地；真实模型 workflow
   仍需取得无 provider error 的连续安装态证据：`tests/coding/README.md`、

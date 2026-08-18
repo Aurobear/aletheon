@@ -17,7 +17,7 @@
 | IntentClassifier | 🔶 Standalone | `crates/cognit/src/application/inference/classifier.rs` | Rule-based classifier exists but is not the installed route authority |
 | InferenceRouter | 🔶 Standalone | `crates/cognit/src/application/inference/router.rs` | Selection component exists but is not wired into production sessions |
 | ProviderConfig | ✅ Implemented | `crates/cognit/src/application/inference/provider_config.rs` | Configuration types for the standalone router |
-| Installed inference route | ✅ Implemented | `crates/aletheon/src/wiring/daemon/bootstrap/inference.rs` | Host-owned provider/model resolution through the machine core |
+| Installed inference route | ✅ Implemented | `crates/aletheon/src/composition/daemon_bootstrap/inference.rs` | Host-owned provider/model resolution through the machine core |
 
 **NOTE:** This module is standalone -- NOT integrated with the engine. Engine uses `ProviderRegistry` directly.
 
