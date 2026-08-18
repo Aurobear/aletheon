@@ -9,13 +9,13 @@ use ::contracts::{
     InvocationControl, PrincipalId, ProcessId, SalienceVector, SandboxRequirement, UsageReport,
     WorkspaceAttribution,
 };
-use aletheon::wiring::application::governed_capability::{
+use anyhow::Result;
+use async_trait::async_trait;
+use kernel::capability::governed::{
     ActionModulationSnapshot, AuthorizedInvocation, GovernedActionDecision, GovernedActionLoop,
     GovernedCapabilityInvoker, SelectedActionContext, SelectedActionOutcomeReceipt,
     TurnAuthorityProvider, TurnCapabilityInvoker,
 };
-use anyhow::Result;
-use async_trait::async_trait;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -347,7 +347,7 @@ fn conscious_arbitration_mode_is_strict_and_observe_first() {
 
 #[test]
 fn stable_priority_order_keeps_original_tie_order() {
-    let ordered = aletheon::wiring::application::conscious_workspace::stable_priority_order(&[
+    let ordered = cognit::harness::linear::stable_priority_order(&[
         ("low".into(), 0.2),
         ("first-high".into(), 0.9),
         ("second-high".into(), 0.9),

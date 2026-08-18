@@ -2,7 +2,7 @@ use kernel::capability::CapabilityInvoker;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-#[path = "../src/wiring/composition/dasein_workspace.rs"]
+#[path = "../src/composition/dasein_workspace.rs"]
 mod dasein_workspace;
 
 use ::contracts::types::admission::RiskLevel;
@@ -11,22 +11,21 @@ use ::contracts::{
     CapabilityResult, CapabilityScope, InvocationControl, NamespaceId, PermitId, PrincipalId,
     ProcessId, SandboxRequirement, SpawnSpec, UsageReport, WorkspaceAttribution, WorkspaceContent,
 };
+use agora::conscious_core_ports::ConsciousCoreConfig;
 use agora::{
     BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, CandidatePoolConfig, SelectionPolicy,
     SqliteBroadcastStore,
 };
-use aletheon::wiring::application::conscious_action::ConsciousActionBridge;
-use aletheon::wiring::application::conscious_core_coordinator::{
-    ConsciousCoreConfig, ConsciousCoreCoordinator,
-};
-use aletheon::wiring::application::governed_capability::{
+use aletheon::composition::conscious_action::ConsciousActionBridge;
+use aletheon::composition::conscious_core_coordinator::ConsciousCoreCoordinator;
+use anyhow::Result;
+use async_trait::async_trait;
+use dasein_workspace::DaseinWorkspaceAdapter;
+use kernel::capability::governed::{
     ActionModulationSnapshot, AuthorizedInvocation, GovernedActionDecision, GovernedActionLoop,
     GovernedCapabilityInvoker, SelectedActionContext, SelectedActionOutcomeReceipt,
     TurnAuthorityProvider, TurnCapabilityInvoker,
 };
-use anyhow::Result;
-use async_trait::async_trait;
-use dasein_workspace::DaseinWorkspaceAdapter;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use sha2::{Digest, Sha256};

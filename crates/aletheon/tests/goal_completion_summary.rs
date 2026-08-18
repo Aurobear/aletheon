@@ -3,7 +3,7 @@ use adapters_sqlite::approval_repository::{
     ApprovalApplyReceipt, ApprovalCreate, ApprovalDecision, ApprovalRepository,
     ApprovalResolutionContext,
 };
-use aletheon::wiring::application::goal::{GoalCompletionSummary, ObjectiveStore};
+use adapters_sqlite::goal::{GoalCompletionSummary, ObjectiveStore};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::PathBuf;

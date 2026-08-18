@@ -2,7 +2,7 @@ use ::contracts::{
     AgentBudget, AgentContextFork, AgentControlErrorKind, AgentId, AgentProfileId,
     AgentSpawnRequest, RuntimeId,
 };
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentAdmissionPort, AgentAdmissionRequest, AgentStorageRequest, BoundedAgentAdmission,
 };
 use cognit::config::AgentAdmissionConfig;
@@ -416,8 +416,8 @@ fn a_agent_003_service_reserves_policy_before_creating_any_child_resource() {
     // registration helper in the authority owner module.
     let source = format!(
         "{}\n{}",
-        include_str!("../src/wiring/application/agent_control/spawning.rs"),
-        include_str!("../src/wiring/application/agent_control/mod.rs")
+        include_str!("../src/composition/agent_control/spawning.rs"),
+        include_str!("../src/composition/agent_control/mod.rs")
     );
     let reserve = source.find(".reserve(AgentAdmissionRequest").unwrap();
     let process = source.find(".spawn_process(SpawnSpec").unwrap();

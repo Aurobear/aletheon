@@ -6,7 +6,7 @@ use ::contracts::{
     AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId, AttemptUsage,
     BroadcastEpoch, ContentId, OperationId, ProcessId, RuntimeId,
 };
-use aletheon::wiring::application::agent_control::{AgentRunProjection, AgentRunRecord};
+use aletheon::composition::agent_control::{AgentRunProjection, AgentRunRecord};
 use rusqlite::{params, Connection};
 
 fn request(
@@ -66,7 +66,7 @@ fn record(root: AgentId, parent: Option<AgentId>, created_at_ms: i64) -> AgentRu
             last_error: None,
         },
         request_hash: SqliteAgentRunProjection::request_hash(&request).unwrap(),
-        workspace_id: aletheon::wiring::application::agent_control::agent_workspace_id(agent),
+        workspace_id: aletheon::composition::agent_control::agent_workspace_id(agent),
         root_process_id: process_id,
         broadcast_refs: request.broadcast_refs.clone(),
         request,
@@ -157,7 +157,7 @@ async fn repository_migrates_pre_workspace_rows_without_losing_runs() {
     let migrated = repository.get(root).await.unwrap().unwrap();
     assert_eq!(
         migrated.workspace_id,
-        aletheon::wiring::application::agent_control::agent_workspace_id(root)
+        aletheon::composition::agent_control::agent_workspace_id(root)
     );
     assert_eq!(
         migrated.root_process_id,

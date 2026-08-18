@@ -636,3 +636,54 @@ fn unix_now() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+
+/// Consumer-owned session-input port (M8.4 HandlerPorts narrowing).
+#[async_trait::async_trait]
+pub trait SessionInputPort: Send + Sync {
+    async fn edit(
+        &self,
+        id: PromptId,
+        expected_version: u64,
+        editor: (PrincipalId, ConnectionId),
+        new_content: String,
+    ) -> Result<QueueOpResult>;
+    async fn cancel(
+        &self,
+        id: PromptId,
+        expected_version: u64,
+        requester: PrincipalId,
+    ) -> Result<QueueOpResult>;
+    async fn metrics(
+        &self,
+        principal: &PrincipalId,
+        thread: &ThreadId,
+    ) -> Result<PromptQueueMetricSnapshot>;
+}
+
+#[async_trait::async_trait]
+impl SessionInputPort for SessionInputCoordinator {
+    async fn edit(
+        &self,
+        id: PromptId,
+        expected_version: u64,
+        editor: (PrincipalId, ConnectionId),
+        new_content: String,
+    ) -> Result<QueueOpResult> {
+        self.edit(id, expected_version, editor, new_content).await
+    }
+    async fn cancel(
+        &self,
+        id: PromptId,
+        expected_version: u64,
+        requester: PrincipalId,
+    ) -> Result<QueueOpResult> {
+        self.cancel(id, expected_version, requester).await
+    }
+    async fn metrics(
+        &self,
+        principal: &PrincipalId,
+        thread: &ThreadId,
+    ) -> Result<PromptQueueMetricSnapshot> {
+        self.metrics(principal, thread).await
+    }
+}

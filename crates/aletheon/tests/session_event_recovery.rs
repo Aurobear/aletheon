@@ -119,7 +119,7 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
         vec![item]
     );
 
-    let authority = aletheon::wiring::adapters::session::test_composition::compose_session_store(
+    let authority = aletheon::host::session::test_composition::compose_session_store(
         store.clone(),
         spine.clone(),
         projections.clone(),

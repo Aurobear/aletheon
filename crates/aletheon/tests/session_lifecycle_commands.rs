@@ -3,11 +3,9 @@ use std::sync::Arc;
 use ::contracts::{SessionId, TurnRequest};
 use adapters_sqlite::event_spine::{EventReadFilter, SqliteEventSpine};
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
-use aletheon::wiring::application::session_service::{InterruptOutcome, SessionService};
-use aletheon::wiring::application::turn_coordinator::{
-    cancelled_result, ActiveTurnKey, TurnExecution,
-};
+use application::turn::coordinator::{cancelled_result, ActiveTurnKey, TurnExecution};
 use kernel::KernelRuntime;
+use runtime::session_service::{InterruptOutcome, SessionService};
 use runtime::turn_policy::TurnPolicy;
 
 fn request(session: &str, process_id: ::contracts::ProcessId) -> TurnRequest {
@@ -34,15 +32,18 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
         .unwrap();
     let read_store = Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
+    let store = aletheon::host::session::test_composition::compose_session_store(
+        read_store,
+        event_spine.clone(),
+        Arc::new(adapters_sqlite::projection_set::DefaultEventProjectionSet::in_memory()),
+    );
     let coordinator = Arc::new(
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
+        aletheon::host::session::test_composition::compose_from_session_store(
             kernel,
-            read_store,
-            event_spine.clone(),
+            store.clone(),
             aletheon::config::GrokHardeningConfig::default(),
         ),
     );
-    let store = coordinator.store();
     coordinator
         .submit_with(
             request("base", process.id),
@@ -68,7 +69,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
         )
         .await
         .unwrap();
-    let service = SessionService::new(coordinator.store(), coordinator.active_index());
+    let service = SessionService::new(store.clone(), coordinator.active_index());
     let resumed = service.resume(&SessionId("base".into())).await.unwrap();
     assert_eq!(resumed.next_sequence, 3);
     assert_eq!(resumed.messages.len(), 2);

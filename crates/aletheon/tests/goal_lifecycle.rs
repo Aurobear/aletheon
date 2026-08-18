@@ -6,8 +6,8 @@
 use ::contracts::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
 use ::contracts::PrincipalId;
 use ::contracts::ProcessId;
-use aletheon::wiring::application::goal::coordinator::{GoalCoordinator, GoalTickOutcome};
-use aletheon::wiring::application::goal::ObjectiveStore;
+use adapters_sqlite::goal::ObjectiveStore;
+use application::goal::{GoalCoordinator, GoalTickOutcome};
 use std::sync::{Arc, Mutex};
 
 // ---------------------------------------------------------------------------
@@ -21,7 +21,9 @@ fn setup() -> (GoalCoordinator, Arc<Mutex<ObjectiveStore>>) {
 
     let store = ObjectiveStore::open(&path).unwrap();
     let store = Arc::new(Mutex::new(store));
-    let coord = GoalCoordinator::new(store.clone());
+    let coord = GoalCoordinator::new(Arc::new(
+        adapters_sqlite::goal::SqliteGoalCoordinatorRepository::new(store.clone()),
+    ));
     (coord, store)
 }
 

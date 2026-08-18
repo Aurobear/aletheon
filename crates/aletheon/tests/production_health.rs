@@ -109,7 +109,10 @@ fn health_contract_never_accepts_arbitrary_error_bodies() {
 
 #[test]
 fn unix_server_retains_peer_credential_gate() {
-    let server = include_str!("../../aletheon/src/wiring/daemon/server.rs");
+    // The peer-credential gate lives on the host UnixServer (M8.2 host
+    // UnixServer + ConnectionDispatcher seam); daemon/server.rs no longer
+    // owns socket/peer-auth.
+    let server = include_str!("../../aletheon/src/host/unix_server.rs");
     assert!(server.contains("check_peer_cred"));
     assert!(server.contains("Connection rejected by peer credential check"));
     let script = include_str!("../../../scripts/libexec/aletheon/healthcheck.sh");

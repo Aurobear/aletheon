@@ -11,9 +11,6 @@ use ::contracts::protocol::memory::{
     MAX_MEMORY_RECALL_CONTENT_BYTES, MAX_MEMORY_RECALL_ITEMS,
 };
 use ::contracts::PrincipalId;
-use aletheon::wiring::application::memory_gateway::{
-    MemoryGatewayService, SupplementalBindingNegotiator, SupplementalBindingRecallPort,
-};
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use kernel::chronos::TestClock;
@@ -22,6 +19,9 @@ use mnemosyne::{
     MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity, MemoryService, RecallItem,
     RecallRequest, RecallSet, SupplementalCapabilityGrant, TemporalState,
     WorkspaceMemoryBindingRegistry, WorkspaceMemoryKey,
+};
+use mnemosyne::{
+    MemoryGatewayService, SupplementalBindingNegotiator, SupplementalBindingRecallPort,
 };
 use tempfile::TempDir;
 

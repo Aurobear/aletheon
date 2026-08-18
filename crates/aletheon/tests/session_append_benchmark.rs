@@ -106,12 +106,11 @@ async fn s1_append_scale_matrix_reports_percentiles_and_throughput() {
             let directory = tempfile::tempdir().unwrap();
             let session_path = directory.path().join("sessions.db");
             seed(&session_path, total_events, session_count);
-            let store =
-                aletheon::wiring::adapters::session::test_composition::compose_session_store(
-                    Arc::new(CanonicalSessionStore::open(&session_path).unwrap()),
-                    Arc::new(SqliteEventSpine::open(directory.path().join("events.db")).unwrap()),
-                    Arc::new(DefaultEventProjectionSet::in_memory()),
-                );
+            let store = aletheon::host::session::test_composition::compose_session_store(
+                Arc::new(CanonicalSessionStore::open(&session_path).unwrap()),
+                Arc::new(SqliteEventSpine::open(directory.path().join("events.db")).unwrap()),
+                Arc::new(DefaultEventProjectionSet::in_memory()),
+            );
             let mut heads = HashMap::new();
             let base = total_events / session_count;
             let remainder = total_events % session_count;

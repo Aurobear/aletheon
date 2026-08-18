@@ -1,4 +1,4 @@
-use aletheon::wiring::adapters::runtime::test_registry::AgentExecutionRegistry;
+use aletheon::host::runtime::test_registry::AgentExecutionRegistry;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -12,11 +12,11 @@ use ::contracts::{
     AgentProfileId, AgentSpawnRequest, AgoraSpaceId, OperationId, OsProcessId, ProcessId,
     RuntimeId, RuntimeProcessId, WorkspacePolicy, AGENT_MESSAGE_SCHEMA_V1,
 };
-use aletheon::wiring::adapters::runtime::PiDelegateBackend;
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
     AgentRuntimeInput, AgentRuntimeLauncher,
 };
+use aletheon::host::runtime::PiDelegateBackend;
 use anyhow::Result;
 use async_trait::async_trait;
 use runtime::RuntimeProcessRegistrationPort;
@@ -274,7 +274,7 @@ done
         .register_manifested(
             PiDelegateBackend::runtime_id(),
             runtime.clone(),
-            aletheon::wiring::adapters::runtime::pi_manifest().clone(),
+            aletheon::host::runtime::pi_manifest().clone(),
         )
         .unwrap();
     let selected = registry
@@ -287,7 +287,7 @@ done
         )
         .unwrap();
     assert_eq!(PiDelegateBackend::runtime_id().0, PI_CODER_RUNTIME_ID);
-    let manifest = aletheon::wiring::adapters::runtime::pi_manifest();
+    let manifest = aletheon::host::runtime::pi_manifest();
     assert_eq!(manifest.id, PI_CODER_RUNTIME_ID);
     assert!(manifest.aliases.iter().any(|alias| alias == "pi-rpc"));
     let (selected_id, _, decision) = registry
@@ -434,9 +434,8 @@ fn trusted_workspace_is_not_deserializable_or_serialized() {
 #[test]
 fn external_pi_precedes_native_until_native_subagent_synthesis_is_reliable() {
     assert!(
-        aletheon::wiring::adapters::runtime::NativeCognitRuntime::manifest(["code-agent".into()])
-            .priority
-            > aletheon::wiring::adapters::runtime::pi_manifest().priority
+        aletheon::host::runtime::NativeCognitRuntime::manifest(["code-agent".into()]).priority
+            > aletheon::host::runtime::pi_manifest().priority
     );
 }
 
@@ -526,7 +525,7 @@ done
 
 #[test]
 fn rpc_environment_uses_a_reviewed_path_not_the_parent_path() {
-    let environment = aletheon::wiring::adapters::runtime::pi_rpc_environment_from_process();
+    let environment = aletheon::host::runtime::pi_rpc_environment_from_process();
     assert_eq!(
         environment.get("PATH").map(String::as_str),
         Some("/usr/local/bin:/usr/bin:/bin")

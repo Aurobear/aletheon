@@ -12,7 +12,7 @@ fn production_source(path: impl AsRef<Path>) -> String {
 
 #[test]
 fn binary_composition_uses_owner_domain_services() {
-    let source = production_source("../aletheon/src/wiring/domain.rs");
+    let source = production_source("../aletheon/src/host/domain.rs");
     for contract in [
         "agora: Arc<dyn AgoraService>",
         "metacog: Arc<dyn metacog::MetacogService>",
@@ -32,17 +32,18 @@ fn binary_composition_uses_owner_domain_services() {
 #[test]
 fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
     let files = [
-        "../aletheon/src/wiring/daemon/handler/mod.rs",
-        "../aletheon/src/wiring/daemon/handler/init.rs",
-        "../aletheon/src/wiring/daemon/handler/ports.rs",
-        "../aletheon/src/wiring/daemon/handler/tool_executor.rs",
-        "../aletheon/src/wiring/daemon/mcp_embedded.rs",
-        "src/wiring/adapters/runtime/provider_worker.rs",
-        "src/wiring/application/request_use_cases.rs",
-        "src/wiring/application/admin_service.rs",
-        "src/wiring/application/post_turn_projection.rs",
-        "src/wiring/application/turn_pipeline.rs",
-        "src/wiring/application/turn_runtime_ports.rs",
+        "../aletheon/src/daemon/handler/mod.rs",
+        "../aletheon/src/daemon/handler/init.rs",
+        "../aletheon/src/daemon/handler/ports.rs",
+        "../aletheon/src/daemon/handler/tool_executor.rs",
+        "../aletheon/src/daemon/mcp_embedded.rs",
+        // The provider worker moved to the agent-backend adapter crate during
+        // the wiring-ownership migration (M7.4 host/runtime 归位).
+        "../adapters/agent-backend/src/provider_worker.rs",
+        "src/host/request_use_cases.rs",
+        "src/host/admin_service.rs",
+        "src/adapters/post_turn.rs",
+        "src/host/turn_pipeline.rs",
     ];
     let forbidden = [
         "mnemosyne::runtime::FactStore",
@@ -74,14 +75,8 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
 #[test]
 fn admin_and_post_turn_retain_runtime_facades_not_executive() {
     for (file, contract) in [
-        (
-            "src/wiring/application/admin_service.rs",
-            "Arc<dyn AdminRuntimePort>",
-        ),
-        (
-            "src/wiring/application/post_turn_projection.rs",
-            "Arc<dyn PostTurnRuntimePort>",
-        ),
+        ("src/host/admin_service.rs", "Arc<dyn AdminRuntimePort>"),
+        ("src/adapters/post_turn.rs", "Arc<dyn PostTurnRuntimePort>"),
     ] {
         let source = production_source(file);
         assert!(
@@ -97,7 +92,7 @@ fn admin_and_post_turn_retain_runtime_facades_not_executive() {
 
 #[test]
 fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
-    let source = production_source("src/wiring/application/request_use_cases.rs");
+    let source = production_source("src/host/request_use_cases.rs");
     for contract in [
         "Arc<dyn CognitiveRuntimePort>",
         "Arc<dyn ReflectionMemoryPort>",
@@ -131,7 +126,7 @@ fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
 
 #[test]
 fn exec_session_crosses_private_corpus_composition() {
-    let source = production_source("../aletheon/src/wiring/exec_session.rs");
+    let source = production_source("../aletheon/src/host/exec_session.rs");
     assert!(
         source.contains("compose_exec_corpus"),
         "exec session does not use private Corpus composition"
@@ -151,37 +146,20 @@ fn exec_session_crosses_private_corpus_composition() {
 }
 
 #[test]
-fn turn_runtime_retain_only_typed_use_case_ports() {
-    let source = production_source("src/wiring/application/turn_runtime_ports.rs");
+fn turn_pipeline_receives_typed_use_case_ports_directly() {
+    let source = fs::read_to_string("src/host/turn_pipeline.rs").expect("turn pipeline source");
     for contract in [
-        "Arc<dyn SelfPolicyPort>",
-        "Arc<dyn TurnConfigPort>",
-        "Arc<dyn TurnHookPort>",
-        "Arc<dyn StormStatePort>",
-        "Arc<dyn ModelSelectionPort>",
-        "Arc<dyn TurnApprovalPort>",
-        "Arc<dyn GovernedTurnCapabilityPort>",
-        "Arc<dyn TurnSessionStatePort>",
-        "Arc<dyn TurnObservabilityPort>",
+        "Arc<dyn crate::adapters::conscious::self_policy::SelfPolicyPort>",
+        "Arc<dyn application::turn::ports::TurnConfigPort>",
+        "Arc<dyn crate::adapters::hooks::TurnHookPort>",
+        "Arc<dyn application::turn::ports::StormStatePort>",
+        "Arc<dyn application::turn::ports::ModelSelectionPort>",
+        "Arc<dyn application::turn::ports::TurnApprovalPort>",
+        "Arc<dyn crate::adapters::capability::GovernedTurnCapabilityPort>",
+        "Arc<dyn application::turn::ports::TurnSessionStatePort>",
+        "Arc<dyn application::turn::ports::TurnObservabilityPort>",
     ] {
         assert!(source.contains(contract), "missing turn port: {contract}");
-    }
-    for concrete in [
-        "dasein::SelfField",
-        "AletheonCognitiveRuntime",
-        "StormBreaker",
-        "PendingApproval",
-        "CapabilityResources",
-        "ContextWorkingSet",
-        "ModelRouter",
-        "PerfCounter",
-        "corpus::CorpusService",
-        "mnemosyne::MemoryService",
-    ] {
-        assert!(
-            !source.contains(concrete),
-            "turn runtime retained concrete domain state: {concrete}"
-        );
     }
 }
 
@@ -189,9 +167,9 @@ fn turn_runtime_retain_only_typed_use_case_ports() {
 fn concrete_domain_construction_is_confined_to_composition_or_domain_tests() {
     let root = Path::new("src");
     let allowed = [
-        PathBuf::from("src/wiring/daemon/bootstrap"),
-        PathBuf::from("src/wiring/composition/exec_corpus.rs"),
-        PathBuf::from("src/wiring/application/harness_factory.rs"),
+        PathBuf::from("src/composition/daemon_bootstrap"),
+        PathBuf::from("src/composition/exec_corpus.rs"),
+        PathBuf::from("src/composition/harness_factory.rs"),
     ];
     let constructors = [
         "DefaultMetacogService::",

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use ::contracts::{InferenceUsage, LlmResponse, LlmStream, StopReason};
-use aletheon::wiring::core_runtime::MachineInferenceRuntime;
-use aletheon::wiring::user_runtime::{UserRuntime, UserRuntimeConfig};
+use aletheon::host::core::MachineInferenceRuntime;
+use aletheon::host::user_runtime::{UserRuntime, UserRuntimeConfig};
 use cognit::ports::inference::{
     CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
 };
@@ -85,20 +85,26 @@ async fn two_user_runtime_configs_never_share_state_paths() {
 
 #[test]
 fn core_registry_resolves_requested_models_and_rejects_unknown_providers() {
-    let source = include_str!("../src/wiring/core_runtime.rs");
+    let source = include_str!("../src/host/core.rs");
     assert!(source.contains("ProviderRegistry::from_config"));
-    assert!(source.contains("resolve_and_create"));
+    // `resolve_and_create` lives on the ProviderRegistry type in the cognit
+    // crate (the canonical host registry).  During the wiring-ownership
+    // migration the registry moved out of host/core.rs into cognit; the host
+    // constructs it via from_config, and the type exposes the resolve/create
+    // step that rejects unknown provider specs.
+    let registry_type = include_str!("../../cognit/src/composition/provider_registry.rs");
+    assert!(registry_type.contains("pub fn resolve_and_create"));
 }
 
 #[test]
 fn system_core_surface_exposes_no_user_execution_authority() {
     fn accepts_core(_: &MachineInferenceRuntime) {}
     let _ = accepts_core;
-    let core = include_str!("../src/wiring/core_runtime.rs");
+    let core = include_str!("../src/host/core.rs");
     for forbidden in ["RequestHandler", "ToolRegistry", "Sandbox"] {
         assert!(!core.contains(forbidden), "core contains {forbidden}");
     }
-    let user = include_str!("../src/wiring/user_runtime.rs");
+    let user = include_str!("../src/host/user_runtime.rs");
     for forbidden in ["ProviderRegistry", "credential loading"] {
         assert!(
             !user.contains(forbidden),

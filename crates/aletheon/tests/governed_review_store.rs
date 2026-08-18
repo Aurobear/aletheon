@@ -1,6 +1,6 @@
 use std::os::unix::fs::PermissionsExt;
 
-use aletheon::wiring::governed_review::{GovernedReviewStore, ReviewStoreError};
+use aletheon::host::governed_review::{GovernedReviewStore, ReviewStoreError};
 use application::governed_review::*;
 
 fn digest(byte: char) -> String {

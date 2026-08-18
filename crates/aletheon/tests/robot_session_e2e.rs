@@ -35,7 +35,7 @@ use cognit::harness::robot::{
 };
 use cognit::harness::session::CognitiveSession;
 use cognit::ports::policy_provider::{PolicyProviderError, PolicyProviderPort};
-#[path = "../../aletheon/src/wiring/composition/robot_harness.rs"]
+#[path = "../../aletheon/src/composition/robot_harness.rs"]
 mod robot_harness;
 use kernel::chronos::TestClock;
 use robot_harness::{build_robot_harness, RobotHarnessDependencies};

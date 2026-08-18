@@ -7,8 +7,8 @@ use ::contracts::types::embodiment::{
     skill_request_digest, DeviceId, EmbodiedObservation, EmbodimentExecutionPort, RiskClass,
     SkillDescriptor, SkillId, SkillOutcome, SkillRequest, SkillResult,
 };
-use aletheon::wiring::embodiment::build_embodiment_invoker;
-use aletheon::wiring::embodiment::EmbodimentService;
+use aletheon::host::embodiment::build_embodiment_invoker;
+use aletheon::host::embodiment::EmbodimentService;
 use async_trait::async_trait;
 use hardware::approval::{HighRiskSkillApprovalPort, HighRiskSkillApprovalReceipt};
 use hardware::progress_projection::RecordingEmbodimentProgress;

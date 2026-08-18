@@ -1,7 +1,7 @@
 use ::contracts::PrincipalId;
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
 use adapters_sqlite::ChannelStore;
-use aletheon::wiring::adapters::external::{ExternalIdentityRepository, GoogleIntegration};
+use aletheon::adapters::external::{ExternalIdentityRepository, GoogleIntegration};
 use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;

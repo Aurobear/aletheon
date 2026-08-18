@@ -1,8 +1,8 @@
 use ::contracts::{Clock, CodingJobId, CodingJobStatus, MonoTime, WallTime};
-use aletheon::wiring::adapters::runtime::worktree_recovery::{
+use adapters_sqlite::goal::CodingJobRecoveryRecord;
+use aletheon::host::runtime::worktree_recovery::{
     WorktreeCleaner, WorktreeRecoveryConfig, WorktreeRecoveryService,
 };
-use aletheon::wiring::application::goal::CodingJobRecoveryRecord;
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

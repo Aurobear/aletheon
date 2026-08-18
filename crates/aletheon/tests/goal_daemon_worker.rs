@@ -1,7 +1,10 @@
 use ::contracts::{
     GoalBudget, GoalSpec, GoalState, PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult,
 };
-use aletheon::wiring::application::goal::{AttemptExecutor, GoalWorker, ObjectiveStore};
+use adapters_sqlite::goal::ObjectiveStore;
+use application::goal::AttemptCoordinator;
+use application::goal_attempt::GoalAttemptPort;
+use application::goal_retry::RetryPolicy;
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tempfile::NamedTempFile;
@@ -11,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 struct ReportingRuntime(mpsc::UnboundedSender<&'static str>, &'static str);
 
 #[async_trait]
-impl AttemptExecutor for ReportingRuntime {
+impl GoalAttemptPort for ReportingRuntime {
     fn is_available(&self, runtime_id: &RuntimeId) -> bool {
         runtime_id.0 == self.1
     }
@@ -62,15 +65,32 @@ async fn ready_goal_is_started_then_exactly_one_runtime_attempt_is_executed() {
 
     let (calls_tx, mut calls_rx) = mpsc::unbounded_channel();
     let (progress_tx, mut progress_rx) = mpsc::channel(4);
-    let worker = GoalWorker::new_with_executor(
-        store.clone(),
+    let attempts = Arc::new(AttemptCoordinator::new(
+        Arc::new(adapters_sqlite::goal::SqliteGoalAttemptPersistence::new(
+            store.clone(),
+        )),
         Arc::new(ReportingRuntime(calls_tx.clone(), "worker")),
+        Arc::new(kernel::chronos::SystemClock::new()),
+        RetryPolicy::default(),
+    ));
+    let coordinator = Arc::new(application::goal::GoalCoordinator::new(Arc::new(
+        adapters_sqlite::goal::SqliteGoalCoordinatorRepository::new(store.clone()),
+    )));
+    let worker = application::goal::GoalAdvanceService::new(
+        Arc::new(adapters_sqlite::goal::SqliteGoalAdvanceRepository::new(
+            store.clone(),
+        )),
+        coordinator,
+        attempts,
         RuntimeId("worker".into()),
         RuntimeId("reviewer".into()),
-        progress_tx,
+        Arc::new(aletheon::adapters::goal_progress::GatewayGoalProgressAdapter::new(progress_tx)),
     );
 
-    assert!(worker.tick_once(CancellationToken::new()).await.unwrap());
+    assert!(worker
+        .advance_once(0, CancellationToken::new())
+        .await
+        .unwrap());
     assert_eq!(
         store
             .lock()
@@ -83,7 +103,10 @@ async fn ready_goal_is_started_then_exactly_one_runtime_attempt_is_executed() {
     );
     assert!(calls_rx.try_recv().is_err());
 
-    assert!(worker.tick_once(CancellationToken::new()).await.unwrap());
+    assert!(worker
+        .advance_once(0, CancellationToken::new())
+        .await
+        .unwrap());
     assert_eq!(calls_rx.recv().await.unwrap(), "worker");
     let progress = progress_rx.recv().await.unwrap();
     assert_eq!(progress.goal_id, goal.id);

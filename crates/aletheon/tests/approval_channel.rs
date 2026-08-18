@@ -1,11 +1,11 @@
 use ::contracts::*;
 use adapters_sqlite::approval_repository::{ApprovalCreate, ApprovalRepository};
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
+use adapters_sqlite::goal::ObjectiveStore;
 use adapters_sqlite::ChannelStore;
-use aletheon::wiring::adapters::channel::daemon_adapter::{
+use aletheon::adapters::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonChannelApprovalCallbackAdapter,
 };
-use aletheon::wiring::application::goal::ObjectiveStore;
 use async_trait::async_trait;
 use gateway::channel::*;
 use gateway::ports::{ApprovalResolverRegistry, ChannelTurnApplicationPort, ChannelTurnRequest};

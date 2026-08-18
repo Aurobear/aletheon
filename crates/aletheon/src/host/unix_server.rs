@@ -1,0 +1,1675 @@
+//! Host Unix socket peer-authentication surface (M8.2).
+//!
+//! Owns SO_PEERCRED peer authentication and connection-role classification.
+//! The Unix accept loop and raw frame lifecycle are the socket-transport
+//! concern of this module; wire negotiation and typed route translation live
+//! in the Gateway.
+
+use std::ffi::CString;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use ::contracts::protocol::client::{
+    ClientEvent as ProtocolClientEvent, ClientMessage, ClientRequest, InitializedResult,
+};
+use ::contracts::{Clock, ConnectionId, LocalOsPrincipal, PrincipalId, Timer};
+use anyhow::Result;
+use futures::FutureExt;
+use gateway::protocol::connection::{ConnectionProtocolState, NegotiatedProtocol, ProtocolAction};
+use gateway::protocol::legacy_progress::ClientEvent;
+use gateway::protocol::{
+    ProtocolError, WireRequest, WireResponse, WireResponseBody, PROTOCOL_VERSION,
+};
+use kernel::chronos::SystemTimer;
+use kernel::debug::DebugEvent;
+use nix::unistd::{Gid, Uid, User};
+use std::panic::AssertUnwindSafe;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixListener;
+use tokio::sync::mpsc;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info, warn};
+
+/// Per-connection event notification channel capacity.
+pub const CONNECTION_NOTIFICATION_CAPACITY: usize = 64;
+
+/// Authenticated role of a connected peer, derived from the OS process
+/// credentials and the executable argv.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionRole {
+    Ordinary,
+    OfficialMemoryAgent,
+    OfficialMemoryAdmin,
+}
+
+/// Authenticated per-connection identity. Minted by the host accept loop after
+/// SO_PEERCRED verification; never constructed by a client.
+#[derive(Debug, Clone)]
+pub struct ConnectionContext {
+    pub principal_id: PrincipalId,
+    pub os_principal: LocalOsPrincipal,
+    pub connection_id: ConnectionId,
+    pub peer_pid: Option<u32>,
+    pub role: ConnectionRole,
+}
+
+impl ConnectionContext {
+    #[cfg(test)]
+    pub(crate) fn from_peer(os_principal: LocalOsPrincipal) -> Self {
+        Self::from_authenticated_peer(os_principal, None)
+    }
+
+    pub fn from_authenticated_peer(os_principal: LocalOsPrincipal, peer_pid: Option<u32>) -> Self {
+        let role = peer_pid
+            .and_then(|pid| official_memory_process_role(pid).ok())
+            .unwrap_or(ConnectionRole::Ordinary);
+        Self {
+            principal_id: PrincipalId::local_uid(os_principal.uid),
+            os_principal,
+            connection_id: ConnectionId::new(),
+            peer_pid,
+            role,
+        }
+    }
+
+    pub fn is_official_memory_agent(&self) -> bool {
+        self.role == ConnectionRole::OfficialMemoryAgent
+    }
+
+    pub fn is_official_memory_admin(&self) -> bool {
+        self.role == ConnectionRole::OfficialMemoryAdmin
+    }
+}
+
+fn official_memory_process_role(pid: u32) -> anyhow::Result<ConnectionRole> {
+    let peer_exe = std::fs::metadata(format!("/proc/{pid}/exe"))?;
+    let self_exe = std::fs::metadata("/proc/self/exe")?;
+    if peer_exe.dev() != self_exe.dev() || peer_exe.ino() != self_exe.ino() {
+        return Ok(ConnectionRole::Ordinary);
+    }
+    let command = std::fs::read(format!("/proc/{pid}/cmdline"))?;
+    Ok(if official_memory_agent_argv(&command) {
+        ConnectionRole::OfficialMemoryAgent
+    } else if official_memory_admin_argv(&command) {
+        ConnectionRole::OfficialMemoryAdmin
+    } else {
+        ConnectionRole::Ordinary
+    })
+}
+
+pub fn official_memory_admin_argv(command: &[u8]) -> bool {
+    let args = command
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .collect::<Vec<_>>();
+    matches!(
+        args.as_slice(),
+        [_, memory, workspace, action, ..]
+            if *memory == b"memory"
+                && *workspace == b"workspace"
+                && (*action == b"preview-bind" || *action == b"bind" || *action == b"unbind")
+    )
+}
+
+pub fn official_memory_agent_argv(command: &[u8]) -> bool {
+    let args = command
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .collect::<Vec<_>>();
+    matches!(
+        args.as_slice(),
+        [_, memory_agent, serve, official]
+            if *memory_agent == b"memory-agent"
+                && *serve == b"serve"
+                && *official == b"--official-user-socket"
+    )
+}
+
+/// Narrow host seam injected into the Unix accept loop by the daemon
+/// composition. The server owns socket/accept/peer-auth/frame lifecycle only;
+/// every request/response translation is delegated to the dispatcher.
+#[async_trait::async_trait]
+pub trait ConnectionDispatcher: Send + Sync + Clone + 'static {
+    async fn handle(
+        &self,
+        connection: &ConnectionContext,
+        request: serde_json::Value,
+    ) -> serde_json::Value;
+    async fn set_notify_channel(&mut self, tx: tokio::sync::mpsc::Sender<String>);
+    fn try_increment_connections(&self) -> bool;
+    fn decrement_connections(&self);
+    fn max_connections(&self) -> Option<usize>;
+    fn notify_tx(&self) -> Option<tokio::sync::mpsc::Sender<String>>;
+    async fn protocol_read_snapshot_for(
+        &self,
+        principal: &::contracts::PrincipalId,
+        session_id: &::contracts::SessionId,
+    ) -> anyhow::Result<::contracts::protocol::client::SessionReadSnapshot>;
+    async fn protocol_session_list_for(
+        &self,
+        principal: &::contracts::PrincipalId,
+    ) -> anyhow::Result<::contracts::protocol::client::SessionListSnapshot>;
+    async fn protocol_event_page_for(
+        &self,
+        principal: &::contracts::PrincipalId,
+        session_id: &::contracts::SessionId,
+        cursor: &::contracts::protocol::client::EventCursor,
+    ) -> anyhow::Result<::contracts::protocol::client::SessionEventPage>;
+    async fn protocol_snapshot_for(
+        &self,
+        principal: &::contracts::PrincipalId,
+        session_id: &::contracts::SessionId,
+    ) -> anyhow::Result<::contracts::protocol::client::UiSnapshot>;
+    async fn protocol_events_after_for(
+        &self,
+        principal: &::contracts::PrincipalId,
+        session_id: &::contracts::SessionId,
+        cursor: &::contracts::protocol::client::EventCursor,
+    ) -> anyhow::Result<Vec<::contracts::protocol::client::ClientEvent>>;
+    async fn execute_explicit_chat(
+        &self,
+        connection: &ConnectionContext,
+        id: serde_json::Value,
+        message: String,
+        thread_id: ::contracts::ThreadId,
+        workspace: ::contracts::WorkspacePolicy,
+        requirements: Vec<::contracts::TurnRequirement>,
+        task_kind: Option<::contracts::TaskKind>,
+        execution_target: ::contracts::ExecutionTargetSelection,
+        permission_mode: ::contracts::permission::HostPermissionMode,
+    ) -> serde_json::Value;
+    async fn resolve_versioned_approval(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::client::ApprovalRequest,
+    ) -> anyhow::Result<::contracts::ApprovalSnapshot>;
+    async fn cancel_versioned_turn(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::client::CancelRequest,
+    ) -> anyhow::Result<()>;
+    async fn memory_observe(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::memory::MemoryObservationRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryObservationReceiptV1>;
+    async fn memory_receipt(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::memory::MemoryReceiptGetRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryLifecycleReceiptV1>;
+    async fn handle_typed(
+        &self,
+        connection: &ConnectionContext,
+        request: gateway::protocol::WireRequest,
+    ) -> gateway::protocol::WireResponse;
+
+    async fn memory_recall(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::memory::MemoryRecallRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryRecallResultV1>;
+    async fn memory_feedback(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::memory::MemoryFeedbackRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryFeedbackReceiptV1>;
+    async fn memory_workspace_preview_bind(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::memory::MemoryWorkspacePreviewBindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingPreviewV1>;
+    async fn memory_workspace_bind(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::memory::MemoryWorkspaceBindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingViewV1>;
+    async fn memory_workspace_unbind(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::memory::MemoryWorkspaceUnbindRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory::MemoryWorkspaceBindingViewV1>;
+    async fn memory_maintenance_status(
+        &self,
+        request: ::contracts::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory_maintenance::MemoryMaintenanceStatusV1>;
+    async fn memory_maintenance_run(
+        &self,
+        connection: &ConnectionContext,
+        request: ::contracts::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1,
+    ) -> anyhow::Result<::contracts::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1>;
+
+    async fn cleanup_disconnected_connection(
+        &self,
+        connection_id: &::contracts::ConnectionId,
+    ) -> anyhow::Result<Vec<::contracts::ProcessId>>;
+    fn debug_handler(&self) -> std::sync::Arc<dyn crate::daemon::debug_handler::DebugHandlerPort>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SocketPrivacy {
+    /// Per-user runtime: parent directory 0700 and socket 0600.
+    UserPrivate,
+    /// Machine core compatibility: socket remains owner/group accessible 0660.
+    SystemCore,
+}
+
+/// Injectable systemd activation environment. Tests use an in-memory
+/// implementation so they never mutate process-global environment variables.
+struct LegacyClientHandshakeAdapter;
+
+impl LegacyClientHandshakeAdapter {
+    fn bind(state: &mut ConnectionProtocolState, request: &serde_json::Value) -> bool {
+        if !is_legacy_json_rpc(request) {
+            return false;
+        }
+        state.accept_legacy().is_ok()
+    }
+}
+
+fn is_legacy_json_rpc(request: &serde_json::Value) -> bool {
+    request.get("jsonrpc").and_then(|value| value.as_str()) == Some("2.0")
+        && request
+            .get("method")
+            .and_then(|value| value.as_str())
+            .is_some()
+        && !has_versioned_params(request)
+}
+
+fn has_versioned_params(request: &serde_json::Value) -> bool {
+    request.get("params").is_some_and(|params| {
+        params.get("protocol_version").is_some() && params.get("payload").is_some()
+    })
+}
+
+fn parse_versioned_request(request: &serde_json::Value) -> Option<anyhow::Result<ClientRequest>> {
+    if !has_versioned_params(request) {
+        return None;
+    }
+    Some(
+        serde_json::from_value::<ClientMessage<ClientRequest>>(request["params"].clone())
+            .map_err(anyhow::Error::from)
+            .and_then(|message| message.into_v1().map_err(anyhow::Error::from)),
+    )
+}
+
+fn protocol_error(
+    request_id: serde_json::Value,
+    error: impl std::fmt::Display,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": { "code": -32030, "message": error.to_string() }
+    })
+}
+
+fn initialize_response(
+    request_id: serde_json::Value,
+    connection: &ConnectionContext,
+    negotiated: NegotiatedProtocol,
+) -> serde_json::Value {
+    let result = InitializedResult {
+        protocol_version: negotiated.protocol_version,
+        server_capabilities: negotiated.capabilities,
+        connection_id: connection.connection_id.clone(),
+        principal_id: connection.principal_id.clone(),
+        os_principal: connection.os_principal,
+        runtime_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": ClientMessage::v1(ProtocolClientEvent::InitializeResponse(result))
+    })
+}
+
+async fn dispatch_request<D: ConnectionDispatcher>(
+    handler: D,
+    connection: ConnectionContext,
+    request: serde_json::Value,
+    request_id: serde_json::Value,
+    notify_tx: Option<mpsc::Sender<String>>,
+) -> serde_json::Value {
+    // Catch a handler panic without spawning a detached nested task. The
+    // connection's JoinSet can therefore cancel the complete request future
+    // before disconnect cleanup starts.
+    match AssertUnwindSafe(handler.handle(&connection, request))
+        .catch_unwind()
+        .await
+    {
+        Ok(response) => response,
+        Err(payload) => {
+            let error = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("request handler panicked");
+            let (response, terminal_events) = request_task_failure(request_id, error);
+            error!(message = %response["error"]["message"], "Request handler task failed");
+            if let Some(tx) = notify_tx {
+                for event in terminal_events {
+                    if let Ok(payload) = crate::daemon::handler::format::event_to_json(&event) {
+                        let _ = tx.send(payload).await;
+                    }
+                }
+            }
+            response
+        }
+    }
+}
+
+async fn dispatch_versioned_request<D: ConnectionDispatcher>(
+    handler: D,
+    connection: ConnectionContext,
+    request: ClientRequest,
+    request_id: serde_json::Value,
+    notify_tx: Option<mpsc::Sender<String>>,
+) -> serde_json::Value {
+    if let ClientRequest::ReadSnapshot(request) = &request {
+        return match handler
+            .protocol_read_snapshot_for(&connection.principal_id, &request.session_id)
+            .await
+        {
+            Ok(snapshot) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": ClientMessage::v1(snapshot),
+            }),
+            Err(error) => protocol_error(request_id, error),
+        };
+    }
+    if matches!(request, ClientRequest::ReadSessions) {
+        return match handler
+            .protocol_session_list_for(&connection.principal_id)
+            .await
+        {
+            Ok(snapshot) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": ClientMessage::v1(snapshot),
+            }),
+            Err(error) => protocol_error(request_id, error),
+        };
+    }
+    if let ClientRequest::ReadEvents(request) = &request {
+        return match handler
+            .protocol_event_page_for(
+                &connection.principal_id,
+                &request.session_id,
+                &request.after,
+            )
+            .await
+        {
+            Ok(page) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": ClientMessage::v1(page),
+            }),
+            Err(error) => protocol_error(request_id, error),
+        };
+    }
+    let result: anyhow::Result<ProtocolClientEvent> = match request {
+        ClientRequest::Snapshot(request) => handler
+            .protocol_snapshot_for(&connection.principal_id, &request.session_id)
+            .await
+            .map(ProtocolClientEvent::Snapshot),
+        ClientRequest::ReadSnapshot(_) => unreachable!("handled before event dispatch"),
+        ClientRequest::ReadSessions => unreachable!("handled before event dispatch"),
+        ClientRequest::ReadEvents(_) => unreachable!("handled before event dispatch"),
+        ClientRequest::Subscribe(subscription) => {
+            match handler
+                .protocol_events_after_for(
+                    &connection.principal_id,
+                    &subscription.session_id,
+                    &subscription.after,
+                )
+                .await
+            {
+                Ok(events) => {
+                    if let Some(tx) = notify_tx {
+                        for event in events {
+                            let notification = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "method": "session.event",
+                                "params": ClientMessage::v1(event),
+                            });
+                            if tx.send(notification.to_string()).await.is_err() {
+                                return protocol_error(request_id, "session event receiver closed");
+                            }
+                        }
+                    }
+                    Ok(ProtocolClientEvent::Reconnected(subscription.after))
+                }
+                Err(error) => Err(error),
+            }
+        }
+        ClientRequest::Chat(request) => {
+            let thread_id = request.thread_id.clone();
+            let workspace = ::contracts::WorkspaceSelection::new(
+                Some(request.working_dir.clone()),
+                request.additional_writable_roots,
+            )
+            .resolve_with_profile(
+                &request.working_dir,
+                &if request.permission_mode.is_full() {
+                    ::contracts::PermissionProfileId::danger_full_access()
+                } else {
+                    ::contracts::PermissionProfileId::workspace_write()
+                },
+            );
+            let response = match workspace {
+                Ok(workspace) => {
+                    handler
+                        .execute_explicit_chat(
+                            &connection,
+                            request_id.clone(),
+                            request.message,
+                            request.thread_id,
+                            workspace,
+                            Vec::new(),
+                            None,
+                            ::contracts::ExecutionTargetSelection::default(),
+                            request.permission_mode,
+                        )
+                        .await
+                }
+                Err(error) => protocol_error(request_id.clone(), error),
+            };
+            if let Some(error) = response.get("error") {
+                Err(anyhow::anyhow!(
+                    "{}",
+                    error
+                        .get("message")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("chat failed")
+                ))
+            } else {
+                Ok(ProtocolClientEvent::CommandCompleted {
+                    command: "chat".into(),
+                    thread_id,
+                    turn_id: None,
+                    operation_id: None,
+                    detail: response.get("result").cloned().unwrap_or_default(),
+                })
+            }
+        }
+        ClientRequest::Approval(request) => {
+            let thread_id = request.thread_id.clone();
+            let turn_id = request.turn_id;
+            let operation_id = request.operation_id;
+            match handler
+                .resolve_versioned_approval(&connection, request)
+                .await
+            {
+                Ok(approval) => serde_json::to_value(approval)
+                    .map(|detail| ProtocolClientEvent::CommandCompleted {
+                        command: "approval".into(),
+                        thread_id,
+                        turn_id: Some(turn_id),
+                        operation_id: Some(operation_id),
+                        detail,
+                    })
+                    .map_err(anyhow::Error::from),
+                Err(error) => Err(error),
+            }
+        }
+        ClientRequest::Cancel(request) => {
+            let thread_id = request.thread_id.clone();
+            let turn_id = request.turn_id;
+            let operation_id = request.operation_id;
+            handler
+                .cancel_versioned_turn(&connection, request)
+                .await
+                .map(|()| ProtocolClientEvent::CommandCompleted {
+                    command: "cancel".into(),
+                    thread_id,
+                    turn_id: Some(turn_id),
+                    operation_id: Some(operation_id),
+                    detail: serde_json::json!({"status":"cancelled"}),
+                })
+        }
+        ClientRequest::MemoryObserve(request) => handler
+            .memory_observe(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryObservationReceipt),
+        ClientRequest::MemoryReceiptGet(request) => handler
+            .memory_receipt(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryLifecycleReceipt),
+        ClientRequest::MemoryRecall(request) => handler
+            .memory_recall(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryRecallResult),
+        ClientRequest::MemoryFeedback(request) => handler
+            .memory_feedback(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryFeedbackReceipt),
+        ClientRequest::MemoryWorkspacePreviewBind(request)
+            if connection.is_official_memory_admin() =>
+        {
+            handler
+                .memory_workspace_preview_bind(&connection, request)
+                .await
+                .map(ProtocolClientEvent::MemoryWorkspaceBindingPreview)
+        }
+        ClientRequest::MemoryWorkspaceBind(request) if connection.is_official_memory_admin() => {
+            handler
+                .memory_workspace_bind(&connection, request)
+                .await
+                .map(ProtocolClientEvent::MemoryWorkspaceBinding)
+        }
+        ClientRequest::MemoryWorkspaceUnbind(request) if connection.is_official_memory_admin() => {
+            handler
+                .memory_workspace_unbind(&connection, request)
+                .await
+                .map(ProtocolClientEvent::MemoryWorkspaceBinding)
+        }
+        ClientRequest::MemoryWorkspacePreviewBind(_)
+        | ClientRequest::MemoryWorkspaceBind(_)
+        | ClientRequest::MemoryWorkspaceUnbind(_) => Err(anyhow::anyhow!(
+            "official memory admin connection is required"
+        )),
+        ClientRequest::MemoryMaintenanceStatus(request)
+            if connection.is_official_memory_agent() =>
+        {
+            handler
+                .memory_maintenance_status(request)
+                .await
+                .map(ProtocolClientEvent::MemoryMaintenanceStatus)
+        }
+        ClientRequest::MemoryMaintenanceRun(request) if connection.is_official_memory_agent() => {
+            handler
+                .memory_maintenance_run(&connection, request)
+                .await
+                .map(ProtocolClientEvent::MemoryMaintenanceRunReceipt)
+        }
+        ClientRequest::MemoryMaintenanceStatus(_) | ClientRequest::MemoryMaintenanceRun(_) => Err(
+            anyhow::anyhow!("official Memory Agent connection is required"),
+        ),
+        ClientRequest::Initialize(_) | ClientRequest::Initialized => {
+            Err(anyhow::anyhow!("handshake request cannot be dispatched"))
+        }
+    };
+    match result {
+        Ok(event) => serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": ClientMessage::v1(event),
+        }),
+        Err(error) => protocol_error(request_id, error),
+    }
+}
+
+async fn run_versioned_subscription<D: ConnectionDispatcher>(
+    handler: D,
+    principal: ::contracts::PrincipalId,
+    subscription: ::contracts::protocol::client::EventSubscription,
+    request_id: serde_json::Value,
+    notify_tx: mpsc::Sender<String>,
+    resp_tx: mpsc::Sender<String>,
+) {
+    let mut cursor = subscription.after;
+    let events = match handler
+        .protocol_events_after_for(&principal, &subscription.session_id, &cursor)
+        .await
+    {
+        Ok(events) => events,
+        Err(error) => {
+            let response = protocol_error(request_id.clone(), error);
+            let _ = resp_tx.send(response.to_string()).await;
+            return;
+        }
+    };
+    for event in events {
+        match &event {
+            ProtocolClientEvent::Item(item) => cursor = item.cursor.clone(),
+            ProtocolClientEvent::ApprovalRequested {
+                cursor: approval_cursor,
+                ..
+            } => cursor = approval_cursor.clone(),
+            _ => {}
+        }
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session.event",
+            "params": ClientMessage::v1(event),
+        });
+        if notify_tx.send(notification.to_string()).await.is_err() {
+            return;
+        }
+    }
+    // Acknowledge only after the initial replay is enqueued. The task then
+    // remains connection-owned and tails durable events until disconnect.
+    let response = serde_json::json!({
+        "jsonrpc":"2.0",
+        "id":request_id,
+        "result":ClientMessage::v1(ProtocolClientEvent::Reconnected(cursor.clone())),
+    });
+    if resp_tx.send(response.to_string()).await.is_err() {
+        return;
+    }
+    loop {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let events = match handler
+            .protocol_events_after_for(&principal, &subscription.session_id, &cursor)
+            .await
+        {
+            Ok(events) => events,
+            Err(error) => {
+                tracing::warn!(%error, session = %subscription.session_id.0, "versioned subscription tail failed");
+                return;
+            }
+        };
+        for event in events {
+            match &event {
+                ProtocolClientEvent::Item(item) => cursor = item.cursor.clone(),
+                ProtocolClientEvent::ApprovalRequested {
+                    cursor: approval_cursor,
+                    ..
+                } => cursor = approval_cursor.clone(),
+                _ => {}
+            }
+            let notification = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "session.event",
+                "params": ClientMessage::v1(event),
+            });
+            if notify_tx.send(notification.to_string()).await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+fn request_task_failure(
+    request_id: serde_json::Value,
+    error: impl std::fmt::Display,
+) -> (serde_json::Value, Vec<ClientEvent>) {
+    let message = format!("request task failed: {error}");
+    (
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": { "code": -32603, "message": message }
+        }),
+        vec![
+            ClientEvent::Error {
+                message: message.clone(),
+            },
+            ClientEvent::TurnDone,
+        ],
+    )
+}
+
+pub struct UnixServer<D: ConnectionDispatcher> {
+    listener: UnixListener,
+    handler: D,
+    cancel_token: CancellationToken,
+    /// Tracks spawned connection tasks for graceful shutdown drain.
+    connections: JoinSet<()>,
+    /// UID of the daemon process — allowed to connect.
+    owner_uid: u32,
+    /// GID of the aletheon group — users in this group may also connect.
+    group_gid: u32,
+    #[allow(dead_code)]
+    clock: Arc<dyn Clock>,
+}
+
+impl<D: ConnectionDispatcher> UnixServer<D> {
+    pub async fn new(
+        socket_path: &Path,
+        handler: D,
+        cancel_token: CancellationToken,
+        owner_uid: u32,
+        group_gid: u32,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        let listener =
+            bind_path_listener(socket_path, SocketPrivacy::SystemCore, owner_uid).await?;
+        info!(path = %socket_path.display(), owner_uid, group_gid, "Unix socket listening");
+
+        Ok(Self::from_listener(
+            listener,
+            handler,
+            cancel_token,
+            owner_uid,
+            group_gid,
+            clock,
+        ))
+    }
+
+    /// Bind a per-user runtime socket with a private parent directory and mode.
+    pub async fn new_user_private(
+        socket_path: &Path,
+        handler: D,
+        cancel_token: CancellationToken,
+        owner_uid: u32,
+        group_gid: u32,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        let listener =
+            bind_path_listener(socket_path, SocketPrivacy::UserPrivate, owner_uid).await?;
+        info!(path = %socket_path.display(), owner_uid, "Private Unix socket listening");
+        Ok(Self::from_listener(
+            listener,
+            handler,
+            cancel_token,
+            owner_uid,
+            group_gid,
+            clock,
+        ))
+    }
+
+    /// Construct the server around an already-bound listener, such as one
+    /// supplied by systemd socket activation.
+    pub fn from_listener(
+        listener: UnixListener,
+        handler: D,
+        cancel_token: CancellationToken,
+        owner_uid: u32,
+        group_gid: u32,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            listener,
+            handler,
+            cancel_token,
+            connections: JoinSet::new(),
+            owner_uid,
+            group_gid,
+            clock,
+        }
+    }
+
+    /// Return a reference to the handler so the host can interact with it
+    /// after the accept loop finishes (e.g., for graceful shutdown).
+    pub fn handler(&self) -> &D {
+        &self.handler
+    }
+
+    pub async fn run(&mut self) -> Result<()> {
+        loop {
+            tokio::select! {
+                accept_result = self.listener.accept() => {
+                    let (stream, _addr) = accept_result?;
+                    // Verify peer credentials before accepting the connection.
+                    let (peer, peer_pid) = match Self::check_peer_cred(&stream, self.owner_uid, self.group_gid) {
+                        Ok(peer) => peer,
+                        Err(e) => {
+                            warn!(error = %e, "Connection rejected by peer credential check");
+                            continue;
+                        }
+                    };
+                    let connection = ConnectionContext::from_authenticated_peer(peer, peer_pid);
+                    let mut handler = self.handler.clone();
+
+                    // Create a per-connection notify channel so each client receives
+                    // its own events independently (shared channels would cause events
+                    // to be consumed by whichever connection reads first).
+                    let (notify_tx, notify_rx) =
+                        mpsc::channel::<String>(CONNECTION_NOTIFICATION_CAPACITY);
+                    handler.set_notify_channel(notify_tx).await;
+                    if !handler.try_increment_connections() {
+                        warn!(
+                            limit = ?handler.max_connections(),
+                            "Connection rejected by daemon admission limit"
+                        );
+                        continue;
+                    }
+
+                    self.connections.spawn(async move {
+                        if let Err(e) = Self::handle_connection(stream, handler, notify_rx, connection).await {
+                            error!(error = %e, "Connection error");
+                        }
+                    });
+                }
+                _ = self.cancel_token.cancelled() => {
+                    info!("Shutdown signal received, stopping accept loop");
+                    break;
+                }
+            }
+        }
+
+        // Drain in-flight connections with a 5-second timeout per task.
+        info!(
+            remaining = self.connections.len(),
+            "Draining in-flight connections..."
+        );
+        loop {
+            match SystemTimer
+                .timeout(Duration::from_secs(5), self.connections.join_next())
+                .await
+            {
+                Ok(Some(Ok(()))) => {
+                    // Connection completed normally.
+                }
+                Ok(Some(Err(e))) => {
+                    error!(error = %e, "Connection task panicked during drain");
+                }
+                Ok(None) => {
+                    info!("All connections drained");
+                    break;
+                }
+                Err(_elapsed) => {
+                    info!(
+                        remaining = self.connections.len(),
+                        "Drain timeout expired, aborting remaining connections"
+                    );
+                    self.connections.abort_all();
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Verify that the connecting peer is either the daemon owner or a member
+    /// of the aletheon group. Root (uid 0) is always allowed.
+    fn check_peer_cred(
+        stream: &tokio::net::UnixStream,
+        owner_uid: u32,
+        group_gid: u32,
+    ) -> anyhow::Result<(LocalOsPrincipal, Option<u32>)> {
+        let cred = stream.peer_cred()?;
+        let peer_uid = cred.uid();
+        let peer_gid = cred.gid();
+        let peer_pid = cred.pid().and_then(|pid| u32::try_from(pid).ok());
+
+        // Allow root and the daemon owner.
+        if peer_uid == 0 || peer_uid == owner_uid {
+            return Ok((
+                LocalOsPrincipal {
+                    uid: peer_uid,
+                    gid: peer_gid,
+                },
+                peer_pid,
+            ));
+        }
+
+        // Check if the peer belongs to the aletheon group.
+        // First check primary group (fast path, no allocation).
+        if peer_gid == group_gid {
+            return Ok((
+                LocalOsPrincipal {
+                    uid: peer_uid,
+                    gid: peer_gid,
+                },
+                peer_pid,
+            ));
+        }
+        // Then check supplementary groups via nix.
+        if let Some(user) = User::from_uid(Uid::from_raw(peer_uid))? {
+            let c_name = CString::new(user.name)?;
+            let groups = nix::unistd::getgrouplist(&c_name, Gid::from_raw(cred.gid()))?;
+            if groups.contains(&Gid::from_raw(group_gid)) {
+                return Ok((
+                    LocalOsPrincipal {
+                        uid: peer_uid,
+                        gid: peer_gid,
+                    },
+                    peer_pid,
+                ));
+            }
+        }
+
+        anyhow::bail!("Access denied: uid {peer_uid} not in aletheon group")
+    }
+
+    /// Handle a single client connection. Reads JSON-RPC requests from the
+    /// client and also writes out-of-band notifications (e.g. approval_request)
+    /// from the handler's notification channel, and debug subscriber events.
+    async fn handle_connection(
+        stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        handler: D,
+        notify_rx: mpsc::Receiver<String>,
+        connection: ConnectionContext,
+    ) -> Result<()> {
+        let result =
+            Self::handle_connection_inner(stream, handler.clone(), notify_rx, connection.clone())
+                .await;
+        if let Err(error) = handler
+            .cleanup_disconnected_connection(&connection.connection_id)
+            .await
+        {
+            tracing::warn!(
+                connection_id = %connection.connection_id.0,
+                %error,
+                "failed to clean up connection-owned foreground processes"
+            );
+        }
+        handler.decrement_connections();
+        result
+    }
+
+    async fn handle_connection_inner(
+        stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        handler: D,
+        mut notify_rx: mpsc::Receiver<String>,
+        connection: ConnectionContext,
+    ) -> Result<()> {
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+
+        // Debug subscriber receiver — populated when the client sends debug.subscribe.
+        let mut debug_subscriber_rx: Option<mpsc::Receiver<DebugEvent>> = None;
+
+        // Channel for receiving handler responses from background tasks.
+        // This allows the select! loop to continue forwarding notifications
+        // while the handler is processing a long-running request (e.g. LLM API call).
+        let (resp_tx, mut resp_rx) = mpsc::channel::<String>(1);
+        let mut protocol_state = ConnectionProtocolState::New;
+        let mut request_tasks = JoinSet::new();
+        let mut versioned_subscription_started = false;
+        let mut typed_gateway_started = false;
+
+        loop {
+            tokio::select! {
+                // Read incoming requests from the client.
+                // Dispatch to a background task so the select loop continues
+                // forwarding notifications while the handler processes.
+                read_result = reader.read_line(&mut line) => {
+                    let n = read_result?;
+                    if n == 0 {
+                        break; // Connection closed
+                    }
+
+                    let trimmed = line.trim().to_string();
+                    line.clear();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+
+                    // Parse JSON request and spawn handler in background
+                    let request: serde_json::Value = serde_json::from_str(&trimmed)?;
+
+                    // The official socket accepts the additive typed Gateway
+                    // envelope before legacy/versioned JSON-RPC parsing.  A
+                    // connection cannot mix wire families; this prevents a
+                    // second authority path from sharing one stream.
+                    let looks_typed = request.get("version").is_some()
+                        && request.get("request_id").is_some()
+                        && request.get("body").is_some();
+                    if looks_typed {
+                        if protocol_state != ConnectionProtocolState::New {
+                            let request_id = request
+                                .get("request_id")
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null);
+                            let response = WireResponse {
+                                version: PROTOCOL_VERSION,
+                                request_id: request_id.as_str().unwrap_or_default().to_owned(),
+                                body: WireResponseBody::Error(ProtocolError::Server(
+                                    "typed Gateway cannot share a legacy/versioned connection".into(),
+                                )),
+                            };
+                            resp_tx.send(serde_json::to_string(&response)?).await?;
+                            continue;
+                        }
+                        let typed_request_id = request
+                            .get("request_id")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
+                        let typed_request = match serde_json::from_value::<WireRequest>(request) {
+                            Ok(request) => request,
+                            Err(_) => {
+                                let response = WireResponse {
+                                    version: PROTOCOL_VERSION,
+                                    request_id: typed_request_id,
+                                    body: WireResponseBody::Error(ProtocolError::UnknownSchema),
+                                };
+                                resp_tx.send(serde_json::to_string(&response)?).await?;
+                                continue;
+                            }
+                        };
+                        typed_gateway_started = true;
+                        let handler = handler.clone();
+                        let typed_request = typed_request;
+                        let request_connection = connection.clone();
+                        let resp_tx = resp_tx.clone();
+                        request_tasks.spawn(async move {
+                            let response = handler
+                                .handle_typed(&request_connection, typed_request)
+                                .await;
+                            if let Ok(json) = serde_json::to_string(&response) {
+                                let _ = resp_tx.send(json).await;
+                            }
+                        });
+                        continue;
+                    }
+
+                    if typed_gateway_started {
+                        let request_id = request
+                            .get("id")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        let response = protocol_error(
+                            request_id,
+                            "typed Gateway and legacy/versioned requests cannot share a connection",
+                        );
+                        resp_tx.send(response.to_string()).await?;
+                        continue;
+                    }
+                    let request_id = request
+                        .get("id")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+
+                    if let Some(versioned) = parse_versioned_request(&request) {
+                        let versioned = match versioned {
+                            Ok(versioned) => versioned,
+                            Err(error) => {
+                                let response = protocol_error(request_id, error);
+                                resp_tx.send(serde_json::to_string(&response)?).await?;
+                                continue;
+                            }
+                        };
+                        let response = match protocol_state.accept_with_capabilities(
+                            &versioned,
+                            connection.is_official_memory_agent(),
+                            connection.is_official_memory_admin(),
+                        ) {
+                            Ok(ProtocolAction::InitializeResponse(negotiated)) => {
+                                initialize_response(request_id, &connection, negotiated)
+                            }
+                            Ok(ProtocolAction::Initialized) => serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": request_id,
+                                "result": { "status": "ready" }
+                            }),
+                            Ok(ProtocolAction::Dispatch) => {
+                                if let ClientRequest::Subscribe(subscription) = &versioned {
+                                    if versioned_subscription_started {
+                                        let response = protocol_error(
+                                            request_id,
+                                            "connection already has an active session subscription",
+                                        );
+                                        resp_tx.send(response.to_string()).await?;
+                                        continue;
+                                    }
+                                    let Some(notify_tx) = handler.notify_tx() else {
+                                        let response = protocol_error(
+                                            request_id,
+                                            "connection notification channel is unavailable",
+                                        );
+                                        resp_tx.send(response.to_string()).await?;
+                                        continue;
+                                    };
+                                    versioned_subscription_started = true;
+                                    let handler = handler.clone();
+                                    let principal = connection.principal_id.clone();
+                                    let subscription = subscription.clone();
+                                    let resp_tx = resp_tx.clone();
+                                    request_tasks.spawn(async move {
+                                        run_versioned_subscription(
+                                            handler,
+                                            principal,
+                                            subscription,
+                                            request_id,
+                                            notify_tx,
+                                            resp_tx,
+                                        )
+                                        .await;
+                                    });
+                                    continue;
+                                }
+                                let handler = handler.clone();
+                                let notify_tx = handler.notify_tx();
+                                let resp_tx = resp_tx.clone();
+                                let request_connection = connection.clone();
+                                request_tasks.spawn(async move {
+                                    let response = dispatch_versioned_request(
+                                        handler,
+                                        request_connection,
+                                        versioned,
+                                        request_id,
+                                        notify_tx,
+                                    )
+                                    .await;
+                                    let response_json = serde_json::to_string(&response)
+                                        .unwrap_or_default();
+                                    let _ = resp_tx.send(response_json).await;
+                                });
+                                continue;
+                            }
+                            Err(error) => protocol_error(request_id, error),
+                        };
+                        let response_json = serde_json::to_string(&response)?;
+                        resp_tx.send(response_json).await?;
+                        continue;
+                    }
+
+                    if !LegacyClientHandshakeAdapter::bind(&mut protocol_state, &request) {
+                        let response = protocol_error(
+                            request_id,
+                            "legacy and versioned requests cannot share a connection",
+                        );
+                        resp_tx.send(serde_json::to_string(&response)?).await?;
+                        continue;
+                    }
+
+                    let handler = handler.clone();
+                    let notify_tx = handler.notify_tx();
+                    let resp_tx = resp_tx.clone();
+                    let connection = connection.clone();
+                    request_tasks.spawn(async move {
+                        let response = dispatch_request(
+                            handler,
+                            connection,
+                            request,
+                            request_id,
+                            notify_tx,
+                        )
+                        .await;
+                        let response_json = serde_json::to_string(&response)
+                            .unwrap_or_default();
+                        let _ = resp_tx.send(response_json).await;
+                    });
+                }
+                // Receive handler response from background task.
+                response_json = resp_rx.recv() => {
+                    if let Some(json) = response_json {
+                        writer.write_all(json.as_bytes()).await?;
+                        writer.write_all(b"\n").await?;
+                        writer.flush().await?;
+
+                        // Check if the debug handler has a pending subscriber rx
+                        // (populated when debug.subscribe was just processed).
+                        if let Some(rx) = handler.debug_handler().take_pending_subscriber_rx().await {
+                            debug_subscriber_rx = Some(rx);
+                            info!("Debug subscriber channel attached to client connection");
+                        }
+                    }
+                }
+                completed = request_tasks.join_next(), if !request_tasks.is_empty() => {
+                    if let Some(Err(error)) = completed {
+                        warn!(%error, "connection request task failed");
+                    }
+                }
+                // Forward out-of-band notifications from the handler to the client.
+                notification = notify_rx.recv() => {
+                    match notification {
+                        Some(msg) => {
+                            if typed_gateway_started {
+                                if let Some(event) = crate::daemon::server::typed_gateway_notification(&msg) {
+                                    let response = WireResponse {
+                                        version: PROTOCOL_VERSION,
+                                        // Unsolicited typed events do not belong
+                                        // to a command correlation slot.
+                                        request_id: String::new(),
+                                        body: WireResponseBody::Event(event),
+                                    };
+                                    writer
+                                        .write_all(serde_json::to_string(&response)?.as_bytes())
+                                        .await?;
+                                    writer.write_all(b"\n").await?;
+                                    writer.flush().await?;
+                                }
+                                continue;
+                            }
+                            writer.write_all(msg.as_bytes()).await?;
+                            writer.write_all(b"\n").await?;
+                            writer.flush().await?;
+                        }
+                        None => {
+                            // Notification channel closed — handler dropped.
+                            // Continue reading requests normally.
+                        }
+                    }
+                }
+                // Forward debug subscriber events to the client.
+                debug_event = async {
+                    match &mut debug_subscriber_rx {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Some(event) = debug_event {
+                        let json = serde_json::to_string(&event)?;
+                        writer.write_all(json.as_bytes()).await?;
+                        writer.write_all(b"\n").await?;
+                        writer.flush().await?;
+                    } else {
+                        // Subscriber channel closed — clear it.
+                        debug_subscriber_rx = None;
+                    }
+                }
+            }
+        }
+
+        // No request started by this transport may outlive it. In particular,
+        // this closes the race where a detached request could register an
+        // approval after disconnect cleanup had already run.
+        request_tasks.shutdown().await;
+        Ok(())
+    }
+}
+
+async fn bind_path_listener(
+    socket_path: &Path,
+    privacy: SocketPrivacy,
+    owner_uid: u32,
+) -> Result<UnixListener> {
+    use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
+
+    if privacy == SocketPrivacy::UserPrivate {
+        let parent = socket_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("private socket path has no parent"))?;
+        if !parent.exists() {
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            builder.create(parent)?;
+        }
+        let metadata = std::fs::symlink_metadata(parent)?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            anyhow::bail!("private socket parent is not a real directory");
+        }
+        if metadata.uid() != owner_uid {
+            anyhow::bail!(
+                "private socket parent is owned by uid {}, expected {}",
+                metadata.uid(),
+                owner_uid
+            );
+        }
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    match std::fs::symlink_metadata(socket_path) {
+        Ok(metadata) if privacy == SocketPrivacy::UserPrivate => {
+            if !metadata.file_type().is_socket() || metadata.uid() != owner_uid {
+                anyhow::bail!("refusing to replace non-owned private socket path");
+            }
+            tokio::fs::remove_file(socket_path).await?;
+        }
+        Ok(_) => tokio::fs::remove_file(socket_path).await?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    let listener = UnixListener::bind(socket_path)?;
+    let mode = match privacy {
+        SocketPrivacy::UserPrivate => 0o600,
+        SocketPrivacy::SystemCore => 0o660,
+    };
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(mode))?;
+    Ok(listener)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    use ::contracts::paths::RuntimeEnvironment;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct FakeActivationEnvironment {
+        values: Mutex<BTreeMap<String, OsString>>,
+    }
+
+    impl FakeActivationEnvironment {
+        fn with(values: impl IntoIterator<Item = (&'static str, String)>) -> Self {
+            Self {
+                values: Mutex::new(
+                    values
+                        .into_iter()
+                        .map(|(key, value)| (key.to_owned(), value.into()))
+                        .collect(),
+                ),
+            }
+        }
+    }
+
+    impl ::contracts::paths::RuntimeEnvironment for FakeActivationEnvironment {
+        fn var_os(&self, key: &str) -> Option<OsString> {
+            self.values.lock().unwrap().get(key).cloned()
+        }
+    }
+
+    impl crate::daemon::server::ActivationEnvironment for FakeActivationEnvironment {
+        fn remove_var(&self, key: &str) {
+            self.values.lock().unwrap().remove(key);
+        }
+    }
+
+    #[tokio::test]
+    async fn one_systemd_listener_is_adopted_without_using_real_fd_three() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("activated.sock");
+        let original = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let duplicate: OwnedFd = original.try_clone().unwrap().into();
+        let env = FakeActivationEnvironment::with([
+            ("LISTEN_PID", std::process::id().to_string()),
+            ("LISTEN_FDS", "1".to_owned()),
+        ]);
+
+        let adopted = crate::daemon::server::inherited_listener(&env, Some(duplicate))
+            .unwrap()
+            .expect("activation listener");
+
+        assert_eq!(
+            adopted.local_addr().unwrap().as_pathname(),
+            Some(socket_path.as_path())
+        );
+        assert!(env.var_os("LISTEN_PID").is_none());
+        assert!(env.var_os("LISTEN_FDS").is_none());
+    }
+
+    #[tokio::test]
+    async fn absent_activation_environment_falls_back_to_path_binding() {
+        let env = FakeActivationEnvironment::default();
+        assert!(crate::daemon::server::inherited_listener(&env, None)
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn malformed_activation_environment_fails_closed() {
+        let cases = [
+            FakeActivationEnvironment::with([("LISTEN_PID", std::process::id().to_string())]),
+            FakeActivationEnvironment::with([
+                ("LISTEN_PID", (std::process::id() + 1).to_string()),
+                ("LISTEN_FDS", "1".to_owned()),
+            ]),
+            FakeActivationEnvironment::with([
+                ("LISTEN_PID", std::process::id().to_string()),
+                ("LISTEN_FDS", "2".to_owned()),
+            ]),
+        ];
+
+        assert!(matches!(
+            crate::daemon::server::inherited_listener(&cases[0], None),
+            Err(crate::daemon::server::ActivationError::IncompleteEnvironment)
+        ));
+        assert!(matches!(
+            crate::daemon::server::inherited_listener(&cases[1], None),
+            Err(crate::daemon::server::ActivationError::WrongPid { .. })
+        ));
+        assert!(matches!(
+            crate::daemon::server::inherited_listener(&cases[2], None),
+            Err(crate::daemon::server::ActivationError::InvalidFdCount(2))
+        ));
+    }
+
+    #[tokio::test]
+    async fn activation_rejects_a_non_listening_unix_socket() {
+        let datagram = std::os::unix::net::UnixDatagram::unbound().unwrap();
+        let env = FakeActivationEnvironment::with([
+            ("LISTEN_PID", std::process::id().to_string()),
+            ("LISTEN_FDS", "1".to_owned()),
+        ]);
+
+        assert!(matches!(
+            crate::daemon::server::inherited_listener(&env, Some(datagram.into())),
+            Err(crate::daemon::server::ActivationError::InvalidListener)
+        ));
+    }
+
+    #[tokio::test]
+    async fn private_path_binding_sets_parent_and_socket_modes() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("runtime/aletheon/aletheon.sock");
+        let owner_uid = nix::unistd::geteuid().as_raw();
+
+        let _listener = bind_path_listener(&socket_path, SocketPrivacy::UserPrivate, owner_uid)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            std::fs::metadata(socket_path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[tokio::test]
+    async fn system_core_path_binding_retains_group_mode() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("core.sock");
+        let _listener = bind_path_listener(
+            &socket_path,
+            SocketPrivacy::SystemCore,
+            nix::unistd::geteuid().as_raw(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o660
+        );
+    }
+
+    #[test]
+    fn typed_gateway_translates_connection_owned_approval_request() {
+        let message = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "approval_request",
+            "params": {
+                "approval_id": "choice-1",
+                "session": "session-1",
+                "turn": "turn-1",
+                "tool": "bash_exec",
+                "action_summary": "remove a temporary file",
+                "risk_level": "high",
+                "detail": "rm /tmp/example"
+            }
+        })
+        .to_string();
+
+        let event = crate::daemon::server::typed_gateway_notification(&message)
+            .expect("approval notification should become a typed event");
+        let gateway::protocol::Event::ApprovalRequested(approval) = event else {
+            panic!("unexpected typed event");
+        };
+        assert_eq!(approval.session.0, "session-1");
+        assert_eq!(approval.turn.0, "turn-1");
+        assert_eq!(approval.choice_id, "choice-1");
+        assert_eq!(approval.tool, "bash_exec");
+        assert_eq!(approval.detail.as_deref(), Some("rm /tmp/example"));
+    }
+
+    fn capabilities() -> ::contracts::protocol::client::ClientCapabilities {
+        ::contracts::protocol::client::ClientCapabilities {
+            item_events: true,
+            cursors: true,
+            memory_gateway_v1: false,
+            memory_maintenance_v1: false,
+            memory_admin_v1: false,
+        }
+    }
+
+    fn initialize() -> ::contracts::protocol::client::ClientRequest {
+        ::contracts::protocol::client::ClientRequest::Initialize(
+            ::contracts::protocol::client::InitializeParams {
+                client_version: "test-client".into(),
+                protocol_versions: vec![::contracts::protocol::client::CLIENT_PROTOCOL_VERSION],
+                capabilities: capabilities(),
+            },
+        )
+    }
+
+    fn snapshot() -> ::contracts::protocol::client::ClientRequest {
+        ::contracts::protocol::client::ClientRequest::Snapshot(
+            ::contracts::protocol::client::SnapshotRequest {
+                session_id: ::contracts::SessionId("thread-a".into()),
+            },
+        )
+    }
+
+    #[test]
+    fn json_identity_cannot_replace_peer_identity() {
+        let peer = ::contracts::LocalOsPrincipal {
+            uid: 1001,
+            gid: 100,
+        };
+        let connection = ConnectionContext::from_peer(peer);
+        let request = serde_json::json!({"method":"chat","params":{"uid":0,"gid":0}});
+        assert_eq!(
+            connection.principal_id,
+            ::contracts::PrincipalId::local_uid(1001)
+        );
+        assert_eq!(connection.os_principal.uid, 1001);
+        assert_ne!(
+            request["params"]["uid"].as_u64(),
+            Some(u64::from(connection.os_principal.uid))
+        );
+    }
+
+    #[test]
+    fn official_memory_agent_role_requires_exact_typed_argv() {
+        assert!(crate::host::unix_server::official_memory_agent_argv(
+            b"/usr/bin/aletheon\0memory-agent\0serve\0--official-user-socket\0"
+        ));
+        for command in [
+            b"/usr/bin/aletheon\0memory-agent\0run\0--official-user-socket\0".as_slice(),
+            b"/usr/bin/aletheon\0memory-agent\0serve\0".as_slice(),
+            b"/usr/bin/aletheon\0memory-agent\0serve\0--official-user-socket\0extra\0".as_slice(),
+            b"/usr/bin/other\0memory-agent\0serve\0--official-user-socket\0".as_slice(),
+        ] {
+            // argv alone cannot establish executable identity; these cases
+            // characterize the exact command-line half of the role proof.
+            if command.starts_with(b"/usr/bin/other") {
+                assert!(crate::host::unix_server::official_memory_agent_argv(
+                    command
+                ));
+            } else {
+                assert!(!crate::host::unix_server::official_memory_agent_argv(
+                    command
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn official_memory_admin_role_requires_explicit_workspace_command() {
+        for action in ["preview-bind", "bind", "unbind"] {
+            let command =
+                format!("/usr/bin/aletheon\0memory\0workspace\0{action}\0--working-dir\0/tmp\0");
+            assert!(crate::host::unix_server::official_memory_admin_argv(
+                command.as_bytes()
+            ));
+        }
+        for command in [
+            b"/usr/bin/aletheon\0memory\0recall\0".as_slice(),
+            b"/usr/bin/aletheon\0memory-agent\0serve\0--official-user-socket\0".as_slice(),
+            b"/usr/bin/aletheon\0memory\0workspace\0status\0".as_slice(),
+        ] {
+            assert!(!crate::host::unix_server::official_memory_admin_argv(
+                command
+            ));
+        }
+    }
+
+    #[test]
+    fn connection_requires_initialize_then_initialized_exactly_once() {
+        let mut state = ConnectionProtocolState::New;
+        assert!(state.accept(&snapshot()).is_err());
+        state.accept(&initialize()).unwrap();
+        assert!(state.accept(&initialize()).is_err());
+        state
+            .accept(&::contracts::protocol::client::ClientRequest::Initialized)
+            .unwrap();
+        assert!(matches!(
+            state,
+            ConnectionProtocolState::Ready {
+                negotiated: Some(_)
+            }
+        ));
+        assert!(state.accept(&initialize()).is_err());
+    }
+
+    #[test]
+    fn legacy_adapter_binds_identity_without_weakening_versioned_handshake() {
+        let legacy = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "status",
+            "params": {"uid": 0, "gid": 0}
+        });
+        let mut legacy_state = ConnectionProtocolState::New;
+        assert!(LegacyClientHandshakeAdapter::bind(
+            &mut legacy_state,
+            &legacy
+        ));
+        assert!(matches!(
+            legacy_state,
+            ConnectionProtocolState::Ready { negotiated: None }
+        ));
+
+        let versioned = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "initialize",
+            "params": ::contracts::protocol::client::ClientMessage::v1(initialize())
+        });
+        let mut versioned_state = ConnectionProtocolState::New;
+        assert!(!LegacyClientHandshakeAdapter::bind(
+            &mut versioned_state,
+            &versioned
+        ));
+        assert!(matches!(versioned_state, ConnectionProtocolState::New));
+    }
+
+    #[tokio::test]
+    async fn connection_owned_subscription_task_is_bounded_and_cancelled_on_cleanup() {
+        let (tx, _rx) = mpsc::channel::<String>(CONNECTION_NOTIFICATION_CAPACITY);
+        assert_eq!(tx.capacity(), CONNECTION_NOTIFICATION_CAPACITY);
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        struct DropMark(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for DropMark {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let mut tasks = JoinSet::new();
+        let marker = DropMark(dropped.clone());
+        tasks.spawn(async move {
+            let _marker = marker;
+            std::future::pending::<()>().await;
+        });
+        tasks.shutdown().await;
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn request_task_failure_retains_id_and_finishes_client_turn() {
+        let (response, events) = request_task_failure(serde_json::json!(42), "panic");
+        assert_eq!(response["id"], 42);
+        assert_eq!(response["error"]["code"], -32603);
+        assert!(response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("panic"));
+        assert!(matches!(
+            events.as_slice(),
+            [ClientEvent::Error { .. }, ClientEvent::TurnDone]
+        ));
+    }
+}

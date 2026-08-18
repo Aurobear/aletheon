@@ -1,0 +1,108 @@
+//! Typed construction unit for the base daemon tool registry.
+
+use std::sync::Arc;
+
+use ::contracts::Clock;
+use corpus::security::network_policy::NetworkPolicy;
+use corpus::tools::tools::{web_search::WebSearchConfig, ToolRegistry};
+use corpus::Registry;
+use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
+
+use super::memory::MemoryComposition;
+
+pub(super) struct ToolCompositionInput {
+    pub(super) network_policy: NetworkPolicy,
+    pub(super) search: Option<WebSearchConfig>,
+    pub(super) stores: MemoryComposition,
+    pub(super) clock: Arc<dyn Clock>,
+    /// SQLite path for persisting the task list across daemon restarts.
+    /// `None` keeps tasks in-memory only.
+    pub(super) tasks_db: Option<std::path::PathBuf>,
+    pub(super) agora: Arc<dyn agora::AgoraService>,
+    pub(super) sandbox_preference: ::contracts::SandboxPreference,
+}
+
+pub(super) struct ToolComposition {
+    pub(super) registry: ToolRegistry,
+    pub(super) stores: MemoryComposition,
+}
+
+pub(super) fn compose(input: ToolCompositionInput) -> ToolComposition {
+    let mut registry = ToolRegistry::with_network_policy_search_tasks_and_sandbox(
+        input.network_policy,
+        input.search,
+        input.tasks_db,
+        input.sandbox_preference,
+    );
+    registry
+        .bind_agora_task_tools(input.agora, ::contracts::ProcessId::new())
+        .expect("built-in task tools can be rebound to Agora");
+    registry
+        .register(Arc::new(CoreMemoryAppendTool {
+            memory: input.stores.core.clone(),
+            clock: input.clock.clone(),
+        }))
+        .expect("built-in core-memory append tool name is unique");
+    registry
+        .register(Arc::new(CoreMemoryReplaceTool {
+            memory: input.stores.core.clone(),
+            clock: input.clock.clone(),
+        }))
+        .expect("built-in core-memory replace tool name is unique");
+    registry
+        .register(Arc::new(MemorySearchTool {
+            recall: input.stores.recall.clone(),
+            core_memory: input.stores.core.clone(),
+            fact_store: Some(input.stores.facts.clone()),
+            clock: input.clock,
+        }))
+        .expect("built-in memory-search tool name is unique");
+    for name in ["core_memory_append", "core_memory_replace", "memory_search"] {
+        registry
+            .set_proposal_confidence(name, 0.5)
+            .expect("built-in memory tool has trusted host planning metadata");
+    }
+
+    ToolComposition {
+        registry,
+        stores: input.stores,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn composes_memory_tools_from_injected_dependencies() {
+        let root = tempfile::tempdir().unwrap();
+        let clock: Arc<dyn Clock> = Arc::new(kernel::chronos::TestClock::new(100, 0));
+        let memory = crate::composition::daemon_bootstrap::memory::compose(
+            crate::composition::daemon_bootstrap::memory::MemoryCompositionInput {
+                data_dir: root.path(),
+                clock: clock.clone(),
+            },
+        )
+        .unwrap();
+        let composition = compose(ToolCompositionInput {
+            network_policy: NetworkPolicy::default(),
+            search: None,
+            stores: memory,
+            clock,
+            tasks_db: None,
+            agora: Arc::new(agora::AgoraRegistry::new(Arc::new(
+                kernel::chronos::TestClock::default(),
+            ))),
+            sandbox_preference: ::contracts::SandboxPreference::Forbid,
+        });
+
+        for name in ["core_memory_append", "core_memory_replace", "memory_search"] {
+            assert!(composition.registry.get(name).is_some(), "missing {name}");
+            assert_eq!(
+                composition.registry.proposal_confidences().get(name),
+                Some(&0.5),
+                "missing trusted proposal confidence for {name}"
+            );
+        }
+    }
+}

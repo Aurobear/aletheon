@@ -2,8 +2,7 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aletheon::config::{SupplementalDestinationAttestationConfig, SupplementalMemoryConfig};
-use aletheon::wiring::adapters::gbrain::build_supplemental_memory_runtime;
+use adapters_gbrain::build_supplemental_memory_runtime;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
@@ -17,6 +16,9 @@ use hyper_util::rt::TokioIo;
 use mnemosyne::supplemental::{
     EnqueueOutcome, SupplementalErrorCategory, SupplementalMemoryError, SupplementalRecall,
     SupplementalRecallHealth,
+};
+use mnemosyne::supplemental_memory::{
+    SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
 };
 use mnemosyne::{
     CompositeMemoryService, ExperienceEvent, ForgetPolicy, MemoryMetadata, MemoryProvenance,

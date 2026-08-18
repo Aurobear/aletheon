@@ -4,6 +4,7 @@ use ::contracts::{
     ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject, AttemptId, CodingJobId,
     GoalId, OperationId, PrincipalId,
 };
+pub use application::approval::{ApprovalApplyClaim, ApprovalApplyOperation, ApprovalApplyReceipt};
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::BTreeSet;
@@ -47,35 +48,6 @@ pub struct ApprovalDelivery {
     pub last_error: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
-pub struct ApprovalApplyReceipt {
-    pub approval_id: ApprovalId,
-    pub operation_id: OperationId,
-    pub goal_id: GoalId,
-    pub success: bool,
-    pub applied_head: Option<String>,
-    pub diff_sha256: String,
-    pub changed_paths: Vec<std::path::PathBuf>,
-    pub error: Option<String>,
-    pub finished_at_ms: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApprovalApplyOperation {
-    pub approval_id: ApprovalId,
-    pub operation_id: OperationId,
-    pub status: String,
-    pub started_at_ms: i64,
-    pub finished_at_ms: Option<i64>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ApprovalApplyClaim {
-    Claimed(ApprovalApplyOperation),
-    Existing(ApprovalApplyOperation),
 }
 
 #[derive(Debug, Clone)]

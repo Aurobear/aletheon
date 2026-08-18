@@ -5,7 +5,7 @@
 
 use ::contracts::goal::{GoalBudget, GoalId, GoalSpec, GoalState, GoalWaitReason};
 use ::contracts::PrincipalId;
-use aletheon::wiring::application::goal::ObjectiveStore;
+use adapters_sqlite::goal::ObjectiveStore;
 
 // ---------------------------------------------------------------------------
 // Helpers

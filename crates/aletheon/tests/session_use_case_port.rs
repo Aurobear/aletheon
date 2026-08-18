@@ -6,7 +6,7 @@ use ::contracts::{
 };
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
 use adapters_sqlite::session::store::SessionStore;
-use aletheon::wiring::daemon::legacy_session::{
+use aletheon::daemon::legacy_session::{
     LegacySessionResources, LegacySessionService, LegacySessionUseCases,
 };
 use async_trait::async_trait;
@@ -122,7 +122,7 @@ async fn service_with_history(
     let canonical_store_impl =
         Arc::new(CanonicalSessionStore::open(temp.path().join("canonical.db")).unwrap());
     let canonical_store =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_session_store(
+        aletheon::host::session::test_composition::compose_in_memory_session_store(
             canonical_store_impl,
         );
     let active = Arc::new(runtime::ActiveTurnRegistry::new());
@@ -308,8 +308,8 @@ async fn runtime_mode_facade_creates_only_through_the_runtime_command_port() {
 
 #[test]
 fn session_rpc_and_routing_do_not_construct_concrete_session_stores() {
-    let rpc = include_str!("../src/wiring/daemon/handler/rpc/rpc_session.rs");
-    let handler = include_str!("../src/wiring/daemon/handler/mod.rs");
+    let rpc = include_str!("../src/daemon/handler/rpc/rpc_session.rs");
+    let handler = include_str!("../src/daemon/handler/mod.rs");
     for forbidden in [
         "SessionStore::new",
         "ContextWorkingSet::new",

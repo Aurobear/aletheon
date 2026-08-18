@@ -3,9 +3,7 @@ use std::sync::Arc;
 use ::contracts::{
     ContentBlock, InferenceUsage, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk,
 };
-use aletheon::wiring::core_rpc::{
-    CoreFrame, CorePeerPolicy, CoreRequest, CoreRpcClient, CoreRpcServer,
-};
+use adapters_inference::{CoreFrame, CorePeerPolicy, CoreRequest, CoreRpcClient, CoreRpcServer};
 use cognit::ports::inference::{
     CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
 };

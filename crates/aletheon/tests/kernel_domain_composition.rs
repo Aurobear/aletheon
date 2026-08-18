@@ -18,7 +18,8 @@ fn kernel_and_domain_composition_are_separate() {
     let kernel_lib = fs::read_to_string(root.join("kernel/src/lib.rs")).unwrap();
     let kernel_runtime = fs::read_to_string(root.join("kernel/src/runtime.rs")).unwrap();
     let bootstrap =
-        fs::read_to_string(root.join("aletheon/src/wiring/daemon/bootstrap/request.rs")).unwrap();
+        fs::read_to_string(root.join("aletheon/src/composition/daemon_bootstrap/request.rs"))
+            .unwrap();
 
     assert!(!kernel_lib.contains("pub mod service"));
     assert!(!kernel_runtime.contains("Agora"));
@@ -27,7 +28,9 @@ fn kernel_and_domain_composition_are_separate() {
         bootstrap.contains("let kernel = Arc::new(kernel::KernelRuntime::with_clock_and_budget")
     );
     assert!(bootstrap.contains("let domains ="));
-    assert!(bootstrap.contains("crate::wiring::domain::DomainServices::new"));
+    // Domain composition is owned by the host (M7.4 host/runtime 归位); the
+    // deleted wiring tree no longer holds it.
+    assert!(bootstrap.contains("crate::host::domain::DomainServices::new"));
     assert!(bootstrap.contains("agora_service.clone(),"));
 }
 

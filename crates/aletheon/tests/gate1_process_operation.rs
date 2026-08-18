@@ -136,8 +136,8 @@ fn agent_control_is_the_only_subagent_process_owner() {
         .exists());
     let authority = format!(
         "{}\n{}",
-        include_str!("../src/wiring/application/agent_control/mod.rs"),
-        include_str!("../src/wiring/application/agent_control/spawning.rs")
+        include_str!("../src/composition/agent_control/mod.rs"),
+        include_str!("../src/composition/agent_control/spawning.rs")
     );
     assert!(authority.contains(".spawn_process("));
     assert!(authority.contains("repository.create"));

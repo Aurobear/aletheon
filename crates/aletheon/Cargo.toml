@@ -17,6 +17,10 @@ acp = []
 [dependencies]
 adapters-sqlite = { path = "../adapters/sqlite" }
 adapters-agent-profile = { path = "../adapters/agent-profile" }
+adapters-agent-backend = { path = "../adapters/agent-backend" }
+adapters-inference = { path = "../adapters/inference" }
+adapters-gbrain = { path = "../adapters/gbrain" }
+adapters-google = { path = "../adapters/google" }
 application = { path = "../application" }
 kernel = { path = "../kernel" }
 platform = { path = "../platform" }

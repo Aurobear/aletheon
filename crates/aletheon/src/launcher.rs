@@ -4,7 +4,7 @@
 //! module. Keeping the facade here prevents CLI parsing from constructing
 //! domain or Runtime components itself.
 
-pub use crate::wiring::exec::{
+pub use crate::host::exec::{
     ExecEventWriter, ExecHostOutcome, ExecLaunch, JsonlExecEventWriter, WorkspaceLaunch,
 };
 
@@ -52,26 +52,26 @@ pub enum EnsureUserDaemonError {
 }
 
 pub async fn run_core(request: CoreLaunch) -> anyhow::Result<()> {
-    crate::wiring::run_core(request).await
+    crate::host::launcher::run_core(request).await
 }
 
 pub async fn run_daemon(request: DaemonLaunch) -> anyhow::Result<()> {
-    crate::wiring::run_daemon(request).await
+    crate::host::launcher::run_daemon(request).await
 }
 
 pub async fn ensure_user_daemon(
     request: EnsureUserDaemon,
 ) -> Result<::application::daemon_lifecycle::DaemonReadyReceipt, EnsureUserDaemonError> {
-    crate::wiring::ensure_user_daemon(request).await
+    crate::host::launcher::ensure_user_daemon(request).await
 }
 
 pub async fn run_exec(request: ExecLaunch) -> anyhow::Result<ExecHostOutcome> {
-    crate::wiring::exec::run_exec(request).await
+    crate::host::exec::run_exec(request).await
 }
 
 pub async fn run_exec_streaming(
     request: ExecLaunch,
     writer: std::sync::Arc<dyn ExecEventWriter>,
 ) -> anyhow::Result<ExecHostOutcome> {
-    crate::wiring::exec::run_exec_streaming(request, writer).await
+    crate::host::exec::run_exec_streaming(request, writer).await
 }

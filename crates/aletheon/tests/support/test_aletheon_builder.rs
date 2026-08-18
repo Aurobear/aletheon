@@ -24,9 +24,9 @@ use std::sync::Arc;
 use ::contracts::{Clock, SessionAppendStore};
 use adapters_sqlite::event_spine::SqliteEventSpine;
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
-use aletheon::wiring::application::harness_factory::LinearCognitiveSessionFactory;
-use aletheon::wiring::application::turn_coordinator::TurnCoordinator;
 use application::session_input::SessionInputCoordinator;
+use application::turn::coordinator::TurnCoordinator;
+use cognit::harness::LinearCognitiveSessionFactory;
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 
@@ -77,14 +77,16 @@ impl TestAletheonBuilder {
             Arc::new(CanonicalSessionStore::open(":memory:").expect("in-memory session store"));
         let event_spine =
             Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine"));
-        let coordinator =
-            aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-                kernel.clone(),
-                read_store,
-                event_spine.clone(),
-                aletheon::config::GrokHardeningConfig::default(),
-            );
-        let store = coordinator.store();
+        let store = aletheon::host::session::test_composition::compose_session_store(
+            read_store,
+            event_spine.clone(),
+            Arc::new(adapters_sqlite::projection_set::DefaultEventProjectionSet::in_memory()),
+        );
+        let coordinator = aletheon::host::session::test_composition::compose_from_session_store(
+            kernel.clone(),
+            store.clone(),
+            aletheon::config::GrokHardeningConfig::default(),
+        );
         let cognitive_sessions = Arc::new(LinearCognitiveSessionFactory::new(
             cognit::HarnessConfig::default(),
             clock.clone() as Arc<dyn Clock>,
@@ -177,24 +179,22 @@ mod tests {
                 |request, _cancel| {
                     let output = request.input.clone();
                     async move {
-                        Ok(
-                            aletheon::wiring::application::turn_coordinator::TurnExecution {
-                                result: TurnResult {
-                                    output: format!("answer: {output}"),
-                                    stop: TurnStop::Completed,
-                                    failure: None,
-                                    usage: Default::default(),
-                                    metrics: TurnMetrics {
-                                        completed_normally: true,
-                                        ..Default::default()
-                                    },
+                        Ok(application::turn::coordinator::TurnExecution {
+                            result: TurnResult {
+                                output: format!("answer: {output}"),
+                                stop: TurnStop::Completed,
+                                failure: None,
+                                usage: Default::default(),
+                                metrics: TurnMetrics {
+                                    completed_normally: true,
+                                    ..Default::default()
                                 },
-                                items: vec![],
-                                projection: None,
-                                context_projection: None,
-                                evaluation_artifacts: Default::default(),
                             },
-                        )
+                            items: vec![],
+                            projection: None,
+                            context_projection: None,
+                            evaluation_artifacts: Default::default(),
+                        })
                     }
                 },
             )

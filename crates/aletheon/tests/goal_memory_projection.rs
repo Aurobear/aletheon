@@ -3,16 +3,15 @@ use std::sync::Arc;
 
 use ::contracts::{ApprovalId, GoalId};
 use adapters_sqlite::event_projection::SqliteProjectionStore;
+use adapters_sqlite::goal::{GoalApprovalOutcomeSummary, GoalCompletionSummary};
 use adapters_sqlite::{
     event_spine::{EventReadFilter, SqliteEventSpine},
     projection_set::DefaultEventProjectionSet,
 };
-use aletheon::wiring::application::goal::{
-    GoalApprovalOutcomeSummary, GoalCompletionSummary, GoalProjectionEvidence,
-};
-use aletheon::wiring::application::memory_projection::{
+use aletheon::adapters::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
+use application::goal_projection::GoalProjectionEvidence;
 use mnemosyne::MemorySensitivity;
 use runtime::{EventSpine, EventTreeId, SpineEvent, UnsequencedEvent};
 use uuid::Uuid;

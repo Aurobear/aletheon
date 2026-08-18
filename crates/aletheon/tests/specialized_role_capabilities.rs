@@ -18,12 +18,12 @@ use ::contracts::{
     LlmResponse, LlmStream, ParentRestriction, ProcessId, RiskTier, StopReason, Tool,
     ToolApprovalAuthority, ToolContext, ToolDefinition, UsageReport, WorkspacePolicy,
 };
-use aletheon::wiring::adapters::runtime::{
+use aletheon::host::runtime::{
     AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources, ResolvedAgentProfile,
 };
-use aletheon::wiring::application::harness_factory::LinearCognitiveSessionFactory;
-use aletheon::wiring::application::{CapabilityExecutionContext, CapabilityService};
 use async_trait::async_trait;
+use cognit::harness::LinearCognitiveSessionFactory;
+use kernel::capability::governed::{CapabilityExecutionContext, CapabilityService};
 use kernel::chronos::TestClock;
 use runtime::agent_admission::CognitiveTaskAdmissionPort;
 use tokio_util::sync::CancellationToken;

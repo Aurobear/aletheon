@@ -571,6 +571,8 @@ async fn main() -> Result<()> {
                     "schema_version": 1,
                     "name": "aletheon",
                     "version": env!("CARGO_PKG_VERSION"),
+                    "source_revision": option_env!("GIT_COMMIT_SHA").unwrap_or("unknown"),
+                    "config_hash": option_env!("CONFIG_HASH").unwrap_or("unknown"),
                     "protocol_version": ::contracts::CLIENT_PROTOCOL_VERSION,
                 });
                 println!("{output}");

@@ -1,13 +1,14 @@
 use adapters_sqlite::approval_repository::ApprovalRepository;
-use aletheon::wiring::application::goal::{
-    AttemptExecutor, AttemptRequest, CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
-};
+use adapters_sqlite::goal::ObjectiveStore;
+use application::goal::{AttemptCoordinator, AttemptRequest, CodingVerifier};
+use application::goal_attempt::GoalAttemptPort;
+use application::goal_retry::RetryPolicy;
 use async_trait::async_trait;
 use base64::Engine;
 use contracts::CodingAttemptRequest;
 const TEST_CODING_RUNTIME_ID: &str = "fake-coding-runtime";
 use ::contracts::*;
-use aletheon::wiring::application::verification::{VerificationCheckKind, VerificationContext};
+use application::verification::{VerificationCheckKind, VerificationContext};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -70,7 +71,7 @@ struct Executor {
     calls: AtomicUsize,
 }
 #[async_trait]
-impl AttemptExecutor for Executor {
+impl GoalAttemptPort for Executor {
     fn is_available(&self, id: &RuntimeId) -> bool {
         id.0 == TEST_CODING_RUNTIME_ID
     }
@@ -244,28 +245,33 @@ impl Harness {
         &self,
         passed: bool,
         approvals: bool,
-    ) -> (
-        aletheon::wiring::application::goal::AttemptCoordinator,
-        Arc<Verifier>,
-    ) {
+    ) -> (application::goal::AttemptCoordinator, Arc<Verifier>) {
         let verifier = Arc::new(Verifier {
             passed,
             calls: AtomicUsize::new(0),
         });
-        let goal = GoalCoordinator::new(self.store.clone());
-        let base = goal
-            .coding_attempt_coordinator(
-                self.exec.clone(),
-                Arc::new(Clock50),
-                RetryPolicy::default(),
-                verifier.clone(),
-                self.worktrees.path(),
-            )
-            .unwrap();
+        let base = AttemptCoordinator::new(
+            Arc::new(adapters_sqlite::goal::SqliteGoalAttemptPersistence::new(
+                self.store.clone(),
+            )),
+            self.exec.clone(),
+            Arc::new(Clock50),
+            RetryPolicy::default(),
+        )
+        .with_coding_verification(
+            verifier.clone(),
+            Arc::new(
+                platform::goal_worktree::HostCodingWorktreeResolver::new(self.worktrees.path())
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
         let result = if approvals {
-            base.with_approval_repository(Arc::new(Mutex::new(
-                ApprovalRepository::open(self.db.path()).unwrap(),
-            )))
+            base.with_approval_port(Arc::new(
+                adapters_sqlite::approval::SqliteGoalApprovalPort::new(Arc::new(Mutex::new(
+                    ApprovalRepository::open(self.db.path()).unwrap(),
+                ))),
+            ))
             .unwrap()
         } else {
             base
@@ -336,9 +342,7 @@ async fn verified_diff_creates_one_hash_bound_apply_approval() {
         .execute_one(req.clone(), CancellationToken::new())
         .await
         .unwrap();
-    let aletheon::wiring::application::goal::AttemptCoordinationOutcome::Succeeded { goal, .. } =
-        out
-    else {
+    let application::goal::AttemptCoordinationOutcome::Succeeded { goal, .. } = out else {
         panic!()
     };
     assert_eq!(goal.state, GoalState::AwaitingHuman);
@@ -353,7 +357,7 @@ async fn verified_diff_creates_one_hash_bound_apply_approval() {
     assert_eq!(a.subject.apply_target, Some(PathBuf::from(".")));
     let duplicate = c.execute_one(req, CancellationToken::new()).await.unwrap();
     assert!(
-        matches!(duplicate,aletheon::wiring::application::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
+        matches!(duplicate,application::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
     );
     assert_eq!(h.pending().len(), 1);
     assert_eq!(h.exec.calls.load(Ordering::SeqCst), 1);
@@ -386,7 +390,7 @@ async fn restart_between_verification_and_approval_creation_recovers_without_ree
     let (c2, v2) = h.coordinator(true, true);
     let out = c2.execute_one(req, CancellationToken::new()).await.unwrap();
     assert!(
-        matches!(out,aletheon::wiring::application::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
+        matches!(out,application::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
     );
     assert_eq!(h.exec.calls.load(Ordering::SeqCst), 1);
     assert_eq!(v2.calls.load(Ordering::SeqCst), 0);

@@ -2,8 +2,8 @@ use ::contracts::{
     AgentBudget, AgentDelegationAuthority, EvaluationContractId, EvaluationDecision,
     EvaluationReceiptId, EvaluationReceiptRef, ProcessId, WorkspacePolicy, EVALUATION_SCHEMA_V1,
 };
-use aletheon::wiring::application::capability_benchmark::CapabilityRollupProjectionSink;
-use aletheon::wiring::application::evaluation::{
+use adapters_sqlite::SqliteCapabilityRollupProjectionSink;
+use application::evaluation_projection::{
     EvaluationProjectionContext, EvaluationProjectionMetrics, EvaluationProjectionRecord,
     EvaluationProjectionSink,
 };
@@ -45,7 +45,7 @@ fn record(runtime: &str, passed: bool, score: u32, index: i64) -> EvaluationProj
 
 #[tokio::test]
 async fn host_prefers_evaluated_runtime_without_creating_authority() {
-    let sink = CapabilityRollupProjectionSink::default();
+    let sink = SqliteCapabilityRollupProjectionSink::default();
     sink.project(&record("runtime-a", false, 30_000, 1))
         .await
         .unwrap();
@@ -96,7 +96,7 @@ async fn host_prefers_evaluated_runtime_without_creating_authority() {
 
 #[tokio::test]
 async fn replay_does_not_bias_selection() {
-    let sink = CapabilityRollupProjectionSink::default();
+    let sink = SqliteCapabilityRollupProjectionSink::default();
     let same = record("runtime-a", true, 90_000, 1);
     sink.project(&same).await.unwrap();
     sink.project(&same).await.unwrap();

@@ -11,17 +11,17 @@ use ::contracts::{
     LlmResponse, LlmStream, OperationId, ParentRestriction, ProcessId, RiskTier, RuntimeId,
     StopReason, ToolDefinition, AGENT_MESSAGE_SCHEMA_V1,
 };
-use aletheon::wiring::adapters::runtime::{
-    pi_manifest, AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources,
-    ResolvedAgentProfile,
-};
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
     AgentRuntimeInput, AgentRuntimeLauncher,
 };
-use aletheon::wiring::application::harness_factory::LinearCognitiveSessionFactory;
-use aletheon::wiring::application::{CapabilityExecutionContext, CapabilityService};
+use aletheon::host::runtime::{
+    pi_manifest, AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources,
+    ResolvedAgentProfile,
+};
 use async_trait::async_trait;
+use cognit::harness::LinearCognitiveSessionFactory;
+use kernel::capability::governed::{CapabilityExecutionContext, CapabilityService};
 use kernel::chronos::TestClock;
 use tokio_util::sync::CancellationToken;
 

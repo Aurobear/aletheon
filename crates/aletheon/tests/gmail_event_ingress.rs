@@ -1,12 +1,10 @@
 use ::contracts::PrincipalId;
-use aletheon::wiring::adapters::channel::gmail::sender_policy::{
-    AuthenticationRequirement, GmailSenderPolicy,
-};
-use aletheon::wiring::adapters::channel::gmail::{
+use adapters_google::gmail::sender_policy::{AuthenticationRequirement, GmailSenderPolicy};
+use adapters_google::gmail::{
     load_gmail_ingress_policies, GmailGoalEventIngress, GmailIngressPolicy,
 };
-use aletheon::wiring::adapters::external::ExternalIdentityRepository;
-use aletheon::wiring::application::goal::ObjectiveStore;
+use adapters_sqlite::goal::ObjectiveStore;
+use aletheon::adapters::external::ExternalIdentityRepository;
 use application::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId};
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;

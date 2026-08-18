@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-#[path = "../../src/wiring/composition/dasein_workspace.rs"]
+#[path = "../../src/composition/dasein_workspace.rs"]
 mod dasein_workspace;
 use mnemosyne::memory_job_projection::MemoryJobProjection;
 use runtime::event_projection::agent_tree::AgentTreeProjection;
@@ -10,7 +10,7 @@ use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
 use agora::{
     AcceptanceEvidence, ConsciousCoreTrace, ConsciousTraceEvent, CONSCIOUS_CORE_TRACE_SCHEMA_V1,
 };
-use aletheon::wiring::adapters::runtime::test_registry::AgentExecutionRegistry;
+use aletheon::host::runtime::test_registry::AgentExecutionRegistry;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,19 +26,18 @@ use ::contracts::{
     SESSION_SCHEMA_VERSION,
 };
 use adapters_sqlite::event_projection::SqliteProjectionStore;
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentEventSink, AgentHostAdapter, AgentRunProjection, AgentRuntimeInput, AgentRuntimeLauncher,
     BoundedAgentAdmission,
 };
-use aletheon::wiring::application::conscious_workspace::{
-    ConsciousTurnPort, ConsciousWorkspaceRegistry,
-};
-use aletheon::wiring::application::governed_capability::{
-    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
-};
+use aletheon::composition::conscious_workspace::ConsciousWorkspaceRegistry;
 use anyhow::Context;
+use application::conscious::ConsciousObservationPort;
 use async_trait::async_trait;
 use dasein_workspace::DaseinWorkspaceAdapter;
+use kernel::capability::governed::{
+    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
+};
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallItem, RecallRequest, RecallSet};
@@ -216,7 +215,7 @@ impl AgentRuntimeLauncher for AcceptanceLauncher {
                 .push((input.handle.agent_id, payload.content.clone()));
             events
                 .emit(
-                    aletheon::wiring::application::agent_control::AgentRuntimeEvent::Progress {
+                    aletheon::composition::agent_control::AgentRuntimeEvent::Progress {
                         agent_id: input.handle.agent_id,
                         process_id: input.handle.process_id,
                         operation_id: input.handle.operation_id,
@@ -418,7 +417,7 @@ async fn run_agent_lifecycle(
     let runtimes = Arc::new(AgentExecutionRegistry::default());
     runtimes.register(RuntimeId(ACCEPTANCE_RUNTIME.into()), launcher.clone())?;
     let service = Arc::new(
-        AgentHostAdapter::new_legacy(
+        AgentHostAdapter::new_fixture(
             kernel.clone(),
             clock.clone(),
             repository.clone(),
@@ -619,7 +618,7 @@ async fn run_agent_lifecycle(
         "real event projection drift"
     );
 
-    let restarted_service = AgentHostAdapter::new_legacy(
+    let restarted_service = AgentHostAdapter::new_fixture(
         kernel,
         clock,
         reopened_repository,
@@ -838,7 +837,7 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
         modulations: AtomicUsize::new(0),
     });
     let coordinator =
-        aletheon::wiring::application::conscious_core_coordinator::ConsciousCoreCoordinator::new(
+        aletheon::composition::conscious_core_coordinator::ConsciousCoreCoordinator::new(
             space.clone(),
             agora::CandidatePoolConfig::default(),
             broadcast,
@@ -847,8 +846,7 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
             ::contracts::ProcessId(Uuid::from_u128(804)),
             kernel.clone(),
             Arc::new(agora::AgoraRegistry::new(kernel.clock())),
-            aletheon::wiring::application::conscious_core_coordinator::ConsciousCoreConfig::default(
-            ),
+            agora::conscious_core_ports::ConsciousCoreConfig::default(),
         )?;
     coordinator.register_processor(
         Arc::new(FeedbackProcessor {
@@ -958,13 +956,13 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
     )?;
     let space = AgoraSpaceId("session:acceptance".into());
     let first = registry
-        .observe_turn(
-            space.clone(),
+        .observe_turn(application::conscious::ConsciousTurnObservation {
+            space: space.clone(),
             owner,
-            owner,
-            ::contracts::OperationId(Uuid::from_u128(10)),
-            &fixture.input,
-        )
+            root: owner,
+            operation: ::contracts::OperationId(Uuid::from_u128(10)),
+            input: fixture.input.clone(),
+        })
         .await?;
     let processors = first
         .processors
@@ -1045,7 +1043,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
     };
     let forged_outcome_denied = action_loop
         .observe_outcome(
-            &aletheon::wiring::application::governed_capability::SelectedActionContext {
+            &kernel::capability::governed::SelectedActionContext {
                 candidate_id: ::contracts::ContentId(Uuid::from_u128(999)),
                 broadcast_epoch: ::contracts::BroadcastEpoch(1),
                 operation_id: call.operation_id,
@@ -1201,8 +1199,8 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
 fn trace(
     replay: &[agora::BroadcastReplay],
     transition: Option<&::contracts::dasein::SelfTransitionReceipt>,
-    processors: &[agora::conscious_core_ports::ProcessorCycleStatus],
-    selected: &aletheon::wiring::application::governed_capability::SelectedActionContext,
+    processors: &[application::conscious::ConsciousProcessorStatus],
+    selected: &kernel::capability::governed::SelectedActionContext,
     outcome: &SelectedActionOutcomeReceipt,
 ) -> ConsciousCoreTrace {
     let mut events = Vec::new();

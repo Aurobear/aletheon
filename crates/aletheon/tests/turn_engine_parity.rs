@@ -7,11 +7,11 @@
 //! CLI/child execution through the real engine.
 
 use ::contracts::{AgentApprovalPolicy, MonoDeadlineMillis};
-use aletheon::wiring::application::turn_engine::{
+use application::turn::settings::ResolvedTurnProfile;
+use application::turn::{
     TurnEngine, TurnEngineContext, TurnEngineError, TurnEngineParitySnapshot, TurnEngineRequest,
     TurnEngineResult,
 };
-use aletheon::wiring::application::turn_runtime_ports::ResolvedTurnProfile;
 use std::sync::Arc;
 
 // ── Stub engine for contract validation ────────────────────────────────────
@@ -95,7 +95,7 @@ fn test_context() -> TurnEngineContext {
         ),
         profile: test_profile(),
         cancel_token: tokio_util::sync::CancellationToken::new(),
-        notification_sender: None,
+        notification: None,
         principal_context: None,
     }
 }
@@ -141,9 +141,9 @@ fn snapshot_of(result: &TurnEngineResult) -> TurnEngineParitySnapshot {
 #[test]
 fn daemon_mapping_matches_engine_result_snapshot() {
     let turn_id = ::contracts::TurnId::new();
-    let mapped = aletheon::wiring::application::daemon_turn_engine::map_turn_execution(
+    let mapped = aletheon::daemon::turn_engine::map_turn_execution(
         turn_id,
-        aletheon::wiring::application::turn_coordinator::TurnExecution {
+        application::turn::coordinator::TurnExecution {
             result: ::contracts::TurnResult {
                 output: "ok".into(),
                 stop: ::contracts::TurnStop::Completed,

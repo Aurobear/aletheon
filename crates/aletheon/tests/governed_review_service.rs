@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ::contracts::{ContentBlock, InferenceUsage, LlmResponse, LlmStream, StopReason};
-use aletheon::wiring::governed_review::{
+use aletheon::host::governed_review::{
     GovernedReviewLimits, GovernedReviewService, GovernedReviewStore,
 };
 use application::governed_review::*;

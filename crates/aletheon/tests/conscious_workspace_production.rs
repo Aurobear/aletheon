@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-#[path = "../src/wiring/composition/dasein_workspace.rs"]
+#[path = "../src/composition/dasein_workspace.rs"]
 mod dasein_workspace;
 
 use ::contracts::{
@@ -9,14 +9,13 @@ use ::contracts::{
     ConsciousArbitrationMode, LatestConsciousContextPort, NamespaceId, PermitId, SpawnSpec,
     UsageReport, WorkspaceAttribution, WorkspaceContent,
 };
-use aletheon::wiring::application::conscious_workspace::{
-    ConsciousTurnPort, ConsciousWorkspaceRegistry,
-};
-use aletheon::wiring::application::governed_capability::{
-    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
-};
+use aletheon::composition::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
+use application::conscious::ConsciousObservationPort;
 use async_trait::async_trait;
 use dasein_workspace::DaseinWorkspaceAdapter;
+use kernel::capability::governed::{
+    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
+};
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};
@@ -74,13 +73,13 @@ async fn production_planner_reorders_trusted_calls_and_preserves_unknown_calls()
     );
     let space = AgoraSpaceId("session:production-reorder".into());
     registry
-        .observe_turn(
-            space.clone(),
+        .observe_turn(application::conscious::ConsciousTurnObservation {
+            space: space.clone(),
             owner,
-            owner,
-            ::contracts::OperationId::new(),
-            "read then write",
-        )
+            root: owner,
+            operation: ::contracts::OperationId::new(),
+            input: "read then write".into(),
+        })
         .await
         .unwrap();
     let calls = vec![
@@ -203,13 +202,13 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
     let turn_operation = ::contracts::OperationId(Uuid::from_u128(10));
 
     let observed = registry
-        .observe_turn(
-            space.clone(),
+        .observe_turn(application::conscious::ConsciousTurnObservation {
+            space: space.clone(),
             owner,
-            owner,
-            turn_operation,
-            "summarize the last seven days of mail",
-        )
+            root: owner,
+            operation: turn_operation,
+            input: "summarize the last seven days of mail".into(),
+        })
         .await
         .unwrap();
 
@@ -397,7 +396,11 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
 
 #[test]
 fn production_context_source_has_no_direct_self_or_memory_store_route() {
-    let source = include_str!("../src/wiring/application/context_assembler.rs");
+    let source = format!(
+        "{}\n{}",
+        include_str!("../../application/src/turn/context.rs"),
+        include_str!("../src/adapters/context_source.rs")
+    );
     for forbidden in [
         "recall_service",
         "core_memory",

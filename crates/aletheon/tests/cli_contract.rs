@@ -116,7 +116,18 @@ fn json_version_test() {
     assert!(output.stderr.is_empty(), "stderr must be empty");
     let value: Value = serde_json::from_slice(&output.stdout).expect("stdout is valid JSON");
     let obj = value.as_object().expect("must be a JSON object");
-    let expected_keys = ["name", "protocol_version", "schema_version", "version"];
+    // The version JSON carries deployment provenance (source_revision from
+    // GIT_COMMIT_SHA, config_hash from CONFIG_HASH) alongside the protocol
+    // contract fields.  Core keys must remain; the provenance keys are part of
+    // the accepted install-state contract (M10 spec §11.2).
+    let expected_keys = [
+        "config_hash",
+        "name",
+        "protocol_version",
+        "schema_version",
+        "source_revision",
+        "version",
+    ];
     let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
     keys.sort_unstable();
     assert_eq!(keys, expected_keys, "exact key set must match sorted");

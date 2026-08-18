@@ -17,7 +17,7 @@ fn rust_files(root: &Path) -> Vec<PathBuf> {
 #[test]
 fn request_handler_owns_only_ports_and_protocol_state() {
     let source =
-        fs::read_to_string("../aletheon/src/wiring/daemon/handler/mod.rs").expect("handler source");
+        fs::read_to_string("../aletheon/src/daemon/handler/mod.rs").expect("handler source");
     let start = source
         .find("pub struct RequestHandler")
         .expect("RequestHandler");
@@ -43,7 +43,7 @@ fn request_handler_owns_only_ports_and_protocol_state() {
 
 #[test]
 fn rpc_adapters_do_not_touch_domain_implementation_details() {
-    let root = Path::new("../aletheon/src/wiring/daemon/handler/rpc");
+    let root = Path::new("../aletheon/src/daemon/handler/rpc");
     let forbidden = [
         "subsystems",
         "CoreSystems",
@@ -74,7 +74,7 @@ fn rpc_adapters_do_not_touch_domain_implementation_details() {
 #[test]
 fn handler_ports_cover_every_rpc_family() {
     let source =
-        fs::read_to_string("../aletheon/src/wiring/daemon/handler/ports.rs").expect("ports source");
+        fs::read_to_string("../aletheon/src/daemon/handler/ports.rs").expect("ports source");
     for field in [
         "facts",
         "goals",
@@ -82,7 +82,6 @@ fn handler_ports_cover_every_rpc_family() {
         "admin",
         "sessions",
         "health",
-        "_reflection",
         "google",
         "workflow",
         "turn",
@@ -97,7 +96,7 @@ fn handler_ports_cover_every_rpc_family() {
 #[test]
 fn typed_prompt_target_reaches_the_targeted_turn_use_case() {
     let handler =
-        fs::read_to_string("../aletheon/src/wiring/daemon/handler/mod.rs").expect("handler source");
+        fs::read_to_string("../aletheon/src/daemon/handler/mod.rs").expect("handler source");
     let submit_start = handler
         .find("impl CommandUseCases for DaemonCommandUseCases")
         .expect("daemon command use cases");
@@ -111,14 +110,16 @@ fn typed_prompt_target_reaches_the_targeted_turn_use_case() {
         "typed ClientIntent target was dropped before the explicit chat boundary"
     );
 
-    let use_cases = fs::read_to_string("src/wiring/application/request_use_cases.rs")
-        .expect("request use case source");
+    let use_cases =
+        fs::read_to_string("src/host/request_use_cases.rs").expect("request use case source");
     assert!(
         use_cases.contains("execution_target: ::contracts::ExecutionTargetSelection"),
         "TurnUseCases no longer carries the typed target"
     );
+    let turn_adapter = fs::read_to_string("src/daemon/turn_use_cases.rs")
+        .expect("daemon turn use case adapter source");
     assert!(
-        use_cases.contains(".execute_turn_targeted("),
+        turn_adapter.contains(".execute_turn_targeted("),
         "production TurnUseCases silently restored the default General path"
     );
 }

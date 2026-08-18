@@ -6,16 +6,16 @@ fn source(path: &str) -> String {
 
 #[test]
 fn daemon_turn_composition_resources_do_not_escape_the_crate() {
-    let orchestrator = source("src/wiring/application/daemon_turn/orchestrator.rs");
+    let orchestrator = source("src/daemon/turn/orchestrator.rs");
     assert!(orchestrator.contains("pub(crate) struct DaemonTurnResources"));
     assert!(orchestrator.contains("pub(crate) fn new(resources: DaemonTurnResources)"));
     assert!(!orchestrator.contains("pub fn new(resources: DaemonTurnResources)"));
 
-    let module = source("src/wiring/application/daemon_turn/mod.rs");
+    let module = source("src/daemon/turn/mod.rs");
     assert!(!module.contains("use orchestrator::DaemonTurnResources"));
     assert!(!module.contains("pub use orchestrator::DaemonTurnResources"));
 
-    for path in ["src/wiring/application/mod.rs", "src/lib.rs"] {
+    for path in ["src/host/mod.rs", "src/lib.rs"] {
         let public_surface = source(path);
         for private in [
             "DaemonTurnResources",
@@ -34,7 +34,7 @@ fn daemon_turn_composition_resources_do_not_escape_the_crate() {
 
 #[test]
 fn any_in_crate_test_support_module_is_test_cfg_gated() {
-    for path in ["src/lib.rs", "src/wiring/application/mod.rs"] {
+    for path in ["src/lib.rs", "src/host/mod.rs"] {
         let source = source(path);
         if let Some(module_offset) = source.find("mod test_support") {
             let prefix = &source[..module_offset];
@@ -58,7 +58,7 @@ fn daemon_turn_resources_are_constructed_only_in_bootstrap() {
     for root in [
         "src/application",
         "src/core",
-        "../aletheon/src/wiring/daemon/bootstrap",
+        "../aletheon/src/composition/daemon_bootstrap",
     ] {
         let root = std::path::PathBuf::from(root);
         if !root.exists() {
@@ -73,7 +73,7 @@ fn daemon_turn_resources_are_constructed_only_in_bootstrap() {
                 } else if path.extension().is_some_and(|extension| extension == "rs")
                     && source(path.to_str().unwrap()).contains("DaemonTurnResources {")
                     && !path.ends_with("daemon_turn/orchestrator.rs")
-                    && !path.starts_with("../aletheon/src/wiring/daemon/bootstrap")
+                    && !path.starts_with("../aletheon/src/composition/daemon_bootstrap")
                 {
                     violations.push(path);
                 }
@@ -109,9 +109,10 @@ fn production_has_one_turn_engine_interface_and_no_permission_fallback_adapter()
     }
 
     let engine_boundary = format!(
-        "{}\n{}",
-        source("src/wiring/application/turn_engine.rs"),
-        source("src/wiring/application/daemon_turn_engine.rs")
+        "{}\n{}\n{}",
+        source("../application/src/turn/command.rs"),
+        source("../application/src/turn/service.rs"),
+        source("src/daemon/turn_engine.rs")
     );
     for forbidden in [
         "SessionTurnEngine",
@@ -129,25 +130,23 @@ fn production_has_one_turn_engine_interface_and_no_permission_fallback_adapter()
     assert_eq!(
         implementations,
         [
-            std::path::PathBuf::from("src/wiring/application/daemon_turn_engine.rs"),
-            std::path::PathBuf::from("src/wiring/exec_session.rs"),
+            std::path::PathBuf::from("src/daemon/turn_engine.rs"),
+            std::path::PathBuf::from("src/host/exec_session.rs"),
         ],
         "daemon and exec must both enter the TurnEngine interface"
     );
     assert_eq!(
         bindings,
-        [std::path::PathBuf::from(
-            "src/wiring/application/daemon_turn/orchestrator.rs"
-        )],
+        [std::path::PathBuf::from("src/daemon/turn/orchestrator.rs")],
         "production must have one TurnEngine binding point"
     );
 }
 
 #[test]
 fn daemon_turn_scope_is_local_and_never_stored_in_a_shared_option() {
-    let pipeline = source("src/wiring/application/turn_pipeline.rs");
-    let engine = source("src/wiring/application/daemon_turn_engine.rs");
-    let bootstrap = source("../aletheon/src/wiring/daemon/bootstrap/turn_runtime.rs");
+    let pipeline = source("src/host/turn_pipeline.rs");
+    let engine = source("src/daemon/turn_engine.rs");
+    let bootstrap = source("../aletheon/src/composition/daemon_bootstrap/turn_runtime.rs");
     let production = format!("{pipeline}\n{engine}\n{bootstrap}");
 
     assert!(!production.contains("current_scope"));
@@ -160,8 +159,8 @@ fn daemon_turn_scope_is_local_and_never_stored_in_a_shared_option() {
 
 #[test]
 fn turn_result_crosses_the_pipeline_boundary_as_a_typed_outcome_not_json() {
-    let engine = source("src/wiring/application/daemon_turn_engine.rs");
-    let pipeline = source("src/wiring/application/turn_pipeline.rs");
+    let engine = source("src/daemon/turn_engine.rs");
+    let pipeline = source("src/host/turn_pipeline.rs");
 
     // R3: the daemon engine must consume the typed TurnPipelineOutcome directly
     // and must not reverse-index a serialized turn envelope.

@@ -10,6 +10,7 @@ pub mod agent_scope;
 mod application;
 mod backends;
 pub mod binding;
+pub mod candidate_projection;
 pub mod composite_service;
 pub mod consolidation;
 pub mod consolidation_worker;

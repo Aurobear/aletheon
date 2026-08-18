@@ -12,7 +12,7 @@ use ::contracts::{
     ItemPayload, OperationKind, OperationState, PrincipalId, SessionId, SessionReadStore,
     TurnMetrics, TurnRequest, TurnResult, TurnStop,
 };
-use aletheon::wiring::application::turn_coordinator::TurnExecution;
+use application::turn::coordinator::TurnExecution;
 use runtime::session_projection::SessionProjectionStore;
 use runtime::turn_policy::TurnPolicy;
 use support::test_aletheon_builder::TestAletheonBuilder;
@@ -249,14 +249,13 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
         compaction_v2: true,
         ..Default::default()
     };
-    let coordinator =
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-            kernel.clone(),
-            projection_store,
-            spine,
-            hardening,
-        );
-    let store = coordinator.store();
+    let coordinator = aletheon::host::session::test_composition::compose_with_event_spine(
+        kernel.clone(),
+        projection_store,
+        spine,
+        hardening,
+    );
+    let store = coordinator.session_port();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -311,14 +310,13 @@ async fn terminal_settlement_retry_is_idempotent_after_ambiguous_ack() {
         terminal_attempts: terminal_attempts.clone(),
     });
     let spine = Arc::new(adapters_sqlite::event_spine::SqliteEventSpine::open(":memory:").unwrap());
-    let coordinator =
-        aletheon::wiring::adapters::session::test_composition::compose_with_event_spine(
-            kernel.clone(),
-            projection_store,
-            spine,
-            aletheon::config::GrokHardeningConfig::default(),
-        );
-    let store = coordinator.store();
+    let coordinator = aletheon::host::session::test_composition::compose_with_event_spine(
+        kernel.clone(),
+        projection_store,
+        spine,
+        aletheon::config::GrokHardeningConfig::default(),
+    );
+    let store = coordinator.session_port();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -565,7 +563,7 @@ async fn missing_principal_context_refusal_is_durable_and_auditable() {
             &TurnPolicy::daemon(),
             |_request, _cancel| async move {
                 Err(anyhow::Error::new(
-                    aletheon::wiring::application::turn_engine::TurnEngineError::InvalidContext(
+                    application::turn::TurnEngineError::InvalidContext(
                         "authenticated principal context is missing".into(),
                     ),
                 ))

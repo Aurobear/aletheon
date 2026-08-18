@@ -62,6 +62,7 @@ pub mod selector;
 pub mod session_authority;
 pub mod session_head;
 pub mod session_projection;
+pub mod session_protocol;
 pub mod session_service;
 pub mod session_shadow;
 pub mod session_writer;

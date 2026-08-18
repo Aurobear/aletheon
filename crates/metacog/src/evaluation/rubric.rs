@@ -40,3 +40,38 @@ pub struct RubricGate {
     /// Description of the invariant being checked.
     pub description: String,
 }
+
+/// Canonical deterministic rubric for coding-v2 evaluation.
+pub fn coding_v2_rubric() -> Rubric {
+    Rubric {
+        id: "coding-v2".into(),
+        version: 2,
+        dimensions: vec![
+            dimension("requirement_coverage", 200_000, false),
+            dimension("correctness", 250_000, true),
+            dimension("scope_discipline", 150_000, true),
+            dimension("maintainability", 100_000, false),
+            dimension("verification_sufficiency", 200_000, true),
+            dimension("regression_safety", 100_000, true),
+        ],
+        gates: vec![
+            gate("required_verification_passed"),
+            gate("change_within_scope"),
+        ],
+    }
+}
+
+fn dimension(name: &str, weight_millis: u32, mandatory: bool) -> RubricDimension {
+    RubricDimension {
+        name: name.into(),
+        weight_millis,
+        mandatory,
+    }
+}
+
+fn gate(name: &str) -> RubricGate {
+    RubricGate {
+        name: name.into(),
+        description: format!("coding-v2 hard gate: {name}"),
+    }
+}

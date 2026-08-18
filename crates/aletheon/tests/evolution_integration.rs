@@ -9,7 +9,7 @@
 //! 3. Sliding window eviction
 
 use ::contracts::{Subsystem, SubsystemHealth, Version};
-use aletheon::wiring::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator};
+use aletheon::host::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator};
 use anyhow::Result;
 use async_trait::async_trait;
 use dasein::MutationIntent;

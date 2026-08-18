@@ -1,7 +1,7 @@
 //! Resume, fork, interrupt, and replay over canonical session history.
 
 use ::contracts::LOCAL_OWNER_PRINCIPAL;
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use ::contracts::{
     AppendOutcome, ContentBlock, ItemId, ItemPayload, ItemRecord, Message, PrincipalId, Role,
@@ -9,11 +9,14 @@ use ::contracts::{
     TurnId, SESSION_SCHEMA_VERSION,
 };
 use anyhow::{bail, Result};
-use rusqlite::{params, Connection, OptionalExtension};
 use tokio::sync::Mutex;
 
 use crate::public_session_projection::SessionProjection;
 use crate::session_projection::project_messages;
+use crate::session_protocol::{
+    InMemorySessionProtocolEventStore, ProtocolApprovalWrite, ProtocolItemWrite,
+    SessionProtocolEventStore,
+};
 
 use crate::turn_registry::ActiveTurnRegistry;
 
@@ -43,7 +46,7 @@ pub struct SessionService {
     store: Arc<dyn SessionAppendStore>,
     active: Arc<ActiveTurnRegistry>,
     interrupted: Mutex<HashSet<String>>,
-    protocol: std::sync::Mutex<Connection>,
+    protocol: Arc<dyn SessionProtocolEventStore>,
     runtime_commands: Option<Arc<dyn crate::RuntimeCommandPort>>,
 }
 
@@ -83,75 +86,19 @@ impl SessionService {
         error: Option<String>,
         dedupe_key: Option<String>,
     ) -> Result<::contracts::protocol::client::ClientEvent> {
-        let phase_name = format!("{phase:?}").to_ascii_lowercase();
-        let mut connection = self.protocol.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = connection.transaction()?;
-        if let Some(key) = dedupe_key.as_deref() {
-            if let Some((sequence, json)) = tx
-                .query_row(
-                    "SELECT sequence,event_json FROM protocol_events WHERE session_id=?1 AND dedupe_key=?2",
-                    params![session_id.0, key],
-                    |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
-                )
-                .optional()?
-            {
-                if item.is_some() {
-                    let mut event: ::contracts::protocol::client::ClientEvent = serde_json::from_str(&json)?;
-                    if let ::contracts::protocol::client::ClientEvent::Item(existing) = &mut event {
-                        existing.item = item.clone();
-                        existing.error = error.clone();
-                    }
-                    tx.execute(
-                        "UPDATE protocol_events SET event_json=?3 WHERE session_id=?1 AND sequence=?2",
-                        params![session_id.0, sequence, serde_json::to_string(&event)?],
-                    )?;
-                    tx.commit()?;
-                    return Ok(event);
-                }
-                tx.commit()?;
-                return Ok(serde_json::from_str(&json)?);
-            }
-        }
-        let sequence: u64 = tx.query_row(
-            "SELECT COALESCE(MAX(sequence),0)+1 FROM protocol_events WHERE session_id=?1",
-            params![session_id.0],
-            |row| row.get(0),
-        )?;
-        let cursor = ::contracts::protocol::client::EventCursor {
-            sequence,
-            event_id: Some(uuid::Uuid::new_v4().to_string()),
-        };
-        let event = ::contracts::protocol::client::ClientEvent::Item(
-            ::contracts::protocol::client::ItemEvent {
-                cursor: cursor.clone(),
-                item_id: item_id.clone(),
-                phase,
-                delta,
-                item,
-                error,
-            },
-        );
-        tx.execute(
-            "INSERT INTO protocol_events(session_id,sequence,event_id,item_id,phase,dedupe_key,event_json)
-             VALUES(?1,?2,?3,?4,?5,?6,?7)",
-            params![
-                session_id.0,
-                sequence,
-                cursor.event_id.as_deref().unwrap_or_default(),
-                item_id,
-                phase_name,
-                dedupe_key,
-                serde_json::to_string(&event)?,
-            ],
-        )?;
-        tx.commit()?;
-        Ok(event)
+        self.protocol.append_item(ProtocolItemWrite {
+            session_id: session_id.clone(),
+            item_id,
+            phase,
+            delta,
+            item,
+            error,
+            dedupe_key,
+        })
     }
 
-    /// Persist a connection-owned approval request in the same authenticated
-    /// session event journal used by projection reconnect. The request DTO is
-    /// deliberately distinct from the durable ApprovalSnapshot contract: the
-    /// opaque choice id is resolved only by the owning connection.
+    /// Persist a connection-owned approval request in the authenticated
+    /// protocol journal. Opaque approval choice resolution remains in Gateway.
     pub async fn append_protocol_approval_event(
         &self,
         session_id: &SessionId,
@@ -163,55 +110,16 @@ impl SessionService {
         detail: Option<String>,
         scope_subject: Option<::contracts::protocol::client::TransientApprovalScopeSubject>,
     ) -> Result<::contracts::protocol::client::ClientEvent> {
-        let mut connection = self.protocol.lock().unwrap_or_else(|e| e.into_inner());
-        let tx = connection.transaction()?;
-        let dedupe_key = format!("approval-request:{approval_id}");
-        if let Some(json) = tx
-            .query_row(
-                "SELECT event_json FROM protocol_events WHERE session_id=?1 AND dedupe_key=?2",
-                params![session_id.0, dedupe_key],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-        {
-            tx.commit()?;
-            return Ok(serde_json::from_str(&json)?);
-        }
-        let sequence: u64 = tx.query_row(
-            "SELECT COALESCE(MAX(sequence),0)+1 FROM protocol_events WHERE session_id=?1",
-            params![session_id.0],
-            |row| row.get(0),
-        )?;
-        let cursor = ::contracts::protocol::client::EventCursor {
-            sequence,
-            event_id: Some(uuid::Uuid::new_v4().to_string()),
-        };
-        let event = ::contracts::protocol::client::ClientEvent::ApprovalRequested {
-            cursor: cursor.clone(),
+        self.protocol.append_approval(ProtocolApprovalWrite {
             session_id: session_id.clone(),
             turn_id,
-            approval_id: approval_id.clone(),
+            approval_id,
             tool,
             action_summary,
             risk_level,
             detail,
             scope_subject,
-        };
-        tx.execute(
-            "INSERT INTO protocol_events(session_id,sequence,event_id,item_id,phase,dedupe_key,event_json)
-             VALUES(?1,?2,?3,?4,?5,?6,?7)",
-            params![
-                session_id.0,
-                sequence,
-                cursor.event_id.as_deref().unwrap_or_default(),
-                approval_id,
-                "approval_requested",
-                dedupe_key,
-                serde_json::to_string(&event)?,
-            ],
-        )?;
-        tx.commit()?;
-        Ok(event)
+        })
     }
 
     async fn sync_canonical_protocol_events(&self, session_id: &SessionId) -> Result<()> {
@@ -275,36 +183,25 @@ impl SessionService {
         Ok(())
     }
     pub fn new(store: Arc<dyn SessionAppendStore>, active: Arc<ActiveTurnRegistry>) -> Self {
-        Self::with_protocol_journal(store, active, ":memory:").expect("in-memory protocol journal")
+        Self::with_protocol_store(
+            store,
+            active,
+            Arc::new(InMemorySessionProtocolEventStore::new()),
+        )
     }
 
-    pub fn with_protocol_journal(
+    pub fn with_protocol_store(
         store: Arc<dyn SessionAppendStore>,
         active: Arc<ActiveTurnRegistry>,
-        path: impl AsRef<Path>,
-    ) -> Result<Self> {
-        let connection = Connection::open(path)?;
-        connection.execute_batch(
-            "CREATE TABLE IF NOT EXISTS protocol_events(
-               session_id TEXT NOT NULL,
-               sequence INTEGER NOT NULL,
-               event_id TEXT NOT NULL,
-               item_id TEXT NOT NULL,
-               phase TEXT NOT NULL,
-               dedupe_key TEXT,
-               event_json TEXT NOT NULL,
-               PRIMARY KEY(session_id,sequence),
-               UNIQUE(session_id,event_id),
-               UNIQUE(session_id,dedupe_key)
-             );",
-        )?;
-        Ok(Self {
+        protocol: Arc<dyn SessionProtocolEventStore>,
+    ) -> Self {
+        Self {
             store,
             active,
             interrupted: Mutex::new(HashSet::new()),
-            protocol: std::sync::Mutex::new(connection),
+            protocol,
             runtime_commands: None,
-        })
+        }
     }
 
     /// Bind the one-way Runtime command owner used by production composition.
@@ -486,34 +383,14 @@ impl SessionService {
                 bail!("origin cursor cannot carry an event_id");
             }
         } else {
-            let anchor_event_id: Option<String> = self
-                .protocol
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .query_row(
-                    "SELECT event_id FROM protocol_events WHERE session_id=?1 AND sequence=?2",
-                    params![session_id.0, after.sequence],
-                    |row| row.get(0),
-                )
-                .optional()?;
+            let anchor_event_id = self.protocol.event_id_at(session_id, after.sequence)?;
             if anchor_event_id.as_deref() != after.event_id.as_deref() {
                 bail!("cursor event_id does not match durable item");
             }
         }
-        let connection = self.protocol.lock().unwrap_or_else(|e| e.into_inner());
-        let mut statement = connection.prepare(
-            "SELECT event_json FROM protocol_events WHERE session_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3",
-        )?;
-        let rows = statement
-            .query_map(
-                params![session_id.0, after.sequence, SESSION_EVENT_PAGE_LIMIT],
-                |row| row.get::<_, String>(0),
-            )?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        let events = rows
-            .into_iter()
-            .map(|json| serde_json::from_str(&json))
-            .collect::<serde_json::Result<Vec<::contracts::protocol::client::ClientEvent>>>()?;
+        let events =
+            self.protocol
+                .events_after(session_id, after.sequence, SESSION_EVENT_PAGE_LIMIT)?;
         let next = events.last().map_or_else(
             || after.clone(),
             |event| match event {
@@ -537,18 +414,7 @@ impl SessionService {
         &self,
         session_id: &SessionId,
     ) -> Result<::contracts::protocol::client::EventCursor> {
-        let row: Option<(u64, String)> = self.protocol.lock().unwrap_or_else(|e| e.into_inner()).query_row(
-            "SELECT sequence,event_id FROM protocol_events WHERE session_id=?1 ORDER BY sequence DESC LIMIT 1",
-            params![session_id.0],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).optional()?;
-        Ok(row.map_or_else(
-            ::contracts::protocol::client::EventCursor::origin,
-            |(sequence, event_id)| ::contracts::protocol::client::EventCursor {
-                sequence,
-                event_id: Some(event_id),
-            },
-        ))
+        self.protocol.tail_cursor(session_id)
     }
 
     /// Persist lifecycle-provided workspace context into canonical history

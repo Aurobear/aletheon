@@ -6,7 +6,7 @@
 //! persistence across re-opens.
 
 use ::contracts::ProcessState;
-use aletheon::wiring::application::goal::ObjectiveStore;
+use adapters_sqlite::goal::ObjectiveStore;
 
 // ── Step 1.1: ProcessState transition contract ────────────────────────────
 

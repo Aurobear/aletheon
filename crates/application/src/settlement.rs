@@ -198,6 +198,57 @@ pub struct TransactionReviewService {
     store: std::sync::Arc<dyn TransactionSettlementStore>,
 }
 
+/// Narrow consumer port for transaction review used by the daemon transport and
+/// the typed Gateway.
+#[async_trait::async_trait]
+pub trait TransactionReviewPort: Send + Sync {
+    async fn review(
+        &self,
+        action: TransactionReviewAction,
+        transaction_id: ::contracts::change_transaction::ChangeTransactionId,
+        session_id: &str,
+        root: &std::path::Path,
+        findings: &[ReviewFinding],
+        risk_acknowledged: bool,
+    ) -> anyhow::Result<TransactionReviewOutcome>;
+    async fn latest(
+        &self,
+        session_id: &str,
+        transaction_id: &str,
+    ) -> anyhow::Result<Option<HostSettlementReceipt>>;
+}
+
+#[async_trait::async_trait]
+impl TransactionReviewPort for TransactionReviewService {
+    async fn review(
+        &self,
+        action: TransactionReviewAction,
+        transaction_id: ::contracts::change_transaction::ChangeTransactionId,
+        session_id: &str,
+        root: &std::path::Path,
+        findings: &[ReviewFinding],
+        risk_acknowledged: bool,
+    ) -> anyhow::Result<TransactionReviewOutcome> {
+        TransactionReviewService::review(
+            self,
+            action,
+            transaction_id,
+            session_id,
+            root,
+            findings,
+            risk_acknowledged,
+        )
+        .await
+    }
+    async fn latest(
+        &self,
+        session_id: &str,
+        transaction_id: &str,
+    ) -> anyhow::Result<Option<HostSettlementReceipt>> {
+        TransactionReviewService::latest(self, session_id, transaction_id).await
+    }
+}
+
 impl TransactionReviewService {
     pub fn new(
         transactions: std::sync::Arc<dyn ChangeTransactionAuthority>,

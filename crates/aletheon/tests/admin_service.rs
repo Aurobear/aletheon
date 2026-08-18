@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use aletheon::wiring::application::admin_service::{
+use aletheon::host::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases,
     ApprovalOwner, ModeChange, PendingApprovals, ScopedApprovalCache, SkillAdminPort,
     SkillDescriptor, TransientApprovalRequest,
@@ -29,28 +29,24 @@ impl TestSkillAdmin {
 }
 
 #[async_trait]
-impl aletheon::wiring::application::admin_service::SkillAdminPort for TestSkillAdmin {
-    async fn reload(
-        &self,
-    ) -> Result<usize, aletheon::wiring::application::admin_service::AdminServiceError> {
+impl aletheon::host::admin_service::SkillAdminPort for TestSkillAdmin {
+    async fn reload(&self) -> Result<usize, aletheon::host::admin_service::AdminServiceError> {
         Ok(self.loader.lock().await.reload())
     }
 
-    async fn list(&self) -> Vec<aletheon::wiring::application::admin_service::SkillDescriptor> {
+    async fn list(&self) -> Vec<aletheon::host::admin_service::SkillDescriptor> {
         self.loader
             .lock()
             .await
             .skills()
             .iter()
-            .map(
-                |s| aletheon::wiring::application::admin_service::SkillDescriptor {
-                    id: format!("{}:{}", s.source, s.name),
-                    name: s.name.clone(),
-                    description: s.description.clone(),
-                    enabled: true,
-                    extension_id: s.source.clone(),
-                },
-            )
+            .map(|s| aletheon::host::admin_service::SkillDescriptor {
+                id: format!("{}:{}", s.source, s.name),
+                name: s.name.clone(),
+                description: s.description.clone(),
+                enabled: true,
+                extension_id: s.source.clone(),
+            })
             .collect()
     }
 }
@@ -79,9 +75,8 @@ fn test_runtime() -> Arc<dyn AdminRuntimePort> {
     })
 }
 
-fn noop_runtime_shutdown() -> Arc<
-    dyn Fn() -> aletheon::wiring::application::admin_service::RuntimeShutdownFuture + Send + Sync,
-> {
+fn noop_runtime_shutdown(
+) -> Arc<dyn Fn() -> aletheon::host::admin_service::RuntimeShutdownFuture + Send + Sync> {
     Arc::new(|| Box::pin(async { Ok(()) }))
 }
 
@@ -101,9 +96,7 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
 
 fn setup_with_rollback(
     skills_dir: std::path::PathBuf,
-    deployment_rollback: Option<
-        Arc<dyn aletheon::wiring::application::admin_service::DeploymentRollbackPort>,
-    >,
+    deployment_rollback: Option<Arc<dyn aletheon::host::admin_service::DeploymentRollbackPort>>,
 ) -> (AdminService, CancellationToken, Arc<Mutex<String>>) {
     let cancellation = CancellationToken::new();
     let cached_prefix = Arc::new(Mutex::new(String::new()));
@@ -129,9 +122,7 @@ fn setup_with_rollback(
         agent_timeline: None,
         agent_profiles: None,
         current_profile: None,
-        profile_switch_events: Arc::new(
-            aletheon::wiring::application::admin_service::NoopProfileSwitchEventSink,
-        ),
+        profile_switch_events: Arc::new(aletheon::host::admin_service::NoopProfileSwitchEventSink),
         deployment_rollback,
     });
     (service, cancellation, cached_prefix)
@@ -218,9 +209,7 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         agent_timeline: None,
         agent_profiles: None,
         current_profile: None,
-        profile_switch_events: Arc::new(
-            aletheon::wiring::application::admin_service::NoopProfileSwitchEventSink,
-        ),
+        profile_switch_events: Arc::new(aletheon::host::admin_service::NoopProfileSwitchEventSink),
         deployment_rollback: None,
     });
     assert!(matches!(
@@ -301,9 +290,7 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         agent_timeline: None,
         agent_profiles: None,
         current_profile: None,
-        profile_switch_events: Arc::new(
-            aletheon::wiring::application::admin_service::NoopProfileSwitchEventSink,
-        ),
+        profile_switch_events: Arc::new(aletheon::host::admin_service::NoopProfileSwitchEventSink),
         deployment_rollback: None,
     });
 
@@ -410,19 +397,19 @@ async fn approval_with_closed_consumer_reports_terminal_non_delivery() {
         .unwrap();
     assert_eq!(
         resolved.delivery,
-        aletheon::wiring::application::admin_service::ApprovalDecisionDelivery::ConsumerGone
+        aletheon::host::admin_service::ApprovalDecisionDelivery::ConsumerGone
     );
     assert!(matches!(
         pending
             .resolve(&owner, &approval_id, ApprovalDecision::Approve)
             .await,
-        Err(aletheon::wiring::application::admin_service::PendingApprovalError::NotFound)
+        Err(aletheon::host::admin_service::PendingApprovalError::NotFound)
     ));
 }
 
 #[test]
 fn admin_rpc_has_no_concrete_runtime_registry_or_lock_access() {
-    let source = include_str!("../../aletheon/src/wiring/daemon/handler/rpc/rpc_admin.rs");
+    let source = include_str!("../../aletheon/src/daemon/handler/rpc/rpc_admin.rs");
     assert!(source.contains("self.ports.admin"));
     for forbidden in [
         "subsystems",
@@ -449,13 +436,15 @@ async fn scoped_session_grant_survives_reopen_and_never_widens_to_tool_grant() {
         subject_version: 1,
         subject_sha256: "a".repeat(64),
     };
-    aletheon::wiring::application::admin_service::ScopedApprovalCache::open(&path)
-        .unwrap()
-        .allow_path_for_thread(principal.clone(), thread.clone(), "apply_patch", &hint)
-        .await
-        .unwrap();
-    let reopened =
-        aletheon::wiring::application::admin_service::ScopedApprovalCache::open(&path).unwrap();
+    aletheon::host::admin_service::ScopedApprovalCache::new(Arc::new(
+        adapters_sqlite::approval::SqliteScopedApprovalGrantStore::open(&path).unwrap(),
+    ))
+    .allow_path_for_thread(principal.clone(), thread.clone(), "apply_patch", &hint)
+    .await
+    .unwrap();
+    let reopened = aletheon::host::admin_service::ScopedApprovalCache::new(Arc::new(
+        adapters_sqlite::approval::SqliteScopedApprovalGrantStore::open(&path).unwrap(),
+    ));
     assert!(
         !reopened
             .is_allowed(&principal, &thread, "apply_patch")

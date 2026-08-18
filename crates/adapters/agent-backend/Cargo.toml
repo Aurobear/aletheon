@@ -1,0 +1,28 @@
+[package]
+name = "adapters-agent-backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "External Agent backend adapters for Runtime-owned execution authority"
+
+[dependencies]
+application = { path = "../../application" }
+cognit = { path = "../../cognit" }
+contracts = { path = "../../contracts" }
+corpus = { path = "../../corpus" }
+kernel = { path = "../../kernel" }
+runtime = { path = "../../runtime" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

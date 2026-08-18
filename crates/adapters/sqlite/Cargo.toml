@@ -7,7 +7,7 @@ license.workspace = true
 description = "SQLite persistence adapters for Runtime and Application ports"
 
 [dependencies]
-gateway = { path = "../../gateway" }
+gateway = { path = "../../gateway", default-features = false, features = ["protocol"] }
 application = { path = "../../application" }
 
 contracts = { path = "../../contracts" }

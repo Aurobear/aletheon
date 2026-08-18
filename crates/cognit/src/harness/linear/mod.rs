@@ -13,7 +13,7 @@ pub mod tool_budget;
 mod tool_exec;
 mod tool_output;
 
-pub use batching::{partition_tool_calls, ToolBatch};
+pub use batching::{partition_tool_calls, stable_priority_order, ToolBatch};
 pub use compaction_observability::{compaction_metrics, CompactionMetrics};
 pub use metrics::TurnMetrics;
 

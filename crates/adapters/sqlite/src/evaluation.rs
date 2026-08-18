@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
-use metacog::evaluation::EvaluationReceiptStore;
+use application::evaluation::EvaluationReceiptStore;
 
 pub struct SqliteEvaluationStore {
     connection: Mutex<Connection>,

@@ -10,6 +10,7 @@ description = "Aletheon Self-evolution - reflection, behavior evolution, and gen
 runtime = { path = "../runtime" }
 contracts = { path = "../contracts" }
 kernel = { path = "../kernel" }
+platform = { path = "../platform" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
-use aletheon::wiring::adapters::runtime::test_registry::AgentExecutionRegistry;
+use aletheon::host::runtime::test_registry::AgentExecutionRegistry;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use ::contracts::{
     AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind, AgentControlPort,
     AgentId, AgentProfileId, AgentResult, AgentSpawnRequest, AttemptUsage, ProcessId, RuntimeId,
 };
-use aletheon::wiring::application::agent_control::{
+use aletheon::composition::agent_control::{
     AgentEventSink, AgentHostAdapter, AgentRuntimeInput, AgentRuntimeLauncher,
     BoundedAgentAdmission,
 };
@@ -131,7 +131,7 @@ pub fn fixture_with_task_admission(
         .register(RuntimeId(TEST_RUNTIME.into()), launcher)
         .unwrap();
     let admission = Arc::new(BoundedAgentAdmission::new(max_concurrent).unwrap());
-    let mut service = AgentHostAdapter::new_legacy(
+    let mut service = AgentHostAdapter::new_fixture(
         kernel.clone(),
         clock,
         repository.clone(),
@@ -145,9 +145,7 @@ pub fn fixture_with_task_admission(
     let service = Arc::new(service);
     Fixture {
         port: Arc::new(
-            aletheon::wiring::application::agent_control::RuntimeAgentControlFacade::new(
-                service.clone(),
-            ),
+            aletheon::composition::agent_control::RuntimeAgentControlFacade::new(service.clone()),
         ),
         service,
         kernel,

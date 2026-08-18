@@ -41,10 +41,10 @@ fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
         backpressure: Default::default(),
         cache: Default::default(),
     };
-    aletheon::wiring::adapters::inference::factory::create_provider(
+    adapters_inference::factory::create_provider(
         &config,
         "test-model",
-        aletheon::wiring::adapters::inference::factory::ProviderBuildOptions {
+        adapters_inference::factory::ProviderBuildOptions {
             max_tokens: 100_000,
             timeouts: timeouts(),
         },

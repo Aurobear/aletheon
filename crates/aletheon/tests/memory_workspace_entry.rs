@@ -4,7 +4,7 @@ use ::contracts::{
     OperationId, ProcessId, SelectionExplanation, SelectionResult, StructuredSelfView, TurnRequest,
     WorkspaceBroadcast,
 };
-use aletheon::wiring::application::context_assembler::{
+use application::turn::context::{
     ContextAssembler, ContextAssemblyError, ContextFragments, ContextSource,
 };
 use async_trait::async_trait;

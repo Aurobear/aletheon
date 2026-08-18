@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
 use ::contracts::{
-    ItemPayload, OperationId, OperationState, SessionAppendStore, SessionId, TurnMetrics,
-    TurnRequest, TurnResult, TurnStop,
+    ItemPayload, OperationId, OperationState, SessionId, TurnMetrics, TurnRequest, TurnResult,
+    TurnStop,
 };
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
-use aletheon::wiring::application::post_turn_projection::{
-    PostTurnDispatch, PostTurnOutcome, PostTurnProjection,
-};
-use aletheon::wiring::application::turn_coordinator::TurnExecution;
+use application::turn::coordinator::TurnExecution;
+use application::turn::post_turn::{PostTurnDispatch, PostTurnOutcome, PostTurnProjection};
 use async_trait::async_trait;
 use kernel::KernelRuntime;
 use runtime::turn_policy::TurnPolicy;
@@ -16,7 +14,7 @@ use tokio::sync::{oneshot, Mutex};
 
 struct FailingProjection {
     kernel: Arc<KernelRuntime>,
-    store: Arc<dyn SessionAppendStore>,
+    store: Arc<dyn application::turn::ports::TurnSessionPort>,
     operation: Arc<Mutex<Option<OperationId>>>,
     observed: Mutex<Option<oneshot::Sender<(OperationState, usize, bool)>>>,
 }
@@ -43,12 +41,11 @@ impl PostTurnProjection for FailingProjection {
 #[tokio::test]
 async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
     let kernel = Arc::new(KernelRuntime::new());
-    let coordinator =
-        aletheon::wiring::adapters::session::test_composition::compose_in_memory_turn_coordinator(
-            kernel.clone(),
-            Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
-        );
-    let store = coordinator.store();
+    let coordinator = aletheon::host::session::test_composition::compose_in_memory_turn_coordinator(
+        kernel.clone(),
+        Arc::new(CanonicalSessionStore::open(":memory:").unwrap()),
+    );
+    let store = coordinator.session_port();
     let process = kernel
         .spawn_process(::contracts::SpawnSpec::default())
         .await
@@ -130,7 +127,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
 
 #[test]
 fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
-    let pipeline = include_str!("../src/wiring/application/turn_pipeline.rs");
+    let pipeline = include_str!("../src/host/turn_pipeline.rs");
     for forbidden in [
         "extract_auto_memory(",
         "record_turn_reflection(",
@@ -160,19 +157,29 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
         );
     }
 
-    // Context preparation and model selection may run concurrently, but both
-    // must finish before governed capability preparation and full assembly.
-    let context = pipeline.find("self.context_assembler.prepare").unwrap();
-    let model = pipeline.find(".models.select").unwrap();
-    let capability = pipeline.find(".capabilities").unwrap();
-    assert!(context < capability && model < capability);
+    // Context preparation and model selection run inside the single
+    // `prepare_pre_cognitive` step, which must finish before governed
+    // capability preparation and full assembly (`turn_preparation::prepare`).
+    let context = pipeline.find("prepare_pre_cognitive").unwrap();
+    let capability = pipeline.find("turn_preparation::prepare").unwrap();
+    assert!(context < capability);
+    // Model selection is bundled with context preparation in the same
+    // pre-cognitive step (application crate), so it cannot run after
+    // capability preparation.
+    let pre_cognitive = include_str!("../../application/src/turn/context.rs");
+    assert!(pre_cognitive.contains("assembler.prepare"));
+    assert!(pre_cognitive.contains("models.select("));
+    let prepare_assembles = pre_cognitive
+        .find("let budget_costs = context.budget_costs")
+        .unwrap();
+    assert!(pre_cognitive.find("models.select(").unwrap() < prepare_assembles);
 
-    let coordinator = include_str!("../src/wiring/application/turn_coordinator.rs");
+    let coordinator = include_str!("../../application/src/turn/coordinator.rs");
     let settlement = coordinator.find("terminal?;").unwrap();
     let projection = coordinator.find("dispatch.projector.project").unwrap();
     assert!(settlement < projection);
 
-    let post_turn = include_str!("../src/wiring/application/post_turn_projection.rs");
+    let post_turn = include_str!("../src/adapters/post_turn.rs");
     for forbidden in [
         "MemoryService",
         "AutoMemory",
