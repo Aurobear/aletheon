@@ -1,6 +1,6 @@
 # Aletheon `wiring` 所有权迁移与功能模块化实施计划
 
-状态：**IMPLEMENTATION COMPLETE · INSTALLED ACCEPTANCE PASSED · CLOSEOUT DONE — M0–M9、M10 已完成并通过安装态验收；2026-08-18 closeout（§9.1）完成：架构门禁假绿修复、迁移 warnings 清理、M8.4 HandlerPorts 全收口、legacy sunset ledger、公共 API doc(hidden)、closeout binary 已重新部署并真实 LLM smoke 通过；剩余 2 项显式残留见 §9.1**
+状态：**MIGRATION CLOSEOUT DONE · ARCHITECTURE CONVERGENCE TRACKED — M0–M9、M10 已完成并通过安装态验收；2026-08-18 closeout（§9.1）完成：架构门禁假绿修复、迁移 warnings 清理、M8.4 HandlerPorts 全收口、legacy sunset ledger、公共 API doc(hidden)、closeout binary 已重新部署并真实 LLM smoke 通过；剩余 2 项显式收敛残留见 §9.1**
 
 日期：2026-08-16
 
@@ -2158,8 +2158,8 @@ Problem / solution context.
 
 ## 9.1 2026-08-18 architecture closeout 记录
 
-最终审核判定：**IMPLEMENTATION COMPLETE · INSTALLED ACCEPTANCE PASSED ·
-ARCHITECTURE CLOSEOUT IN PROGRESS**。本 pass 完成以下闭合：
+最终审核判定：**MIGRATION CLOSEOUT DONE · ARCHITECTURE CONVERGENCE TRACKED**。
+本 pass 完成以下闭合：
 
 - **架构门禁假绿修复**：`tests/suites/architecture/architecture_check.sh` 三个已删除
   `wiring/host/*` 路径更新为 `host/*` 并加存在性守卫（缺失路径 → suite FAIL，不再 grep 缺失文件后继续）。

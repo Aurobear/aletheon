@@ -1,6 +1,6 @@
 # Aletheon wiring 所有权迁移：DeepSeek 后续执行交接计划
 
-状态：**COMPLETE — M0–M6、M7.1–7.5、M8.1–M8.5、M7.4 补完、M9（删除 wiring）、M10（最终安装态验收）均已完成并验证；2026-08-18 closeout 完成（§9.1 门禁假绿修复 / warnings 清理 / M8.4 全收口 / legacy sunset ledger / 公共 API doc(hidden)），closeout binary 已重新部署；最终 M10 验收报告见 `docs/testing/x13-m10-installed-acceptance-2026-08-18.md`，legacy sunset ledger 见 `docs/plans/legacy-session-sunset-ledger.md`；2 项显式残留（完整 pub(crate) 收口、runtime::orchestration 退役）见规范 §9.1**
+状态：**MIGRATION CLOSEOUT DONE · ARCHITECTURE CONVERGENCE TRACKED — M0–M6、M7.1–7.5、M8.1–M8.5、M7.4 补完、M9（删除 wiring）、M10（最终安装态验收）均已完成并验证；2026-08-18 closeout 完成（门禁假绿修复 / warnings 清理 / M8.4 全收口 / legacy sunset ledger / 公共 API doc(hidden)），closeout binary 已重新部署；最终 M10 验收报告见 `docs/testing/x13-m10-installed-acceptance-2026-08-18.md`，legacy sunset ledger 见 `docs/plans/legacy-session-sunset-ledger.md`；2 项显式收敛残留（完整 pub(crate) 收口、runtime::orchestration 退役）见规范 §9.1**
 
 规范源：`docs/plans/2026-08-16-aletheon-wiring-ownership-migration.md`
 
