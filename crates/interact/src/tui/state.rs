@@ -176,6 +176,14 @@ pub struct AppState {
     /// Scrollback offset for the actually rendered Task Console conversation.
     /// Zero follows the tail; larger values move upward.
     pub conversation_scroll: u16,
+    /// Rendered conversation lines (markdown) keyed by item id, plus the
+    /// terminal width they were built at. Durable (non-streaming) items never
+    /// change, so they render once and are reused across frames; the live
+    /// streaming item re-renders each frame. A resize invalidates the cache.
+    /// Held in a RefCell because the Task Console renders through an immutable
+    /// `&AppState` view but needs to memoize between frames.
+    pub conversation_render:
+        std::cell::RefCell<(u16, BTreeMap<String, Vec<ratatui::text::Line<'static>>>)>,
     pub approvals: BTreeMap<String, ApprovalSnapshot>,
     pub agents: BTreeMap<String, AgentSnapshot>,
     /// Daemon-owned Session/Task/Activity projection. These fields are
@@ -224,6 +232,7 @@ impl Default for AppState {
             provider_name: None,
             items: BTreeMap::new(),
             conversation_scroll: 0,
+            conversation_render: std::cell::RefCell::new((0, BTreeMap::new())),
             approvals: BTreeMap::new(),
             agents: BTreeMap::new(),
             projected_session: None,

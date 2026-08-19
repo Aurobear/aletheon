@@ -14,7 +14,11 @@ use ratatui::{
 };
 use serde::Deserialize;
 
-use super::{markdown, state::AppState, term_compat::TermCaps};
+use super::{
+    markdown,
+    state::{AppState, UiItemStatus},
+    term_compat::TermCaps,
+};
 use ::contracts::protocol::client::{ActivitySnapshot, ActivityState, TaskPhase, TaskSnapshot};
 
 /// The primary work surface for an active Session.
@@ -180,12 +184,23 @@ fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &Te
     let inner = block.inner(area);
     block.render(area, buf);
     let theme = caps.theme();
+    let width = inner.width;
     let mut items = state
         .items
         .values()
         .filter(|item| matches!(item.kind.as_str(), "user" | "assistant"))
         .collect::<Vec<_>>();
     items.sort_by_key(|item| item.sequence);
+    // Memoize rendered markdown for durable (non-streaming) items. The live
+    // streaming item changes every frame and is re-rendered each time; the
+    // durable history is immutable, so reusing its rendered lines avoids
+    // re-parsing every item's markdown on every frame (long sessions made the
+    // TUI lag badly while a long answer streamed).
+    let mut cache = state.conversation_render.borrow_mut();
+    if cache.0 != width {
+        cache.0 = width;
+        cache.1.clear();
+    }
     let mut lines = Vec::new();
     let mut last_assistant_content: Option<&str> = None;
     for item in items {
@@ -200,10 +215,23 @@ fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &Te
                 continue;
             }
             last_assistant_content = Some(item.content.as_str());
-            lines.extend(markdown::render_markdown(&item.content, inner.width, caps));
+            let rendered = if item.status != UiItemStatus::Streaming {
+                match cache.1.get(&item.id) {
+                    Some(cached) => cached.clone(),
+                    None => {
+                        let built = markdown::render_markdown(&item.content, width, caps);
+                        cache.1.insert(item.id.clone(), built.clone());
+                        built
+                    }
+                }
+            } else {
+                markdown::render_markdown(&item.content, width, caps)
+            };
+            lines.extend(rendered);
         }
         lines.push(Line::from(""));
     }
+    drop(cache);
     append_work_trace(&mut lines, state, caps);
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -777,6 +805,58 @@ mod tests {
 
     fn rendered_text(width: u16, height: u16, state: &AppState) -> String {
         rendered_text_with_selection(width, height, state, None)
+    }
+
+    #[test]
+    fn large_conversation_render_is_cached_and_fast() {
+        // A conversation approximating a long analysis turn: 20 user/assistant
+        // pairs with multi-hundred-char assistant messages (~10K chars total).
+        // Durable items render once and are memoized, so repeated frames stay
+        // well under a frame budget instead of re-parsing every item's markdown.
+        let mut state = AppState::default();
+        let mut seq = 1u64;
+        for turn in 0..20u64 {
+            state.items.insert(
+                format!("user-{turn}"),
+                UiItem {
+                    id: format!("user-{turn}"),
+                    sequence: seq,
+                    kind: "user".into(),
+                    content: format!("第 {turn} 轮：请继续分析这个项目的架构"),
+                    status: UiItemStatus::Completed,
+                    collapsed: false,
+                },
+            );
+            seq += 1;
+            state.items.insert(
+                format!("assistant-{turn}"),
+                UiItem {
+                    id: format!("assistant-{turn}"),
+                    sequence: seq,
+                    kind: "assistant".into(),
+                    content: format!(
+                        "## 第 {turn} 轮分析\n\n模块职责：`kernel` 负责编排，`application` 负责用例，`adapters` 负责 IO。{}\n\n- 分层清晰\n- 端口适配\n",
+                        "详细说明".repeat(30)
+                    ),
+                    status: UiItemStatus::Completed,
+                    collapsed: false,
+                },
+            );
+            seq += 1;
+        }
+        // First frame populates the cache.
+        let _ = rendered_text(120, 40, &state);
+        let start = std::time::Instant::now();
+        for _ in 0..50 {
+            let _ = rendered_text(120, 40, &state);
+        }
+        let per_frame = start.elapsed() / 50;
+        // Durable-item caching keeps a synthetic 40-item session far below a
+        // frame budget even on slow CI runners.
+        assert!(
+            per_frame.as_millis() < 25,
+            "cached large-conversation render too slow: {per_frame:?}"
+        );
     }
 
     fn rendered_text_with_selection(

@@ -1,12 +1,29 @@
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::sync::OnceLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
 use super::term_compat::{TermCaps, Theme};
+
+/// Syntax highlighting grammar database. `SyntaxSet::load_defaults_newlines`
+/// reads every bundled syntax definition from disk and is far too expensive to
+/// run per markdown render; the Task Console re-renders conversation items on
+/// every streaming frame, so a per-call load made the TUI unusably laggy on
+/// long sessions. Load once and reuse.
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
+
+fn syntax_set() -> &'static SyntaxSet {
+    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+fn theme_set() -> &'static ThemeSet {
+    THEME_SET.get_or_init(ThemeSet::load_defaults)
+}
 
 /// Render markdown text into styled ratatui lines.
 ///
@@ -32,8 +49,8 @@ fn render_markdown_with_theme(
 
     let parser = Parser::new_ext(text, options);
 
-    let ss = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
+    let ss = syntax_set();
+    let ts = theme_set();
     let syntect_theme = &ts.themes["base16-ocean.dark"];
 
     let mut lines: Vec<Line<'static>> = Vec::new();
