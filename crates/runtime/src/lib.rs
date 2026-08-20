@@ -45,7 +45,6 @@ pub mod lifecycle;
 pub mod lifecycle_contributors;
 pub mod mailbox;
 pub mod manifest;
-pub mod orchestration;
 pub mod per_turn_scope;
 pub mod ports;
 pub mod post_turn;
@@ -162,9 +161,6 @@ pub use journal::{RuntimeJournalShadow, ShadowEntry, ShadowMismatch, StreamKind}
 pub use manifest::{
     InteractionMode, RuntimeCapability, RuntimeManifest, RuntimeResourceRequirements, TaskEncoding,
     ToolGovernance, WorkspaceMode, MAX_RUNTIME_STORAGE_BYTES, MAX_RUNTIME_STORAGE_ITEMS,
-};
-pub use orchestration::{
-    EvidenceDrivenController, EvidenceGap, OrchestrationStep, Stage, TaskRisk, TransitionReason,
 };
 pub use per_turn_scope::{PerTurnScope, ScopeExit, ScopeGuard, ScopedResource};
 pub use ports::{
