@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use std::sync::Arc;
 
 #[path = "../src/composition/dasein_workspace.rs"]

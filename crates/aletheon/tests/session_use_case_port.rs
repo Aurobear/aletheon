@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use std::{collections::HashMap, sync::Arc};
 
 use ::contracts::{

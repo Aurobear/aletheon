@@ -11,7 +11,8 @@ name = "aletheon"
 path = "src/main.rs"
 
 [features]
-integration-tests = []
+integration-tests = ["test-support"]
+test-support = []
 acp = []
 
 [dependencies]

@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::{
     AttemptEvidence, AttemptUsage, CognitiveRole, FailureClass, GoalBudget, GoalId, GoalSpec,
     GoalState, PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult,

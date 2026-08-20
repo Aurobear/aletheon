@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
 use std::sync::Arc;
 

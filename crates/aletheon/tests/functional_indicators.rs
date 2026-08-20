@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use agora::{ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult};
 #[path = "../src/composition/dasein_workspace.rs"]
 mod dasein_workspace;

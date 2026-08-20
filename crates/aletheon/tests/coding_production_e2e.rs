@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::*;
 use adapters_agent_backend::PI_CODER_RUNTIME_ID;
 use adapters_sqlite::approval_repository::{

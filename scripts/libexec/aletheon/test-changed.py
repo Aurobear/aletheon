@@ -184,6 +184,12 @@ def load_rust_test_groups(root: Path) -> dict[str, RustTestGroup]:
 def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]:
     changed = set(paths)
     cargo = ("bash", "scripts/cargo-agent.sh")
+
+    def test_features(name: str) -> tuple:
+        # aletheon integration tests are gated behind `test-support` (pub(crate)
+        # closure); propagate the feature for that package's test invocations.
+        return ("--features", "test-support") if name == "aletheon" else ()
+
     packages = metadata.get("packages", [])
     workspace_ids = set(metadata.get("workspace_members", []))
     workspace_packages = [package for package in packages if package["id"] in workspace_ids]
@@ -275,7 +281,7 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
                 test_steps,
                 Step(
                     "test",
-                    cargo + ("test", "-p", name) + unit_args,
+                    cargo + ("test", "-p", name) + test_features(name) + unit_args,
                     unit_reason
                     + (
                         "; safe fallback because at least one source lacks a test mapping"
@@ -305,7 +311,7 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
                 test_steps,
                 Step(
                     "test",
-                    cargo + ("test", "-p", name, "--test", target),
+                    cargo + ("test", "-p", name, "--test", target) + test_features(name),
                     f"integration target {name}/{target} changed",
                 ),
             )
@@ -314,7 +320,7 @@ def derive_steps(root: Path, paths: Iterable[str], metadata: dict) -> list[Step]
                 test_steps,
                 Step(
                     "test",
-                    cargo + ("test", "-p", name, "--tests"),
+                    cargo + ("test", "-p", name, "--tests") + test_features(name),
                     f"shared integration support in {name} changed",
                 ),
             )

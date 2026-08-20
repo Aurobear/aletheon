@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use std::convert::Infallible;
 use std::fs;
 use std::path::{Path, PathBuf};

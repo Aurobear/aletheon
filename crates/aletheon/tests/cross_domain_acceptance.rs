@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 mod support {
     pub mod conscious_core_harness;
 }

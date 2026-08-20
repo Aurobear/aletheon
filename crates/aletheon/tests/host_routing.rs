@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use aletheon::{select_host, CommandKind, ExitStatus, HostRoute};
 
 #[test]

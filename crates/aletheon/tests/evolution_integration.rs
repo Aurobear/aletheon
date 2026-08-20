@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 //! Integration tests for governed EvolutionCoordinator verification.
 //!
 //! Verifies the full flow from turn metrics through reflection accumulation

@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 //! Gate-1 Acceptance Tests — Process/Operation/Chronos Integration (PR-4).
 //!
 //! Validates all four Gate 1 criteria:

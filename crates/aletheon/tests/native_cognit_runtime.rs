@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 

@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

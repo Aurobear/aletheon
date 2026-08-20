@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 mod agent_control_support;
 
 use std::sync::atomic::{AtomicBool, Ordering};

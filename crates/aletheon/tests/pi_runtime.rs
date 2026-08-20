@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 //! E6 regression coverage for the resident Pi delegate's public contract.
 
 #[test]

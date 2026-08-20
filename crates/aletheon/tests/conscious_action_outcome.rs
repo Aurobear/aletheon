@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use kernel::capability::CapabilityInvoker;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

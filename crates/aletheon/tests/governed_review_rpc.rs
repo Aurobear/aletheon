@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use aletheon::config::{AppConfig, GovernedReviewSettings};
 use aletheon::host::governed_review::{GovernedReviewLimits, ReviewCapabilities};
 

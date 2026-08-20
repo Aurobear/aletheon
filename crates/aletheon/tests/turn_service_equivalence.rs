@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::{
     NoopTurnEventSink, OperationId, ProcessId, StubTurnServices, TurnRequest, TurnStop,
 };
