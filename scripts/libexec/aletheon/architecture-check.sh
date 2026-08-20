@@ -3050,17 +3050,17 @@ else
   : > "$dep_actual"
 fi
 
-# Freeze: fabric root-level re-exports must not grow beyond the ledgered
-# baseline (architecture-status.toml [freeze].fabric_root_reexports_max).
-fabric_reexports_now=$(grep -c '^pub use' crates/contracts/src/lib.rs || echo 0)
-fabric_reexports_max=$(grep -E '^\s*fabric_root_reexports_max\s*=' architecture-status.toml \
+# Freeze: contracts root-level re-exports must not grow beyond the ledgered
+# baseline (architecture-status.toml [freeze].contracts_root_reexports_max).
+contracts_reexports_now=$(grep -c '^pub use' crates/contracts/src/lib.rs || echo 0)
+contracts_reexports_max=$(grep -E '^\s*contracts_root_reexports_max\s*=' architecture-status.toml \
   | grep -oE '[0-9]+' | head -1)
-if [[ -z "$fabric_reexports_max" ]]; then
-  echo "architecture-check: architecture-status.toml missing fabric_root_reexports_max" >&2
+if [[ -z "$contracts_reexports_max" ]]; then
+  echo "architecture-check: architecture-status.toml missing contracts_root_reexports_max" >&2
   exit 1
 fi
-if (( fabric_reexports_now > fabric_reexports_max )); then
-  echo "architecture-check: fabric root re-exports grew from ${fabric_reexports_max} to ${fabric_reexports_now}" >&2
+if (( contracts_reexports_now > contracts_reexports_max )); then
+  echo "architecture-check: contracts root re-exports grew from ${contracts_reexports_max} to ${contracts_reexports_now}" >&2
   echo "  New root-level 'pub use' in crates/contracts/src/lib.rs are frozen (Wave 0)." >&2
   echo "  Import from a submodule, or lower the baseline as re-exports are removed." >&2
   exit 1

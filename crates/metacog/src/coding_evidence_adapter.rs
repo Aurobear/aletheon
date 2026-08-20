@@ -2,7 +2,7 @@
 //!
 //! Maps `::contracts::CodingJobReport` and `::contracts::VerificationReport` into
 //! `CapturedExperience` containing an `ExperienceEnvelope` and `Vec<EvidenceItem>`.
-//! This adapter lives in the executive (domain-side) crate, not in Metacog core.
+//! This adapter lives in Metacog as a domain-side adapter, not in the host domain.
 
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};

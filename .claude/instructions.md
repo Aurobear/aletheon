@@ -59,12 +59,11 @@ sub-files per concern. Single-file domain dumps are prohibited.
 
 | Crate | Domains (each under `src/<domain>/`) |
 |-------|--------------------------------------|
-| `fabric` | `types/`, `include/`, `ipc/`, `events/`, `kernel/`, `policy/`, `primitives/`, `contract/`, `dasein/` |
+| `contracts` | `types/`, `include/`, `ipc/`, `events/`, `protocol/`, `primitives/`, `policy/`, `contract/`, `dasein/`, `adapters/` |
 | `kernel` | `admission/`, `capability/`, `chronos/`, `operation/`, `process/`, `service/`, `space/`, `supervision/` |
-| `executive` | `core/`, `service/`, `impl/`, `bridge/`, `tools/`, `host/` |
-| `agora` | single crate concern (workspace, ops, persistence, attention, etc.) |
-| `cognit` | `core/`, `harness/`, `impl/`, `bridge/`, `testing/` |
-| `corpus` | `tools/`, `security/`, `drivers/`, `hook/`, `skill/` |
+| `agora` | `blackboard/`, `attention/`, `task_graph/`, `scratchpad/`, `trace/`, `ops/`, `persistence/`, `workspace/` |
+| `cognit` | `core/`, `harness/`, `application/`, `adapters/`, `bridge/`, `composition/`, `ports/` |
+| `corpus` | `tools/`, `security/`, `drivers/`, `hook/`, `skill/`, `extension/` |
 
 No new crate may introduce a `src/` directory without sub-domain grouping.
 No file may exceed 2000 lines without a plan to split it into sub-files.
@@ -116,14 +115,14 @@ path a given input takes.
 
 | Concept | One true implementation | Location |
 |---------|------------------------|----------|
-| Task/process lifecycle | `AgentProcess` + `SubAgentSpawner` + `ProcessTable` | `crates/executive/src/core/sub_agent.rs` |
+| Task/process lifecycle | `AgentProcess` + `SubAgentSpawner` + `ProcessTable` | `crates/kernel/src/process/table.rs` |
 | Work scheduling + cancellation | `OperationTable` (cancellation tree) | `crates/kernel/src/operation/` |
 | Failure recovery + restart | `SupervisorTree` (OTP-style restart policies) | `crates/kernel/src/supervision/` |
-| Turn execution path | `TurnPipeline::run()` (PreTurn → ReActLoop → PostTurn) | `crates/executive/src/service/` |
+| Turn execution path | `TurnPipeline::run()` (PreTurn → ReActLoop → PostTurn) | `crates/aletheon/src/host/turn_pipeline.rs` |
 | Tool safety gate (per-call) | `SelfField::review()` inside ReActLoop | `crates/dasein/` — via TurnPipeline |
 | Shared state (working memory) | `Agora` (CAS propose → commit) | `crates/agora/` |
-| Memory persistence + recall | `Mnemosyne` backends (episodic / semantic / procedural) | `crates/mnemosyne/src/impl/backends/` |
-| Approval / human-in-the-loop | `SessionGateway::approval_flow` | `crates/executive/src/core/session_gateway/approval_flow.rs` |
+| Memory persistence + recall | `Mnemosyne` backends (episodic / semantic / procedural) | `crates/mnemosyne/src/backends/` |
+| Approval / human-in-the-loop | `DurableSocketApprovalGate` + `ApprovalRepository` | `crates/aletheon/src/composition/daemon_bootstrap/approval_gate.rs` |
 | OAuth token storage + refresh | `McpOAuthProvider` + `TokenStore` | `crates/corpus/src/tools/mcp/auth.rs` |
 | Budget + quota enforcement | `AdmissionController::admit()` | `crates/kernel/src/admission/` |
 

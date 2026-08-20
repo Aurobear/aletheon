@@ -1,7 +1,7 @@
 //! Cognitive objects — the canonical vocabulary of RFC-017.
 //!
 //! Existing types are re-exported from their current homes (no redefinition).
-//! Evidence is now defined in `fabric` for broader access.
+//! Evidence is now defined in `contracts` for broader access.
 
 use serde::{Deserialize, Serialize};
 

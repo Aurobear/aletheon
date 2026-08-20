@@ -66,10 +66,10 @@ procedures.
 Run Cargo only through the repository wrapper:
 
 ```bash
-bash scripts/cargo-agent.sh test -p fabric --test metacognition_contract
+bash scripts/cargo-agent.sh test -p contracts --test metacognition_contract
 bash scripts/cargo-agent.sh test -p metacog
-bash scripts/cargo-agent.sh test -p executive --test coding_metacog_adapter
-bash scripts/cargo-agent.sh test -p executive --test coding_metacog_rubric
-bash scripts/cargo-agent.sh test -p executive --test coding_metacog_e2e
+bash scripts/cargo-agent.sh test -p aletheon --test coding_metacog_adapter
+bash scripts/cargo-agent.sh test -p aletheon --test coding_metacog_rubric
+bash scripts/cargo-agent.sh test -p aletheon --test coding_metacog_e2e
 bash scripts/aletheon.sh acceptance architecture
 ```

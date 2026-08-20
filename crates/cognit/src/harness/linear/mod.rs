@@ -93,7 +93,7 @@ impl LlmProvider for DynLlmRef<'_> {
 }
 
 /// Trait for context compaction into the message buffer.
-/// Re-exported from `fabric`, the shared compaction interface, so both
+/// Re-exported from `contracts`, the shared compaction interface, so both
 /// `cognit` and concrete compaction strategies (e.g. `mnemosyne`) depend
 /// on the same abstract contract without depending on each other.
 pub use ::contracts::compaction::CompactorTrait;

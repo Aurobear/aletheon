@@ -562,10 +562,10 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 
 | 项目 | 说明 |
 |------|------|
-| **工具 Trait** | `Tool` trait 在 `fabric/src/types/tool.rs`；`ToolRegistry` 在 `corpus/src/tools/tools/registry.rs` |
+| **工具 Trait** | `Tool` trait 在 `contracts/src/types/tool.rs`；`ToolRegistry` 在 `corpus/src/tools/tools/registry.rs` |
 | **输出处理** | `corpus/src/tools/tools/output/` — 三层防御: `capture.rs` (Layer 1), `persistence.rs` (Layer 2), `turn_budget.rs` (Layer 3) |
 | **截断策略** | `corpus/src/tools/tools/output/truncation.rs` — `TruncationPolicy` + UTF-8 安全的 head/tail 切分 |
-| **工具结果** | `ToolResult` 在 `fabric/src/types/tool.rs`（早期的 `ToolContent` 多模态枚举已简化移除） |
+| **工具结果** | `ToolResult` 在 `contracts/src/types/tool.rs`（早期的 `ToolContent` 多模态枚举已简化移除） |
 | **ToolExposure** | `corpus/src/tools/tools/exposure.rs` — 分级暴露枚举 |
 | **工具搜索** | `corpus/src/tools/tools/search/` — `tool_search.rs` (`ToolSearchTool` + BM25 `CatalogEntry`), `agent_tool.rs`（早期的 config/bridge/catalog 三文件已合并至此） |
 | **工具集** | `corpus/src/tools/tools/toolset.rs` — `Toolset`, `ToolsetRegistry` |

@@ -1,10 +1,10 @@
-//! Adapter from the fabric `EmbodimentExecutionPort` (owned by Executive /
-//! hardware) to the cognit RobotHarness `EmbodiedExecutionPort`.
+//! Adapter from the contracts `EmbodimentExecutionPort` (owned by hardware)
+//! to the cognit RobotHarness `EmbodiedExecutionPort`.
 //!
-//! The two ports differ: fabric carries `SkillDispatchError` and cancels by
+//! The two ports differ: contracts carries `SkillDispatchError` and cancels by
 //! `OperationId`; the cognit harness port preserves typed dispatch failures and cancels by
 //! `DeviceId`. The adapter tracks the latest executed operation so a device-level
-//! cancel can be forwarded to the fabric operation-level cancel.
+//! cancel can be forwarded to the contracts operation-level cancel.
 
 use std::sync::{Arc, Mutex};
 

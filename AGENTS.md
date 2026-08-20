@@ -7,7 +7,7 @@
   worktrees share one bounded build cache and one global compilation lock.
 - Use the narrowest package and test target that validates the change.
 - Only the integration/verification owner may run workspace-wide checks.
-- Do not run concurrent `executive` or workspace builds.
+- Do not run concurrent workspace-wide builds.
 - Formatting may use `bash scripts/cargo-agent.sh fmt --all -- --check`.
 
 ## Installed runtime acceptance policy

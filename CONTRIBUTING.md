@@ -43,11 +43,11 @@ Prefer crate- and target-scoped edit loops instead of enumerating every
 workspace integration binary:
 
 ```bash
-just dev executive
-just test-lib executive
-just test-one executive daemon_turn_engine
+just dev aletheon
+just test-lib aletheon
+just test-one aletheon daemon_turn_engine
 just test-changed
-just lint-one executive
+just lint-one aletheon
 ```
 
 `just test-changed` compares the branch with `origin/dev`, includes staged,

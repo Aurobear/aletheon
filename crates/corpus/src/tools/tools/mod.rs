@@ -43,7 +43,7 @@ pub mod web_fetch;
 pub mod web_search;
 pub(crate) mod workspace_version;
 
-// Re-export types from fabric (the canonical definitions)
+// Re-export types from contracts (the canonical definitions)
 pub use ::contracts::tool::{ConcurrencyClass, ToolExposure};
 pub use ::contracts::tool::{
     PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,

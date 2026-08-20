@@ -14,7 +14,7 @@ cp "$ROOT/config/architecture/retired-authorities.tsv" \
 printf 'pub use example::Example;\n' > "$tmp/crates/contracts/src/lib.rs"
 cat > "$tmp/architecture-status.toml" <<'TOML'
 [freeze]
-fabric_root_reexports_max = 1
+contracts_root_reexports_max = 1
 TOML
 cat > "$tmp/crates/corpus/src/legacy/mod.rs" <<'RS'
 tool.execute(x)
@@ -166,7 +166,7 @@ fn decode(value: serde_json::Value) { let _ = value.get("open_payload"); }
 RS
 cat > "$phase0/architecture-status.toml" <<'TOML'
 [freeze]
-fabric_root_reexports_max = 0
+contracts_root_reexports_max = 0
 TOML
 : > "$phase0/config/architecture-allowlist.txt"
 : > "$phase0/config/architecture-dependencies.txt"
@@ -309,7 +309,7 @@ cp "$ROOT/config/architecture/retired-authorities.tsv" \
 : > "$x1/config/architecture-path-inventory.txt"
 cat > "$x1/architecture-status.toml" <<'TOML'
 [freeze]
-fabric_root_reexports_max = 0
+contracts_root_reexports_max = 0
 TOML
 printf 'pub struct Baseline;\n' > "$x1/crates/contracts/src/lib.rs"
 printf '# decision\n' > "$x1/docs/decision.md"

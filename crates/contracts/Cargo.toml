@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Aletheon fabric contracts, shared types, communication, and runtime interfaces"
+description = "Aletheon contracts: shared types, communication, and runtime interfaces"
 
 [dependencies]
 async-trait = "0.1"
