@@ -12,6 +12,7 @@ pub use pi_rpc::{
 
 pub mod worktree_recovery;
 
+#[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub mod test_registry;
 pub mod turn_operations;

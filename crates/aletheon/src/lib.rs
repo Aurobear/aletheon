@@ -11,11 +11,13 @@
 #[cfg(feature = "test-support")]
 pub mod adapters;
 #[cfg(not(feature = "test-support"))]
+#[allow(dead_code)] // items here are exercised by test-support-gated integration tests
 pub(crate) mod adapters;
 /// Composition-root construction internals. Not part of the stable API.
 #[cfg(feature = "test-support")]
 pub mod composition;
 #[cfg(not(feature = "test-support"))]
+#[allow(dead_code)] // items here are exercised by test-support-gated integration tests
 pub(crate) mod composition;
 /// Binary-owned configuration surface: typed layered application
 /// configuration, normalization, diagnostics and schema. Domain-owned
@@ -25,6 +27,7 @@ pub mod config;
 #[cfg(feature = "test-support")]
 pub mod daemon;
 #[cfg(not(feature = "test-support"))]
+#[allow(dead_code)] // items here are exercised by test-support-gated integration tests
 pub(crate) mod daemon;
 /// Binary-owned diagnostic surface.
 pub mod doctor {
@@ -44,6 +47,7 @@ pub mod extensions;
 #[cfg(feature = "test-support")]
 pub mod host;
 #[cfg(not(feature = "test-support"))]
+#[allow(dead_code)] // items here are exercised by test-support-gated integration tests
 pub(crate) mod host;
 /// The binary-owned composition boundary for core, daemon, exec, and
 /// user-daemon lifecycle. Production callers enter through this narrow facade.
