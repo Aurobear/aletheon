@@ -2,8 +2,7 @@
 
 ## Requirement anchor
 
-XRET-05 requires eventual physical deletion of the empty Executive crate
-(`docs/plans/2026-08-12-migration-closeout-execution-plan.md` §12 item 5).
+XRET-05 requires eventual physical deletion of the empty Executive crate.
 The surface ledger assigns `core/orchestrator.rs` to Runtime and splits its
 mixed evolution/mode concerns among their owners
 (`config/architecture/executive-surface-ledger.tsv`, corresponding core rows).

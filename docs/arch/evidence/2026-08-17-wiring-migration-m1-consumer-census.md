@@ -4,8 +4,6 @@
 
 日期：2026-08-17
 
-对应计划：`docs/plans/2026-08-16-aletheon-wiring-ownership-migration.md` M1
-
 ## 1. 目的与判定规则
 
 M1 删除六个 `wiring::application` compatibility re-export。删除前必须满足：

@@ -4,8 +4,6 @@
 
 日期：2026-08-17
 
-对应计划：`docs/plans/2026-08-16-aletheon-wiring-ownership-migration.md` M0
-
 批准设计 SHA-256：`c9b927bd7a21a01309d05ae31bbc41ff8024988fb0b3417cf799f3a673f76039`
 
 ## 1. Git 与工作区快照
@@ -49,7 +47,7 @@ crates/mnemosyne/src/memory_gateway.rs
 crates/mnemosyne/src/supplemental_memory.rs
 crates/platform/src/journald.rs
 crates/platform/src/lib.rs
-docs/plans/2026-08-16-gbrain-recall-source-mismatch.md
+
 scripts/lib/aletheon/build.sh
 scripts/lib/aletheon/install.sh
 scripts/libexec/aletheon/install-systemd.sh

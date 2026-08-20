@@ -1,7 +1,6 @@
 # RA-03 SessionInfrastructure 修订设计
 
 Date: 2026-08-10
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §12.2, rework brief §4 P0-1..P0-4
 Status: **CODE_CANDIDATE — focused validation and installed smoke passed; full cutover matrix remains**
 
 > §1–§2 preserve the historical evidence captured before the implementation.
@@ -159,8 +158,8 @@ session_writer = "legacy" | "runtime"
 `compact` through the injected Runtime command port
 (`crates/aletheon/src/wiring/daemon/legacy_session.rs:203-254,487-548`).
 Historical `sessions.db` access is opened with `SessionStore::open_read_only`
-only (`:265-283`); canonical-first `resume`/`switch` and the legacy fallback do
-not mutate that file (`:392-429`). A historical fallback can seed the in-memory
+only (); canonical-first `resume`/`switch` and the legacy fallback do
+not mutate that file (). A historical fallback can seed the in-memory
 facade and project into canonical storage on first read, without introducing a
 second legacy writer.
 
@@ -205,7 +204,6 @@ Focused evidence:
 This closes the code-side unchecked maintenance reopen window. Installed
 maintenance/drain rehearsal and rollback acceptance remain open.
 
-
 ## 11. Binary-owned compatibility adapter cutover (2026-08-12)
 
 The installed daemon no longer imports Executive's compatibility session or
@@ -215,7 +213,7 @@ bootstrap constructs that local adapter at
 `crates/aletheon/src/wiring/daemon/bootstrap/request.rs:1343-1358`. Creation and
 mutation still dispatch through the injected Runtime command port
 (`crates/aletheon/src/wiring/daemon/legacy_session.rs:95,203-267`), while the
-historical store remains read-only (`:272-286`). This is a composition-owner
+historical store remains read-only (). This is a composition-owner
 move, not a new Session authority.
 
 Executive's copies are now rollback/test-only remnants assigned to `XRET-04`.

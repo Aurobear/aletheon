@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::{
     AgentBudget, AgentContextFork, AgentControlErrorKind, AgentId, AgentProfileId,
     AgentSpawnRequest, RuntimeId,

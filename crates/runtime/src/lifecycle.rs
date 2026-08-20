@@ -1,4 +1,4 @@
-//! Typed lifecycle contributor model (G5, fabric layer).
+//! Typed lifecycle contributor model (fabric layer).
 //!
 //! In-process contributors receive an immutable data-only [`LifecycleInput`] at
 //! a [`LifecyclePhase`] and return bounded declarative [`LifecycleEffect`]s.
@@ -8,7 +8,7 @@
 //! the Executive.
 //!
 //! This is orthogonal to the command-hook path (external processes) which stays
-//! in corpus. See `docs/plans/grok/exec/G5-lifecycle-hooks.md`.
+//! in corpus.
 
 use serde::{Deserialize, Serialize};
 

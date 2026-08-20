@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-composition-gateway-presentation-extraction.md` §CGP-01
 State: composition skeleton established as an additive seam; **legacy launcher still the live path** (no official socket cutover)
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: composition skeleton established as an additive seam; **legacy launcher s
 ```text
 Slice: CGP-01 aletheon composition skeleton
 Baseline commit: 0bf690b2
-Plan revision: CGP-01 (composition-gateway-presentation-extraction.md:302-311)
 Direct prerequisites: RA-01 (Runtime facade) + K1/K2 + APX-01 (Application) — done
 Current authoritative composition: legacy executive::host::launcher::run_daemon (main.rs:442)
 Target owner/writer: aletheon composition root; not yet the live path

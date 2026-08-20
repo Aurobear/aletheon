@@ -2,7 +2,6 @@
 
 Date: 2026-08-10
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-runtime-authority-consolidation.md` §7 RA-03, runbook PR-C
 State: Runtime Session writer is wired into daemon composition; installed equivalence and rollback evidence remain open
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Runtime Session writer is wired into daemon composition; installed equiva
 ```text
 Slice: RA-03 PR-C Runtime Session writer (code)
 Baseline commit: 0bf690b2
-Plan revision: runtime-authority-consolidation §7 RA-03, runbook §7.3 PR-C
 Direct prerequisites: RA-03 PR-A (SessionAuthority) + S1 (session head) — done
 Current authoritative writer: RuntimeSessionWriter in `[bootstrap].session_writer = "runtime"`, behind the SessionService facade
 Target owner/writer: RuntimeSessionWriter (mints + appends) over canonical `sessions-v1.db`/shared EventSpine

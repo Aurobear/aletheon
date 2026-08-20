@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 //! Reproducible S1 scale evidence.
 //!
 //! Run explicitly (it is ignored in ordinary validation):

@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §7
 State: evidence-only census closed; `application-use-case-census.tsv` frozen; no behavior change
 
 ## Context receipt
@@ -10,7 +9,6 @@ State: evidence-only census closed; `application-use-case-census.tsv` frozen; no
 ```text
 Slice: APX-00 application use-case + I/O census
 Baseline commit: 0bf690b2
-Plan revision: implementation-plan §7.1-7.3
 Direct prerequisites: RA-00, K0 (frozen authority + effect baselines)
 Current authoritative writer: unchanged legacy Executive Application paths
 Target owner/writer: unchanged by this census

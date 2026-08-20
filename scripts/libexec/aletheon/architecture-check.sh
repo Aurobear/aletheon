@@ -2016,9 +2016,10 @@ if "is_side_effectful" not in cache or "is_permission_sensitive" not in cache or
 PY
 fi
 
-# M1 evidence-driven orchestration gate: the stage machine must trigger on
-# missing evidence (not fixed role counts), cap the fixer loop, skip low-risk
-# stages, and never become a second engine (no new settlement path).
+# M1 evidence-driven orchestration gate (retired): the runtime orchestration
+# module was retired in favor of agora::cognitive_role_workflow (single
+# controller). The -f guard below skips the gate now that the module is gone;
+# the equivalent invariants are covered by Agora's own state-machine tests.
 if [[ ${ARCH_SKIP_M1_GATES:-0} != 1 && -f crates/runtime/src/orchestration.rs ]]; then
 python3 - <<'PY'
 from __future__ import annotations

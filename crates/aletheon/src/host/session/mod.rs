@@ -3,4 +3,5 @@
 
 pub(crate) mod exec_turn_service;
 pub(crate) mod lifecycle_context;
+#[cfg(feature = "test-support")]
 pub mod test_composition;

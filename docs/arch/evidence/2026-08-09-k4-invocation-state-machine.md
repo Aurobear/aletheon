@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-kernel-enforcement-consolidation.md` §10 K4
 State: single invocation state machine established; legacy `DefaultCapabilityInvoker` stays authoritative
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: single invocation state machine established; legacy `DefaultCapabilityInv
 ```text
 Slice: K4 single admit/invoke/receipt/recovery path (state machine seam)
 Baseline commit: 0bf690b2
-Plan revision: kernel-enforcement §10 K4
 Direct prerequisites: K3 (verifier) + K2 (registry) + K1 (journal) — done
 Current authoritative writer/executor: unchanged legacy DefaultCapabilityInvoker
 Target owner/writer: Kernel single path; not yet wired

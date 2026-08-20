@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::{ApprovalCategory, ApprovalStatus, GoalState, PrincipalId};
 use adapters_google::gmail::ingest::{
     ExternalEventIngestResult, GmailOriginalReference, IngestedAttachment,

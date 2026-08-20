@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 //! Real-bridge skill-execution E2E (gated).
 //!
 //! Exercises the FULL production path — Kernel admission → Broker → provider →

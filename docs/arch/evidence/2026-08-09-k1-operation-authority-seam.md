@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-kernel-enforcement-consolidation.md` §10 K1
 State: durable Operation authority seam established; **no writer change**, legacy `OperationTable` stays authoritative
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: durable Operation authority seam established; **no writer change**, legac
 ```text
 Slice: K1 Operation authority + durable seam
 Baseline commit: 0bf690b2
-Plan revision: kernel-enforcement §10 K1
 Direct prerequisites: K0 (effect census) + D1 (contracts seed) — done
 Current authoritative writer: unchanged legacy in-memory OperationTable (kernel/src/operation/table.rs)
 Target owner/writer: Kernel (durable ExecutionJournal); not yet wired

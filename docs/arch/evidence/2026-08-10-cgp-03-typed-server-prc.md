@@ -1,7 +1,5 @@
 # CGP-03/04/05 typed Gateway server and ACP slice — evidence
 
-Requirement anchors: `docs/plans/2026-08-08-composition-gateway-presentation-extraction.md:325-341` (CGP-03 route handlers), `:335-341` (CGP-04 official socket cutover), and `:343-348` (CGP-05 ACP typed client).
-
 ## Implemented in this slice
 
 - `crates/gateway-server/src/handlers/typed.rs` exposes the typed Application port, including a fail-closed projection query, and dispatches versioned Session/Turn/Approval commands and queries to that port. `crates/gateway/src/handlers/typed.rs` is now only its compatibility re-export.

@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-domain-authority-and-adapter-extraction.md` §D2
 State: Cognit provider port + narrow CognitiveRun seam established; no writer cutover, no Robot/Executive leak
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Cognit provider port + narrow CognitiveRun seam established; no writer cu
 ```text
 Slice: D2 Cognit/Provider port split
 Baseline commit: 0bf690b2
-Plan revision: domain-authority §D2
 Direct prerequisites: D1 (contracts) — done
 Current authoritative writer: unchanged legacy Cognit core/provider dependency surface
 Target owner/writer: Cognit (InferencePort) + Runtime (loop drive/settlement at cutover)

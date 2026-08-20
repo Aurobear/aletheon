@@ -3,7 +3,7 @@
 ## Requirement anchor
 
 The migration closeout requires the Executive package to be empty before its
-physical deletion (`docs/plans/2026-08-12-migration-closeout-execution-plan.md` §12 item 5).
+physical deletion.
 The governed surface ledger assigned the former Executive deployment module to
 an operating-system adapter owner (`config/architecture/executive-surface-ledger.tsv`,
 former `crates/platform/src/deployment/mod.rs` row).

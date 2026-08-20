@@ -293,9 +293,8 @@ The convergence branch implements and source-validates the typed command
 envelope (R3), canonical live/durable TUI reducer (U1), and indexed
 per-session append path plus the required 1k/10k/100k benchmark matrix (S1).
 Those facts do not make an unreleased branch a published capability claim:
-promotion still requires the exact installed-RC scoreboard and release gates
-defined by
-`docs/plans/2026-08-16-architecture-coupling-closeout.md`.
+promotion still requires the exact installed-RC scoreboard and the release
+gates defined in `docs/release/known-limitations.md`.
 
 **Robot/HIL (H1)** remains unperformed on physical hardware. Simulation
 evidence cannot be presented as physical-robot acceptance.

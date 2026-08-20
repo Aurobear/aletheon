@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 //! Parity harness for the unified TurnEngine contract (Wave 1, W1-04).
 //!
 //! These tests validate that the `TurnEngine` trait contract is

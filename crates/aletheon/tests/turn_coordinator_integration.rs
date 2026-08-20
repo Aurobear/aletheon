@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 mod support {
     pub mod mock_llm_provider;
     pub mod mock_sandbox;

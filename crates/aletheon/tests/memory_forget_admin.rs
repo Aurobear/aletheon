@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use std::sync::Arc;
 
 use aletheon::host::admin_service::{

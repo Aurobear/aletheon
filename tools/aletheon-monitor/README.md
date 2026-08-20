@@ -129,6 +129,3 @@ asyncio.run(test())
 "
 ```
 
-## Design
-
-See `docs/plans/2026-07-05-aletheon-monitor-mcp-design.md` for the full design spec.

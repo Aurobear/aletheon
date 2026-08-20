@@ -1,7 +1,7 @@
 # E7 unused extension state retirement — 2026-08-12
 
-E7 removes extension-specific Fabric rich types after caller-zero
-(`docs/plans/2026-08-08-preserved-extensions-cutover.md:418-428`). The census
+E7 removes extension-specific Fabric rich types after caller-zero.
+The census
 records `ActivationState`, `HealthState`, and `ActivationTransition` as having no
 production caller and assigns them to Application extension activation with E7
 deletion (`config/architecture/fabric-boundary-census.tsv:743-745`).

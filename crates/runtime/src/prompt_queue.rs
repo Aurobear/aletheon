@@ -1,12 +1,10 @@
-//! Prompt queue + interjection types (G3).
+//! Prompt queue + interjection types.
 //!
 //! A session `(principal, thread)` owns a versioned queue of pending prompts
 //! and a mid-turn interjection buffer. This module holds the pure types plus
 //! the optimistic-concurrency edit/cancel rules; the coordinator, persistence,
 //! and turn-loop safe-point draining live in the Executive.
 //!
-//! See `docs/plans/grok/exec/G3-prompt-queue.md`.
-
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

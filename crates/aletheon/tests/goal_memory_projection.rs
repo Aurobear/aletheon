@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use mnemosyne::memory_job_projection::MemoryJobProjection;
 use std::sync::Arc;
 

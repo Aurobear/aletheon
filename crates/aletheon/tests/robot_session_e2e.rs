@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 //! Robot daemon-integration closure test (gap 3).
 //!
 //! Assembles the production RobotHarness composition and drives it through the

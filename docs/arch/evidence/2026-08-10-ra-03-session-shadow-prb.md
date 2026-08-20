@@ -2,7 +2,6 @@
 
 Date: 2026-08-10
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-runtime-authority-consolidation.md` §7 RA-03, runbook PR-B
 State: read-only Session shadow verifier built; legacy SessionService stays authoritative; writer switch is PR-C
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: read-only Session shadow verifier built; legacy SessionService stays auth
 ```text
 Slice: RA-03 PR-B Session shadow verifier
 Baseline commit: 0bf690b2
-Plan revision: runtime-authority-consolidation §7 RA-03, runbook §7.2 PR-B
 Direct prerequisites: RA-03 PR-A (SessionAuthority) + RA-02 (journal shadow) + S1 (session head) — done
 Current authoritative writer: unchanged legacy SessionService/SessionStore
 Target owner/writer: Runtime SessionAuthority; shadow only (no switch)

@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use aletheon::composition::daemon_bootstrap::production_embodiment::ProductionStartupGate;
 
 #[test]

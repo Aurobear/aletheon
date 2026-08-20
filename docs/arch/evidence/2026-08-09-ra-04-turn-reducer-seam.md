@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-runtime-authority-consolidation.md` §7 RA-04, runbook PR-A/PR-C
 State: canonical Turn reducer seam established (PR-A); **writer cutover is PR-C deployment slice**
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: canonical Turn reducer seam established (PR-A); **writer cutover is PR-C 
 ```text
 Slice: RA-04 canonical Turn reducer/terminal fence (PR-A portion)
 Baseline commit: 0bf690b2
-Plan revision: runtime-authority-consolidation §7 RA-04
 Direct prerequisites: RA-03 (SessionAuthority) — done
 Current authoritative writer: unchanged legacy TurnCoordinator/TurnPipeline
 Target owner/writer: Runtime canonical Turn reducer; NOT yet the writer (PR-A seam)

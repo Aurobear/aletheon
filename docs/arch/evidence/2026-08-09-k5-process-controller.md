@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-kernel-enforcement-consolidation.md` §10 K5
 State: ProcessController port established; legacy execd client stays authoritative; installed smoke is K5 PR-C
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: ProcessController port established; legacy execd client stays authoritati
 ```text
 Slice: K5 Linux/execd ProcessController adapter (port seam)
 Baseline commit: 0bf690b2
-Plan revision: kernel-enforcement §10 K5
 Direct prerequisites: K4 + K0 (execd census) — done
 Current authoritative writer: unchanged legacy execd client (executive/src/adapters/channel/execd_client.rs) + execd ProcessManager
 Target owner/writer: platform ProcessController; not yet wired

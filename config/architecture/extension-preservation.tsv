@@ -1,6 +1,5 @@
 # Agent Kernel V2 E0 extension preservation manifest (evidence-only, no behavior change)
 # Baseline: 0bf690b2
-# Plan: docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md §9
 # Each extension: production caller, feature/config, installed state, credential reference,
 # schema/table/file, worker/process, external effect, cancel/restart, equivalence oracle,
 # safe smoke, target owner, cutover slice, rollback blocker.

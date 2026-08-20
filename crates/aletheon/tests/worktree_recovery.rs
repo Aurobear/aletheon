@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::{Clock, CodingJobId, CodingJobStatus, MonoTime, WallTime};
 use adapters_sqlite::goal::CodingJobRecoveryRecord;
 use aletheon::host::runtime::worktree_recovery::{

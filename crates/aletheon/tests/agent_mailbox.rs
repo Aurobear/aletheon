@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use ::contracts::{
     AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentMessageDeliveryState,

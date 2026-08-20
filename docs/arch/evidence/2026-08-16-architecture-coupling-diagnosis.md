@@ -4,7 +4,7 @@
 **Branch at diagnosis:** `fix/tui-live-agent-inspector`
 **Status:** accepted for execution — P0–P2 only; Finding F remains `NEEDS EVIDENCE`
 **Source closeout:** P0–P2 implemented and source-validated on 2026-08-16; installed-runtime acceptance was not run and Finding F remains out of scope
-**Execution packet:** [`docs/plans/2026-08-16-architecture-coupling-closeout.md`](../../plans/2026-08-16-architecture-coupling-closeout.md) (P0–P2 only)
+**Execution packet:**  (P0–P2 only)
 **Review outcome:** Findings A–E `AGREE`; Finding F `NEEDS EVIDENCE`; P0/P1/P2 sequence `AGREE`
 **Audience:** implementer and later reviewer. Re-read cited files before executing or revising a claim.
 **Scope:** long-running operation, coupling, and module responsibility after the Executive / Fabric retirement.
@@ -324,7 +324,7 @@ contracts  <  kernel / runtime / cognit / dasein / corpus / mnemosyne
 | `dasein` → `corpus` | workspace crate edge | Self uses tool-security implementation | `crates/dasein/src/bridge/policy.rs:2` `use corpus::security::policy::{PolicyEngine, PolicyVerdict}`; `crates/dasein/src/bridge/loop_detector.rs:3` `use corpus::security::loop_detector::...`; `crates/dasein/Cargo.toml:12` |
 | `cognit` → `runtime` | workspace crate edge | Cognition uses lifecycle compaction / event bus | `crates/cognit/src/harness/linear/mod.rs:64,99`; `crates/cognit/src/adapters/inference/pulse.rs:16`; `crates/cognit/Cargo.toml:11` |
 | `cognit` infra deps | in-crate production dependency, not a workspace edge | Domain crate owns HTTP/DB/gRPC clients | `crates/cognit/Cargo.toml:28-33` (`reqwest`, `rusqlite`, `tonic`) |
-| `mnemosyne` hub | workspace crate edges | Memory crate depends on cognition + application + kernel + runtime + platform unconditionally | `crates/mnemosyne/Cargo.toml:10-16`. Feature `cognitive-memory` is off by default (`:44-45`), but the `cognit` crate dependency is not optional. |
+| `mnemosyne` hub | workspace crate edges | Memory crate depends on cognition + application + kernel + runtime + platform unconditionally | `crates/mnemosyne/Cargo.toml:10-16`. Feature `cognitive-memory` is off by default (), but the `cognit` crate dependency is not optional. |
 
 `corpus` public surface also remains a dump:
 
@@ -545,7 +545,7 @@ does not invent features.
    only.
 2. Mark `executive-layers.tsv` as a historical retirement snapshot. Mark
    `state-machine-inventory.tsv` living/ungated and remap its stale TurnPipeline
-   row; `:3` still points at deleted
+   row;  still points at deleted
    `crates/aletheon/src/wiring/application/turn_pipeline.rs`.
 3. Put `turn_pipeline.rs` on `hotspot-budgets.tsv`. Freeze new responsibilities
    from entering it while it is the largest live file.

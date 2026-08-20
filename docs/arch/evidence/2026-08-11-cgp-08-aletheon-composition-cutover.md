@@ -1,7 +1,6 @@
 # CGP-08 continuation: binary-owned composition launcher
 
 Date: 2026-08-11
-Plan: `docs/plans/2026-08-08-composition-gateway-presentation-extraction.md` §CGP-08
 
 ## Requirement and current code anchors
 
@@ -262,8 +261,7 @@ All three runs completed without `provider_unavailable`,
 `provider_rejected_request`, or rendered inference errors. This is the current
 installed-runtime acceptance evidence for the composition and extension-owner
 cutovers; the compatibility Executive sources remain intentionally retained
-until the XRET-04 deletion gate (`docs/plans/2026-08-08-composition-gateway-
-presentation-extraction.md:364-372`).
+until the XRET-04 deletion gate.
 
 ### 2026-08-11 CGP-03 server-owner extraction
 

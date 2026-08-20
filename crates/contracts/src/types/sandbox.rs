@@ -315,10 +315,9 @@ impl SandboxExecutor {
 }
 
 // ---------------------------------------------------------------------------
-// S1: sandbox profile layer. Named profiles resolve to deny paths + network
+// Sandbox profile layer. Named profiles resolve to deny paths + network
 // restriction + read/write roots. Layered config: global then project, where
 // project is ADDITIVE ONLY (cannot redefine a global profile — anti-hollowing).
-// See docs/plans/grok/exec/S1-sandbox.md.
 // ---------------------------------------------------------------------------
 
 /// A named sandbox profile config (from trusted daemon config, never repo).

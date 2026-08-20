@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §11.2
 State: Runtime owner contract established; **no writer cutover** (contract/port only)
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Runtime owner contract established; **no writer cutover** (contract/port 
 ```text
 Slice: RA-01 Runtime commands/events/queries/ID owner
 Baseline commit: 0bf690b2
-Plan revision: implementation-plan §11.2
 Direct prerequisites: RA-00 (census), D0/D1 (contracts seed) — done
 Current authoritative writer: unchanged legacy Executive Session/Turn/AgentControl paths
 Target owner/writer: Runtime (canonical IDs + commands/events/queries/ports defined; not yet wired)

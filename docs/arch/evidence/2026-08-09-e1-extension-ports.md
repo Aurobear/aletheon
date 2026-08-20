@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-preserved-extensions-cutover.md` §E1
 State: extension registration seam established; no extension cutover, no rich types in contracts
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: extension registration seam established; no extension cutover, no rich ty
 ```text
 Slice: E1 owner ports + extension registration descriptor
 Baseline commit: 0bf690b2
-Plan revision: preserved-extensions-cutover §E1, implementation-plan §11.5
 Direct prerequisites: E0 (preservation manifest) + APX-01 (Application facade) — done
 Current authoritative writer: unchanged legacy Executive extension bootstrap/adapters
 Target owner/writer: Application extension seam (descriptor only); not yet wired

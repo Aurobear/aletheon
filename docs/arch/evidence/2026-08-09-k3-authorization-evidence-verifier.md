@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-kernel-enforcement-consolidation.md` §10 K3
 State: opaque proof verifier + single-use store established; fail-closed on unavailable
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: opaque proof verifier + single-use store established; fail-closed on unav
 ```text
 Slice: K3 authorization evidence verifier
 Baseline commit: 0bf690b2
-Plan revision: kernel-enforcement §10 K3
 Direct prerequisites: K2 (sealed descriptor) — done
 Current authoritative writer: unchanged legacy admission/production.rs
 Target owner/writer: Kernel verifier port; not yet wired

@@ -39,6 +39,7 @@ cmd_test() {
       ;;
     unit)
       bash "$ALETHEON_ROOT/scripts/cargo-agent.sh" test --workspace "$@"
+      bash "$ALETHEON_ROOT/scripts/cargo-agent.sh" test -p aletheon --tests --features test-support
       ;;
     changed)
       run_internal test-changed.py "$@"

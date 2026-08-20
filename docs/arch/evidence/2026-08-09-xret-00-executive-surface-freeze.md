@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-executive-retirement-and-fitness-gates.md` §5 XRET-00
 State: evidence-only surface freeze closed; `executive-surface-ledger.tsv` frozen; no behavior change
 
 ## Context receipt
@@ -10,7 +9,6 @@ State: evidence-only surface freeze closed; `executive-surface-ledger.tsv` froze
 ```text
 Slice: XRET-00 Executive public surface freeze + seam ledger
 Baseline commit: 0bf690b2
-Plan revision: executive-retirement §5 XRET-00
 Direct prerequisites: RA-00, K0, APX-00, CGP-00, E0, D0
 Current authoritative writer: unchanged legacy Executive paths
 Target owner/writer: unchanged by this census

@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
 use gateway::ports::{ChannelTurnApplicationPort, ChannelTurnRequest};
 use std::sync::Arc;

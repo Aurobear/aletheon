@@ -1,4 +1,4 @@
-//! Subagent resource settlement types (G6).
+//! Subagent resource settlement types.
 //!
 //! When a child agent completes, its resources are settled deterministically:
 //! release leases, flush usage/budget, reparent or kill background resources,
@@ -6,8 +6,6 @@
 //! types plus the reparent rule and the idempotency-key derivation. The
 //! settlement state-machine orchestration lives in the AgentControl service.
 //!
-//! See `docs/plans/grok/exec/G6-subagent-settlement.md`.
-
 use serde::{Deserialize, Serialize};
 
 /// Resource categories; the class drives the default disposition at settlement.

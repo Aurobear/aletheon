@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::{ApprovalId, GoalBudget, GoalSpec, PrincipalId};
 use adapters_google::gmail::report::{
     GmailDeliveryOutcome, GmailReconciliation, GmailReportBoundary, GmailReportProvider,

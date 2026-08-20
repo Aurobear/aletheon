@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §10, `2026-08-09-fabric-source-disposition-ledger.md` §3
 State: D0 artifact produced; **D1 remains blocked until B2/B4 evidence closure** (per ledger §3.2)
 
 ## Context receipt
@@ -10,7 +9,6 @@ State: D0 artifact produced; **D1 remains blocked until B2/B4 evidence closure**
 ```text
 Slice: D0 fabric owner/caller/codec census closure
 Baseline commit: 0bf690b2
-Plan revision: implementation-plan §10.1-10.3, fabric-source-disposition-ledger §3
 Direct prerequisites: RA-00, K0, APX-00, CGP-00, E0
 Current authoritative writer: unchanged legacy Fabric rich-type surface
 Target owner/writer: unchanged by this census

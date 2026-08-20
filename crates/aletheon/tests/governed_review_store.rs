@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use std::os::unix::fs::PermissionsExt;
 
 use aletheon::host::governed_review::{GovernedReviewStore, ReviewStoreError};

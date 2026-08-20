@@ -3,9 +3,9 @@
 ## Requirement anchors
 
 - E7 uniquely removes extension-specific Fabric rich rows and only their root
-  re-exports: `docs/plans/2026-08-08-preserved-extensions-cutover.md:418-428`.
+  re-exports: .
 - D6 must run after E7 and owns non-extension/shared-root closeout:
-  `docs/plans/2026-08-08-domain-authority-and-adapter-extraction.md:334-343`.
+  .
 
 ## Before / after
 

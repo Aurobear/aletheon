@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::*;
 use adapters_sqlite::approval_repository::{ApprovalCreate, ApprovalRepository};
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;

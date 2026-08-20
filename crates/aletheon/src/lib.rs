@@ -3,24 +3,32 @@
 //! The **stable public facade** for external consumers is `launcher` (binary
 //! entry composition), `config`, `doctor`, `extension`, `extensions`,
 //! `scoreboard`, and `workspace`. The host/composition/daemon/adapters modules
-//! below are implementation internals: they are `#[doc(hidden)]` so they are
-//! not part of the documented API, and they are exercised by this crate's
-//! integration tests. Tightening them to `pub(crate)` (feature-gated test
-//! support) is tracked in the wiring-ownership plan closeout.
+//! below are implementation internals: they are `pub(crate)` in normal builds
+//! and are declared public only under the `test-support` feature for this
+//! crate's integration tests.
 
 /// Host runtime/transport implementation internals. Not part of the stable API.
-#[doc(hidden)]
+#[cfg(feature = "test-support")]
 pub mod adapters;
+#[cfg(not(feature = "test-support"))]
+#[allow(dead_code)] // items here are exercised by test-support-gated integration tests
+pub(crate) mod adapters;
 /// Composition-root construction internals. Not part of the stable API.
-#[doc(hidden)]
+#[cfg(feature = "test-support")]
 pub mod composition;
+#[cfg(not(feature = "test-support"))]
+#[allow(dead_code)] // items here are exercised by test-support-gated integration tests
+pub(crate) mod composition;
 /// Binary-owned configuration surface: typed layered application
 /// configuration, normalization, diagnostics and schema. Domain-owned
 /// sub-configuration values are re-exported from their owner crates.
 pub mod config;
 /// Daemon transport/handler implementation internals. Not part of the stable API.
-#[doc(hidden)]
+#[cfg(feature = "test-support")]
 pub mod daemon;
+#[cfg(not(feature = "test-support"))]
+#[allow(dead_code)] // items here are exercised by test-support-gated integration tests
+pub(crate) mod daemon;
 /// Binary-owned diagnostic surface.
 pub mod doctor {
     pub use crate::host::doctor::*;
@@ -36,8 +44,11 @@ pub mod extension {
 /// Binary-owned extension lifecycle, install, snapshot and runtime routing.
 pub mod extensions;
 /// Host runtime/transport implementation internals. Not part of the stable API.
-#[doc(hidden)]
+#[cfg(feature = "test-support")]
 pub mod host;
+#[cfg(not(feature = "test-support"))]
+#[allow(dead_code)] // items here are exercised by test-support-gated integration tests
+pub(crate) mod host;
 /// The binary-owned composition boundary for core, daemon, exec, and
 /// user-daemon lifecycle. Production callers enter through this narrow facade.
 pub mod launcher;

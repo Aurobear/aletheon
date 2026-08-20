@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::PrincipalId;
 use adapters_sqlite::channel_projection::SqliteChannelProjectionStore;
 use adapters_sqlite::ChannelStore;

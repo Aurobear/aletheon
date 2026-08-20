@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use aletheon::daemon::turn_engine::map_turn_execution;
 use application::turn::coordinator::TurnExecution;
 

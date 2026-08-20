@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::dasein::{SelfVersion, Stimmung};
 use ::contracts::{
     AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, Message, OperationId,

@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §6, `2026-08-08-kernel-enforcement-consolidation.md` §10 K0
 State: evidence-only census closed; `kernel-effect-census.tsv` frozen; no behavior change
 
 ## Context receipt
@@ -10,7 +9,6 @@ State: evidence-only census closed; `kernel-effect-census.tsv` frozen; no behavi
 ```text
 Slice: K0 kernel effect/operation/process census
 Baseline commit: 0bf690b2
-Plan revision: implementation-plan §6.1-6.3, kernel-enforcement §10 K0
 Direct prerequisites: RA-00 (frozen runtime authority census)
 Current authoritative writer: unchanged legacy KernelRuntime/DefaultCapabilityInvoker paths
 Target owner/writer: unchanged by this census

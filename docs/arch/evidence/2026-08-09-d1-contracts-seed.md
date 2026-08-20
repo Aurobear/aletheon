@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §11.1
 State: gated ownerless-primitive seed established in fabric; no package rename, no rich-type move, no writer cutover
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: gated ownerless-primitive seed established in fabric; no package rename, 
 ```text
 Slice: D1 minimal contracts seed
 Baseline commit: 0bf690b2
-Plan revision: implementation-plan §11.1 / §10.3
 Direct prerequisites: D0 (B2/B4 closure) — done
 Current authoritative writer: unchanged legacy Fabric rich-type surface
 Target owner/writer: unchanged (seed is additive re-export only)

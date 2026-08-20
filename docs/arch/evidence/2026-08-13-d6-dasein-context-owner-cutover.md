@@ -4,8 +4,8 @@ Date: 2026-08-13
 
 ## Requirement receipt
 
-- D6 closes non-extension rich surfaces before Executive retirement: `docs/plans/2026-08-12-migration-closeout-execution-plan.md §12`.
-- Rich domain models must move to their domain owner rather than remain in the dependency-neutral contract root: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md §10-11`.
+- D6 closes non-extension rich surfaces before Executive retirement: .
+- Rich domain models must move to their domain owner rather than remain in the dependency-neutral contract root: .
 
 ## Cutover
 

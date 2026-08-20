@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::PrincipalId;
 use adapters_google::gmail::sender_policy::{
     AuthenticationRequirement, GmailHeader, GmailSenderPolicy, SenderPolicyError,

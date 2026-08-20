@@ -1,6 +1,5 @@
 # Agent Kernel V2 APX-00 application/IO census (evidence-only, no behavior change)
 # Baseline: 0bf690b2
-# Plan: docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md §7
 # Classification: basic-use-case | optional-supported | optional-unproven | adapter-io | compatibility | dead
 # optional-unproven requires production-caller search, installed search, target owner, closing command.
 fact_id	use_case_family	source_classification	concrete_io	primary_sources	production_callers	installed_config_evidence	target_owner	closing_slice	status	evidence_command

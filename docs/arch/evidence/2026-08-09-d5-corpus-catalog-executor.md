@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-domain-authority-and-adapter-extraction.md` §D5
 State: Corpus catalog/executor split seam established; no writer cutover, no Executive exec_corpus leak
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Corpus catalog/executor split seam established; no writer cutover, no Exe
 ```text
 Slice: D5 Corpus catalog/executor split
 Baseline commit: 0bf690b2
-Plan revision: domain-authority §D5
 Direct prerequisites: D1 + D2-D4 + K2 (sealed registry) — done
 Current authoritative writer: unchanged legacy Corpus ExtensionCatalog + Executive exec_corpus/corpus_group
 Target owner/writer: Corpus (catalog) + adapters (executor); cutover later

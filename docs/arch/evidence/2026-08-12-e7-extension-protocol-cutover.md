@@ -3,10 +3,9 @@
 ## Requirement and current-code anchors
 
 CGP-02 assigns versioned commands, queries, events, serialization and legacy
-translation to the independent Gateway protocol/client packages
-(`docs/plans/2026-08-08-composition-gateway-presentation-extraction.md:313-320`).
-E7 deletes extension-specific Fabric rich types and re-exports after caller-zero
-(`docs/plans/2026-08-08-preserved-extensions-cutover.md:418-428`). The six
+translation to the independent Gateway protocol/client packages.
+E7 deletes extension-specific Fabric rich types and re-exports after caller-zero.
+The six
 extension wire rows were registered for Gateway/Application ownership and E7
 deletion (`config/architecture/fabric-boundary-census.tsv:408-413`).
 

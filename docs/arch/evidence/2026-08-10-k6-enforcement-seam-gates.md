@@ -2,7 +2,6 @@
 
 Date: 2026-08-10
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-kernel-enforcement-consolidation.md` §10 K6
 State: enforcement seam gates delivered; extension joint cutovers (E2-K6a/E4-K6b/E5-K6c/E6-K6d) consume them; no extension migration
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: enforcement seam gates delivered; extension joint cutovers (E2-K6a/E4-K6b
 ```text
 Slice: K6 Kernel seam/gates ready for extension joint cutovers
 Baseline commit: 0bf690b2
-Plan revision: kernel-enforcement §10 K6
 Direct prerequisites: K0..K5 — done
 Current authoritative writer: unchanged legacy Executive extension paths
 Target owner/writer: Kernel enforcement seam (gates only); extensions switch via their unique owner PRs

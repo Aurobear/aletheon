@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use ::contracts::goal::{GoalBudget, GoalSpec, GoalState, GoalWaitReason};
 use ::contracts::PrincipalId;
 use adapters_google::{

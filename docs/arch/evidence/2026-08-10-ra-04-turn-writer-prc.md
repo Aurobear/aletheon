@@ -2,7 +2,6 @@
 
 Date: 2026-08-10
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-runtime-authority-consolidation.md` §7 RA-04, runbook PR-C
 State: Runtime Turn writer is wired as the canonical terminal fence and durable TurnStream writer; TurnCoordinator remains the execution/projection facade
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Runtime Turn writer is wired as the canonical terminal fence and durable 
 ```text
 Slice: RA-04 PR-C canonical Turn writer (code)
 Baseline commit: 0bf690b2
-Plan revision: runtime-authority-consolidation §7 RA-04, runbook §7.3 PR-C
 Direct prerequisites: RA-04 PR-A (Turn reducer) + R1 (typed outcome) — done
 Current authoritative writer: RuntimeTurnWriter for TurnId and terminal; TurnCoordinator remains host execution and SessionAppendStore projection
 Target owner/writer: RuntimeTurnWriter + TurnStream sink

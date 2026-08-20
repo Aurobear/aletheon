@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-kernel-enforcement-consolidation.md` §10 K2
 State: sealed descriptor + CapabilityExecutor registry established; legacy `DefaultCapabilityInvoker` stays authoritative; no traffic cut
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: sealed descriptor + CapabilityExecutor registry established; legacy `Defa
 ```text
 Slice: K2 sealed descriptor + CapabilityExecutor
 Baseline commit: 0bf690b2
-Plan revision: kernel-enforcement §10 K2
 Direct prerequisites: K1 (durable seam) + D1 (contracts) — done
 Current authoritative writer/executor: unchanged legacy DefaultCapabilityInvoker (capability/mod.rs)
 Target owner/writer: Kernel (sealed CapabilityRegistry); not yet wired

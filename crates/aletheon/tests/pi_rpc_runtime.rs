@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use aletheon::host::runtime::test_registry::AgentExecutionRegistry;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

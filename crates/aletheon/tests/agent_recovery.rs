@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 use adapters_sqlite::runtime_agent::SqliteAgentRunProjection;
 use aletheon::host::runtime::test_registry::AgentExecutionRegistry;
 use std::sync::Arc;

@@ -2,8 +2,6 @@
 //!
 //! Implements `debug.*` methods called by `aletheon debug` CLI subcommands.
 //!
-//! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 3).
-
 use ::contracts::{Clock, MonoTime, Timer};
 use kernel::debug::{DebugEvent, DebugLevel};
 use kernel::debug_bus::{
@@ -46,7 +44,6 @@ fn builtin_tracepoints() -> Vec<Value> {
 
 struct ActiveRecording {
     /// Parked — future debug-recording correlation.
-    /// See docs/plans/2026-07-04-config-cleanup-refactor-design.md §5.
     #[allow(dead_code)]
     id: String,
     path: PathBuf,

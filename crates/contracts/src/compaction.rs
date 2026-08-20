@@ -166,8 +166,8 @@ fn truncate_tool_call_args(messages: &mut [Message]) {
 }
 
 // ---------------------------------------------------------------------------
-// C1: compaction guardrails (strategy, outcome, degenerate detection,
-// tool-pair-safe tail cut). See docs/plans/grok/exec/C1-compaction.md.
+// Compaction guardrails (strategy, outcome, degenerate detection,
+// tool-pair-safe tail cut).
 // ---------------------------------------------------------------------------
 
 /// Compaction strategy selector. TailKeep is the current AdvancedCompressor

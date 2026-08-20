@@ -1,9 +1,10 @@
 # Multi-Agent Orchestration
 
-The retired Executive orchestration tree no longer exists. Runtime now owns the
-evidence-driven orchestration state machine and iteration budget:
+The retired Executive orchestration tree no longer exists. The evidence-driven
+orchestration controller (role workflow state machine) now lives in Agora as the
+single controller, while Runtime retains the iteration budget:
 
-- `crates/runtime/src/orchestration.rs`
+- `crates/agora/src/cognitive_role_workflow/mod.rs`
 - `crates/runtime/src/iteration_budget.rs`
 - `crates/aletheon/src/composition/agent_control/mod.rs`
 

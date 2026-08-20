@@ -1,3 +1,4 @@
+#![cfg(feature = "test-support")]
 #![allow(clippy::type_complexity)]
 
 mod support {
