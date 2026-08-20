@@ -1,4 +1,4 @@
-//! Sandbox executor types — now defined in fabric.
+//! Sandbox executor types — now defined in contracts.
 //!
 //! This module provides backward-compatible re-exports and a convenience factory
 //! that constructs a [`SandboxExecutor`] with corpus default backends.

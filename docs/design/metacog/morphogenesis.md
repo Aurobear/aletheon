@@ -70,7 +70,7 @@ The agent operates normally, accumulating performance data, tool call outcomes, 
 
 ### 2.2 Reflect
 
-The agent analyzes its own performance. This uses the `SelfFieldOps` trait from `fabric` to read the current state, and `CognitOps` for reflection and critique.
+The agent analyzes its own performance. This uses the `SelfFieldOps` trait from `dasein` (`crates/dasein/src/core/contracts.rs`) to read the current state, and `CognitOps` for reflection and critique.
 
 Output: `MutationIntent` — a structured description of what should change.
 
@@ -122,7 +122,7 @@ pub struct Genome {
 }
 ```
 
-Code location: `fabric/src/types/genome.rs`
+Code location: `crates/metacog/src/genome/`
 
 ### 3.1 Topology
 
@@ -182,7 +182,7 @@ The `LineageRecorder` in the MetaRuntime preserves these invariants across all m
 - `metacog/src/impl/morphogenesis/candidate.rs` — Candidate model
 - `metacog/src/impl/morphogenesis/mutation_intent.rs` — Mutation intent model
 - `metacog/src/impl/genome/loader.rs` — `GenomeLoader`
-- `fabric/src/types/genome.rs` — `Genome` struct definition
+- `crates/metacog/src/genome/contracts.rs` — `Genome` struct definition
 
 **Key types:**
 - `MorphogenesisPipeline` — orchestrates the full pipeline

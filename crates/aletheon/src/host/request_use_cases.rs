@@ -472,7 +472,7 @@ impl ProductionSessionLifecycle {
                         .persist_context_fragments(
                             &SessionId(session_id.into()),
                             ::contracts::TurnId::new(),
-                            fabric_lifecycle_phase(phase),
+                            canonical_lifecycle_phase(phase),
                             vec![(source, content)],
                         )
                         .await?;
@@ -483,23 +483,23 @@ impl ProductionSessionLifecycle {
     }
 }
 
-fn fabric_lifecycle_phase(
+fn canonical_lifecycle_phase(
     phase: runtime::lifecycle_contributors::LifecyclePhase,
 ) -> runtime::lifecycle::LifecyclePhase {
-    use runtime::lifecycle::LifecyclePhase as FabricPhase;
+    use runtime::lifecycle::LifecyclePhase as CanonicalPhase;
     use runtime::lifecycle_contributors::LifecyclePhase as RuntimePhase;
     match phase {
-        RuntimePhase::BeforeSessionStart => FabricPhase::BeforeSessionStart,
-        RuntimePhase::AfterSessionStart => FabricPhase::AfterSessionStart,
-        RuntimePhase::BeforeTurnInput => FabricPhase::BeforeTurnInput,
-        RuntimePhase::AfterContextProjection => FabricPhase::AfterContextProjection,
-        RuntimePhase::BeforeModelCall => FabricPhase::BeforeModelCall,
-        RuntimePhase::BeforeToolBatch => FabricPhase::BeforeToolBatch,
-        RuntimePhase::AfterToolTerminal => FabricPhase::AfterToolTerminal,
-        RuntimePhase::AfterTurnTerminal => FabricPhase::AfterTurnTerminal,
-        RuntimePhase::BeforeSessionEnd => FabricPhase::BeforeSessionEnd,
-        RuntimePhase::AfterSessionEnd => FabricPhase::AfterSessionEnd,
-        RuntimePhase::OnAbort => FabricPhase::OnAbort,
+        RuntimePhase::BeforeSessionStart => CanonicalPhase::BeforeSessionStart,
+        RuntimePhase::AfterSessionStart => CanonicalPhase::AfterSessionStart,
+        RuntimePhase::BeforeTurnInput => CanonicalPhase::BeforeTurnInput,
+        RuntimePhase::AfterContextProjection => CanonicalPhase::AfterContextProjection,
+        RuntimePhase::BeforeModelCall => CanonicalPhase::BeforeModelCall,
+        RuntimePhase::BeforeToolBatch => CanonicalPhase::BeforeToolBatch,
+        RuntimePhase::AfterToolTerminal => CanonicalPhase::AfterToolTerminal,
+        RuntimePhase::AfterTurnTerminal => CanonicalPhase::AfterTurnTerminal,
+        RuntimePhase::BeforeSessionEnd => CanonicalPhase::BeforeSessionEnd,
+        RuntimePhase::AfterSessionEnd => CanonicalPhase::AfterSessionEnd,
+        RuntimePhase::OnAbort => CanonicalPhase::OnAbort,
     }
 }
 

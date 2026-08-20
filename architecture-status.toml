@@ -64,9 +64,9 @@ to = "hardware"
 reason = "仅定向集成测试验证 Kernel permit 到 Hardware simulator receipt 的纵向边界"
 classification = "experimental_dev"
 
-# Fabric 根级 pub use 数量上限，防止共享协议层继续膨胀。
+# contracts 根级 pub use 数量上限，防止共享协议层继续膨胀。
 # 132 -> 134: R0 execution_target 与 X0 context_budget 两个已验收工作包的
 # 类型提升为跨 crate 公共 API（ExecutionTarget/ExecutionTargetSelection 等
 # 及 ContextBudgetProjection 系列），按冻结账本审查纳入。
 [freeze]
-fabric_root_reexports_max = 134
+contracts_root_reexports_max = 134

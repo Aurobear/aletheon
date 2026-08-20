@@ -81,7 +81,7 @@ crates/agora/src/
 
 `AgoraRegistry` (`ops.rs`) owns one `Workspace` per session id (`HashMap<String, Workspace>`
 behind a `tokio::sync::Mutex`) and implements the `AgoraOps` trait
-(`fabric::AgoraOps`, defined in `crates/agora/src/contract.rs`):
+(`agora::AgoraOps`, defined in `crates/agora/src/contract.rs`):
 
 | Method | Signature | Behavior |
 |--------|-----------|----------|
@@ -92,7 +92,7 @@ behind a `tokio::sync::Mutex`) and implements the `AgoraOps` trait
 | `clear` | `(session) -> Result<()>` | Clears the session's workspace state (no-op if the session doesn't exist). |
 | `trace` | `(session, kind, content: Value) -> Result<()>` | Appends an entry to the session's trace (creates the workspace if absent). |
 
-Tool results are recorded as the typed `fabric::primitives::cognitive::Evidence`
+Tool results are recorded as the typed `contracts::primitives::cognitive::Evidence`
 object via `AgoraOps::record_evidence` (which lowers to `trace(_, "evidence", _)`);
 the persisted snapshot carries them round-trip. Other boundary payloads
 (the generic blackboard `publish`/`recall`/`update`) remain `serde_json::Value`

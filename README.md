@@ -184,12 +184,12 @@ See [the architecture overview](docs/design/architecture-overview.md) and [desig
 
 ## 5. Crate Architecture
 
-Aletheon is organized as sixteen domain/runtime crates plus one executable
-assembly crate and two example crates:
+Aletheon is organized as fifteen domain/runtime crates, six adapter crates,
+one executable assembly crate, and two example crates:
 
 | Crate | Concept | Role |
 |---|---|---|
-| `fabric` | ABI | IPC, tool/message/sandbox/LLM types, `paths` |
+| `contracts` | ABI | IPC, tool/message/sandbox/LLM types, `paths` |
 | `dasein` | Self | identity, boundary, care, narrative |
 | `cognit` | Brain | reasoning, planning, reflection, provider routing |
 | `corpus` | Body | tools, sandbox, perception, MCP, drivers |
@@ -201,9 +201,21 @@ assembly crate and two example crates:
 | `kernel` | Kernel services | clock/timer implementations and process/operation foundations |
 | `platform` | Host platform | Linux host capability contracts and adapters (Android/macOS/Windows not implemented) |
 | `runtime` | Agent runtime contracts | external runtime manifests and deterministic selection |
+| `application` | App services | daemon lifecycle, admin service, turn engine composition |
 | `hardware` | Embodiment | typed hardware permits, receipts, and deterministic simulator |
 | `execd` | Isolated executor | privileged/isolated filesystem execution daemon |
 | `aletheon` | Assembly | unified executable entry point; no domain logic |
+
+Adapter crates (`crates/adapters/`, each owned by the ports it backs):
+
+| Crate | Concept | Role |
+|---|---|---|
+| `adapters-sqlite` | Persistence | SQLite session event-sourced store and projections |
+| `adapters-agent-profile` | Agent profiles | filesystem/Markdown agent profile persistence |
+| `adapters-agent-backend` | Agent backends | external agent backend adapters under Runtime execution authority |
+| `adapters-inference` | Inference | HTTP providers, machine-core RPC transport, and backpressure |
+| `adapters-gbrain` | Memory | GBrain supplemental-memory MCP adapter and governed recall |
+| `adapters-google` | Sync | Google/Gmail sync store, gmail ingress, and classification |
 
 Executable entry point:
 - `aletheon` — assembled by `crates/aletheon` (`crates/aletheon/Cargo.toml`); provides TUI, `daemon`, and `exec` modes.
@@ -215,8 +227,7 @@ aletheon  ---> interact, gateway, corpus, runtime, kernel, application
 interact  ---> gateway
 corpus    ---> platform, kernel, application
 agora/cognit/dasein/metacog/mnemosyne ---> kernel, contracts
-agora/cognit/dasein/metacog/mnemosyne ---> kernel, fabric
-gateway/hardware/kernel ---> fabric
+gateway/hardware/kernel ---> contracts
 execd     ---> platform
 ```
 

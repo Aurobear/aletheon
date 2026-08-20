@@ -13,11 +13,11 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TESTS = [
-    ROOT / "crates/executive/tests/cross_domain_acceptance.rs",
-    ROOT / "crates/executive/tests/functional_indicators.rs",
-    ROOT / "crates/executive/tests/support/conscious_core_harness.rs",
+    ROOT / "crates/aletheon/tests/cross_domain_acceptance.rs",
+    ROOT / "crates/aletheon/tests/functional_indicators.rs",
+    ROOT / "crates/aletheon/tests/support/conscious_core_harness.rs",
 ]
-FIXTURE = ROOT / "crates/executive/tests/fixtures/conscious_core/baseline_v1.json"
+FIXTURE = ROOT / "crates/aletheon/tests/fixtures/conscious_core/baseline_v1.json"
 RUNTIME_EVIDENCE = ROOT / "target/acceptance/runtime-evidence.json"
 INDICATOR_EVIDENCE = ROOT / "target/acceptance/indicator-evidence.json"
 ABLATION_EVIDENCE = ROOT / "target/acceptance/ablation-evidence.json"

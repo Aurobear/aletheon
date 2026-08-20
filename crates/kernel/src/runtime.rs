@@ -26,7 +26,7 @@ use tokio::sync::Mutex;
 ///
 /// Components are stored as owned concrete types and exposed through
 /// trait-object getters (`Arc<dyn Trait>`) so callers depend on the
-/// fabric boundary contract, never on kernel implementation types.
+/// contracts boundary contract, never on kernel implementation types.
 pub struct KernelRuntime {
     clock: Arc<dyn Clock>,
     spaces: Arc<InMemorySpaceManager>,

@@ -20,7 +20,7 @@ use ::contracts::cognitive_workflow::{
 };
 use ::contracts::types::operation::ProcessId;
 
-// Re-export versioned commit types from fabric (single source of truth for
+// Re-export versioned commit types from contracts (single source of truth for
 // the trait contract), so consumers can import them from `crate::workspace`.
 pub use crate::contract::{
     AgoraCommit, AgoraOperation, AgoraProposal, RejectReason, VersionConflict,

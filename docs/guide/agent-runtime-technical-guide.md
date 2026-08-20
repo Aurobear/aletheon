@@ -23,37 +23,46 @@ Aletheon 是**持久自进化的 Agent Runtime**：它是常驻的 daemon / 系�
 - 目标：**Agent Runtime**——承载 Agent 的会话、工具治理、权限、预算、记忆、子 Agent、事件、
   恢复与验收的系统软件；不是再训练一个 LLM。
 
-### 0.2 16 个 crate 地图
+### 0.2 crate 地图
 
 | Crate | 角色 | 核心内容 |
 |---|---|---|
-| `fabric` | ABI | 共享类型与 Trait：message/tool/LLM/admission/embodiment；IPC（Unix socket） |
+| `contracts` | ABI | 共享类型与 Trait：message/tool/LLM/admission/embodiment；IPC（Unix socket） |
+| `dasein` | Self | 自我：identity、boundary、care、narrative、attention |
 | `cognit` | Brain | 推理、规划、反思、provider 路由；ReActLoop / RobotHarness |
 | `corpus` | Body | 工具注册与执行、沙箱、感知、MCP、硬件驱动 |
-| `executive` | Executive | 最小编排 + daemon 实现；Turn/Session/Goal/Attempt、能力治理、settlement |
-| `kernel` | Kernel services | Admission / Permit / Lease、clock/timer、operation 基础 |
-| `mnemosyne` | Memory | episodic/semantic/procedural/self 记忆、检索、沉淀 |
 | `agora` | Workspace | 共享认知工作区：blackboard、attention、task graph、scratchpad、trace |
-| `dasein` | Self | 自我：identity、boundary、care、narrative、attention |
+| `interact` | Interface | 可复用 CLI 与 TUI |
+| `mnemosyne` | Memory | episodic/semantic/procedural/self 记忆、检索、沉淀 |
 | `metacog` | Meta | 自我进化脚手架 |
 | `gateway` | Channels | 通道无关的 intent/effect 分发与传输 |
-| `interact` | Interface | 可复用 CLI 与 TUI |
+| `kernel` | Kernel services | Admission / Permit / Lease、clock/timer、operation 基础 |
 | `platform` | Host platform | Linux 宿主能力契约与适配（Android/macOS/Windows 未实现） |
-| `runtime` | Agent runtime | 外部 runtime manifest 与确定性选择 |
+| `runtime` | Agent runtime | 外部 runtime manifest、Turn/Session/Agent 生命周期与确定性选择 |
+| `application` | App services | daemon 生命周期、admin service、turn engine 组合 |
 | `hardware` | Embodiment | 硬件 permit/receipt、确定性 simulator、gRPC provider |
 | `execd` | Isolated executor | 提权 / 隔离的文件系统执行 daemon |
 | `aletheon` | Assembly | 统一可执行入口，无领域逻辑 |
 
+Adapter crates（`crates/adapters/`，各自归属其背书的 port）：
+
+| Crate | 角色 | 核心内容 |
+|---|---|---|
+| `adapters-sqlite` | Persistence | SQLite 会话事件溯源存储与投影 |
+| `adapters-agent-profile` | Agent profiles | 文件系统/Markdown 的 Agent profile 持久化 |
+| `adapters-agent-backend` | Agent backends | Runtime 执行权威下的外部 agent backend 适配 |
+| `adapters-inference` | Inference | HTTP provider、machine-core RPC 传输、背压 |
+| `adapters-gbrain` | Memory | GBrain 补充记忆 MCP 适配与受治理召回 |
+| `adapters-google` | Sync | Google/Gmail 同步存储、gmail 入站与分类 |
+
 顶层依赖关系：
 
 ```text
-aletheon  ---> executive, interact, fabric
-executive ---> agora, cognit, corpus, dasein, gateway, hardware,
-              kernel, metacog, mnemosyne, runtime, fabric
-interact  ---> executive, fabric
-corpus    ---> platform, kernel, fabric
-agora/cognit/dasein/metacog/mnemosyne ---> kernel, fabric
-gateway/hardware/kernel ---> fabric
+aletheon  ---> interact, gateway, corpus, runtime, kernel, application
+interact  ---> gateway
+corpus    ---> platform, kernel, application
+agora/cognit/dasein/metacog/mnemosyne ---> kernel, contracts
+gateway/hardware/kernel ---> contracts
 execd     ---> platform
 ```
 

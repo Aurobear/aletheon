@@ -1,3 +1,3 @@
-//! Process handle façade shared with fabric.
+//! Process handle façade shared with contracts.
 
 pub use crate::lifecycle::ProcessHandle;

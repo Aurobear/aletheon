@@ -8,7 +8,7 @@ default:
 # ── 构建 ───────────────────────────────────────────────────────────────
 
 # 快速增量类型检查（debug 模式，日常开发用，不支付链接成本）
-# 例如 `just dev executive` 只检查该 crate 及其依赖。
+# 例如 `just dev cognit` 只检查该 crate 及其依赖。
 dev package="aletheon":
     bash scripts/cargo-agent.sh check -p {{package}}
 
@@ -69,14 +69,14 @@ check: fmt test lint doc
 
 # 架构依赖、遗留路径和绕过调用只能减少，不能新增
 architecture-check:
-    bash scripts/cargo-agent.sh test -p executive --test layered_config_contract checked_in_schema_is_deterministic
+    bash scripts/cargo-agent.sh test -p aletheon --test layered_config_contract checked_in_schema_is_deterministic
     bash scripts/aletheon.sh test architecture
 
 # Deterministic cross-domain causal, isolation, replay and ablation evidence.
 acceptance: architecture-check
     python3 tools/acceptance_report.py --check
-    bash scripts/cargo-agent.sh test -j1 -p executive --test cross_domain_acceptance
-    bash scripts/cargo-agent.sh test -j1 -p executive --test functional_indicators
+    bash scripts/cargo-agent.sh test -j1 -p aletheon --test cross_domain_acceptance
+    bash scripts/cargo-agent.sh test -j1 -p aletheon --test functional_indicators
     python3 tools/acceptance_report.py
 
 # ── 部署 ───────────────────────────────────────────────────────────────

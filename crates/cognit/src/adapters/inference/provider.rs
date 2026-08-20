@@ -1,6 +1,6 @@
 //! Re-exports of the canonical LLM provider trait and types.
 //!
-//! These items now live in `fabric` (RFC-018 Phase 4, resolves D4) since they
+//! These items now live in `contracts` (RFC-018 Phase 4, resolves D4) since they
 //! are a shared client abstraction, not cognit-specific implementation. This
 //! Cognit uses the shared contract internally and exposes it through the stable
 //! `cognit::inference::provider` facade. Provider transports stay private.

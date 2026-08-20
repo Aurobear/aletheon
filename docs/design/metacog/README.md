@@ -30,8 +30,8 @@ modules directly under `src/`.
 
 ## Key Concepts
 
-- **Genome** — Complete agent architecture specification (topology, identity, boundary, care, memory, mutation, lifecycle). Defined in `fabric/src/types/genome.rs`.
-- **MetaRuntime** — The engine that reads, modifies, tests, and migrates. Implements `MetaRuntimeOps` trait from `fabric/src/include/meta.rs`.
+- **Genome** — Complete agent architecture specification (topology, identity, boundary, care, memory, mutation, lifecycle). Defined in `crates/metacog/src/genome/`.
+- **MetaRuntime** — The engine that reads, modifies, tests, and migrates. Implements `MetaRuntimeOps` trait from `metacog/src/governance/contracts.rs`.
 - **Morphogenesis** — The self-evolution pipeline: run -> reflect -> mutate -> generate -> evaluate -> migrate -> become.
 - **Continuity Anchor** — The minimal invariant preserved across all mutations: lineage, memory relation, user relation, migration history.
 

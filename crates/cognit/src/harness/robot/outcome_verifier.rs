@@ -1,7 +1,7 @@
 //! Deterministic outcome verifier for embodied skills.
 //!
 //! Evaluates a policy proposal's `ExpectedOutcome` against world-state
-//! observations using fabric's dot-path predicate evaluation. The verifier
+//! observations using contracts' dot-path predicate evaluation. The verifier
 //! WAITS for post-execution observations via `WorldStatePort::observe_until`
 //! and requires a continuous stable window — it never settles on a single
 //! before/after time delta. Unsafe predicates (fall detection, estop, provider

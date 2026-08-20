@@ -961,7 +961,7 @@ io_uring 混合架构        可选内核模块            自定义 syscall
 
 ## Implementation Summary
 
-**Code location:** `crates/fabric/src/ipc/`
+**Code location:** `crates/contracts/src/ipc/`
 
 **Key types/traits implemented:**
 - `IpcBackend` trait (`backend.rs`) — unified backend interface with send/recv/probe

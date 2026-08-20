@@ -48,15 +48,18 @@
 
 **按 Crate 查阅（推荐）：**
 
+> `fabric` 已并入 `contracts`，`executive` 已退役（物理 cutover 完成）。下表这两行及
+> `fabric/`、`executive/` 目录保留为历史设计；能力现状以顶层 `README.md` 和当前 `crates/` 代码为准。
+
 | Crate | 目录 | 核心内容 |
 |-------|------|----------|
-| `fabric` | [fabric/](fabric/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（CommunicationBus、Unix Socket、消息路由） |
+| `contracts`（原 fabric） | [fabric/](fabric/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（CommunicationBus、Unix Socket、消息路由） |
 | `mnemosyne` | [mnemosyne/](mnemosyne/) | 记忆系统：episodic/semantic/procedural/self-memory |
 | `agora` | [agora/](agora/) | 共享认知工作区（黑板/注意力/任务图/推理轨迹/scratchpad），会话隔离 |
 | `corpus` | [corpus/](corpus/) | 执行层：工具、沙箱、MCP、平台、驱动 |
 | `dasein` | [dasein/](dasein/) | SelfField：身份、边界、关切、叙事、感知、安全、容错 |
 | `cognit` | [cognit/](cognit/) | 认知引擎：推理、规划、反思、学习、推理路由 |
-| `executive` | [executive/](executive/) | 运行时：Harness（当前 linear ReAct）、会话、编排、可观测、插件、自动化、守护进程 |
+| `executive`（已退役） | [executive/](executive/) | 历史运行时设计；已物理 cutover 到 runtime/aletheon，见 architecture-overview.md |
 | `metacog` | [metacog/](metacog/) | MetaRuntime：自我更新、形态演化、基因组 |
 | `interact` | [interact/](interact/) | CLI/TUI 客户端（aletheon binary） |
 
@@ -210,6 +213,9 @@ aletheon/
 ## 设计文档索引
 
 ### 按 Crate 组织
+
+> `fabric` 已并入 `contracts`，`executive` 已退役（物理 cutover 完成）——下方对应文档为历史设计，
+> 仅作迁移与设计依据。能力现状以顶层 `README.md` 和当前 `crates/` 代码为准。
 
 | Crate | 设计文档 | 核心内容 |
 |-------|---------|----------|
