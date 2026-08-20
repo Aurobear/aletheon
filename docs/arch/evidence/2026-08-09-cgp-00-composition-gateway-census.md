@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §8
 State: evidence-only census closed; `gateway-route-census.tsv` + `composition-root-census.tsv` frozen; no behavior change
 
 ## Context receipt
@@ -10,7 +9,6 @@ State: evidence-only census closed; `gateway-route-census.tsv` + `composition-ro
 ```text
 Slice: CGP-00 composition/Gateway/Interact census
 Baseline commit: 0bf690b2
-Plan revision: implementation-plan §8.1-8.2
 Direct prerequisites: RA-00, K0, APX-00
 Current authoritative writer: unchanged legacy Executive daemon/handler paths
 Target owner/writer: unchanged by this census
@@ -80,7 +78,7 @@ Interact is NOT the primary composition root (no canonical Agent construction), 
 
 ## 3. Interact 53/53 baseline
 
-`rg --files crates/interact/src -g '*.rs' | wc -l` = **53** — matches the revised `docs/plans/2026-08-09-interact-authority-census.md` §8 `actual=53` after caller-zero retirement of six stale/duplicate-framing shells, deletion of the caller-zero `intent.rs` facade, and registration of the CGP-07 model/controller seams. The CGP-00 gate enforces this set stays mechanically equal (no new/removed interact source files without a census update).
+`rg --files crates/interact/src -g '*.rs' | wc -l` = **53** — matches the revised  §8 `actual=53` after caller-zero retirement of six stale/duplicate-framing shells, deletion of the caller-zero `intent.rs` facade, and registration of the CGP-07 model/controller seams. The CGP-00 gate enforces this set stays mechanically equal (no new/removed interact source files without a census update).
 
 ## 4. Validation
 

@@ -3,9 +3,8 @@
 ## Requirement anchors
 
 E7 uniquely deletes extension-specific Fabric rows after matching caller-zero
-evidence (`docs/plans/2026-08-08-preserved-extensions-cutover.md:418-430`).
-Runtime-owned Agent seams are removed from Fabric during RA/E7 closeout
-(`docs/plans/2026-08-08-runtime-authority-consolidation.md:240-255`).
+evidence.
+Runtime-owned Agent seams are removed from Fabric during RA/E7 closeout.
 
 ## Result
 

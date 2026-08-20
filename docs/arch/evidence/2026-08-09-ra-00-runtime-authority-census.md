@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2` (contains PR #192 foundation `1631ac3f`/`d9838d85`/`d3c5e748` + ratchet `f0aaec7e`/`7466dbfd`)
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §5
 State: evidence-only census closed; `RA-00` gate added; no writer/schema/behavior change
 
 ## Context receipt (plan §3.1)
@@ -10,7 +9,6 @@ State: evidence-only census closed; `RA-00` gate added; no writer/schema/behavio
 ```text
 Slice: RA-00 runtime authority census
 Baseline commit: 0bf690b2 (contains PR #192 foundation)
-Plan revision: docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md §5
 Direct prerequisites: PR #192 foundation (F0 DONE)
 Current authoritative writer: unchanged legacy Executive Session/Turn/AgentControl paths
 Target owner/writer: unchanged by this census
@@ -86,8 +84,8 @@ Both hold Pi/Native launchers (RA-D-01/02/03). Target: single `DelegateBackendRe
 
 ### Q7 — Native/Pi spawn/wait/cancel entry points
 
-- Native: `NativeCognitRuntime` (`adapters/runtime/native_cognit.rs`), runtime_id at `:262`; registered as `AgentRuntimeRegistry` launcher at `request.rs:982`.
-- Pi: `register_pi_runtime` at `adapters/runtime/pi.rs:66`; `PiRuntime::runtime_id()` at `:107`; `PiRuntime` config/resolution in `pi.rs`/`pi_rpc.rs`/`pi_protocol.rs`.
+- Native: `NativeCognitRuntime` (`adapters/runtime/native_cognit.rs`), runtime_id at ; registered as `AgentRuntimeRegistry` launcher at `request.rs:982`.
+- Pi: `register_pi_runtime` at `adapters/runtime/pi.rs:66`; `PiRuntime::runtime_id()` at ; `PiRuntime` config/resolution in `pi.rs`/`pi_rpc.rs`/`pi_protocol.rs`.
 - Both are behind `AgentControlService::spawn` (`agent_control/mod.rs:1034`) / `AgentRuntimeLauncher` (`execution.rs:408`). Target `RA-05`/`E6-K6d`.
 
 ### Q8 — production/package/runtime manifest loaders

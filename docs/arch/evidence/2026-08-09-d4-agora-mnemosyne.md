@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-domain-authority-and-adapter-extraction.md` §D4
 State: Agora non-authoritative workspace port established; Mnemosyne supplemental port already stable; no writer cutover
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Agora non-authoritative workspace port established; Mnemosyne supplementa
 ```text
 Slice: D4 Agora/Mnemosyne convergence (port seam)
 Baseline commit: 0bf690b2
-Plan revision: domain-authority §D4
 Direct prerequisites: D1 + D2/D3 — done
 Current authoritative writer: unchanged legacy Executive memory/workspace + Agora workspace
 Target owner/writer: Agora (non-authoritative workspace) + Mnemosyne (supplemental port); cutover later

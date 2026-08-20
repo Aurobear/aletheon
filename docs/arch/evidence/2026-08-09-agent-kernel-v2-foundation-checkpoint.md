@@ -7,10 +7,10 @@ State: foundation checkpoint complete; `RA-00` remains the next canonical slice
 
 ## Requirement anchors
 
-- The first post-PR-#192 task is to freeze the architecture ratchet and verify that the deletion did not remove a known external public consumer (`docs/plans/2026-08-09-deepseek-rearchitecture-execution-runbook.md:569-574`).
-- Wave A may remove only caller-zero ghost authorities and must not cut a canonical writer (`docs/plans/2026-08-09-deepseek-rearchitecture-execution-runbook.md:245-250`).
-- The retired TUI Session authority, dormant Executive Agent authority, and duplicate loader are explicitly classified for deletion (`docs/plans/2026-08-08-runtime-authority-consolidation.md:81-93`, `docs/plans/2026-08-08-runtime-authority-consolidation.md:120-133`).
-- `RA-00` must separately freeze the complete constructor/ID/writer/table/composition census; this checkpoint does not claim that exit condition (`docs/plans/2026-08-08-runtime-authority-consolidation.md:216-234`).
+- The first post-PR-#192 task is to freeze the architecture ratchet and verify that the deletion did not remove a known external public consumer.
+- Wave A may remove only caller-zero ghost authorities and must not cut a canonical writer.
+- The retired TUI Session authority, dormant Executive Agent authority, and duplicate loader are explicitly classified for deletion.
+- `RA-00` must separately freeze the complete constructor/ID/writer/table/composition census; this checkpoint does not claim that exit condition.
 
 ## Context receipt
 

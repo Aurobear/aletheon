@@ -2,7 +2,6 @@
 
 Date: 2026-08-10
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-composition-gateway-presentation-extraction.md` §CGP-05
 State: **production ACP typed cutover active**; `aletheon/src/acp.rs` constructs
 `GatewayAcpBackend` over the official typed Gateway socket. No
 `ExecutiveAcpBackend` symbol remains in the production graph.
@@ -12,7 +11,6 @@ State: **production ACP typed cutover active**; `aletheon/src/acp.rs` constructs
 ```text
 Slice: CGP-05 ACP typed client cutover (PR-A translation seam)
 Baseline commit: 0bf690b2
-Plan revision: CGP-05 (composition-gateway-presentation-extraction.md:340-346)
 Direct prerequisites: CGP-02 (gateway-client) + CGP-03 (typed handlers) — done
 Current authoritative writer: Runtime/Gateway behind `GatewayAcpBackend`
 Target owner/writer: interact ACP over typed GatewayClient; switched in production

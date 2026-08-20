@@ -1,6 +1,6 @@
 # D6 unused legacy IPC/backend retirement
 
-The D0 ledger assigned the old Fabric IPC backends, transport implementations and legacy communication protocols to D6 deletion after installed/config/route caller-zero evidence (`docs/plans/2026-08-09-fabric-source-disposition-ledger.md:76-99,445-479`).
+The D0 ledger assigned the old Fabric IPC backends, transport implementations and legacy communication protocols to D6 deletion after installed/config/route caller-zero evidence.
 
 Evidence before deletion:
 

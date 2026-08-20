@@ -299,8 +299,7 @@ Resolved during closeout:
 - HandlerPorts fully narrowed: `_reflection` removed; `kernel`,
   `pending_approvals`, `workspace_checkpoint`, `transaction_review`,
   `conscious_workspaces`, `debug`, `review` all narrowed to consumer ports.
-- Legacy-session sunset ledger created
-  (`docs/plans/legacy-session-sunset-ledger.md`).
+- Legacy-session sunset ledger created (tracking the 11 legacy `session.*` methods).
 - Public API: internal modules `#[doc(hidden)]`, stable facade documented.
 
 Tracked residuals (not blocking, explicit in plan §9):

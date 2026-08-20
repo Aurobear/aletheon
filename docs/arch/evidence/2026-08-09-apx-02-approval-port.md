@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-application-persistence-extraction.md` §APX-02
 State: Approval aggregate/store port + validation semantics established; **legacy SQLite repository is still the single writer (writer cutover separate)**
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Approval aggregate/store port + validation semantics established; **legac
 ```text
 Slice: APX-02 Approval aggregate/store port + SQLite adapter (port portion)
 Baseline commit: 0bf690b2
-Plan revision: APX-02 (application-persistence-extraction.md:225-234)
 Direct prerequisites: APX-01 (Application facade) — done
 Current authoritative writer: unchanged legacy Executive approval_service.rs / approval/repository.rs
 Target owner/writer: Application Approval owner; NOT yet the writer

@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-domain-authority-and-adapter-extraction.md` §D3
 State: Dasein authority seam established; no writer cutover, no facade deletion
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Dasein authority seam established; no writer cutover, no facade deletion
 ```text
 Slice: D3 Dasein/Metacog authority convergence (port seam)
 Baseline commit: 0bf690b2
-Plan revision: domain-authority §D3
 Direct prerequisites: D1 (contracts) + D2 (Cognit split) — done
 Current authoritative writer: unchanged legacy Dasein self-mutation / Executive Self/Metacog facade
 Target owner/writer: Dasein (SelfMutationAuthority); Runtime durable outbox feeds consumers at cutover

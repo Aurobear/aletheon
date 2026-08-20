@@ -2,7 +2,6 @@
 
 Date: 2026-08-12
 Scope: audit only; no Agent production behavior changed
-Requirement: `docs/plans/2026-08-12-migration-closeout-execution-plan.md §9.1`
 
 ## Context receipt
 

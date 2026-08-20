@@ -3,8 +3,8 @@
 ## Requirement and code anchors
 
 E7 owns deletion of extension-specific Fabric rich types and root re-exports
-after their callers have switched to the extension owner
-(`docs/plans/2026-08-08-preserved-extensions-cutover.md:418-428`). The boundary
+after their callers have switched to the extension owner.
+The boundary
 census assigned `Plugin` and `PluginContext` to the Corpus/Application extension
 package and E7 deletion (`config/architecture/fabric-boundary-census.tsv:172-173`).
 Before this slice, their only non-test consumer was the rollback Executive plugin

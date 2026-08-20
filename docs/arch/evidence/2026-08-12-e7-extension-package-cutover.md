@@ -3,7 +3,7 @@
 ## Anchors
 
 E7 deletes extension-owned Fabric rich types after authoritative cutover and
-caller-zero (`docs/plans/2026-08-08-preserved-extensions-cutover.md:418-428`).
+caller-zero.
 Package rows target the Application extension package/Corpus catalog and E7
 retirement (`config/architecture/fabric-boundary-census.tsv:736-742`); adjacent
 asset rows target the Corpus catalog (`config/architecture/fabric-boundary-census.tsv:728-735`).

@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-application-persistence-extraction.md` §APX-01
 State: minimal Application crate + typed facade established; **no legacy writer cutover**
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: minimal Application crate + typed facade established; **no legacy writer 
 ```text
 Slice: APX-01 minimal Application crate + Runtime command/query ports
 Baseline commit: 0bf690b2
-Plan revision: APX-01 (application-persistence-extraction.md:212-223)
 Direct prerequisites: APX-00 (census) + RA-01 (Runtime facade) — done
 Current authoritative writer: unchanged legacy Executive handlers + SessionService
 Target owner/writer: Application (facade over Runtime); not yet wired

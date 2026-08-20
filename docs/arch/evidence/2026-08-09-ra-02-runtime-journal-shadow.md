@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §12.1
 State: RuntimeJournal shadow established; **no writer cutover, no append/spawn/effect**
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: RuntimeJournal shadow established; **no writer cutover, no append/spawn/e
 ```text
 Slice: RA-02 durable RuntimeJournal shadow
 Baseline commit: 0bf690b2
-Plan revision: implementation-plan §12.1
 Direct prerequisites: RA-01 (Runtime contract) + K0 (EventSpine census) — done
 Current authoritative writer: unchanged legacy SessionAppendStore/EventSpine/AgentRun writers
 Target owner/writer: Runtime (canonical journal); not yet the writer

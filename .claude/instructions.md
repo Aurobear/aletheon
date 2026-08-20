@@ -146,7 +146,6 @@ plan is rejected.
    `ProcessTable`; proposed `CredentialVault` duplicating `McpOAuthProvider` +
    `TokenStore`; proposed `ApprovalManager` duplicating `approval_flow.rs`;
    proposed `DeepSeekWorker::execute()` bypassing `TurnPipeline::run()`.
-   Review: `docs/plans/2026-07-14-agent-google-review.md`.
 
 ### Design / Plan review checklist
 

@@ -2,9 +2,9 @@
 
 ## Requirement receipt
 
-- E2 keeps Gmail/Google transport and concrete adapter behavior outside core owners (`docs/plans/2026-08-08-preserved-extensions-cutover.md:379-384`).
-- APX-03 keeps Application's use case provider-neutral while Gmail/Google names remain in the extension adapter (`docs/plans/2026-08-08-application-persistence-extraction.md:236-245`).
-- E7 removes only extension-owned Fabric rich types after cutover and leaves unrelated shared rows for D6 (`docs/plans/2026-08-08-preserved-extensions-cutover.md:418-426`).
+- E2 keeps Gmail/Google transport and concrete adapter behavior outside core owners.
+- APX-03 keeps Application's use case provider-neutral while Gmail/Google names remain in the extension adapter.
+- E7 removes only extension-owned Fabric rich types after cutover and leaves unrelated shared rows for D6.
 
 ## Cutover
 

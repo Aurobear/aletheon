@@ -1,8 +1,8 @@
 # Aletheon 架构总览
 
-> **Status:** Current implementation plus active ownership-migration target
+> **Status:** Current implementation; wiring ownership migration complete (1 explicit convergence residual tracked)
 >
-> **Verified:** 2026-08-17
+> **Verified:** 2026-08-18
 
 ## 1. 系统定位
 
@@ -13,10 +13,11 @@ Aletheon 是 native-first、长期运行、受治理的 Agent 系统。它维护
 `docs/arch/CORE_REFACTOR_COMPLETION_REPORT.md` 和实际 workspace 共同约束。
 代码事实优先于历史架构快照。
 
-当前已完成旧 `executive` 的物理 cutover，但 `crates/aletheon/src/wiring/**` 的所有权迁移
-仍在进行，不能把“文件已搬到 aletheon”描述为领域边界已经收敛。实施状态、唯一 owner
-和 packet 以 `docs/plans/2026-08-16-aletheon-wiring-ownership-migration.md`、
-`config/architecture/wiring-ownership.tsv` 及当前代码共同为准。
+旧 `executive` 已完成物理 cutover，`crates/aletheon/src/wiring/**` 的所有权迁移也已收敛
+（M0–M10 闭合，安装态验收见 `docs/testing/x13-m10-installed-acceptance-2026-08-18.md`）。
+实施状态、唯一 owner 和 packet 以 `config/architecture/wiring-ownership.tsv` 及当前代码
+共同为准。仍有一项显式收敛残留：`aletheon::host/composition/daemon/adapters` 完整
+`pub(crate)` 收口（`runtime::orchestration` 已退役，由 `agora::cognitive_role_workflow` 接替）。
 
 ## 2. 运行结构
 

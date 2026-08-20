@@ -1,7 +1,6 @@
 # Agent Kernel V2：RA-02 shadow/replay evidence closure
 
 Date: 2026-08-10
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §12.1, rework brief §5.2 first item
 State: **evidence closed** — shadow reads the real production event spine read-only; writer cutover remains PR-C deployment
 
 ## Context receipt

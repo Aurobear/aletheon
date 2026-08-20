@@ -1,4 +1,4 @@
-//! Workspace checkpoint / rewind types (G4).
+//! Workspace checkpoint / rewind types.
 //!
 //! Captures FS state at turn/prompt boundaries and restores it with
 //! transactional semantics. Distinct from runtime checkpoints (agent/model
@@ -8,8 +8,6 @@
 //! identity check. Application owns capture/finalize/restore orchestration;
 //! filesystem, lease-authority, and persistence effects are injected ports.
 //!
-//! See `docs/plans/grok/exec/G4-checkpoint-rewind.md`.
-
 mod service;
 
 pub use service::{

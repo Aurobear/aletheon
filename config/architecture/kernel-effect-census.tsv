@@ -1,6 +1,5 @@
 # Agent Kernel V2 K0 kernel effect/operation/process census (evidence-only, no behavior change)
 # Baseline: 0bf690b2 (contains PR #192 foundation)
-# Plan: docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md §6
 # Each row records: effect family, command owner, current executor, authorization input,
 # operation/process ID owner, receipt, timeout/cancel, restart recovery, external irreversibility,
 # target K/E slice.

@@ -1,4 +1,4 @@
-//! Endpoint-scoped embedding credentials (G7).
+//! Endpoint-scoped embedding credentials.
 //!
 //! Any remote embedding/search credential is bound to an exact normalized
 //! origin. The grant is `approved_for` a request only when the request's base
@@ -6,8 +6,6 @@
 //! hostname-suffix matches and post-redirect origins are rejected). The secret
 //! handle hides itself from `Debug` so it never leaks into logs/events/memory.
 //!
-//! See `docs/plans/grok/exec/G7-memory-search.md`.
-
 /// Operations a grant may authorize. Embedding-only by construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmbeddingOperation {

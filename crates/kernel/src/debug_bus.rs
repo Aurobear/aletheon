@@ -3,8 +3,6 @@
 //! Observes EventBus.publish() and forwards events to debug sinks,
 //! records to bag files, and tracks performance metrics.
 //!
-//! Design: `docs/plans/2026-06-19-aletheon-debug-system-design.md` (Layer 2).
-
 use crate::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
 use ::contracts::types::time::MonoTime;
 use async_trait::async_trait;

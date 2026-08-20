@@ -2,9 +2,9 @@
 
 ## Requirement receipt
 
-- APX-01 requires Application to contain pure Rust types/use cases and eventually depend only on contracts/runtime (`docs/plans/2026-08-08-application-persistence-extraction.md:212-223`).
+- APX-01 requires Application to contain pure Rust types/use cases and eventually depend only on contracts/runtime.
 - The boundary census assigned Fabric external identity rows to `Application identity/grant + external adapter translation` and physical deletion to D6 (historical rows 755-762 before this cutover).
-- E2 keeps concrete Google/OAuth transport in the adapter (`docs/plans/2026-08-08-preserved-extensions-cutover.md:379-384`).
+- E2 keeps concrete Google/OAuth transport in the adapter.
 
 ## Cutover
 

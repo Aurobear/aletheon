@@ -1,4 +1,4 @@
-//! Workspace trust decisions (G1).
+//! Workspace trust decisions.
 //!
 //! Constrains whether *repository-provided executable configuration* (repo-local
 //! hooks, MCP server commands, plugins, `.envrc`, LSP commands, agent command
@@ -8,8 +8,6 @@
 //! This module holds pure types plus a pure [`decide`] function. Persistence
 //! (trust store) and interactive prompting live in the Executive/Interact edges.
 //!
-//! See `docs/plans/grok/exec/G1-folder-trust.md`.
-
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};

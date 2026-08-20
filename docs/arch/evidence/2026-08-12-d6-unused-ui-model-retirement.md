@@ -1,8 +1,8 @@
 # D6 unused UI model retirement
 
 The D0 disposition ledger assigns the mixed Fabric UI-event model to owner
-splits followed by D6 cleanup
-(`docs/plans/2026-08-09-fabric-source-disposition-ledger.md:42`). Exact Rust
+splits followed by D6 cleanup.
+Exact Rust
 caller searches found no caller outside the defining module/root re-export for
 `EvolutionStage`, the rich `PlanUpdate` struct, or the obsolete
 `SubAgentState` lifecycle machine. D6 therefore deletes those three rich
@@ -183,7 +183,6 @@ identity, origin, activation, descriptor, snapshot, and validation types intact 
 Aletheon extension coordinator plus daemon bootstrap to the Corpus owner API. Fabric's module,
 root exports, and census rows were deleted without aliases; JSON representations remain covered
 by the relocated contract tests.
-
 
 ## Corpus hook-contract ownership and Runtime lifecycle split
 

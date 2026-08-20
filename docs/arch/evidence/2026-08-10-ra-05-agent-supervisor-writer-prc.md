@@ -2,7 +2,6 @@
 
 Date: 2026-08-10
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §12.4 RA-05, runbook PR-C
 State: Runtime AgentSupervisor identity/lifecycle writer and typed host delegate-spawn adapter are deployed; AgentRun lifecycle/recovery/mailbox writes now pass Runtime-first through an explicit host projection bridge, while rich AgentControl remains the concrete execution adapter. Official daemon/client deployment is green; the full Agent spawn/wait acceptance drill remains open.
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Runtime AgentSupervisor identity/lifecycle writer and typed host delegate
 ```text
 Slice: RA-05 PR-C AgentSupervisor writer (code)
 Baseline commit: 0bf690b2
-Plan revision: agent-kernel-v2-deepseek-implementation-plan §12.4 RA-05, runbook §7.3 PR-C
 Direct prerequisites: RA-05 PR-A (AgentSupervisor seam + DelegateBackendRegistry) — done
 Current authoritative writer: RuntimeAgentSupervisor owns the durable Runtime Agent lifecycle receipt, generation fence, and typed delegate admission
 Target owner/writer: RuntimeAgentSupervisor + `RuntimeObservedAgentBackend`; AgentControl owns only Kernel/process/mailbox host facts until RA-06
@@ -390,7 +388,7 @@ implementations were physically consolidated. `pi_rpc.rs` now defines the
 single `PiDelegateBackend`, which owns the reviewed Pi executable policy,
 process controller, RPC protocol, terminal/cancel path, and the one-time host
 service binding (`crates/aletheon/src/wiring/adapters/runtime/pi_rpc.rs:48-147`,
-`:242-318`). Request composition prepares that backend and the daemon service
+). Request composition prepares that backend and the daemon service
 composition binds/registers it directly in Runtime's `DelegateBackendRegistry`
 (`crates/aletheon/src/wiring/daemon/bootstrap/request.rs:1041-1064`,
 `crates/executive/src/host/daemon/bootstrap/services.rs:526-542`). The former
@@ -626,7 +624,7 @@ delivery id, an `AgentRunMailbox` delivery receipt under the same terminal
 write fence (`crates/runtime/src/agent_writer.rs:1081-1179`). This prevents a
 successful host mailbox operation from disappearing from the Runtime Agent
 stream and rejects an observation that races an already fenced terminal.
-Manual mailbox lifecycle writes now use the same fence (`:442-479`). The
+Manual mailbox lifecycle writes now use the same fence (). The
 observed-host test covers both message and delivered-receipt events; the
 focused Runtime Agent writer suite remains 17 passing tests.
 
@@ -934,7 +932,7 @@ re-export (`crates/executive/src/application/agent_control/settlement.rs:18-31`)
 (`crates/executive/src/application/agent_control/settlement.rs:26-30`).
 
 This advances the approved RA-05 requirement to migrate AgentControl
-settlement ownership to Runtime (`docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md:507-516`),
+settlement ownership to Runtime,
 but does not claim RA-05 complete: rich AgentControl admission, mailbox,
 recovery projection and the remaining Executive compatibility facade still
 require caller-zero and installed recovery/rollback evidence.
@@ -961,7 +959,7 @@ The Agent admission contract is now physically owned by Runtime:
 `AgentAdmissionRequest`, `AgentAdmissionPort`, `AgentAdmissionLease`, metrics,
 storage intent, and cognitive-workspace narrowing live in
 `crates/runtime/src/agent_admission.rs:13-136`. The convenience constructor
-also mints through Runtime's `mint_agent_run_uuid` (`:31-43`); production
+also mints through Runtime's `mint_agent_run_uuid` (); production
 adapters receive the Runtime identity with `new_for_agent`.
 
 Executive keeps only the concrete policy/budget adapter and a thin forwarding

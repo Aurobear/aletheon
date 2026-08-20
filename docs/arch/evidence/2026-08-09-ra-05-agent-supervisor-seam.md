@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-runtime-authority-consolidation.md` §7 RA-05, runbook PR-A/PR-C
 State: AgentSupervisor seam established (PR-A); **generic registry only, no Pi migration, writer cutover is PR-C**
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: AgentSupervisor seam established (PR-A); **generic registry only, no Pi m
 ```text
 Slice: RA-05 AgentSupervisor + DelegateBackendRegistry (PR-A portion)
 Baseline commit: 0bf690b2
-Plan revision: runtime-authority-consolidation §7 RA-05
 Direct prerequisites: RA-04 (Turn reducer) — done
 Current authoritative writer: unchanged legacy AgentControlService/AgentRuntimeRegistry
 Target owner/writer: Runtime AgentSupervisor; NOT yet the writer (PR-A seam)

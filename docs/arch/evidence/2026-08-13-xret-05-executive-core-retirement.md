@@ -3,8 +3,7 @@
 ## Requirement anchor
 
 XRET-05 requires physical deletion of the Executive crate after its owned
-surfaces have moved and callers are zero
-(`docs/plans/2026-08-12-migration-closeout-execution-plan.md` §12 item 5).
+surfaces have moved and callers are zero.
 The Executive surface ledger classifies `core/mod.rs` for deletion and assigns
 each former child to an owner or deletion gate.
 

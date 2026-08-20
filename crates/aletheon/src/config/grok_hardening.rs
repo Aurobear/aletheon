@@ -1,6 +1,6 @@
 //! Feature flags for the Grok-inspired hardening mechanisms.
 //!
-//! Every flag gates one exec-spec item (see `docs/plans/grok/exec/`). All
+//! Every flag gates one hardening mechanism. All
 //! default to `false`: with the whole section absent or all-off, every gated
 //! code path must be equivalent to current behavior (no-op adapter). Consumers
 //! read these flags at their integration point; defining them here does not by

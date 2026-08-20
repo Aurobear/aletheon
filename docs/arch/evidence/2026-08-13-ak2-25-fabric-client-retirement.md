@@ -4,8 +4,8 @@ Date: 2026-08-13
 
 ## Requirement receipt
 
-- AK2-25 requires the Fabric compatibility path to reach hard zero before final retirement: `docs/plans/2026-08-12-migration-closeout-execution-plan.md §12`.
-- Gateway protocol/client/server remain independent packages; this change does not merge those responsibilities: `docs/plans/2026-08-12-migration-closeout-execution-plan.md §2.1`.
+- AK2-25 requires the Fabric compatibility path to reach hard zero before final retirement: .
+- Gateway protocol/client/server remain independent packages; this change does not merge those responsibilities: .
 
 ## Cutover
 

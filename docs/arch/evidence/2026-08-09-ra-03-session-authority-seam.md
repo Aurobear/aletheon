@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-runtime-authority-consolidation.md` §7 RA-03, runbook PR-A/PR-C
 State: SessionAuthority owner seam established (PR-A); **writer cutover is a separate PR-C deployment slice**
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: SessionAuthority owner seam established (PR-A); **writer cutover is a sep
 ```text
 Slice: RA-03 SessionAuthority + ContextWorkingSet + legacy seam (PR-A portion)
 Baseline commit: 0bf690b2
-Plan revision: runtime-authority-consolidation §7 RA-03
 Direct prerequisites: RA-00..RA-02 (census + contract + journal shadow) — done
 Current authoritative writer: unchanged legacy SessionService/SessionStore/EventSourcedSessionStore
 Target owner/writer: Runtime SessionAuthority; NOT yet the writer (PR-A seam only)

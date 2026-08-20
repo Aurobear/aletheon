@@ -1,4 +1,4 @@
-//! Streaming tool execution contract (G2).
+//! Streaming tool execution contract.
 //!
 //! A tool call may emit zero-to-many `Progress`/`Notification` events, then
 //! exactly one `Terminal`, after which no further events are valid. The
@@ -8,8 +8,6 @@
 //! This module holds the pure contract plus a bounded sink. Bridging progress
 //! to the turn event spine and driving host tools live in Aletheon composition.
 //!
-//! See `docs/plans/grok/exec/G2-streaming-tools.md`.
-
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 

@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-composition-gateway-presentation-extraction.md` §CGP-03
 State: typed Session/Turn/Approval route handlers established; **legacy daemon handlers still authoritative (route cutover is separate)**
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: typed Session/Turn/Approval route handlers established; **legacy daemon h
 ```text
 Slice: CGP-03 typed route handlers (Session/Turn/Approval first)
 Baseline commit: 0bf690b2
-Plan revision: CGP-03 (composition-gateway-presentation-extraction.md:322-329)
 Direct prerequisites: CGP-02 (gateway-protocol) + CGP-01 + APX-01 (Application facade) — done
 Current authoritative writer/handler: unchanged legacy Executive daemon rpc handlers
 Target owner/writer: Gateway typed handlers over Application/Runtime ports; not yet routed

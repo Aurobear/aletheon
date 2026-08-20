@@ -2,8 +2,6 @@
 
 Date: 2026-08-12
 Scope: audit only
-Requirement: `docs/plans/2026-08-12-migration-closeout-execution-plan.md §9.3` and
-`docs/plans/2026-08-08-composition-gateway-presentation-extraction.md §5 CGP-08`
 
 ## Result
 

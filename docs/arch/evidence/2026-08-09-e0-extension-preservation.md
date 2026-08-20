@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-09-agent-kernel-v2-deepseek-implementation-plan.md` §9
 State: evidence-only preservation manifest closed; `extension-preservation.tsv` frozen; no behavior change
 
 ## Context receipt
@@ -10,7 +9,6 @@ State: evidence-only preservation manifest closed; `extension-preservation.tsv` 
 ```text
 Slice: E0 extension preservation manifest
 Baseline commit: 0bf690b2
-Plan revision: implementation-plan §9.1-9.2
 Direct prerequisites: RA-00, K0, APX-00, CGP-00
 Current authoritative writer: unchanged legacy Executive extension paths
 Target owner/writer: unchanged by this census

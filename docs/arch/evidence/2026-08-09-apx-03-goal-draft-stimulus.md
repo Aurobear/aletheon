@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-application-persistence-extraction.md` §APX-03
 State: provider-neutral Goal Draft + External Stimulus use cases established; no cutover
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: provider-neutral Goal Draft + External Stimulus use cases established; no
 ```text
 Slice: APX-03 Goal Draft + External Stimulus provider-neutral use cases
 Baseline commit: 0bf690b2
-Plan revision: APX-03 (application-persistence-extraction.md:236-245)
 Direct prerequisites: APX-02 (Approval) — done
 Current authoritative writer: unchanged legacy goal service / worker (Gmail/Telegram goal commands)
 Target owner/writer: Application GoalDraft (provider-neutral); not yet wired

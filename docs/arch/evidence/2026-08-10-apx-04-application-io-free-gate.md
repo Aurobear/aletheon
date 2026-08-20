@@ -2,7 +2,6 @@
 
 Date: 2026-08-10
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-application-persistence-extraction.md` §APX-04
 State: Application crate confirmed I/O-free via monotonic gate; adapter extraction is enforced going forward
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: Application crate confirmed I/O-free via monotonic gate; adapter extracti
 ```text
 Slice: APX-04 filesystem/SQLite/process/host adapters out of Application core (gate enforcement)
 Baseline commit: 0bf690b2
-Plan revision: APX-04 (application-persistence-extraction.md:247-256)
 Direct prerequisites: APX-03 (Goal Draft) + APX-00 (census) — done
 Current authoritative writer: unchanged legacy Executive application layer (concrete I/O there, per APX-00)
 Target owner/writer: Application (narrow ports only) + owner adapters (concrete I/O)

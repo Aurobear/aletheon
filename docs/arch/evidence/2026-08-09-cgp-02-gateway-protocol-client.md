@@ -2,7 +2,6 @@
 
 Date: 2026-08-09
 Baseline: `0bf690b2`
-Plan: `docs/plans/2026-08-08-composition-gateway-presentation-extraction.md` §CGP-02, runbook §7.1 PR-A
 State: owner seam established and now used by the official typed Session/Turn/ACP/one-shot paths; legacy framing remains only behind the compatibility client for extension/debug surfaces.
 
 ## Context receipt (runbook §3.1)
@@ -10,7 +9,6 @@ State: owner seam established and now used by the official typed Session/Turn/AC
 ```text
 Slice: CGP-02 gateway-protocol + gateway-client owner seam
 Baseline commit: 0bf690b2
-Plan revision: CGP-02 (composition-gateway-presentation-extraction.md:313-320)
 Direct prerequisites: CGP-00 (frozen route census) — done
 Current authoritative writer: Runtime/Executive application ports behind the typed Gateway handler
 Target owner/writer: `gateway-protocol` contract + `gateway-client` transport/correlation; server authority remains Runtime/application-owned

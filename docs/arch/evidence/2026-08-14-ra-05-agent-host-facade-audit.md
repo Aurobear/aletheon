@@ -1,9 +1,7 @@
 # RA-05 Agent host facade audit
 
-Requirement: the rich Agent host service remains open until production uses
-one-way facades (`docs/plans/2026-08-12-migration-closeout-execution-plan.md:205-211`).
-The required audit categories and narrow-slice rule are defined at
-`docs/plans/2026-08-12-migration-closeout-execution-plan.md:275-299`.
+one-way facades.
+The required audit categories and narrow-slice rule are defined at.
 
 ## Classification
 

@@ -4,8 +4,8 @@ Date: 2026-08-12
 
 ## Requirement receipt
 
-- D6 requires rich domain facades to leave the dependency-neutral contracts crate: `docs/plans/2026-08-12-migration-closeout-execution-plan.md §12`.
-- The deletion sequence places D6 before the final Executive retirement: `docs/plans/2026-08-12-migration-closeout-execution-plan.md §4`.
+- D6 requires rich domain facades to leave the dependency-neutral contracts crate: .
+- The deletion sequence places D6 before the final Executive retirement: .
 
 ## Cutover
 
