@@ -117,7 +117,11 @@ async fn run_typed(
             ))
         }
     };
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+    // Reasoning models (deepseek-v4-*[1m]) plan silently before the first
+    // output token; a complex analysis turn can take ~3 minutes end to end.
+    // Match the daemon's provider request/idle budget (5 min) so the CLI does
+    // not abandon a healthy long-reasoning turn.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
     let output = loop {
         let value = client
             .query(Query::SessionSnapshot(SessionSnapshotQuery {

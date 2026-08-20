@@ -68,7 +68,10 @@ stream_idle_timeout_ms = 30
 
     let defaults = ProviderTimeoutConfig::default();
     assert!(defaults.connect_timeout_ms > 0);
-    assert_eq!(defaults.stream_idle_timeout_ms, 90_000);
+    // Reasoning models (deepseek-v4-*[1m]) plan silently before the first
+    // output token; the idle bound was raised to the 5-minute request budget
+    // so a healthy long-reasoning turn is not aborted with provider_timeout.
+    assert_eq!(defaults.stream_idle_timeout_ms, 300_000);
     assert_eq!(defaults.stream_idle_timeout_ms, defaults.request_timeout_ms);
 
     let mut invalid = parsed;
