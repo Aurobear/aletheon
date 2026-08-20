@@ -38,17 +38,14 @@ fn production_has_one_governed_capability_construction() {
         }
         // Agent-control owns a separate admission and settlement lifecycle;
         // its terminology must not be mistaken for capability admission.
-        let is_canonical_boundary =
-            path.ends_with("src/wiring/wiring/application/governed_capability.rs");
         // RA-04's RuntimeTurnWriter is a separate canonical lifecycle writer;
         // its terminal fence is intentionally not the Corpus capability
         // settlement path this census protects.
         let is_runtime_turn_writer_boundary =
             source.contains("runtime_turn_writer") && source.contains("runtime::TurnTerminal");
-        if !is_canonical_boundary
-            && !path
-                .components()
-                .any(|part| part.as_os_str() == "agent_control")
+        if !path
+            .components()
+            .any(|part| part.as_os_str() == "agent_control")
         {
             for forbidden in [".admit(", ".settle(", "AdmissionRequest {"] {
                 if forbidden == ".settle(" && is_runtime_turn_writer_boundary {

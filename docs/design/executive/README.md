@@ -1,6 +1,8 @@
 # Executive Crate — Core Runtime Infrastructure
 
-> Code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
+> **Status:** Historical — the `executive` crate has been retired; its runtime
+> and domain responsibilities were cut over to `runtime`/`aletheon` and the
+> domain crates. Paths below are historical design reference, not current code.
 
 **Crate:** `executive`
 **Purpose:** The core runtime that drives agent reasoning, manages sessions, orchestrates multi-agent collaboration, and hosts plugins and automations.

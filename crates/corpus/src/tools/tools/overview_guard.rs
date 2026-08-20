@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn classifies_recursive_and_wildcard_directory_scopes() {
-        assert!(broad_pattern("crates/executive/tests/**/*.rs"));
+        assert!(broad_pattern("crates/aletheon/tests/**/*.rs"));
         assert!(broad_pattern("crates/*/Cargo.toml"));
         assert!(!broad_pattern("docs/design/architecture-overview.md"));
         assert!(!broad_pattern("scripts/*.sh"));
