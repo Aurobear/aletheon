@@ -435,7 +435,7 @@ pub struct ProviderTimeoutConfig {
     #[schemars(range(min = 1, max = 300_000))]
     pub request_timeout_ms: u64,
     /// Maximum silence between streaming response body chunks.
-    #[schemars(range(min = 1, max = 120_000))]
+    #[schemars(range(min = 1, max = 300_000))]
     pub stream_idle_timeout_ms: u64,
 }
 
@@ -443,12 +443,14 @@ impl Default for ProviderTimeoutConfig {
     fn default() -> Self {
         Self {
             connect_timeout_ms: 10_000,
-            request_timeout_ms: 90_000,
+            request_timeout_ms: 300_000,
             // Reasoning and tool-follow-up rounds can sit behind the provider's
-            // rate-limit queue without producing SSE bytes. Keep the idle bound
-            // finite, but align it with the request-header budget so a healthy
-            // multi-round turn is not aborted after only 30 seconds of silence.
-            stream_idle_timeout_ms: 90_000,
+            // rate-limit queue without producing SSE bytes. Reasoning models
+            // (deepseek-v4-*[1m]) also plan silently before the first output
+            // token; a 90s idle bound aborted complex analysis turns with
+            // provider_timeout. Align the idle bound with the request budget
+            // (5 min) so a healthy long-reasoning turn is not aborted.
+            stream_idle_timeout_ms: 300_000,
         }
     }
 }
@@ -464,8 +466,8 @@ impl ProviderTimeoutConfig {
             "provider request timeout must be between 1 and 300000 ms"
         );
         anyhow::ensure!(
-            (1..=120_000).contains(&self.stream_idle_timeout_ms),
-            "provider stream idle timeout must be between 1 and 120000 ms"
+            (1..=300_000).contains(&self.stream_idle_timeout_ms),
+            "provider stream idle timeout must be between 1 and 300000 ms"
         );
         anyhow::ensure!(
             self.connect_timeout_ms <= self.request_timeout_ms,

@@ -18,9 +18,12 @@ session_writer = "runtime"
 
 [agent.provider_timeouts]
 # Bound connection setup, whole non-stream responses / stream headers, and SSE silence.
+# Reasoning models (deepseek-v4-*[1m]) can sit silently behind a long planning
+# phase before the first output token; 90s was too short and aborted complex
+# analysis turns with provider_timeout. Allow up to 5 minutes.
 connect_timeout_ms = 10000
-request_timeout_ms = 90000
-stream_idle_timeout_ms = 90000
+request_timeout_ms = 300000
+stream_idle_timeout_ms = 300000
 
 [backpressure]
 max_concurrent_turns = 8
