@@ -64,7 +64,29 @@ PY
 
 # Execute the declared pre-migration/reopen evidence. Production installed-host
 # tests execute the declared PRAGMA integrity query against every resulting DB.
-bash "$repo_root/scripts/cargo-agent.sh" test -p mnemosyne --test gbrain_spool \
+# Cargo exits successfully when a target is compiled but every test is filtered
+# out, so this gate also proves that each declared test actually ran.
+run_declared_test() {
+  local label=$1
+  shift
+  local output
+  if ! output=$("$@" 2>&1); then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  printf '%s\n' "$output"
+  if ! grep -Fxq 'running 1 test' <<<"$output"; then
+    echo "migration matrix: declared test did not run exactly once: $label" >&2
+    return 1
+  fi
+}
+
+run_declared_test \
+  legacy_migration_redacts_commits_then_renames_and_restarts_idempotently \
+  bash "$repo_root/scripts/cargo-agent.sh" test -p mnemosyne --test gbrain_spool \
   legacy_migration_redacts_commits_then_renames_and_restarts_idempotently -- --exact
-bash "$repo_root/scripts/cargo-agent.sh" test -p aletheon --test agent_control_repository \
+run_declared_test \
+  repository_migrates_pre_workspace_rows_without_losing_runs \
+  bash "$repo_root/scripts/cargo-agent.sh" test -p aletheon --features test-support \
+  --test agent_control_repository \
   repository_migrates_pre_workspace_rows_without_losing_runs -- --exact

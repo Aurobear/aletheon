@@ -5,8 +5,8 @@
 //! root builds the registry, validates duplicate/version/digest, and **seals**
 //! it — after sealing the descriptor-to-executor binding cannot be replaced
 //! (no Runtime/Executive can inject an arbitrary executor).  This module is
-//! contract/port only; the legacy `DefaultCapabilityInvoker` remains
-//! authoritative until K4.
+//! contract/port only and is not part of the production invocation path.
+//! `DefaultCapabilityInvoker` is the explicit production authority.
 
 use ::contracts::CapabilityId;
 use serde::{Deserialize, Serialize};
@@ -25,8 +25,8 @@ pub struct SealedDescriptor {
 }
 
 /// A capability executor bound to a sealed descriptor.  Executors must not
-/// perform side effects before receiving a validated permit (K3); the legacy
-/// invoker still enforces admission until K4.
+/// perform side effects before receiving a validated permit. This experimental
+/// registry does not replace the production invoker.
 #[async_trait::async_trait]
 pub trait CapabilityExecutor: Send + Sync {
     /// Execute the capability for the given sealed descriptor and input.

@@ -6,7 +6,6 @@ use ::contracts::{
     StopReason, ToolDefinition,
 };
 use adapters_sqlite::session::canonical_store::CanonicalSessionStore;
-use adapters_sqlite::session::store::SessionStore;
 use aletheon::daemon::legacy_session::{
     LegacySessionResources, LegacySessionService, LegacySessionUseCases,
 };
@@ -92,10 +91,6 @@ async fn service_with_history(
     let temp = tempfile::tempdir().unwrap();
     let initial_id = "legacy-initial".to_string();
     let clock: Arc<dyn Clock> = Arc::new(TestClock::default());
-    SessionStore::new(temp.path())
-        .unwrap()
-        .create_session(&initial_id)
-        .unwrap();
     let factory = MnemosyneContextCompactorFactory;
     let mut manager = ContextWorkingSet::new(
         temp.path(),
@@ -128,6 +123,10 @@ async fn service_with_history(
         );
     let active = Arc::new(runtime::ActiveTurnRegistry::new());
     let canonical = Arc::new(SessionService::new(canonical_store.clone(), active));
+    canonical
+        .ensure_legacy_projection(&SessionId(initial_id.clone()), messages, 0)
+        .await
+        .unwrap();
     let writer = Arc::new(runtime::RuntimeSessionWriter::new(
         runtime::SessionAuthority::new(Arc::new(runtime::RuntimeJournalShadow::new(Arc::new(
             EmptySpine,
@@ -181,7 +180,7 @@ async fn runtime_writer_service() -> (tempfile::TempDir, LegacySessionService, A
 }
 
 #[tokio::test]
-async fn resume_imports_legacy_journal_into_canonical_history_once() {
+async fn resume_reads_canonical_history_without_a_legacy_fallback() {
     let (_temp, service, canonical) =
         service_with_history(&[Message::user("remember this"), Message::assistant("I will")]).await;
 
@@ -206,7 +205,7 @@ async fn resume_imports_legacy_journal_into_canonical_history_once() {
 }
 
 #[tokio::test]
-async fn legacy_list_reads_canonical_sessions_and_historical_rows_without_writing_legacy_db() {
+async fn deprecated_legacy_mode_lists_only_canonical_sessions() {
     let (temp, service, _canonical) = service_with_history(&[Message::user("historical")]).await;
 
     let created = service.create().await.unwrap();
@@ -217,14 +216,7 @@ async fn legacy_list_reads_canonical_sessions_and_historical_rows_without_writin
         .collect();
     assert!(listed_ids.contains(&"legacy-initial"));
     assert!(listed_ids.contains(&created.session_id.as_str()));
-    assert_eq!(
-        SessionStore::open_read_only(&temp.path().join("sessions.db"))
-            .unwrap()
-            .list_sessions()
-            .unwrap(),
-        vec!["legacy-initial"],
-        "legacy list remains read-only"
-    );
+    assert!(!temp.path().join("sessions.db").exists());
 }
 
 #[tokio::test]
@@ -247,14 +239,7 @@ async fn clear_rotates_to_empty_canonical_session() {
         service.current("legacy-initial").await.unwrap().session_id,
         "legacy-initial"
     );
-    assert_eq!(
-        SessionStore::open_read_only(&temp.path().join("sessions.db"))
-            .unwrap()
-            .list_sessions()
-            .unwrap(),
-        vec!["legacy-initial"],
-        "legacy sessions.db remains an unchanged read-only audit source"
-    );
+    assert!(!temp.path().join("sessions.db").exists());
 }
 
 #[tokio::test]

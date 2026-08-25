@@ -1,8 +1,8 @@
 //! Aletheon Gateway typed protocol contract (CGP-02 owner seam).
 //!
 //! Versioned commands, queries, events, cursor and error codes that a typed
-//! Gateway client and server share.  The server still runs the legacy
-//! daemon handlers today; this crate only defines the contract. It carries
+//! Gateway client and server share. The official socket dispatches this typed
+//! contract directly. It carries
 //! opaque client references (`SessionRef`, `TurnRef`, `AgentRef`) and
 //! requested preferences — never authoritative effective policy, and never a
 //! canonical ID mint.  Caller correlation and `UiOverlayId` live in the client,
@@ -376,6 +376,10 @@ pub struct AgentCatalogQuery;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentProfileCatalogQuery;
 
+/// Read the daemon-owned production health projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HealthStatusQuery;
+
 /// Read the daemon-owned memory health projection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryStatusQuery;
@@ -430,6 +434,7 @@ const fn default_checkpoint_limit() -> u16 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Query {
+    Health(HealthStatusQuery),
     SessionSnapshot(SessionSnapshotQuery),
     SessionList,
     SkillCatalog(SkillCatalogQuery),

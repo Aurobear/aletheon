@@ -63,9 +63,15 @@ impl SessionInfrastructure {
             journal.spine(),
             journal.projections(),
         );
-        if writer_mode == SessionWriterMode::Runtime {
-            migrate_legacy_sessions(data_dir, append_store.clone()).await?;
+        if writer_mode == SessionWriterMode::Legacy {
+            tracing::warn!(
+                "bootstrap.session_writer=legacy is deprecated and now uses the Runtime Session authority"
+            );
         }
+        // `sessions.db` is a one-way, read-only import source. Configuration
+        // compatibility must not skip migration or reopen it as a live read
+        // authority after the Runtime writer cutover.
+        migrate_legacy_sessions(data_dir, append_store.clone()).await?;
         // Reconcile committed spine events before exposing the writer. A
         // daemon restart must repair the materialized read model before any
         // new SessionCreated command is admitted.
@@ -257,7 +263,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_cutover_migrates_legacy_records_without_writing_legacy_db() {
+    async fn deprecated_legacy_mode_imports_records_without_reopening_fallback_reads() {
         let temp = tempfile::tempdir().unwrap();
         let legacy = adapters_sqlite::session::store::SessionStore::open(
             temp.path().join("sessions.db").as_path(),
@@ -277,7 +283,7 @@ mod tests {
             temp.path(),
             &journal,
             Arc::new(TestClock::default()),
-            SessionWriterMode::Runtime,
+            SessionWriterMode::Legacy,
         )
         .await
         .unwrap();

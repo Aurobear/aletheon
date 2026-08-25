@@ -7,8 +7,8 @@
 //! IDs, derive effective policy, or infer terminal — terminal only ever comes
 //! from a typed `TurnSettlement` event (gateway-protocol).
 
-mod legacy;
-pub use legacy::{LegacyJsonRpcClient, LegacyJsonRpcEventStream, LegacyProtocolClient};
+mod versioned;
+pub use versioned::VersionedProtocolClient;
 
 use crate::protocol::{
     Command, Cursor, Event, ProtocolError, Query, SessionRef, SessionSnapshotQuery, TurnRef,
@@ -515,6 +515,11 @@ impl GatewayTransport for InMemoryTransport {
 
     async fn send_query(&mut self, query: Query) -> Result<serde_json::Value, ProtocolError> {
         match query {
+            Query::Health(_) => Ok(serde_json::json!({
+                "liveness": "alive",
+                "readiness": "ready",
+                "components": {},
+            })),
             Query::SessionSnapshot(q) => Ok(serde_json::json!({
                 "session": q.session.0,
                 "after": q.after_cursor.map(|c| {

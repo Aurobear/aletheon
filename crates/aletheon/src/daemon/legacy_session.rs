@@ -4,14 +4,9 @@
 //! mutation dispatch through Runtime while `sessions.db` remains read-only.
 
 use ::contracts::{Clock, ContentBlock, LlmProvider, Message, Role, SessionId};
-use adapters_sqlite::session::store::SessionStore;
 use async_trait::async_trait;
 use runtime::{ContextCompactorFactory, ContextWorkingSet};
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -93,7 +88,6 @@ pub struct LegacySessionService {
     llm: Arc<dyn LlmProvider>,
     canonical: Arc<SessionService>,
     session_commands: Arc<dyn runtime::RuntimeCommandPort>,
-    session_writer: crate::config::SessionWriterMode,
 }
 
 pub struct LegacySessionResources {
@@ -105,6 +99,8 @@ pub struct LegacySessionResources {
     pub llm: Arc<dyn LlmProvider>,
     pub canonical: Arc<SessionService>,
     pub session_commands: Arc<dyn runtime::RuntimeCommandPort>,
+    /// Accepted only to keep old configuration/test construction source
+    /// compatible. Runtime is always the sole live Session authority.
     pub session_writer: crate::config::SessionWriterMode,
 }
 
@@ -123,7 +119,6 @@ impl LegacySessionService {
             llm: resources.llm,
             canonical: resources.canonical,
             session_commands: resources.session_commands,
-            session_writer: resources.session_writer,
         }
     }
 
@@ -151,19 +146,6 @@ impl LegacySessionService {
             .map_err(operation_error)?
         {
             manager.restore_messages(replay.messages);
-        } else if self.session_writer == crate::config::SessionWriterMode::Legacy {
-            // Historical `sessions.db` is an audit/read-only fallback. It may
-            // seed the in-memory facade, but it is never mutated by this
-            // service after the canonical writer cutover.
-            if let Some(store) = self.legacy_read_store()? {
-                if let Some(record) = store.load(session_id).map_err(operation_error)? {
-                    let messages: Vec<Message> =
-                        serde_json::from_str(&record.messages_json).map_err(operation_error)?;
-                    for message in &messages {
-                        persist_legacy_message(&mut manager, message).await;
-                    }
-                }
-            }
         }
         let manager = Arc::new(Mutex::new(manager));
         self.registry
@@ -208,9 +190,8 @@ impl LegacySessionService {
         &self,
         messages: &[Message],
     ) -> Result<LegacySessionView, LegacySessionError> {
-        // Both modes now create through the injected canonical Runtime writer.
-        // `sessions.db` remains a read-only historical source for rollback and
-        // migration inspection; this facade never appends to it.
+        // Session creation always goes through the injected canonical Runtime
+        // writer. Historical `sessions.db` is imported during bootstrap only.
         let session_id = self
             .session_commands
             .dispatch(runtime::RuntimeCommand::CreateSession(
@@ -268,26 +249,6 @@ impl LegacySessionService {
             }
         }
     }
-
-    fn legacy_read_store(&self) -> Result<Option<SessionStore>, LegacySessionError> {
-        let path = self.data_dir.join("sessions.db");
-        if !path.exists() {
-            return Ok(None);
-        }
-        SessionStore::open_read_only(&path)
-            .map(Some)
-            .map_err(operation_error)
-    }
-
-    fn legacy_contains(&self, session_id: &str) -> Result<bool, LegacySessionError> {
-        match self.legacy_read_store()? {
-            Some(store) => store
-                .load(session_id)
-                .map(|record| record.is_some())
-                .map_err(operation_error),
-            None => Ok(false),
-        }
-    }
 }
 
 #[async_trait]
@@ -312,9 +273,9 @@ impl LegacySessionUseCases for LegacySessionService {
     }
 
     async fn list(&self) -> Result<Vec<LegacySessionView>, LegacySessionError> {
-        // Both modes query the canonical projection. The process-local
-        // ContextWorkingSet registry is only a cache and must not make
-        // restart-created sessions disappear from `list`.
+        // Query only the canonical projection. The process-local
+        // ContextWorkingSet registry is a cache and historical rows have
+        // already been imported during bootstrap.
         let now_ms = ::contracts::wall_to_datetime(self.clock.wall_now())
             .timestamp_millis()
             .max(0) as u64;
@@ -324,10 +285,8 @@ impl LegacySessionUseCases for LegacySessionService {
             .await
             .map_err(operation_error)?
             .sessions;
-        let mut canonical_ids = HashSet::with_capacity(records.len());
         let mut result = Vec::with_capacity(records.len());
         for record in records.into_iter().take(100) {
-            canonical_ids.insert(record.id.0.clone());
             let message_count = self
                 .canonical
                 .items(&record.id)
@@ -339,24 +298,6 @@ impl LegacySessionUseCases for LegacySessionService {
                 message_count,
                 created_at: format!("{}ms ago", now_ms.saturating_sub(record.created_at_ms)),
             });
-        }
-        // Preserve visibility of historical rows that have not yet been
-        // imported, without opening the legacy file for writes.
-        if self.session_writer == crate::config::SessionWriterMode::Legacy {
-            if let Some(store) = self.legacy_read_store()? {
-                for record in store.list(None, 100).map_err(operation_error)? {
-                    if canonical_ids.contains(&record.session_id) {
-                        continue;
-                    }
-                    let messages: Vec<Message> =
-                        serde_json::from_str(&record.messages_json).map_err(operation_error)?;
-                    result.push(LegacySessionView {
-                        session_id: record.session_id,
-                        message_count: messages.len(),
-                        created_at: record.created_at,
-                    });
-                }
-            }
         }
         result.sort_by(|left, right| left.session_id.cmp(&right.session_id));
         result.truncate(100);
@@ -377,15 +318,6 @@ impl LegacySessionUseCases for LegacySessionService {
                     .collect::<Vec<_>>()
             })
             .map_err(operation_error)?;
-        if self.session_writer == crate::config::SessionWriterMode::Legacy {
-            if let Some(store) = self.legacy_read_store()? {
-                for id in store.list_sessions().map_err(operation_error)? {
-                    if !ids.contains(&id) && ids.len() < 100 {
-                        ids.push(id);
-                    }
-                }
-            }
-        }
         ids.sort();
         Ok(ids)
     }
@@ -396,9 +328,7 @@ impl LegacySessionUseCases for LegacySessionService {
             .try_resume(&SessionId(session_id.clone()))
             .await
             .map_err(operation_error)?
-            .is_some()
-            || (self.session_writer == crate::config::SessionWriterMode::Legacy
-                && self.legacy_contains(&session_id)?);
+            .is_some();
         if !available && !self.registry.lock().await.contains_key(&session_id) {
             return Err(LegacySessionError::NotFound(session_id));
         }
@@ -416,9 +346,7 @@ impl LegacySessionUseCases for LegacySessionService {
             .try_resume(&SessionId(session_id.clone()))
             .await
             .map_err(operation_error)?;
-        let legacy_available = self.session_writer == crate::config::SessionWriterMode::Legacy
-            && self.legacy_contains(&session_id)?;
-        if canonical.is_none() && !legacy_available {
+        if canonical.is_none() {
             return Err(LegacySessionError::NotFound(session_id));
         }
         if let Some(replay) = canonical {

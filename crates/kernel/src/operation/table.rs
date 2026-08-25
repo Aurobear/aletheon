@@ -36,9 +36,10 @@ impl OperationTable {
         }
     }
 
-    /// Submit a durable operation using its persisted identifier.
+    /// Register an operation using a caller-provided identifier.
     ///
-    /// Restart recovery uses this instead of allocating a second operation.
+    /// A caller may persist and recover the identifier, but this table is
+    /// process-local and does not persist operation records across restarts.
     pub async fn submit_with_id(
         &self,
         id: OperationId,

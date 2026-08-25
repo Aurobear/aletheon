@@ -3,9 +3,7 @@
 //! One-way typed handlers for Session/Turn/Approval, built on
 //! `gateway-protocol` typed commands/queries/events.  Each handler only calls
 //! an Application/Runtime trait — no Kernel/domain store/concrete adapter
-//! import.  `LegacyJsonRpcAdapter` (in the legacy handler path) only
-//! translates; it never executes business logic.  This seam is additive: the
-//! legacy daemon handlers remain authoritative until the CGP-03 route cutover.
+//! import. The official socket dispatches these handlers directly.
 
 use crate::protocol::{
     CancelActiveTurn, Command, ExecuteShellRequest, ExtensionRequest, ForkSessionRequest,
@@ -116,6 +114,10 @@ pub trait TypedApplicationPort: Send + Sync {
     }
 
     async fn query_sessions(&self) -> Result<serde_json::Value, ProtocolError> {
+        Err(ProtocolError::UnknownSchema)
+    }
+
+    async fn query_health(&self) -> Result<serde_json::Value, ProtocolError> {
         Err(ProtocolError::UnknownSchema)
     }
 
@@ -381,6 +383,12 @@ impl TypedRouteHandler {
                     }
                 }
                 WireRequestBody::Query(query) => match query {
+                    Query::Health(_) => self
+                        .application
+                        .query_health()
+                        .await
+                        .map(WireResponseBody::Query)
+                        .unwrap_or_else(WireResponseBody::Error),
                     Query::SessionSnapshot(snapshot) => self
                         .application
                         .query_session(snapshot.session, snapshot.after_cursor)
@@ -472,95 +480,6 @@ pub enum CommandOutcome {
     TransactionReviewed { outcome: serde_json::Value },
     ExtensionResult { result: serde_json::Value },
     Ok,
-}
-
-/// Compatibility adapter: a legacy JSON-RPC request is translated into a typed
-/// Gateway command, nothing more.  Business logic never lives here.
-pub struct LegacyJsonRpcAdapter {
-    inner: TypedRouteHandler,
-}
-
-impl LegacyJsonRpcAdapter {
-    pub fn new(inner: TypedRouteHandler) -> Self {
-        Self { inner }
-    }
-
-    /// Translate a legacy method name + JSON body into a typed command, then
-    /// dispatch.  Unknown methods fail closed with a typed error.
-    pub async fn translate_and_dispatch(
-        &self,
-        method: &str,
-        body: serde_json::Value,
-    ) -> Result<CommandOutcome, ProtocolError> {
-        let command = match method {
-            "new_session" | "session.create" => Command::CreateSession(RequestSessionCreation {
-                principal_hint: body
-                    .get("principal")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                workspace: body
-                    .get("workspace")
-                    .or_else(|| body.get("working_dir"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned),
-            }),
-            "resume" | "session.resume" => Command::ResumeSession(ResumeSessionReference {
-                reference: body
-                    .get("session")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            }),
-            "prompt" | "turn.start" => Command::SubmitPrompt(SubmitPromptRequest {
-                session: SessionRef(
-                    body.get("session")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                ),
-                content: body
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                workspace: body
-                    .get("workspace")
-                    .or_else(|| body.get("working_dir"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned),
-                requested_target: Default::default(),
-                requested_permission: Default::default(),
-                required_agent_runtimes: Vec::new(),
-                requested_task_kind: None,
-            }),
-            "cancel" | "turn.cancel" => Command::CancelActiveTurn(CancelActiveTurn {
-                session: SessionRef(
-                    body.get("session")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                ),
-            }),
-            "approve" | "approval.approve" => Command::SubmitApproval(SubmitApprovalChoice {
-                session: SessionRef(
-                    body.get("session")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                ),
-                choice_id: body
-                    .get("choice_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                approved: true,
-                version: body.get("version").and_then(|v| v.as_u64()).unwrap_or(0),
-                reason: None,
-            }),
-            _ => return Err(ProtocolError::UnknownSchema),
-        };
-        self.inner.dispatch(command).await
-    }
 }
 
 #[cfg(test)]
@@ -973,21 +892,5 @@ mod tests {
             }
             other => panic!("unexpected checkpoint response: {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn legacy_adapter_translates_and_dispatches() {
-        let app: Arc<dyn TypedApplicationPort> = Arc::new(FakeApp {
-            created: Mutex::new(vec![]),
-        });
-        let adapter = LegacyJsonRpcAdapter::new(TypedRouteHandler::new(app));
-        let outcome = adapter
-            .translate_and_dispatch("new_session", serde_json::json!({"principal": "bob"}))
-            .await
-            .unwrap();
-        assert_eq!(
-            outcome,
-            CommandOutcome::Session(SessionRef("sess-1".into()))
-        );
     }
 }
