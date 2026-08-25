@@ -1354,6 +1354,8 @@ fn mark_typed_turn_submitted(app: &mut TuiModel, turn: gateway::protocol::TurnRe
     app.streaming = true;
     app.status.waiting = true;
     app.app_state.streaming = true;
+    app.projection_polling = true;
+    app.projection_next_poll_at = app.clock.mono_now();
 }
 
 /// Simple base64 encoder (no external dependency).

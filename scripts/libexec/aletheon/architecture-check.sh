@@ -72,6 +72,16 @@ while IFS=$'\t' read -r kind scope target deletion_owner evidence; do
   esac
 done < "$retired_authorities"
 
+# The official socket has two typed wire families during the Memory transport
+# transition, but it must never reopen the unversioned JSON-RPC dispatcher.
+if rg -n \
+    -e 'LegacyClientHandshakeAdapter::bind\(&mut protocol_state' \
+    -e 'dispatch_request\([[:space:]]*$' \
+    "$ROOT/crates/aletheon/src/host/unix_server.rs" >/dev/null; then
+  echo "architecture-check: official socket restored unversioned JSON-RPC dispatch" >&2
+  exit 1
+fi
+
 # Phase 0 architecture inventory and semantic ratchets.  The inventories are
 # deliberately data files: later refactor phases update ownership and lower
 # metrics without having to rewrite this checker.
@@ -1162,47 +1172,6 @@ for path in sorted((root / "crates/runtime/src").rglob("*.rs")):
 PY
 fi
 
-# K1 durable Operation seam gate: the journal module is read/shadow only — it
-# must not write to the legacy OperationTable or introduce a second writer.
-if [[ ${ARCH_SKIP_K1_GATES:-0} != 1 && -f crates/kernel/src/operation/journal.rs ]]; then
-python3 - <<'PY'
-from __future__ import annotations
-
-import re
-import sys
-from pathlib import Path
-
-root = Path.cwd()
-journal = (root / "crates/kernel/src/operation/journal.rs").read_text(errors="replace")
-
-# The journal must not mutate the legacy in-memory OperationTable (double
-# writer forbidden by kernel plan §K1).  It defines ports/contracts only.
-# Doc comments and string literals are ignored; only Rust code is checked.
-code_only = "\n".join(
-    l for l in journal.splitlines()
-    if not l.lstrip().startswith("//") and not l.lstrip().startswith("///")
-    and not l.lstrip().startswith("//!")
-    and not l.strip().startswith("use ") and not l.strip().startswith("pub use ")
-)
-for lineno, line in enumerate(code_only.splitlines(), 1):
-    if re.search(r"\bOperationTable\b", line):
-        raise SystemExit(f"architecture-check: K1 journal touches legacy OperationTable at {lineno}")
-    if re.search(r"\binsert\b|\bremove\b|\bwrite\b|\bappend\b", line, re.I):
-        raise SystemExit(f"architecture-check: K1 journal carries a write/append at {lineno}")
-    # async fn is allowed only for read/replay; a mutable write signature fails.
-    if re.search(r"async fn [a-z_]+\(&mut self.*\)", line):
-        raise SystemExit(f"architecture-check: K1 journal exposes a mutating write at {lineno}")
-
-# The ExecutionJournal trait may only expose read/replay, never write.
-trait_body = journal.split("pub trait ExecutionJournal", 1)
-if len(trait_body) == 2:
-    trait_src = trait_body[1].split("\n}", 1)[0]
-    for lineno, line in enumerate(trait_src.splitlines(), 1):
-        if "fn " in line and not re.search(r"\b(read|replay_after)\b", line):
-            raise SystemExit(f"architecture-check: K1 ExecutionJournal exposes non-read method at {lineno}")
-PY
-fi
-
 # K2 sealed-descriptor gate: the CapabilityRegistry must reject duplicate/
 # version-0/empty-digest bindings and must be immutable after seal; no
 # Runtime/Executive can replace a binding post-seal.
@@ -1465,8 +1434,7 @@ PY
 fi
 
 # CGP-03 typed route handler gate: the typed handler must call only the
-# Application/Runtime port — no Kernel/domain store/concrete adapter import,
-# no business logic in the legacy adapter (translate only).
+# Application/Runtime port — no Kernel/domain store/concrete adapter import.
 if [[ ${ARCH_SKIP_CGP03_GATES:-0} != 1 && -f crates/gateway/src/server/handlers/typed.rs ]]; then
 python3 - <<'PY'
 from __future__ import annotations
@@ -1486,13 +1454,6 @@ for lineno, line in enumerate(code.splitlines(), 1):
     # No Kernel/domain store/concrete adapter imports in the typed handler.
     if re.search(r"use\s+crate::(?:kernel|executive)|\bAgentRunRepository\b|\bSessionAppendStore\b|\bSqlite", line):
         raise SystemExit(f"architecture-check: CGP-03 typed handler imports a store/adapter at {lineno}")
-
-# The legacy adapter must be translation-only (dispatch through the typed
-# handler, never business logic).
-if "LegacyJsonRpcAdapter" not in typed:
-    raise SystemExit("architecture-check: CGP-03 lacks the LegacyJsonRpcAdapter")
-if "translate_and_dispatch" not in typed:
-    raise SystemExit("architecture-check: CGP-03 legacy adapter must be translation-only")
 PY
 fi
 
@@ -1707,62 +1668,6 @@ for lineno, line in enumerate(code.splitlines(), 1):
 
 if "CatalogPort" not in ports or "ExecutorPort" not in ports:
     raise SystemExit("architecture-check: D5 seam must define CatalogPort + ExecutorPort")
-PY
-fi
-
-# K4 single-path gate: the invocation state machine must have one
-# admit/observe/settle/recover path with explicit crash-window reconciliation
-# and no standalone permit issuer/settler or public component getter.
-if [[ ${ARCH_SKIP_K4_GATES:-0} != 1 && -f crates/kernel/src/capability/invocation.rs ]]; then
-python3 - <<'PY'
-from __future__ import annotations
-
-import re
-import sys
-from pathlib import Path
-
-root = Path.cwd()
-inv = (root / "crates/kernel/src/capability/invocation.rs").read_text(errors="replace")
-code = "\n".join(
-    l for l in inv.split("#[cfg(test)]", 1)[0].splitlines()
-    if not l.lstrip().startswith(("//", "///", "//!"))
-)
-
-# No standalone permit issuer/settler or public component getter.
-for lineno, line in enumerate(code.splitlines(), 1):
-    if re.search(r"\bpub fn (issue_permit|settle_permit|get_admission|get_lease)\b", line):
-        raise SystemExit(f"architecture-check: K4 exposes a standalone permit getter at {lineno}")
-
-if "NeedsReconciliation" not in inv or "AlreadyTerminal" not in inv:
-    raise SystemExit("architecture-check: K4 must handle crash-window reconciliation + terminal fence")
-PY
-fi
-
-# K5 ProcessController gate: the controller must fail closed on spawn failure
-# (no silent in-process fallback) and expose PID generation for stale-handle
-# fencing.
-if [[ ${ARCH_SKIP_K5_GATES:-0} != 1 && -f crates/platform/src/process_controller.rs ]]; then
-python3 - <<'PY'
-from __future__ import annotations
-
-import re
-import sys
-from pathlib import Path
-
-root = Path.cwd()
-pc = (root / "crates/platform/src/process_controller.rs").read_text(errors="replace")
-code = "\n".join(
-    l for l in pc.split("#[cfg(test)]", 1)[0].splitlines()
-    if not l.lstrip().startswith(("//", "///", "//!"))
-)
-
-if "FailedToStart" not in pc:
-    raise SystemExit("architecture-check: K5 process controller lacks fail-closed FailedToStart")
-if "generation" not in pc:
-    raise SystemExit("architecture-check: K5 process controller lacks PID generation")
-for lineno, line in enumerate(code.splitlines(), 1):
-    if re.search(r"\b(?:Command::new)\b", line) and not re.search(r"request\.command|command:", line):
-        pass
 PY
 fi
 

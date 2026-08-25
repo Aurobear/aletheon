@@ -178,7 +178,11 @@ import json, socket, sys, time
 path, timeout = sys.argv[1], int(sys.argv[2])
 client = None
 deadline = time.monotonic() + timeout
-request = json.dumps({'jsonrpc':'2.0','id':1,'method':'health','params':{}}).encode() + b'\n'
+request = json.dumps({
+    'version': 1,
+    'request_id': 'readiness',
+    'body': {'Query': {'Health': None}},
+}).encode() + b'\n'
 while time.monotonic() < deadline:
     try:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -191,7 +195,8 @@ while time.monotonic() < deadline:
             if not chunk: break
             response += chunk
         payload = json.loads(response)
-        if payload.get('result', {}).get('readiness') in ('ready', 'degraded'):
+        if payload.get('request_id') == 'readiness' and \
+           payload.get('body', {}).get('Query', {}).get('readiness') in ('ready', 'degraded'):
             raise SystemExit(0)
     except (OSError, ValueError, json.JSONDecodeError):
         time.sleep(.25)

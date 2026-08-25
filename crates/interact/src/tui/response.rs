@@ -612,6 +612,7 @@ pub(crate) fn apply_typed_projection_result(
         app.active_turn_ref = None;
         app.turn_cancel_requested = false;
         app.status.session_turns = app.status.session_turns.saturating_add(1);
+        app.projection_polling = false;
     }
     app.projection_next_poll_at = ::contracts::MonoTime(app.clock.mono_now().0.saturating_add(200));
 }

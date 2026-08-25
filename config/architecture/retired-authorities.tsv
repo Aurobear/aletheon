@@ -5,3 +5,8 @@ path	crates/executive/src/composition/agents	-	RA-00	workspace production caller
 rust_symbol	crates	TuiSessionManager	RA-00	retired presentation-owned Session authority
 rust_symbol	crates/executive/src/application	AgentRuntime	RA-00	retired Executive application authority; canonical name reserved for runtime owner
 path	crates/interact/src/tui/session_protocol.rs	-	CGP-06	duplicate Session RPC wrapper deleted after typed GatewayClient migration
+path	crates/kernel/src/operation/journal.rs	-	K1-closeout	unwired shadow contract duplicated canonical contracts::OperationRecord; production OperationTable remains explicit authority
+path	crates/kernel/src/capability/invocation.rs	-	K4-closeout	unwired pure state-machine scaffold duplicated the canonical DefaultCapabilityInvoker path
+path	crates/platform/src/process_controller.rs	-	K5-closeout	caller-zero scaffold superseded by the production kernel process controller
+path	crates/gateway/src/client/legacy.rs	-	CGP-closeout	unversioned raw JSON-RPC client API retired; negotiated typed client transport lives in client/versioned.rs
+rust_symbol	crates/gateway/src/server	LegacyJsonRpcAdapter	CGP-closeout	caller-zero unversioned request translator retired after official socket typed cutover

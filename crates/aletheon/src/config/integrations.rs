@@ -71,8 +71,9 @@ pub struct RuntimeBootstrapConfig {
     pub data_dir: Option<PathBuf>,
     pub sandbox_preference: Option<String>,
     pub conscious_arbitration_mode: Option<String>,
-    /// RA-03 writer cutover mode. Runtime is the production authority; Legacy
-    /// remains only as a one-way rollback writer during the observation window.
+    /// RA-03 writer cutover compatibility setting. Runtime is the only live
+    /// authority; `legacy` is accepted as a deprecated configuration alias and
+    /// still performs the one-way bootstrap import into Runtime storage.
     pub session_writer: SessionWriterMode,
 }
 
@@ -85,6 +86,8 @@ pub struct RuntimeBootstrapConfig {
 pub enum SessionWriterMode {
     #[default]
     Runtime,
+    /// Deprecated compatibility spelling. It no longer enables legacy reads or
+    /// writes and is normalized to Runtime behavior during composition.
     Legacy,
 }
 

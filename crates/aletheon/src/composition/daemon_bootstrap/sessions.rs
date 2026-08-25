@@ -33,8 +33,8 @@ pub(super) async fn compose(
     // RA-03: the canonical SessionId is minted by the unique
     // SessionInfrastructure BEFORE this compose runs (request.rs).  This
     // function is pure-memory: it never opens a DB or writes a session.  The
-    // `session_writer` mode is used only for the initial id (legacy uuid vs
-    // Runtime minted), both already resolved upstream.
+    // The Runtime Session authority minted the initial id upstream. No legacy
+    // mode can select a second identifier or persistence path here.
     let initial_session_id = input.session_id.clone();
     let initial = Arc::new(Mutex::new(
         crate::daemon::context_working_set::compose_context_working_set(

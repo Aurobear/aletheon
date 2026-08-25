@@ -134,6 +134,10 @@ impl DaemonTypedApplication {
 
 #[async_trait]
 impl TypedApplicationPort for DaemonTypedApplication {
+    async fn query_health(&self) -> Result<serde_json::Value, ProtocolError> {
+        serde_json::to_value(self.ports.health.health().await).map_err(Self::map_error)
+    }
+
     async fn create_session(
         &self,
         principal_hint: Option<String>,

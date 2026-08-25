@@ -73,7 +73,11 @@ def daemon_health(path, expected_uid=None, expected_gid=None):
     client.settimeout(3)
     try:
         client.connect(path)
-        request = {"jsonrpc": "2.0", "id": 1, "method": "health", "params": {}}
+        request = {
+            "version": 1,
+            "request_id": "healthcheck",
+            "body": {"Query": {"Health": None}},
+        }
         client.sendall(json.dumps(request).encode() + b"\n")
         response = b""
         while not response.endswith(b"\n"):
@@ -82,9 +86,12 @@ def daemon_health(path, expected_uid=None, expected_gid=None):
                 break
             response += chunk
         envelope = json.loads(response)
-        if envelope.get("id") != 1 or "error" in envelope:
+        if envelope.get("request_id") != "healthcheck":
             fail(f"invalid health response from {path}")
-        result = envelope.get("result", {})
+        body = envelope.get("body", {})
+        result = body.get("Query")
+        if not isinstance(result, dict) or "Error" in body:
+            fail(f"invalid health response from {path}")
         readiness = result.get("readiness")
         report = {
             "liveness": result.get("liveness"),

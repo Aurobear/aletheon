@@ -387,8 +387,13 @@ async fn drive_agent_inspector_refresh(app: &mut TuiModel) {
 }
 
 async fn drive_typed_events(app: &mut TuiModel, recorder: &mut Option<EventRecorder>) -> bool {
+    // Keep the terminal input loop responsive when a working Agent emits a
+    // dense burst of progress events. Remaining events stay queued on the
+    // transport and are consumed on the next loop iteration, after keyboard
+    // and mouse input have had another chance to run.
+    const MAX_EVENTS_PER_FRAME: usize = 32;
     let mut changed = false;
-    loop {
+    for _ in 0..MAX_EVENTS_PER_FRAME {
         let result = {
             let Some(client) = app.controller.typed_gateway.as_mut() else {
                 return changed;
@@ -454,6 +459,18 @@ async fn drive_session_projection(app: &mut TuiModel) -> bool {
     };
     if app.projection_request_in_flight {
         return false;
+    }
+    // A missing projection_session_id means an initial/resume snapshot is
+    // required even before polling has started. Once initialized, honor the
+    // reducer-owned polling state and deadline instead of synchronously
+    // downloading and decoding the full snapshot on every TUI iteration.
+    if app.projection_session_id.is_some() {
+        if !app.projection_polling {
+            return false;
+        }
+        if app.clock.mono_now().0 < app.projection_next_poll_at.0 {
+            return false;
+        }
     }
     if app.controller.has_typed_gateway() {
         let after_cursor =

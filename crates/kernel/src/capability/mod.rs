@@ -7,7 +7,6 @@
 mod invoker;
 pub use invoker::CapabilityInvoker;
 pub mod governed;
-pub mod invocation;
 pub mod registry;
 pub mod verifier;
 

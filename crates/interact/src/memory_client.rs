@@ -16,10 +16,10 @@ use ::contracts::protocol::memory_maintenance::{
     MemoryMaintenancePhaseV1, MemoryMaintenanceRunReceiptV1, MemoryMaintenanceRunRequestV1,
     MemoryMaintenanceStatusRequestV1, MemoryMaintenanceStatusV1,
 };
-use gateway::client::LegacyProtocolClient;
+use gateway::client::VersionedProtocolClient;
 
 pub struct MemoryClient {
-    transport: LegacyProtocolClient,
+    transport: VersionedProtocolClient,
 }
 
 pub type MemoryAgentClient = MemoryClient;
@@ -44,7 +44,7 @@ impl MemoryClient {
         memory_admin_v1: bool,
     ) -> anyhow::Result<Self> {
         let socket = crate::host::resolve_user_socket(explicit_socket)?;
-        let transport = LegacyProtocolClient::connect(&socket)
+        let transport = VersionedProtocolClient::connect(&socket)
             .await
             .map_err(|error| anyhow::anyhow!("connecting {}: {error}", socket.display()))?;
         let mut client = Self { transport };

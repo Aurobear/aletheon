@@ -1,7 +1,7 @@
 //! Per-connection daemon protocol negotiation (M8.1 extracted to Gateway).
 //!
-//! Version negotiation, connection-protocol state reducer, and legacy
-//! compatibility state are transport wire policy owned by the Gateway. The
+//! Version negotiation and connection-protocol state reduction are transport
+//! wire policy owned by the Gateway. The
 //! Aletheon host consumes this reducer to drive its accept loop; it never
 //! reimplements the state machine.
 
@@ -31,12 +31,8 @@ pub struct NegotiatedProtocol {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConnectionProtocolState {
     New,
-    AwaitingInitialized {
-        negotiated: NegotiatedProtocol,
-    },
-    Ready {
-        negotiated: Option<NegotiatedProtocol>,
-    },
+    AwaitingInitialized { negotiated: NegotiatedProtocol },
+    Ready { negotiated: NegotiatedProtocol },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,7 +40,6 @@ pub enum ProtocolEvent {
     Initialize(NegotiatedProtocol),
     Initialized,
     Request,
-    LegacyRequest,
 }
 
 pub enum ProtocolAction {
@@ -63,7 +58,7 @@ pub fn reduce_protocol(
     event: ProtocolEvent,
 ) -> anyhow::Result<ProtocolTransition> {
     use ConnectionProtocolState::{AwaitingInitialized, New, Ready};
-    use ProtocolEvent::{Initialize, Initialized, LegacyRequest, Request};
+    use ProtocolEvent::{Initialize, Initialized, Request};
     match (state, event) {
         (New, Initialize(negotiated)) => Ok(ProtocolTransition {
             next_state: AwaitingInitialized {
@@ -71,14 +66,10 @@ pub fn reduce_protocol(
             },
             action: ProtocolAction::InitializeResponse(negotiated),
         }),
-        (New, LegacyRequest) => Ok(ProtocolTransition {
-            next_state: Ready { negotiated: None },
-            action: ProtocolAction::Dispatch,
-        }),
         (New, _) => anyhow::bail!("connection must initialize before requests"),
         (AwaitingInitialized { negotiated }, Initialized) => Ok(ProtocolTransition {
             next_state: Ready {
-                negotiated: Some(negotiated.clone()),
+                negotiated: negotiated.clone(),
             },
             action: ProtocolAction::Initialized,
         }),
@@ -91,30 +82,10 @@ pub fn reduce_protocol(
         (Ready { .. }, Initialize(_) | Initialized) => {
             anyhow::bail!("connection initialization cannot be repeated")
         }
-        (
-            Ready {
-                negotiated: Some(_),
-            },
-            Request,
-        ) => Ok(ProtocolTransition {
+        (Ready { .. }, Request) => Ok(ProtocolTransition {
             next_state: state.clone(),
             action: ProtocolAction::Dispatch,
         }),
-        (Ready { negotiated: None }, LegacyRequest) => Ok(ProtocolTransition {
-            next_state: state.clone(),
-            action: ProtocolAction::Dispatch,
-        }),
-        (Ready { negotiated: None }, Request) => {
-            anyhow::bail!("legacy connections cannot send versioned requests")
-        }
-        (
-            Ready {
-                negotiated: Some(_),
-            },
-            LegacyRequest,
-        ) => {
-            anyhow::bail!("versioned connections cannot send legacy requests")
-        }
     }
 }
 
@@ -129,27 +100,11 @@ impl ConnectionProtocolState {
         official_memory_agent: bool,
         official_memory_admin: bool,
     ) -> anyhow::Result<ProtocolAction> {
-        // During the X5c presentation migration, legacy TUI connections may
-        // consume the canonical read-only Session projection without gaining
-        // access to any versioned mutation. This is deliberately limited to
-        // snapshot/subscription reads and can be deleted once every TUI
-        // command uses the versioned connection.
-        if matches!(self, Self::Ready { negotiated: None })
-            && matches!(
-                request,
-                ClientRequest::ReadSnapshot(_)
-                    | ClientRequest::ReadSessions
-                    | ClientRequest::ReadEvents(_)
-                    | ClientRequest::Subscribe(_)
-            )
-        {
-            return Ok(ProtocolAction::Dispatch);
-        }
         if request.requires_memory_gateway() {
             let enabled = matches!(
                 self,
                 Self::Ready {
-                    negotiated: Some(NegotiatedProtocol { capabilities, .. })
+                    negotiated: NegotiatedProtocol { capabilities, .. }
                 } if capabilities.memory_gateway_v1
             );
             anyhow::ensure!(enabled, "memory_gateway_v1 was not negotiated");
@@ -158,7 +113,7 @@ impl ConnectionProtocolState {
             let enabled = matches!(
                 self,
                 Self::Ready {
-                    negotiated: Some(NegotiatedProtocol { capabilities, .. })
+                    negotiated: NegotiatedProtocol { capabilities, .. }
                 } if capabilities.memory_maintenance_v1
             );
             anyhow::ensure!(enabled, "memory_maintenance_v1 was not negotiated");
@@ -167,7 +122,7 @@ impl ConnectionProtocolState {
             let enabled = matches!(
                 self,
                 Self::Ready {
-                    negotiated: Some(NegotiatedProtocol { capabilities, .. })
+                    negotiated: NegotiatedProtocol { capabilities, .. }
                 } if capabilities.memory_admin_v1
             );
             anyhow::ensure!(enabled, "memory_admin_v1 was not negotiated");
@@ -184,10 +139,6 @@ impl ConnectionProtocolState {
             _ => ProtocolEvent::Request,
         };
         self.apply(event)
-    }
-
-    pub fn accept_legacy(&mut self) -> anyhow::Result<ProtocolAction> {
-        self.apply(ProtocolEvent::LegacyRequest)
     }
 
     /// The sole connection protocol mutation entry point.
@@ -216,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn characterizes_versioned_and_legacy_success_paths() {
+    fn characterizes_initialized_versioned_success_path() {
         let waiting = reduce_protocol(
             &ConnectionProtocolState::New,
             ProtocolEvent::Initialize(negotiated()),
@@ -227,10 +178,6 @@ mod tests {
             .unwrap()
             .next_state;
         assert!(reduce_protocol(&ready, ProtocolEvent::Request).is_ok());
-        let legacy = reduce_protocol(&ConnectionProtocolState::New, ProtocolEvent::LegacyRequest)
-            .unwrap()
-            .next_state;
-        assert!(reduce_protocol(&legacy, ProtocolEvent::LegacyRequest).is_ok());
     }
 
     #[test]
@@ -239,53 +186,12 @@ mod tests {
             negotiated: negotiated(),
         };
         let versioned = ConnectionProtocolState::Ready {
-            negotiated: Some(negotiated()),
+            negotiated: negotiated(),
         };
-        let legacy = ConnectionProtocolState::Ready { negotiated: None };
         assert!(reduce_protocol(&ConnectionProtocolState::New, ProtocolEvent::Request).is_err());
         assert!(reduce_protocol(&waiting, ProtocolEvent::Request).is_err());
         assert!(reduce_protocol(&waiting, ProtocolEvent::Initialize(negotiated())).is_err());
         assert!(reduce_protocol(&versioned, ProtocolEvent::Initialized).is_err());
-        assert!(reduce_protocol(&versioned, ProtocolEvent::LegacyRequest).is_err());
-        assert!(reduce_protocol(&legacy, ProtocolEvent::Request).is_err());
-    }
-
-    #[test]
-    fn legacy_connection_can_only_bridge_canonical_projection_reads() {
-        let mut state = ConnectionProtocolState::New;
-        state.accept_legacy().unwrap();
-        let session_id = ::contracts::SessionId("session-1".into());
-        assert!(state
-            .accept(&ClientRequest::ReadSnapshot(
-                ::contracts::protocol::client::SnapshotRequest {
-                    session_id: session_id.clone(),
-                },
-            ))
-            .is_ok());
-        assert!(state.accept(&ClientRequest::ReadSessions).is_ok());
-        assert!(state
-            .accept(&ClientRequest::ReadEvents(
-                ::contracts::protocol::client::EventSubscription {
-                    session_id: ::contracts::SessionId("session-1".into()),
-                    after: ::contracts::protocol::client::EventCursor::origin(),
-                },
-            ))
-            .is_ok());
-        assert!(state
-            .accept(&ClientRequest::Subscribe(
-                ::contracts::protocol::client::EventSubscription {
-                    session_id,
-                    after: ::contracts::protocol::client::EventCursor::origin(),
-                },
-            ))
-            .is_ok());
-        assert!(state
-            .accept(&ClientRequest::Snapshot(
-                ::contracts::protocol::client::SnapshotRequest {
-                    session_id: ::contracts::SessionId("session-1".into()),
-                },
-            ))
-            .is_err());
     }
 
     #[test]

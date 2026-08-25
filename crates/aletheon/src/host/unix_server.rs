@@ -16,16 +16,13 @@ use ::contracts::protocol::client::{
 };
 use ::contracts::{Clock, ConnectionId, LocalOsPrincipal, PrincipalId, Timer};
 use anyhow::Result;
-use futures::FutureExt;
 use gateway::protocol::connection::{ConnectionProtocolState, NegotiatedProtocol, ProtocolAction};
-use gateway::protocol::legacy_progress::ClientEvent;
 use gateway::protocol::{
     ProtocolError, WireRequest, WireResponse, WireResponseBody, PROTOCOL_VERSION,
 };
 use kernel::chronos::SystemTimer;
 use kernel::debug::DebugEvent;
 use nix::unistd::{Gid, Uid, User};
-use std::panic::AssertUnwindSafe;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
@@ -259,26 +256,6 @@ pub enum SocketPrivacy {
 
 /// Injectable systemd activation environment. Tests use an in-memory
 /// implementation so they never mutate process-global environment variables.
-struct LegacyClientHandshakeAdapter;
-
-impl LegacyClientHandshakeAdapter {
-    fn bind(state: &mut ConnectionProtocolState, request: &serde_json::Value) -> bool {
-        if !is_legacy_json_rpc(request) {
-            return false;
-        }
-        state.accept_legacy().is_ok()
-    }
-}
-
-fn is_legacy_json_rpc(request: &serde_json::Value) -> bool {
-    request.get("jsonrpc").and_then(|value| value.as_str()) == Some("2.0")
-        && request
-            .get("method")
-            .and_then(|value| value.as_str())
-            .is_some()
-        && !has_versioned_params(request)
-}
-
 fn has_versioned_params(request: &serde_json::Value) -> bool {
     request.get("params").is_some_and(|params| {
         params.get("protocol_version").is_some() && params.get("payload").is_some()
@@ -325,41 +302,6 @@ fn initialize_response(
         "id": request_id,
         "result": ClientMessage::v1(ProtocolClientEvent::InitializeResponse(result))
     })
-}
-
-async fn dispatch_request<D: ConnectionDispatcher>(
-    handler: D,
-    connection: ConnectionContext,
-    request: serde_json::Value,
-    request_id: serde_json::Value,
-    notify_tx: Option<mpsc::Sender<String>>,
-) -> serde_json::Value {
-    // Catch a handler panic without spawning a detached nested task. The
-    // connection's JoinSet can therefore cancel the complete request future
-    // before disconnect cleanup starts.
-    match AssertUnwindSafe(handler.handle(&connection, request))
-        .catch_unwind()
-        .await
-    {
-        Ok(response) => response,
-        Err(payload) => {
-            let error = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("request handler panicked");
-            let (response, terminal_events) = request_task_failure(request_id, error);
-            error!(message = %response["error"]["message"], "Request handler task failed");
-            if let Some(tx) = notify_tx {
-                for event in terminal_events {
-                    if let Ok(payload) = crate::daemon::handler::format::event_to_json(&event) {
-                        let _ = tx.send(payload).await;
-                    }
-                }
-            }
-            response
-        }
-    }
 }
 
 async fn dispatch_versioned_request<D: ConnectionDispatcher>(
@@ -685,26 +627,6 @@ async fn run_versioned_subscription<D: ConnectionDispatcher>(
     }
 }
 
-fn request_task_failure(
-    request_id: serde_json::Value,
-    error: impl std::fmt::Display,
-) -> (serde_json::Value, Vec<ClientEvent>) {
-    let message = format!("request task failed: {error}");
-    (
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": { "code": -32603, "message": message }
-        }),
-        vec![
-            ClientEvent::Error {
-                message: message.clone(),
-            },
-            ClientEvent::TurnDone,
-        ],
-    )
-}
-
 pub struct UnixServer<D: ConnectionDispatcher> {
     listener: UnixListener,
     handler: D,
@@ -988,10 +910,9 @@ impl<D: ConnectionDispatcher> UnixServer<D> {
                     // Parse JSON request and spawn handler in background
                     let request: serde_json::Value = serde_json::from_str(&trimmed)?;
 
-                    // The official socket accepts the additive typed Gateway
-                    // envelope before legacy/versioned JSON-RPC parsing.  A
-                    // connection cannot mix wire families; this prevents a
-                    // second authority path from sharing one stream.
+                    // The official socket accepts the typed Gateway envelope
+                    // and the initialized, versioned client protocol used by
+                    // Memory. Unversioned JSON-RPC is retired.
                     let looks_typed = request.get("version").is_some()
                         && request.get("request_id").is_some()
                         && request.get("body").is_some();
@@ -1005,7 +926,7 @@ impl<D: ConnectionDispatcher> UnixServer<D> {
                                 version: PROTOCOL_VERSION,
                                 request_id: request_id.as_str().unwrap_or_default().to_owned(),
                                 body: WireResponseBody::Error(ProtocolError::Server(
-                                    "typed Gateway cannot share a legacy/versioned connection".into(),
+                                    "typed Gateway cannot share a versioned client connection".into(),
                                 )),
                             };
                             resp_tx.send(serde_json::to_string(&response)?).await?;
@@ -1051,7 +972,7 @@ impl<D: ConnectionDispatcher> UnixServer<D> {
                             .unwrap_or(serde_json::Value::Null);
                         let response = protocol_error(
                             request_id,
-                            "typed Gateway and legacy/versioned requests cannot share a connection",
+                            "typed Gateway and versioned client requests cannot share a connection",
                         );
                         resp_tx.send(response.to_string()).await?;
                         continue;
@@ -1145,32 +1066,11 @@ impl<D: ConnectionDispatcher> UnixServer<D> {
                         continue;
                     }
 
-                    if !LegacyClientHandshakeAdapter::bind(&mut protocol_state, &request) {
-                        let response = protocol_error(
-                            request_id,
-                            "legacy and versioned requests cannot share a connection",
-                        );
-                        resp_tx.send(serde_json::to_string(&response)?).await?;
-                        continue;
-                    }
-
-                    let handler = handler.clone();
-                    let notify_tx = handler.notify_tx();
-                    let resp_tx = resp_tx.clone();
-                    let connection = connection.clone();
-                    request_tasks.spawn(async move {
-                        let response = dispatch_request(
-                            handler,
-                            connection,
-                            request,
-                            request_id,
-                            notify_tx,
-                        )
-                        .await;
-                        let response_json = serde_json::to_string(&response)
-                            .unwrap_or_default();
-                        let _ = resp_tx.send(response_json).await;
-                    });
+                    let response = protocol_error(
+                        request_id,
+                        "unversioned JSON-RPC is retired; use the typed Gateway or initialize the versioned client protocol",
+                    );
+                    resp_tx.send(serde_json::to_string(&response)?).await?;
                 }
                 // Receive handler response from background task.
                 response_json = resp_rx.recv() => {
@@ -1598,43 +1498,27 @@ mod tests {
             .unwrap();
         assert!(matches!(
             state,
-            ConnectionProtocolState::Ready {
-                negotiated: Some(_)
-            }
+            ConnectionProtocolState::Ready { negotiated: _ }
         ));
         assert!(state.accept(&initialize()).is_err());
     }
 
     #[test]
-    fn legacy_adapter_binds_identity_without_weakening_versioned_handshake() {
-        let legacy = serde_json::json!({
+    fn unversioned_json_rpc_does_not_parse_as_the_versioned_protocol() {
+        let unversioned = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "status",
-            "params": {"uid": 0, "gid": 0}
+            "params": {}
         });
-        let mut legacy_state = ConnectionProtocolState::New;
-        assert!(LegacyClientHandshakeAdapter::bind(
-            &mut legacy_state,
-            &legacy
-        ));
-        assert!(matches!(
-            legacy_state,
-            ConnectionProtocolState::Ready { negotiated: None }
-        ));
-
+        assert!(parse_versioned_request(&unversioned).is_none());
         let versioned = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 2,
             "method": "initialize",
             "params": ::contracts::protocol::client::ClientMessage::v1(initialize())
         });
-        let mut versioned_state = ConnectionProtocolState::New;
-        assert!(!LegacyClientHandshakeAdapter::bind(
-            &mut versioned_state,
-            &versioned
-        ));
-        assert!(matches!(versioned_state, ConnectionProtocolState::New));
+        assert!(parse_versioned_request(&versioned).is_some());
     }
 
     #[tokio::test]
@@ -1656,20 +1540,5 @@ mod tests {
         });
         tasks.shutdown().await;
         assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
-    }
-
-    #[test]
-    fn request_task_failure_retains_id_and_finishes_client_turn() {
-        let (response, events) = request_task_failure(serde_json::json!(42), "panic");
-        assert_eq!(response["id"], 42);
-        assert_eq!(response["error"]["code"], -32603);
-        assert!(response["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("panic"));
-        assert!(matches!(
-            events.as_slice(),
-            [ClientEvent::Error { .. }, ClientEvent::TurnDone]
-        ));
     }
 }
