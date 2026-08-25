@@ -2721,7 +2721,7 @@
         "session_writer": {
           "$ref": "#/$defs/SessionWriterMode",
           "default": "runtime",
-          "description": "RA-03 writer cutover mode. Runtime is the production authority; Legacy\nremains only as a one-way rollback writer during the observation window."
+          "description": "RA-03 writer cutover compatibility setting. Runtime is the only live\nauthority; `legacy` is accepted as a deprecated configuration alias and\nstill performs the one-way bootstrap import into Runtime storage."
         },
         "working_dir": {
           "default": null,
@@ -2856,11 +2856,19 @@
     },
     "SessionWriterMode": {
       "description": "Typed RA-03 Session writer cutover mode.\n\nSerde rejects unknown values while loading the configuration layer, so an\noperator typo cannot silently reopen the legacy writer.",
-      "enum": [
-        "runtime",
-        "legacy"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "runtime"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "legacy",
+          "description": "Deprecated compatibility spelling. It no longer enables legacy reads or\nwrites and is normalized to Runtime behavior during composition.",
+          "type": "string"
+        }
+      ]
     },
     "SupplementalDestinationAttestationConfig": {
       "additionalProperties": false,
