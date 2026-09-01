@@ -77,11 +77,11 @@ impl CanonicalSessionStore {
     }
 
     fn open_connection(&self) -> Result<Connection> {
-        let connection = match &self.locator {
-            DatabaseLocator::File(path) => Connection::open(path)?,
-            DatabaseLocator::SharedMemory(uri) => open_shared_memory(uri)?,
+        let (connection, file_backed) = match &self.locator {
+            DatabaseLocator::File(path) => (Connection::open(path)?, true),
+            DatabaseLocator::SharedMemory(uri) => (open_shared_memory(uri)?, false),
         };
-        configure_connection(&connection, false)?;
+        configure_connection(&connection, file_backed)?;
         Ok(connection)
     }
 
@@ -134,8 +134,8 @@ fn configure_connection(connection: &Connection, file_backed: bool) -> Result<()
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
     if file_backed {
         connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.pragma_update(None, "synchronous", "NORMAL")?;
     }
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
     Ok(())
 }
 
@@ -487,6 +487,28 @@ impl SessionReadStore for CanonicalSessionStore {
         items
     }
 
+    async fn load_items_page(
+        &self,
+        session: &SessionId,
+        after: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<ItemRecord>> {
+        let connection = self.open_connection()?;
+        let mut stmt = connection.prepare(
+            "SELECT item_json FROM session_items
+             WHERE session_id=?1 AND sequence>?2
+             ORDER BY sequence LIMIT ?3",
+        )?;
+        let items = stmt
+            .query_map(
+                params![session.0, after.unwrap_or(0), limit.clamp(1, 10_000)],
+                |row| row.get::<_, String>(0),
+            )?
+            .map(|row| Ok(serde_json::from_str(&row?)?))
+            .collect();
+        items
+    }
+
     async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
         let connection = self.open_connection()?;
         let mut statement =
@@ -498,6 +520,29 @@ impl SessionReadStore for CanonicalSessionStore {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter()
             .map(|json| serde_json::from_str(&json).map_err(Into::into))
+            .collect()
+    }
+
+    async fn list_sessions_with_principal(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(SessionRecord, Option<PrincipalId>)>> {
+        let connection = self.open_connection()?;
+        let mut statement = connection.prepare(
+            "SELECT s.record_json, p.principal_id
+             FROM sessions s
+             LEFT JOIN session_principals p ON p.session_id=s.session_id
+             ORDER BY s.rowid DESC LIMIT ?1",
+        )?;
+        let rows = statement
+            .query_map(params![limit.clamp(1, 1_000)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(record, principal)| {
+                Ok((serde_json::from_str(&record)?, principal.map(PrincipalId)))
+            })
             .collect()
     }
 

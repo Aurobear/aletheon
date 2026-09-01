@@ -35,6 +35,8 @@ pub enum RuntimeError {
     UnknownSchema,
     #[error("request field is not supported by the authoritative runtime writer")]
     UnsupportedRequest,
+    #[error(transparent)]
+    AgentControl(#[from] ::contracts::AgentControlError),
     #[error("internal runtime error")]
     Internal,
 }

@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::Result;
 use contracts::protocol::client::{ClientEvent, EventCursor};
@@ -18,6 +19,9 @@ pub struct SqliteSessionProtocolEventStore {
 impl SqliteSessionProtocolEventStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;
+        connection.busy_timeout(Duration::from_secs(2))?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS protocol_events(
                session_id TEXT NOT NULL,
@@ -30,6 +34,10 @@ impl SqliteSessionProtocolEventStore {
                PRIMARY KEY(session_id,sequence),
                UNIQUE(session_id,event_id),
                UNIQUE(session_id,dedupe_key)
+             );
+             CREATE TABLE IF NOT EXISTS protocol_sync_watermarks(
+               session_id TEXT PRIMARY KEY,
+               canonical_sequence INTEGER NOT NULL
              );",
         )?;
         Ok(Self {
@@ -62,9 +70,15 @@ impl SessionProtocolEventStore for SqliteSessionProtocolEventStore {
                         "UPDATE protocol_events SET event_json=?3 WHERE session_id=?1 AND sequence=?2",
                         params![write.session_id.0, sequence, serde_json::to_string(&event)?],
                     )?;
+                    advance_canonical_watermark(
+                        &tx,
+                        &write.session_id,
+                        write.canonical_sequence,
+                    )?;
                     tx.commit()?;
                     return Ok(event);
                 }
+                advance_canonical_watermark(&tx, &write.session_id, write.canonical_sequence)?;
                 tx.commit()?;
                 return Ok(serde_json::from_str(&json)?);
             }
@@ -92,6 +106,7 @@ impl SessionProtocolEventStore for SqliteSessionProtocolEventStore {
             params![write.session_id.0, sequence, cursor.event_id.as_deref().unwrap_or_default(),
                 write.item_id, phase_name, write.dedupe_key, serde_json::to_string(&event)?],
         )?;
+        advance_canonical_watermark(&tx, &write.session_id, write.canonical_sequence)?;
         tx.commit()?;
         Ok(event)
     }
@@ -192,4 +207,35 @@ impl SessionProtocolEventStore for SqliteSessionProtocolEventStore {
             }),
         )
     }
+
+    fn canonical_watermark(&self, session_id: &SessionId) -> Result<u64> {
+        Ok(self
+            .connection
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .query_row(
+                "SELECT canonical_sequence FROM protocol_sync_watermarks WHERE session_id=?1",
+                params![session_id.0],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0))
+    }
+}
+
+fn advance_canonical_watermark(
+    transaction: &rusqlite::Transaction<'_>,
+    session_id: &SessionId,
+    canonical_sequence: Option<u64>,
+) -> Result<()> {
+    let Some(canonical_sequence) = canonical_sequence else {
+        return Ok(());
+    };
+    transaction.execute(
+        "INSERT INTO protocol_sync_watermarks(session_id,canonical_sequence) VALUES(?1,?2)
+         ON CONFLICT(session_id) DO UPDATE SET canonical_sequence=
+           MAX(protocol_sync_watermarks.canonical_sequence,excluded.canonical_sequence)",
+        params![session_id.0, canonical_sequence],
+    )?;
+    Ok(())
 }

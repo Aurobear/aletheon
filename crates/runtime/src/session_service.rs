@@ -1,7 +1,10 @@
 //! Resume, fork, interrupt, and replay over canonical session history.
 
 use ::contracts::LOCAL_OWNER_PRINCIPAL;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 use ::contracts::{
     AppendOutcome, ContentBlock, ItemId, ItemPayload, ItemRecord, Message, PrincipalId, Role,
@@ -10,6 +13,8 @@ use ::contracts::{
 };
 use anyhow::{bail, Result};
 use tokio::sync::Mutex;
+
+const CANONICAL_PROTOCOL_SYNC_PAGE_SIZE: usize = 256;
 
 use crate::public_session_projection::SessionProjection;
 use crate::session_projection::project_messages;
@@ -21,6 +26,7 @@ use crate::session_protocol::{
 use crate::turn_registry::ActiveTurnRegistry;
 
 const SESSION_EVENT_PAGE_LIMIT: usize = 256;
+const SESSION_EVENT_PAGE_MAX_BYTES: usize = 512 * 1024;
 
 /// Session IDs emitted by the authenticated turn path are namespaced as
 /// `<principal>:<thread>`. Legacy local-only IDs remain visible only to the
@@ -45,8 +51,9 @@ pub enum InterruptOutcome {
 pub struct SessionService {
     store: Arc<dyn SessionAppendStore>,
     active: Arc<ActiveTurnRegistry>,
-    interrupted: Mutex<HashSet<String>>,
+    interrupted_turns: Mutex<HashMap<String, crate::TurnId>>,
     protocol: Arc<dyn SessionProtocolEventStore>,
+    canonical_sync_locks: Mutex<HashMap<String, Weak<Mutex<()>>>>,
     runtime_commands: Option<Arc<dyn crate::RuntimeCommandPort>>,
 }
 
@@ -94,6 +101,29 @@ impl SessionService {
             item,
             error,
             dedupe_key,
+            canonical_sequence: None,
+        })
+    }
+
+    async fn append_canonical_protocol_item_event(
+        &self,
+        session_id: &SessionId,
+        item_id: String,
+        phase: ::contracts::protocol::client::ItemPhase,
+        item: ItemRecord,
+        error: Option<String>,
+        dedupe_key: String,
+    ) -> Result<::contracts::protocol::client::ClientEvent> {
+        let canonical_sequence = item.sequence;
+        self.protocol.append_item(ProtocolItemWrite {
+            session_id: session_id.clone(),
+            item_id,
+            phase,
+            delta: None,
+            item: Some(item),
+            error,
+            dedupe_key: Some(dedupe_key),
+            canonical_sequence: Some(canonical_sequence),
         })
     }
 
@@ -123,62 +153,96 @@ impl SessionService {
     }
 
     async fn sync_canonical_protocol_events(&self, session_id: &SessionId) -> Result<()> {
-        for item in self.items(session_id).await? {
-            let (item_id, phase, error, suffix) = match &item.payload {
-                ItemPayload::ToolCall { call_id, .. } => (
-                    format!("tool:{}:{call_id}", item.turn_id.0),
-                    ::contracts::protocol::client::ItemPhase::Started,
-                    None,
-                    "tool-started",
-                ),
-                ItemPayload::ToolResult {
-                    call_id,
-                    content,
-                    is_error,
-                    ..
-                } => (
-                    format!("tool:{}:{call_id}", item.turn_id.0),
-                    if *is_error {
-                        ::contracts::protocol::client::ItemPhase::Failed
-                    } else {
-                        ::contracts::protocol::client::ItemPhase::Completed
-                    },
-                    is_error.then(|| content.clone()),
-                    "tool-terminal",
-                ),
-                ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. } => (
-                    format!("turn:{}:assistant", item.turn_id.0),
-                    ::contracts::protocol::client::ItemPhase::Completed,
-                    None,
-                    "assistant-terminal",
-                ),
-                _ => (
-                    item.id.0.to_string(),
-                    ::contracts::protocol::client::ItemPhase::Completed,
-                    None,
-                    "canonical-terminal",
-                ),
-            };
-            self.append_protocol_item_event(
-                session_id,
-                item_id,
-                phase,
-                None,
-                Some(item.clone()),
-                error,
-                Some(format!(
-                    "{}:{suffix}",
-                    match &item.payload {
-                        ItemPayload::ToolCall { call_id, .. }
-                        | ItemPayload::ToolResult { call_id, .. } =>
-                            format!("tool:{}:{call_id}", item.turn_id.0),
-                        ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. } =>
-                            format!("turn:{}:assistant", item.turn_id.0),
-                        _ => item.id.0.to_string(),
-                    }
-                )),
-            )
-            .await?;
+        let session_lock = {
+            let mut locks = self.canonical_sync_locks.lock().await;
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = locks.get(&session_id.0).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(session_id.0.clone(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        let _session_guard = session_lock.lock().await;
+        let mut watermark = self.protocol.canonical_watermark(session_id)?;
+        if self.store.load_session(session_id).await?.is_none() {
+            bail!("session not found");
+        }
+        loop {
+            let items = self
+                .store
+                .load_items_page(
+                    session_id,
+                    Some(watermark),
+                    CANONICAL_PROTOCOL_SYNC_PAGE_SIZE,
+                )
+                .await?;
+            if items.is_empty() {
+                break;
+            }
+            let page_len = items.len();
+            for item in items {
+                let (item_id, phase, error, suffix) = match &item.payload {
+                    ItemPayload::ToolCall { call_id, .. } => (
+                        format!("tool:{}:{call_id}", item.turn_id.0),
+                        ::contracts::protocol::client::ItemPhase::Started,
+                        None,
+                        "tool-started",
+                    ),
+                    ItemPayload::ToolResult {
+                        call_id,
+                        content,
+                        is_error,
+                        ..
+                    } => (
+                        format!("tool:{}:{call_id}", item.turn_id.0),
+                        if *is_error {
+                            ::contracts::protocol::client::ItemPhase::Failed
+                        } else {
+                            ::contracts::protocol::client::ItemPhase::Completed
+                        },
+                        is_error.then(|| content.clone()),
+                        "tool-terminal",
+                    ),
+                    ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. } => (
+                        format!("turn:{}:assistant", item.turn_id.0),
+                        ::contracts::protocol::client::ItemPhase::Completed,
+                        None,
+                        "assistant-terminal",
+                    ),
+                    _ => (
+                        item.id.0.to_string(),
+                        ::contracts::protocol::client::ItemPhase::Completed,
+                        None,
+                        "canonical-terminal",
+                    ),
+                };
+                self.append_canonical_protocol_item_event(
+                    session_id,
+                    item_id,
+                    phase,
+                    item.clone(),
+                    error,
+                    format!(
+                        "{}:{suffix}",
+                        match &item.payload {
+                            ItemPayload::ToolCall { call_id, .. }
+                            | ItemPayload::ToolResult { call_id, .. } =>
+                                format!("tool:{}:{call_id}", item.turn_id.0),
+                            ItemPayload::AssistantMessage { .. }
+                            | ItemPayload::SystemNotice { .. } =>
+                                format!("turn:{}:assistant", item.turn_id.0),
+                            _ => item.id.0.to_string(),
+                        }
+                    ),
+                )
+                .await?;
+                watermark = item.sequence;
+            }
+            if page_len < CANONICAL_PROTOCOL_SYNC_PAGE_SIZE {
+                break;
+            }
         }
         Ok(())
     }
@@ -198,8 +262,9 @@ impl SessionService {
         Self {
             store,
             active,
-            interrupted: Mutex::new(HashSet::new()),
+            interrupted_turns: Mutex::new(HashMap::new()),
             protocol,
+            canonical_sync_locks: Mutex::new(HashMap::new()),
             runtime_commands: None,
         }
     }
@@ -313,8 +378,8 @@ impl SessionService {
         principal: &PrincipalId,
     ) -> Result<::contracts::protocol::client::SessionListSnapshot> {
         let mut sessions = Vec::new();
-        for session in self.store.list_sessions(256).await? {
-            let visible = match self.store.principal_for(&session.id).await? {
+        for (session, owner) in self.store.list_sessions_with_principal(256).await? {
+            let visible = match owner {
                 Some(owner) => owner == *principal,
                 None => session_visible_to(&session.id, principal),
             };
@@ -388,9 +453,24 @@ impl SessionService {
                 bail!("cursor event_id does not match durable item");
             }
         }
-        let events =
+        let candidates =
             self.protocol
                 .events_after(session_id, after.sequence, SESSION_EVENT_PAGE_LIMIT)?;
+        let mut events = Vec::new();
+        let mut encoded_bytes = 0usize;
+        for event in candidates {
+            let event_bytes = serde_json::to_vec(&event)?.len().saturating_add(1);
+            if event_bytes > SESSION_EVENT_PAGE_MAX_BYTES {
+                bail!("single session event exceeds the projection page byte budget");
+            }
+            if !events.is_empty()
+                && encoded_bytes.saturating_add(event_bytes) > SESSION_EVENT_PAGE_MAX_BYTES
+            {
+                break;
+            }
+            encoded_bytes = encoded_bytes.saturating_add(event_bytes);
+            events.push(event);
+        }
         let next = events.last().map_or_else(
             || after.clone(),
             |event| match event {
@@ -703,10 +783,6 @@ impl SessionService {
     }
 
     pub async fn interrupt(&self, session_id: &SessionId) -> Result<InterruptOutcome> {
-        let mut interrupted = self.interrupted.lock().await;
-        if interrupted.contains(&session_id.0) {
-            return Ok(InterruptOutcome::AlreadyTerminal);
-        }
         // Legacy session RPCs do not yet carry a principal. This compatibility
         // lookup is removed when those RPCs move to PrincipalContext in M3.
         let active = self
@@ -719,8 +795,12 @@ impl SessionService {
         let Some(active) = active else {
             return Ok(InterruptOutcome::AlreadyTerminal);
         };
+        let mut interrupted = self.interrupted_turns.lock().await;
+        if interrupted.get(&session_id.0) == Some(&active.canonical_turn_id) {
+            return Ok(InterruptOutcome::AlreadyTerminal);
+        }
         active.cancel(::contracts::CancelReason::User);
-        interrupted.insert(session_id.0.clone());
+        interrupted.insert(session_id.0.clone(), active.canonical_turn_id);
         Ok(InterruptOutcome::Interrupted)
     }
 }
@@ -869,6 +949,49 @@ mod tests {
 
     fn test_store() -> Arc<dyn SessionAppendStore> {
         Arc::new(TestMemoryStore::default())
+    }
+
+    fn test_active_turn(canonical_turn_id: &str) -> crate::ActiveTurn {
+        crate::ActiveTurn {
+            operation_id: ::contracts::OperationId::new(),
+            turn_id: ::contracts::TurnId::new(),
+            canonical_turn_id: crate::TurnId(canonical_turn_id.to_owned()),
+            connection_id: ::contracts::ConnectionId::new(),
+            cancellation: crate::TurnCancellation::new(),
+            started_at: ::contracts::MonoTime(0),
+            deadline_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupt_idempotency_is_scoped_to_the_active_turn() {
+        let active = Arc::new(ActiveTurnRegistry::new());
+        let key = crate::ActiveTurnKey::new(
+            ::contracts::PrincipalId("principal-a".into()),
+            ::contracts::ThreadId("session-a".into()),
+        );
+        let first = test_active_turn("runtime-turn-1");
+        active.lock().await.insert(key.clone(), first.clone());
+        let service = SessionService::new(test_store(), active.clone());
+        let session = SessionId("session-a".into());
+
+        assert_eq!(
+            service.interrupt(&session).await.unwrap(),
+            InterruptOutcome::Interrupted
+        );
+        assert!(first.is_cancelled());
+        assert_eq!(
+            service.interrupt(&session).await.unwrap(),
+            InterruptOutcome::AlreadyTerminal
+        );
+
+        let second = test_active_turn("runtime-turn-2");
+        active.lock().await.insert(key, second.clone());
+        assert_eq!(
+            service.interrupt(&session).await.unwrap(),
+            InterruptOutcome::Interrupted
+        );
+        assert!(second.is_cancelled());
     }
 
     fn test_budget_projection() -> ::contracts::ContextBudgetProjection {
