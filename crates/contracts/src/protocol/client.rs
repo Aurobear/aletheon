@@ -1095,6 +1095,18 @@ pub struct UiSnapshot {
 
 pub const SESSION_READ_MODEL_SCHEMA_VERSION: u16 = 1;
 
+/// Item-free Session read-model baseline used with bounded event pages.
+/// `through` names the authoritative tail represented by tasks/activities;
+/// clients rebuild item history by consuming ordered pages from their cursor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionReadBaseline {
+    pub schema_version: u16,
+    pub session: crate::SessionRecord,
+    pub through: EventCursor,
+    pub tasks: Vec<TaskSnapshot>,
+    pub activities: Vec<ActivitySnapshot>,
+}
+
 /// Versioned daemon-owned Session/Task/Activity snapshot. X5c migrates the
 /// presentation adapter from the compatibility `UiSnapshot` to this contract;
 /// keeping the types distinct prevents a partially upgraded client from
@@ -1501,6 +1513,15 @@ pub enum ClientEvent {
     },
     Agent(AgentEvent),
     Reconnected(EventCursor),
+    /// Terminal condition for one connection-owned subscription. The cursor is
+    /// the last event successfully enqueued for this client; reconnecting
+    /// clients must resume strictly after it instead of guessing progress.
+    SubscriptionTerminal {
+        cursor: EventCursor,
+        retryable: bool,
+        code: String,
+        message: String,
+    },
     MemoryObservationReceipt(crate::protocol::memory::MemoryObservationReceiptV1),
     MemoryLifecycleReceipt(crate::protocol::memory::MemoryLifecycleReceiptV1),
     MemoryRecallResult(crate::protocol::memory::MemoryRecallResultV1),

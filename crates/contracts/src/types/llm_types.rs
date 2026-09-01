@@ -102,6 +102,49 @@ pub enum StreamChunk {
     Done { stop_reason: StopReason },
 }
 
+/// Typed provider-stream failure emitted when a protocol-level tool block ends
+/// before its accumulated arguments form valid JSON. Raw model output is not
+/// retained in the diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "malformed_tool_arguments tool_id={tool_id} tool_name={tool_name} parse_kind={parse_kind} line={line} column={column} argument_bytes={argument_bytes}"
+)]
+pub struct MalformedToolArgumentsError {
+    pub tool_id: String,
+    pub tool_name: String,
+    pub parse_kind: &'static str,
+    pub line: usize,
+    pub column: usize,
+    pub argument_bytes: usize,
+}
+
+impl MalformedToolArgumentsError {
+    pub fn from_json_error(
+        tool_id: &str,
+        tool_name: &str,
+        argument_bytes: usize,
+        error: &serde_json::Error,
+    ) -> Self {
+        Self {
+            tool_id: bounded_tool_diagnostic(tool_id),
+            tool_name: bounded_tool_diagnostic(tool_name),
+            parse_kind: match error.classify() {
+                serde_json::error::Category::Io => "json_io",
+                serde_json::error::Category::Syntax => "json_syntax",
+                serde_json::error::Category::Data => "json_schema",
+                serde_json::error::Category::Eof => "json_eof",
+            },
+            line: error.line(),
+            column: error.column(),
+            argument_bytes,
+        }
+    }
+}
+
+fn bounded_tool_diagnostic(value: &str) -> String {
+    value.replace(['\r', '\n'], " ").chars().take(256).collect()
+}
+
 /// A pinned, boxed stream of `StreamChunk` results.
 pub type LlmStream = Pin<Box<dyn Stream<Item = anyhow::Result<StreamChunk>> + Send>>;
 
