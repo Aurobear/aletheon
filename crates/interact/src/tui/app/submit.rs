@@ -1,6 +1,4 @@
 use crate::tui::presentation::CollaborationModePresentation;
-use std::io;
-use std::io::Write;
 
 use application::turn_control::CollaborationMode;
 use gateway::client::CommandOutcome as GatewayCommandOutcome;
@@ -350,6 +348,7 @@ async fn typed_status(app: &mut TuiModel, session_id: String) -> bool {
             gateway::protocol::SessionSnapshotQuery {
                 session: SessionRef(session_id.clone()),
                 after_cursor: None,
+                paged: false,
             },
         ))
         .await;
@@ -822,12 +821,16 @@ pub async fn submit_message(app: &mut TuiModel, text: String) {
                 match last_assistant {
                     Some(text) if !text.is_empty() => {
                         let encoded = base64_encode(&text);
-                        // OSC 52: set clipboard to base64-encoded text
-                        let osc = format!("\x1b]52;c;{encoded}\x1b\\");
-                        io::stdout().write_all(osc.as_bytes()).ok();
-                        io::stdout().flush().ok();
-                        app.system_notices
-                            .push(ChatRole::System, "已复制到剪贴板".to_string());
+                        match app.caps.write_osc52_clipboard(&encoded) {
+                            Ok(()) => app
+                                .system_notices
+                                .push(ChatRole::System, "已发送到终端剪贴板".to_string()),
+                            Err(error) => {
+                                let message = format!("复制到剪贴板失败: {error}");
+                                app.app_state.last_error = Some(message.clone());
+                                app.system_notices.push(ChatRole::System, message);
+                            }
+                        }
                     }
                     _ => {
                         app.system_notices
@@ -978,10 +981,19 @@ pub async fn submit_message(app: &mut TuiModel, text: String) {
                     modes[(current + 1) % modes.len()]
                 } else {
                     match name.as_str() {
+                        "default" => CollaborationMode::Default,
                         "plan" => CollaborationMode::Plan,
                         "auto" => CollaborationMode::Auto,
                         "sandbox" => CollaborationMode::Sandbox,
-                        _ => CollaborationMode::Default,
+                        _ => {
+                            app.system_notices.push(
+                                ChatRole::System,
+                                format!(
+                                    "Unknown collaboration mode '{name}'. Available modes: default, plan, auto, sandbox"
+                                ),
+                            );
+                            return;
+                        }
                     }
                 };
                 if typed_set_collaboration_mode(app, mode).await {
@@ -1249,12 +1261,19 @@ pub async fn submit_message(app: &mut TuiModel, text: String) {
             return;
         }
     }
-    app.history.push(text.clone());
-    app.persist_input_state();
-    app.system_notices.push(ChatRole::User, text.clone());
-    // Assistant entry created lazily on first response delta so it renders
-    // after any tool/reflection logs (ordering fix).
-    send_to_daemon(app, &text).await;
+    if send_to_daemon(app, &text).await {
+        app.history.push(text.clone());
+        app.system_notices.push(ChatRole::User, text);
+        app.persist_input_state();
+        // Assistant entry created lazily on first response delta so it renders
+        // after any tool/reflection logs (ordering fix).
+    } else {
+        app.input_buf = text;
+        app.cursor = app.input_buf.len();
+        app.input_literal = literal_input;
+        app.check_cjk();
+        app.persist_input_state();
+    }
 }
 
 async fn send_shell_to_daemon(app: &mut TuiModel, command: &str) {
@@ -1264,7 +1283,7 @@ async fn send_shell_to_daemon(app: &mut TuiModel, command: &str) {
     typed_route_required(app, "shell command");
 }
 
-pub async fn send_to_daemon(app: &mut TuiModel, text: &str) {
+pub async fn send_to_daemon(app: &mut TuiModel, text: &str) -> bool {
     let mut requirements = app.turn_requirements.clone();
     if let Some(runtime_id) = app.next_agent_runtime.as_ref() {
         requirements.push(::contracts::TurnRequirement::InvokeAgentRuntime {
@@ -1281,7 +1300,7 @@ pub async fn send_to_daemon(app: &mut TuiModel, text: &str) {
                 ChatRole::System,
                 "Gateway refused prompt: session is not initialized".to_string(),
             );
-            return;
+            return false;
         };
         let required_agent_runtimes = requirements
             .iter()
@@ -1321,12 +1340,14 @@ pub async fn send_to_daemon(app: &mut TuiModel, text: &str) {
             Ok(GatewayCommandOutcome::Submitted { turn }) => {
                 app.next_agent_runtime = None;
                 mark_typed_turn_submitted(app, turn);
+                true
             }
             Ok(other) => {
                 app.system_notices.push(
                     ChatRole::System,
                     format!("Gateway rejected prompt receipt: {other:?}"),
                 );
+                false
             }
             Err(error) => {
                 app.system_notices.push(
@@ -1334,11 +1355,13 @@ pub async fn send_to_daemon(app: &mut TuiModel, text: &str) {
                     format!("Gateway prompt rejected: {error}"),
                 );
                 app.app_state.last_error = Some(error.to_string());
+                false
             }
         }
-        return;
+    } else {
+        typed_route_required(app, "prompt submission");
+        false
     }
-    typed_route_required(app, "prompt submission");
 }
 
 /// Record the server-assigned turn reference before any live notification can
@@ -1353,6 +1376,7 @@ fn mark_typed_turn_submitted(app: &mut TuiModel, turn: gateway::protocol::TurnRe
     app.turn_cancel_requested = false;
     app.streaming = true;
     app.status.waiting = true;
+    app.status.begin_elapsed(app.clock.mono_now());
     app.app_state.streaming = true;
     app.projection_polling = true;
     app.projection_next_poll_at = app.clock.mono_now();

@@ -8,10 +8,10 @@ use std::time::Duration;
 use ::contracts::{
     AgoraSpaceId, CapabilityBatchDecision, CapabilityBatchPlan, CapabilityCall, Clock,
     ConsciousArbitrationMode, ConsciousContextProjection, ConsciousFieldReadout,
-    ConsciousProcessor, ContentId, FieldDecisionKind, FieldDecisionReason,
-    LatestConsciousContextPort, MonoDeadline, PredictionFrame, ProcessId, ProcessorAck,
-    ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, SalienceVector,
-    VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate,
+    ConsciousProcessor, ContentId, ContextProjectionReceipt, FieldDecisionKind,
+    FieldDecisionReason, LatestConsciousContextPort, MonoDeadline, PredictionFrame, ProcessId,
+    ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse,
+    SalienceVector, VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate,
     WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use agora::{
@@ -628,13 +628,24 @@ impl LatestConsciousContextPort for ConsciousWorkspaceRegistry {
         &self,
         space: &AgoraSpaceId,
     ) -> anyhow::Result<ConsciousContextProjection> {
-        let coordinator = self
-            .spaces
-            .read()
-            .get(space)
-            .cloned()
-            .context("conscious workspace has not observed a turn")?;
-        coordinator.latest_context(space).await
+        let coordinator = self.spaces.read().get(space).cloned();
+        if let Some(coordinator) = coordinator {
+            return coordinator.latest_context(space).await;
+        }
+        let self_view = self.dasein.self_view().await?;
+        let projection = ConsciousContextProjection {
+            latest_broadcast: None,
+            receipt: ContextProjectionReceipt {
+                space: space.clone(),
+                broadcast_epoch: None,
+                workspace_version: None,
+                dasein_version: self_view.version,
+                content_ids: Vec::new(),
+            },
+            self_view,
+        };
+        projection.validate()?;
+        Ok(projection)
     }
 }
 

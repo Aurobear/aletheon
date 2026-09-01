@@ -165,7 +165,7 @@ impl Renderable for TaskConsoleRenderable<'_> {
 
 // ── InputRenderable ─────────────────────────────────────────────────
 
-/// Renders the 3-row input area (separator, input text with cursor, hint line).
+/// Renders a separator plus a bounded, cursor-following input viewport.
 pub struct InputRenderable<'a> {
     pub buf: &'a str,
     pub cursor: usize,
@@ -187,57 +187,107 @@ impl Renderable for InputRenderable<'_> {
         let sep_line = Line::from(Span::styled(sep, Style::default().fg(Color::DarkGray)));
         Paragraph::new(sep_line).render(Rect { height: 1, ..area }, buf);
 
-        // Row 1: input text with cursor
-        let input_area = Rect {
-            y: area.y + 1,
-            height: 1,
-            ..area
-        };
-        let mut spans = vec![Span::styled(prompt, Style::default().fg(Color::Green))];
-
         let byte_pos = self.cursor.min(self.buf.len());
-        let before = &self.buf[..byte_pos];
-        let after = &self.buf[byte_pos..];
+        let cursor_line = self.buf[..byte_pos]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count();
+        let cursor_in_line = self.buf[..byte_pos]
+            .rsplit_once('\n')
+            .map_or(byte_pos, |(_, tail)| tail.len());
+        let lines = self.buf.split('\n').collect::<Vec<_>>();
+        let visible_rows = usize::from(area.height.saturating_sub(1)).max(1);
+        let first_line = cursor_line.saturating_sub(visible_rows.saturating_sub(1));
+        let last_line = (first_line + visible_rows).min(lines.len());
 
-        if !before.is_empty() {
-            spans.push(Span::styled(before, Style::default().fg(Color::White)));
+        for (visible_index, line_index) in (first_line..last_line).enumerate() {
+            let line_area = Rect {
+                y: area.y + 1 + visible_index as u16,
+                height: 1,
+                ..area
+            };
+            let prefix = if line_index == first_line {
+                if lines.len() > visible_rows {
+                    format!("{prompt}[{}/{}] ", cursor_line + 1, lines.len())
+                } else {
+                    prompt.to_owned()
+                }
+            } else {
+                "  ".to_owned()
+            };
+            let prefix_width = Line::from(prefix.as_str())
+                .width()
+                .min(usize::from(area.width));
+            Paragraph::new(Line::from(Span::styled(
+                prefix,
+                Style::default().fg(Color::Green),
+            )))
+            .render(
+                Rect {
+                    width: prefix_width as u16,
+                    ..line_area
+                },
+                buf,
+            );
+
+            let content_area = Rect {
+                x: line_area.x.saturating_add(prefix_width as u16),
+                width: line_area.width.saturating_sub(prefix_width as u16),
+                ..line_area
+            };
+            if content_area.width == 0 {
+                continue;
+            }
+            let line = lines[line_index];
+            if line_index == cursor_line {
+                render_cursor_line(line, cursor_in_line, content_area, buf);
+            } else {
+                Paragraph::new(Line::from(Span::styled(
+                    line,
+                    Style::default().fg(Color::White),
+                )))
+                .render(content_area, buf);
+            }
         }
-
-        let cursor_char = after
-            .chars()
-            .next()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| " ".to_string());
-        spans.push(Span::styled(
-            cursor_char,
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-        let rest = if after.chars().count() > 1 {
-            &after[after
-                .char_indices()
-                .nth(1)
-                .map(|(i, _)| i)
-                .unwrap_or(after.len())..]
-        } else {
-            ""
-        };
-        if !rest.is_empty() {
-            spans.push(Span::styled(rest, Style::default().fg(Color::White)));
-        }
-
-        Paragraph::new(Line::from(spans)).render(input_area, buf);
 
         // Render completion popup over the input area (port from completion.rs)
         self.render_completion(area, buf);
     }
 
     fn desired_height(&self, _width: u16) -> u16 {
-        2
+        4
     }
+}
+
+fn render_cursor_line(line: &str, cursor: usize, area: Rect, buf: &mut Buffer) {
+    let cursor = cursor.min(line.len());
+    let before = &line[..cursor];
+    let after = &line[cursor..];
+    let cursor_char = after
+        .chars()
+        .next()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| " ".to_owned());
+    let rest_offset = after
+        .char_indices()
+        .nth(1)
+        .map_or(after.len(), |(offset, _)| offset);
+    let line = Line::from(vec![
+        Span::styled(before, Style::default().fg(Color::White)),
+        Span::styled(
+            cursor_char,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(&after[rest_offset..], Style::default().fg(Color::White)),
+    ]);
+    let cursor_column = Line::from(before).width();
+    let horizontal_scroll = cursor_column.saturating_sub(usize::from(area.width).saturating_sub(1));
+    Paragraph::new(line)
+        .scroll((0, horizontal_scroll.min(u16::MAX as usize) as u16))
+        .render(area, buf);
 }
 
 impl InputRenderable<'_> {

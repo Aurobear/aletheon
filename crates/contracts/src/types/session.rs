@@ -326,8 +326,35 @@ pub enum AppendOutcome {
 pub trait SessionReadStore: Send + Sync {
     async fn load_session(&self, session: &SessionId) -> Result<Option<SessionRecord>>;
     async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>>;
+    /// Read a bounded, sequence-ordered page after `after`. Stores with a
+    /// native LIMIT implementation should override this default so hot paths
+    /// never materialize the complete session merely to truncate it.
+    async fn load_items_page(
+        &self,
+        session: &SessionId,
+        after: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<ItemRecord>> {
+        let mut items = self.load_items(session, after).await?;
+        items.truncate(limit.max(1));
+        Ok(items)
+    }
     async fn list_sessions(&self, _limit: usize) -> Result<Vec<SessionRecord>> {
         anyhow::bail!("Session listing is unavailable for this store")
+    }
+
+    /// List session records together with their durable owner binding. Stores
+    /// should override this when both projections can be read in one query.
+    async fn list_sessions_with_principal(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(SessionRecord, Option<PrincipalId>)>> {
+        let mut sessions = Vec::new();
+        for session in self.list_sessions(limit).await? {
+            let principal = self.principal_for(&session.id).await?;
+            sessions.push((session, principal));
+        }
+        Ok(sessions)
     }
 
     /// Enumerate every durable Session identity for startup reconciliation.

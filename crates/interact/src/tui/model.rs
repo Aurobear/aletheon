@@ -16,7 +16,7 @@ use super::completion::CompletionPopup;
 use super::controller::TuiController;
 use super::diff_view;
 use super::history_search;
-use super::input::{CommandHistory, InputStateStore};
+use super::input::{CommandHistory, InputStateStore, PreparedInputState};
 use super::pager;
 use super::plan_view::PlanViewState;
 use super::registry;
@@ -64,6 +64,9 @@ pub(crate) struct TuiModel {
     /// Bounded local system notices. They are never used as durable
     /// conversation, tool, or terminal truth; typed projections own those.
     pub(crate) system_notices: SystemNoticeQueue,
+    /// Last visible malformed-event notice. Detailed decode errors stay in
+    /// tracing; this timestamp prevents a bad stream from flooding the TUI.
+    pub(crate) protocol_decode_notice_at: Option<::contracts::MonoTime>,
     pub(crate) input_buf: String,
     /// Cursor position in input_buf (byte index).
     pub(crate) cursor: usize,
@@ -134,6 +137,8 @@ pub(crate) struct TuiModel {
     /// Command history
     pub(crate) history: CommandHistory,
     pub(crate) input_store: InputStateStore,
+    pub(crate) pending_input_persist: Option<PreparedInputState>,
+    pub(crate) input_persist_task: Option<tokio::task::JoinHandle<()>>,
     pub(crate) input_dirty: bool,
     pub(crate) input_persist_at: ::contracts::MonoTime,
     pub(crate) history_search: Option<history_search::HistorySearchOverlay>,
@@ -218,6 +223,7 @@ impl TuiModel {
             requested_permission,
             next_agent_runtime: None,
             system_notices: SystemNoticeQueue::new(caps.clone()),
+            protocol_decode_notice_at: None,
             input_buf: draft,
             cursor,
             controller: TuiController::new(typed_gateway),
@@ -253,6 +259,8 @@ impl TuiModel {
             stream_ctrl: StreamController::new(Arc::clone(&clock)),
             history,
             input_store,
+            pending_input_persist: None,
+            input_persist_task: None,
             input_dirty: false,
             input_persist_at: ::contracts::MonoTime(0),
             history_search: None,
@@ -302,6 +310,7 @@ impl TuiModel {
             requested_permission,
             next_agent_runtime: None,
             system_notices: SystemNoticeQueue::new(caps.clone()),
+            protocol_decode_notice_at: None,
             input_buf: draft,
             cursor,
             controller: TuiController::new(typed_gateway),
@@ -337,6 +346,8 @@ impl TuiModel {
             stream_ctrl: StreamController::new(Arc::clone(&clock)),
             history,
             input_store,
+            pending_input_persist: None,
+            input_persist_task: None,
             input_dirty: false,
             input_persist_at: ::contracts::MonoTime(0),
             history_search: None,
@@ -442,6 +453,7 @@ impl TuiModel {
                 collapsed: false,
             },
         );
+        self.app_state.invalidate_conversation_render();
     }
 
     /// Replace any in-flight assistant representation with one bounded
@@ -475,7 +487,9 @@ impl TuiModel {
     }
 
     pub(crate) fn persist_input_state(&mut self) {
-        self.input_store.save(&self.history, &self.input_buf);
+        self.pending_input_persist = self
+            .input_store
+            .prepare_save(&self.history, &self.input_buf);
         self.input_dirty = false;
     }
 

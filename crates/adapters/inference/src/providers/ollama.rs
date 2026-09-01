@@ -16,6 +16,7 @@ pub struct OllamaProvider {
     client: Client,
     model: String,
     base_url: String,
+    provider_identity: String,
     max_context: usize,
     max_tokens: u32,
 }
@@ -26,9 +27,15 @@ impl OllamaProvider {
             client: Client::new(),
             model: model.into(),
             base_url: "http://localhost:11434".to_string(),
+            provider_identity: "ollama".into(),
             max_context: 128_000,
             max_tokens: 100_000,
         }
+    }
+
+    pub fn with_provider_identity(mut self, identity: impl Into<String>) -> Self {
+        self.provider_identity = identity.into();
+        self
     }
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
@@ -267,7 +274,9 @@ impl LlmProvider for OllamaProvider {
             .await?;
 
         if !response.status().is_success() {
-            return Err(InferenceFailure::from_http_status(&response));
+            return Err(
+                InferenceFailure::from_http_response(response, &self.provider_identity).await,
+            );
         }
 
         let api_resp: ChatResponse = response.json().await?;
@@ -340,7 +349,9 @@ impl LlmProvider for OllamaProvider {
             .await?;
 
         if !response.status().is_success() {
-            return Err(InferenceFailure::from_http_status(&response));
+            return Err(
+                InferenceFailure::from_http_response(response, &self.provider_identity).await,
+            );
         }
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));

@@ -127,6 +127,7 @@ async fn run_typed(
             .query(Query::SessionSnapshot(SessionSnapshotQuery {
                 session: session.clone(),
                 after_cursor: None,
+                paged: false,
             }))
             .await
             .map_err(|error| anyhow::anyhow!("typed Gateway snapshot failed: {error}"))?;

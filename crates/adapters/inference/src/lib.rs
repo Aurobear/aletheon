@@ -18,7 +18,8 @@ pub(crate) mod utf8_stream;
 // re-exported so the host and integration tests never reach into the transport.
 mod core_rpc;
 pub use core_rpc::{
-    CoreFrame, CorePeerPolicy, CoreRequest, CoreRpcClient, CoreRpcServer, DEFAULT_MAX_FRAME_BYTES,
+    CoreFrame, CorePeerPolicy, CoreRequest, CoreRpcClient, CoreRpcReadinessError, CoreRpcServer,
+    DEFAULT_MAX_FRAME_BYTES,
 };
 
 mod registry_port;

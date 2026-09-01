@@ -4,7 +4,7 @@ use super::presentation::CollaborationModePresentation;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui::widgets::{Paragraph, Widget};
 
 use super::awareness::AwarenessWidget;
 use super::state::AppState;
@@ -15,6 +15,7 @@ pub struct StatusBar {
     pub caps: TermCaps,
     pub spinner_frame: usize,
     pub elapsed_secs: f64,
+    elapsed_started_at: Option<::contracts::MonoTime>,
     /// Legacy fields kept for backward compatibility with existing callers.
     pub connected: bool,
     pub provider_info: String,
@@ -34,6 +35,7 @@ impl StatusBar {
             caps,
             spinner_frame: 0,
             elapsed_secs: 0.0,
+            elapsed_started_at: None,
             connected: false,
             provider_info: String::new(),
             model_name: String::new(),
@@ -46,13 +48,26 @@ impl StatusBar {
         }
     }
 
-    pub fn tick_spinner(&mut self) {
+    pub fn begin_elapsed(&mut self, now: ::contracts::MonoTime) {
+        self.elapsed_started_at = Some(now);
+        self.elapsed_secs = 0.0;
+    }
+
+    pub fn begin_elapsed_if_idle(&mut self, now: ::contracts::MonoTime) {
+        if self.elapsed_started_at.is_none() {
+            self.begin_elapsed(now);
+        }
+    }
+
+    pub fn finish_elapsed(&mut self) {
+        self.elapsed_started_at = None;
+    }
+
+    pub fn tick_spinner(&mut self, now: ::contracts::MonoTime) {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
-        // The lifecycle calls this only while a request/turn is streaming.
-        // `waiting` becomes false as soon as the first turn event arrives, so
-        // gating elapsed time on it made long-running inference/tool rounds
-        // appear frozen after admission.
-        self.elapsed_secs += 0.06;
+        if let Some(started_at) = self.elapsed_started_at {
+            self.elapsed_secs = now.0.saturating_sub(started_at.0) as f64 / 1_000.0;
+        }
     }
 
     fn spinner_char(&self) -> &'static str {
@@ -87,7 +102,6 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
             return;
         }
 
-        let y = area.y;
         let bg_color = self.status.caps.color(30, 30, 30);
 
         let sep = if self.status.caps.unicode {
@@ -223,33 +237,13 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
         // and ASCII terminals, and do not imply that the client owns task state.
         spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
         spans.push(Span::styled(
-            "Alt↑↓ activity · Ctrl+T transcript · Ctrl+D diff · Ctrl+C quit",
+            "Alt↑↓ activity · Ctrl+T transcript · Ctrl+D diff · Ctrl+C cancel/clear · Ctrl+C×2 quit",
             Style::default().fg(Color::DarkGray),
         ));
 
-        let line = Line::from(spans);
-
-        // Fill background
-        for x in area.left()..area.right() {
-            buf[(x, y)]
-                .set_symbol(" ")
-                .set_style(Style::default().bg(bg_color));
-        }
-
-        let mut x = area.left();
-        for span in &line.spans {
-            let content = span.content.as_ref();
-            let style = span.style;
-            for ch in content.chars() {
-                if x >= area.right() {
-                    break;
-                }
-                buf[(x, y)]
-                    .set_symbol(&ch.to_string())
-                    .set_style(style.bg(bg_color));
-                x += 1;
-            }
-        }
+        Paragraph::new(Line::from(spans))
+            .style(Style::default().bg(bg_color))
+            .render(area, buf);
     }
 }
 
@@ -265,7 +259,6 @@ impl<'a> Widget for StatusBarWidget<'a> {
             return;
         }
 
-        let y = area.y;
         let bg_color = self.status.caps.color(30, 30, 30);
         let total_w = area.width as usize;
 
@@ -328,35 +321,16 @@ impl<'a> Widget for StatusBarWidget<'a> {
         if !right.is_empty() {
             let used: usize = spans.iter().map(|s: &Span| s.width()).sum();
             let right_with_sep = format!("{sep}{right}");
-            let right_pad = total_w.saturating_sub(used + right_with_sep.len());
+            let right_pad =
+                total_w.saturating_sub(used + Line::from(right_with_sep.as_str()).width());
             spans.push(Span::raw(" ".repeat(right_pad)));
             spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
             spans.push(Span::styled(right, Style::default().fg(Color::DarkGray)));
         }
 
-        let line = Line::from(spans);
-
-        // Fill background
-        for x in area.left()..area.right() {
-            buf[(x, y)]
-                .set_symbol(" ")
-                .set_style(Style::default().bg(bg_color));
-        }
-
-        let mut x = area.left();
-        for span in &line.spans {
-            let content = span.content.as_ref();
-            let style = span.style;
-            for ch in content.chars() {
-                if x >= area.right() {
-                    break;
-                }
-                buf[(x, y)]
-                    .set_symbol(&ch.to_string())
-                    .set_style(style.bg(bg_color));
-                x += 1;
-            }
-        }
+        Paragraph::new(Line::from(spans))
+            .style(Style::default().bg(bg_color))
+            .render(area, buf);
     }
 }
 
@@ -382,8 +356,9 @@ mod tests {
     fn elapsed_time_advances_after_the_first_turn_event() {
         let mut status = StatusBar::new(TermCaps::detect());
         status.waiting = false;
-        status.tick_spinner();
-        assert!((status.elapsed_secs - 0.06).abs() < f64::EPSILON);
+        status.begin_elapsed(::contracts::MonoTime(1_000));
+        status.tick_spinner(::contracts::MonoTime(1_275));
+        assert!((status.elapsed_secs - 0.275).abs() < f64::EPSILON);
     }
 
     #[test]

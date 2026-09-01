@@ -108,6 +108,18 @@ pub trait ObservedAgentBackend: Send + Sync {
         })
     }
     async fn wait(&self, agent_run: &AgentRunId) -> Result<TurnTerminal, RuntimeError>;
+    /// Wait within the caller's remaining end-to-end budget. Implementations
+    /// should pass this duration to their native wait rather than introducing
+    /// an independent timeout.
+    async fn wait_with_timeout(
+        &self,
+        agent_run: &AgentRunId,
+        timeout: std::time::Duration,
+    ) -> Result<TurnTerminal, RuntimeError> {
+        tokio::time::timeout(timeout, self.wait(agent_run))
+            .await
+            .map_err(|_| RuntimeError::Timeout)?
+    }
 
     /// Resume a durable checkpoint for an observed host run after the
     /// supervisor has been recreated.  Observed runs intentionally do not
@@ -797,6 +809,28 @@ impl RuntimeAgentSupervisor {
     /// Wait for a run's authoritative terminal through its pinned backend.
     /// Never returns success before the terminal is authoritative.
     pub async fn wait(&self, agent_run: &AgentRunId) -> Result<TurnTerminal, RuntimeError> {
+        self.wait_inner(agent_run, None).await
+    }
+
+    /// Wait using the caller's remaining end-to-end budget. This is distinct
+    /// from cancellation: cancellation may retain its own short convergence
+    /// fence, while ordinary completion uses the request deadline.
+    pub async fn wait_with_timeout(
+        &self,
+        agent_run: &AgentRunId,
+        timeout: std::time::Duration,
+    ) -> Result<TurnTerminal, RuntimeError> {
+        if timeout.is_zero() {
+            return Err(RuntimeError::Timeout);
+        }
+        self.wait_inner(agent_run, Some(timeout)).await
+    }
+
+    async fn wait_inner(
+        &self,
+        agent_run: &AgentRunId,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<TurnTerminal, RuntimeError> {
         // A restart recovery may have fenced an orphaned run before its
         // backend binding was rebuilt. The durable terminal is authoritative
         // and must be returned instead of treating the missing process-local
@@ -839,7 +873,10 @@ impl RuntimeAgentSupervisor {
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .clone()
                     .ok_or(RuntimeError::AgentRunNotFound)?;
-                let terminal = host.wait(agent_run).await?;
+                let terminal = match timeout {
+                    Some(timeout) => host.wait_with_timeout(agent_run, timeout).await?,
+                    None => host.wait(agent_run).await?,
+                };
                 return self
                     .settle(
                         &observed.session,
@@ -851,7 +888,10 @@ impl RuntimeAgentSupervisor {
                     .map(|()| terminal);
             }
         };
-        let terminal = backend.wait(&backend_run).await?;
+        let terminal = match timeout {
+            Some(timeout) => backend.wait_with_timeout(&backend_run, timeout).await?,
+            None => backend.wait(&backend_run).await?,
+        };
         self.settle(&parent_session, agent_run, generation, terminal.clone())
             .await?;
         Ok(terminal)
@@ -1615,6 +1655,20 @@ impl RuntimeAgentSupervisor {
             return Err(RuntimeError::WrongGeneration);
         }
         self.wait(agent_run).await
+    }
+
+    /// Generation-fenced wait that consumes only the caller's remaining
+    /// end-to-end budget.
+    pub async fn wait_with_generation_timeout(
+        &self,
+        agent_run: &AgentRunId,
+        expected: &Generation,
+        timeout: std::time::Duration,
+    ) -> Result<TurnTerminal, RuntimeError> {
+        if self.generation(agent_run)? != *expected {
+            return Err(RuntimeError::WrongGeneration);
+        }
+        self.wait_with_timeout(agent_run, timeout).await
     }
 
     pub async fn cancel_with_generation(

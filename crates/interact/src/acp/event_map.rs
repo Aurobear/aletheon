@@ -33,6 +33,18 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
             "cursor": cursor_json(cursor),
         })),
         ClientEvent::Reconnected(cursor) => Some(map_reconnect(cursor)),
+        ClientEvent::SubscriptionTerminal {
+            cursor,
+            retryable,
+            code,
+            message,
+        } => Some(json!({
+            "sessionUpdate": "error",
+            "code": code,
+            "message": message,
+            "retryable": retryable,
+            "cursor": cursor_json(cursor),
+        })),
         ClientEvent::Snapshot(snapshot) => Some(json!({
             "sessionUpdate": "snapshot",
             "sessionId": snapshot.session_id.0,

@@ -9,6 +9,8 @@ use tracing::info;
 
 use crate::launcher::{CoreLaunch, DaemonLaunch, EnsureUserDaemon, EnsureUserDaemonError};
 
+const MACHINE_CORE_READINESS_TIMEOUT: Duration = Duration::from_secs(15);
+
 fn select_daemon_socket(
     command: Option<PathBuf>,
     parent: Option<PathBuf>,
@@ -88,7 +90,11 @@ pub async fn run_daemon(request: DaemonLaunch) -> Result<()> {
     let core_socket = std::env::var_os("ALETHEON_CORE_SOCKET")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/run/aletheon/core.sock"));
-    let inference = Arc::new(adapters_inference::CoreRpcClient::new(core_socket));
+    let inference = adapters_inference::CoreRpcClient::new(core_socket);
+    inference
+        .wait_until_ready(MACHINE_CORE_READINESS_TIMEOUT)
+        .await?;
+    let inference = Arc::new(inference);
     crate::host::user_runtime::UserRuntime::bootstrap(config, inference)
         .await?
         .run()

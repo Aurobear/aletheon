@@ -93,7 +93,7 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
                 next_agent_runtime: view.next_agent_runtime,
             });
             layout.push_fixed(
-                2,
+                4,
                 InputRenderable {
                     buf: input_buf,
                     cursor,
@@ -124,9 +124,9 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
             // region. Render it last so later siblings cannot erase it.
             let input_area = ratatui::layout::Rect::new(
                 size.x,
-                size.y + size.height.saturating_sub(3),
+                size.y + size.height.saturating_sub(5),
                 size.width,
-                2,
+                4,
             );
             completion_ref.render(f, input_area);
 

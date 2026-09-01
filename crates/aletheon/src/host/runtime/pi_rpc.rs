@@ -272,6 +272,7 @@ impl AgentHostEffects for UnavailableAgentHostEffects {
     async fn wait_admitted(
         &self,
         _agent_run: &runtime::AgentRunId,
+        _timeout: std::time::Duration,
     ) -> Result<runtime::TurnTerminal, runtime::RuntimeError> {
         Err(runtime::RuntimeError::AgentRunNotFound)
     }

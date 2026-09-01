@@ -6,7 +6,7 @@ use kernel::KernelRuntime;
 
 use super::{
     control_error, AgentHostAdapter, AgentRecoveryRuntimeInput, AgentRunProjection,
-    AgentRuntimeLauncher, CANCEL_WAIT,
+    AgentRuntimeLauncher,
 };
 use runtime::RuntimeProcessRegistrationPort;
 
@@ -84,6 +84,7 @@ pub trait AgentHostEffects: Send + Sync {
     async fn wait_admitted(
         &self,
         agent_run: &runtime::AgentRunId,
+        timeout: std::time::Duration,
     ) -> Result<runtime::TurnTerminal, runtime::RuntimeError>;
 
     async fn resume_admitted(
@@ -182,18 +183,19 @@ impl AgentHostEffects for AgentHostAdapter {
     async fn wait_admitted(
         &self,
         agent_run: &runtime::AgentRunId,
+        timeout: std::time::Duration,
     ) -> Result<runtime::TurnTerminal, runtime::RuntimeError> {
         let agent_id = parse_runtime_agent_id(agent_run)?;
         let record = self
             .repository
             .get(agent_id)
             .await
-            .map_err(|_| runtime::RuntimeError::Internal)?
+            .map_err(runtime::RuntimeError::AgentControl)?
             .ok_or(runtime::RuntimeError::AgentRunNotFound)?;
         let snapshot = self
-            .wait_local(record.root_agent_id(), agent_id, CANCEL_WAIT)
+            .wait_local(record.root_agent_id(), agent_id, timeout)
             .await
-            .map_err(|_| runtime::RuntimeError::Internal)?;
+            .map_err(runtime::RuntimeError::AgentControl)?;
         Ok(match snapshot.status {
             AgentRunStatus::Succeeded => runtime::TurnTerminal::Completed,
             AgentRunStatus::Cancelled | AgentRunStatus::Interrupted => {
@@ -306,6 +308,14 @@ impl runtime::DelegateBackend for RuntimeObservedAgentBackend {
         <Self as runtime::ObservedAgentBackend>::wait(self, agent_run).await
     }
 
+    async fn wait_with_timeout(
+        &self,
+        agent_run: &runtime::AgentRunId,
+        timeout: std::time::Duration,
+    ) -> Result<runtime::TurnTerminal, runtime::RuntimeError> {
+        <Self as runtime::ObservedAgentBackend>::wait_with_timeout(self, agent_run, timeout).await
+    }
+
     async fn resume_from_checkpoint(
         &self,
         recovery: &runtime::DelegateRecoveryRequest,
@@ -352,10 +362,25 @@ impl runtime::ObservedAgentBackend for RuntimeObservedAgentBackend {
         &self,
         agent_run: &runtime::AgentRunId,
     ) -> Result<runtime::TurnTerminal, runtime::RuntimeError> {
+        // Compatibility callers without an explicit wait budget are still
+        // bounded by the public AgentControl protocol maximum. Normal callers
+        // use `wait_with_timeout` and pass their remaining request budget.
+        self.wait_with_timeout(
+            agent_run,
+            std::time::Duration::from_millis(::contracts::agent_control::MAX_AGENT_WAIT_MS),
+        )
+        .await
+    }
+
+    async fn wait_with_timeout(
+        &self,
+        agent_run: &runtime::AgentRunId,
+        timeout: std::time::Duration,
+    ) -> Result<runtime::TurnTerminal, runtime::RuntimeError> {
         self.host
             .upgrade()
             .ok_or(runtime::RuntimeError::AgentRunNotFound)?
-            .wait_admitted(agent_run)
+            .wait_admitted(agent_run, timeout)
             .await
     }
 

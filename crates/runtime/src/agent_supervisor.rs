@@ -250,6 +250,18 @@ pub trait DelegateBackend: Send + Sync {
         &self,
         agent_run: &AgentRunId,
     ) -> Result<crate::event::TurnTerminal, RuntimeError>;
+    /// Wait within a caller-owned remaining budget. Backends may override this
+    /// to pass the same deadline into their native wait primitive; the default
+    /// still establishes a hard outer fence for compatibility backends.
+    async fn wait_with_timeout(
+        &self,
+        agent_run: &AgentRunId,
+        timeout: std::time::Duration,
+    ) -> Result<crate::event::TurnTerminal, RuntimeError> {
+        tokio::time::timeout(timeout, self.wait(agent_run))
+            .await
+            .map_err(|_| RuntimeError::Timeout)?
+    }
     /// Resume a checkpoint through the already-pinned backend generation.
     /// Runtime owns the run identity and only forwards the typed recovery
     /// receipt; concrete checkpoint semantics remain with the backend.

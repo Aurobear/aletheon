@@ -22,6 +22,9 @@ pub struct ProtocolItemWrite {
     pub item: Option<ItemRecord>,
     pub error: Option<String>,
     pub dedupe_key: Option<String>,
+    /// Canonical Session item sequence represented by this protocol write.
+    /// Stores advance the per-session sync watermark atomically with the event.
+    pub canonical_sequence: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -51,6 +54,7 @@ pub trait SessionProtocolEventStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<ClientEvent>>;
     fn tail_cursor(&self, session_id: &SessionId) -> Result<EventCursor>;
+    fn canonical_watermark(&self, session_id: &SessionId) -> Result<u64>;
 }
 
 #[derive(Clone)]
@@ -63,6 +67,7 @@ struct StoredEvent {
 struct MemoryState {
     events: HashMap<String, BTreeMap<u64, StoredEvent>>,
     dedupe: HashMap<(String, String), u64>,
+    canonical_watermarks: HashMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -89,18 +94,28 @@ impl SessionProtocolEventStore for InMemorySessionProtocolEventStore {
         if let Some(key) = write.dedupe_key.as_ref() {
             let lookup = (write.session_id.0.clone(), key.clone());
             if let Some(sequence) = state.dedupe.get(&lookup).copied() {
-                let stored = state
-                    .events
-                    .get_mut(&write.session_id.0)
-                    .and_then(|events| events.get_mut(&sequence))
-                    .ok_or_else(|| anyhow::anyhow!("protocol dedupe index is inconsistent"))?;
-                if write.item.is_some() {
-                    if let ClientEvent::Item(existing) = &mut stored.event {
-                        existing.item = write.item;
-                        existing.error = write.error;
+                let event = {
+                    let stored = state
+                        .events
+                        .get_mut(&write.session_id.0)
+                        .and_then(|events| events.get_mut(&sequence))
+                        .ok_or_else(|| anyhow::anyhow!("protocol dedupe index is inconsistent"))?;
+                    if write.item.is_some() {
+                        if let ClientEvent::Item(existing) = &mut stored.event {
+                            existing.item = write.item;
+                            existing.error = write.error;
+                        }
                     }
+                    stored.event.clone()
+                };
+                if let Some(canonical_sequence) = write.canonical_sequence {
+                    state
+                        .canonical_watermarks
+                        .entry(write.session_id.0)
+                        .and_modify(|watermark| *watermark = (*watermark).max(canonical_sequence))
+                        .or_insert(canonical_sequence);
                 }
-                return Ok(stored.event.clone());
+                return Ok(event);
             }
         }
         let events = state.events.entry(write.session_id.0.clone()).or_default();
@@ -124,7 +139,16 @@ impl SessionProtocolEventStore for InMemorySessionProtocolEventStore {
             },
         );
         if let Some(key) = write.dedupe_key {
-            state.dedupe.insert((write.session_id.0, key), sequence);
+            state
+                .dedupe
+                .insert((write.session_id.0.clone(), key), sequence);
+        }
+        if let Some(canonical_sequence) = write.canonical_sequence {
+            state
+                .canonical_watermarks
+                .entry(write.session_id.0)
+                .and_modify(|watermark| *watermark = (*watermark).max(canonical_sequence))
+                .or_insert(canonical_sequence);
         }
         Ok(event)
     }
@@ -206,5 +230,14 @@ impl SessionProtocolEventStore for InMemorySessionProtocolEventStore {
                 sequence: *sequence,
                 event_id: Some(stored.event_id.clone()),
             }))
+    }
+
+    fn canonical_watermark(&self, session_id: &SessionId) -> Result<u64> {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        Ok(state
+            .canonical_watermarks
+            .get(&session_id.0)
+            .copied()
+            .unwrap_or(0))
     }
 }

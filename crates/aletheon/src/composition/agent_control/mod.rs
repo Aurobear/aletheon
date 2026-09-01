@@ -1564,30 +1564,31 @@ impl AgentHostAdapter {
         request: AgentWaitRequest,
     ) -> Result<AgentSnapshot, AgentControlError> {
         request.validate()?;
+        let timeout = Duration::from_millis(request.timeout_ms);
+        let started = Instant::now();
         if let Some(supervisor) = &self.runtime_agent_supervisor {
             if let Ok(generation) =
                 supervisor.generation(&runtime::AgentRunId(request.agent_id.0.to_string()))
             {
                 supervisor
-                    .wait_with_generation(
+                    .wait_with_generation_timeout(
                         &runtime::AgentRunId(request.agent_id.0.to_string()),
                         &generation,
+                        timeout,
                     )
                     .await
-                    .map_err(|error| {
-                        control_error(
-                            AgentControlErrorKind::Runtime,
-                            format!("Runtime Agent wait failed: {error}"),
-                        )
-                    })?;
+                    .map_err(runtime_agent_wait_error)?;
             }
         }
-        self.wait_local(
-            request.caller_root_agent_id,
-            request.agent_id,
-            Duration::from_millis(request.timeout_ms),
-        )
-        .await
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(control_error(
+                AgentControlErrorKind::Timeout,
+                "Agent wait exhausted its end-to-end deadline",
+            ));
+        }
+        self.wait_local(request.caller_root_agent_id, request.agent_id, remaining)
+            .await
     }
 
     async fn control_send(
@@ -1774,4 +1775,18 @@ fn control_error(kind: AgentControlErrorKind, message: impl Into<String>) -> Age
 
 fn runtime_error(error: impl std::fmt::Display) -> AgentControlError {
     control_error(AgentControlErrorKind::Runtime, error.to_string())
+}
+
+fn runtime_agent_wait_error(error: runtime::RuntimeError) -> AgentControlError {
+    match error {
+        runtime::RuntimeError::AgentControl(error) => error,
+        runtime::RuntimeError::Timeout => control_error(
+            AgentControlErrorKind::Timeout,
+            "Runtime Agent wait exhausted its end-to-end deadline",
+        ),
+        error => control_error(
+            AgentControlErrorKind::Runtime,
+            format!("Runtime Agent wait failed: {error}"),
+        ),
+    }
 }

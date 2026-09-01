@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use ::contracts::protocol::memory::{
     MemoryLifecycleStateV1, MemoryObservationKindV1, MemoryRecordKindV1, MemorySensitivityV1,
@@ -66,6 +70,9 @@ struct SafeProposal;
 struct TerminalProposalControl {
     intents: Mutex<Vec<::contracts::AgentSpawnIntent>>,
     waits: Mutex<u32>,
+    wait_requests: Mutex<Vec<::contracts::AgentWaitRequest>>,
+    outputs: Mutex<VecDeque<String>>,
+    spawn_delay: Duration,
     failure: Option<String>,
 }
 
@@ -75,6 +82,9 @@ impl ::contracts::AgentControlPort for TerminalProposalControl {
         &self,
         intent: ::contracts::AgentSpawnIntent,
     ) -> Result<::contracts::AgentHandle, ::contracts::AgentControlError> {
+        if !self.spawn_delay.is_zero() {
+            tokio::time::sleep(self.spawn_delay).await;
+        }
         let handle = ::contracts::AgentHandle {
             agent_id: ::contracts::AgentId::new(),
             root_agent_id: intent.root_agent_id,
@@ -98,7 +108,14 @@ impl ::contracts::AgentControlPort for TerminalProposalControl {
         request: ::contracts::AgentWaitRequest,
     ) -> Result<::contracts::AgentSnapshot, ::contracts::AgentControlError> {
         *self.waits.lock().unwrap() += 1;
+        self.wait_requests.lock().unwrap().push(request.clone());
         let failure = self.failure.clone();
+        let output = self
+            .outputs
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(valid_proposal_output);
         Ok(::contracts::AgentSnapshot {
             handle: ::contracts::AgentHandle {
                 agent_id: request.agent_id,
@@ -115,15 +132,7 @@ impl ::contracts::AgentControlPort for TerminalProposalControl {
                 ::contracts::AgentRunStatus::Succeeded
             },
             result: failure.is_none().then_some(::contracts::AgentResult {
-                output: serde_json::json!({
-                    "schema_version": 1,
-                    "task_id": "task-a",
-                    "control_instruction_detected": false,
-                    "contradiction_detected": false,
-                    "exact_duplicate_record_ids": [],
-                    "evidence": ["bounded semantic review"]
-                })
-                .to_string(),
+                output,
                 usage: ::contracts::AttemptUsage::default(),
                 evidence: Vec::new(),
                 artifacts: Vec::new(),
@@ -160,6 +169,18 @@ impl ::contracts::AgentControlPort for TerminalProposalControl {
     ) -> Result<Vec<::contracts::AgentSnapshot>, ::contracts::AgentControlError> {
         unreachable!()
     }
+}
+
+fn valid_proposal_output() -> String {
+    serde_json::json!({
+        "schema_version": 1,
+        "task_id": "task-a",
+        "control_instruction_detected": false,
+        "contradiction_detected": false,
+        "exact_duplicate_record_ids": [],
+        "evidence": ["bounded semantic review"]
+    })
+    .to_string()
 }
 
 #[async_trait]
@@ -570,4 +591,67 @@ async fn agent_runtime_proposal_surfaces_terminal_failure_detail() {
     let message = error.to_string();
     assert!(message.contains("runtime ended as Failed"));
     assert!(message.contains("core RPC closed"));
+}
+
+#[tokio::test]
+async fn agent_runtime_proposal_repairs_invalid_json_once_with_remaining_budget() {
+    let control = Arc::new(TerminalProposalControl {
+        outputs: Mutex::new(VecDeque::from(["not-json".into(), valid_proposal_output()])),
+        spawn_delay: Duration::from_millis(5),
+        ..TerminalProposalControl::default()
+    });
+    let mut config = MemoryPolicyConfig::default();
+    config.run_deadline_ms = 1_000;
+    let proposer = AgentControlMemorySemanticProposal::new(control.clone(), config).unwrap();
+
+    let proposal = proposer
+        .propose(
+            "task-a",
+            &observation("proposal-repair", 0),
+            MemoryRecordKindV1::SemanticFact,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(proposal.task_id, "task-a");
+    let intents = control.intents.lock().unwrap();
+    assert_eq!(intents.len(), 2);
+    assert!(intents[1].task.contains("Repair exactly one invalid"));
+    assert!(intents[1].budget.max_elapsed_ms < intents[0].budget.max_elapsed_ms);
+    let waits = control.wait_requests.lock().unwrap();
+    assert_eq!(waits.len(), 2);
+    assert!(waits[0].timeout_ms < intents[0].budget.max_elapsed_ms);
+    assert!(waits[1].timeout_ms < waits[0].timeout_ms);
+}
+
+#[tokio::test]
+async fn agent_runtime_proposal_stops_after_one_repair_and_redacts_invalid_output() {
+    let secret = "token=fixture-secret-value";
+    let control = Arc::new(TerminalProposalControl {
+        outputs: Mutex::new(VecDeque::from([
+            format!("invalid {secret}"),
+            format!("still invalid {secret}"),
+        ])),
+        ..TerminalProposalControl::default()
+    });
+    let proposer =
+        AgentControlMemorySemanticProposal::new(control.clone(), MemoryPolicyConfig::default())
+            .unwrap();
+
+    let error = proposer
+        .propose(
+            "task-a",
+            &observation("proposal-invalid", 0),
+            MemoryRecordKindV1::SemanticFact,
+        )
+        .await
+        .unwrap_err();
+
+    let message = error.to_string();
+    assert!(message.contains("parse_kind=json_syntax"));
+    assert!(message.contains("content=<redacted>"));
+    assert!(!message.contains(secret));
+    assert_eq!(control.intents.lock().unwrap().len(), 2);
+    assert_eq!(*control.waits.lock().unwrap(), 2);
 }

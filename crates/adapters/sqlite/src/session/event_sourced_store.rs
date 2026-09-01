@@ -248,8 +248,24 @@ impl SessionReadStore for EventSourcedSessionStore {
         self.read_model.load_items(session, after).await
     }
 
+    async fn load_items_page(
+        &self,
+        session: &SessionId,
+        after: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<ItemRecord>> {
+        self.read_model.load_items_page(session, after, limit).await
+    }
+
     async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionRecord>> {
         self.read_model.list_sessions(limit).await
+    }
+
+    async fn list_sessions_with_principal(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(SessionRecord, Option<PrincipalId>)>> {
+        self.read_model.list_sessions_with_principal(limit).await
     }
 
     async fn list_session_ids(&self) -> Result<Vec<SessionId>> {

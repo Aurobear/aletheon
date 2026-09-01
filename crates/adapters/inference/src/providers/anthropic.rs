@@ -13,6 +13,7 @@ pub struct AnthropicProvider {
     api_key: String,
     model: String,
     base_url: String,
+    provider_identity: String,
     max_context: usize,
     max_tokens: u32,
     request_timeout: Duration,
@@ -27,11 +28,17 @@ impl AnthropicProvider {
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://api.anthropic.com".to_string(),
+            provider_identity: "anthropic".into(),
             max_context: 200_000,
             max_tokens: 4096,
             request_timeout: Duration::from_millis(timeouts.request_timeout_ms),
             stream_idle_timeout: Duration::from_millis(timeouts.stream_idle_timeout_ms),
         }
+    }
+
+    pub fn with_provider_identity(mut self, identity: impl Into<String>) -> Self {
+        self.provider_identity = identity.into();
+        self
     }
 
     fn client(timeouts: &ProviderTimeoutConfig) -> Client {
@@ -198,6 +205,11 @@ struct StreamContentBlockDelta {
 }
 
 #[derive(Deserialize)]
+struct StreamContentBlockStop {
+    index: usize,
+}
+
+#[derive(Deserialize)]
 struct StreamDelta {
     #[serde(rename = "type")]
     delta_type: String,
@@ -330,7 +342,11 @@ impl LlmProvider for AnthropicProvider {
                 .map_err(provider_request_error)?;
 
             if !response.status().is_success() {
-                return Err(InferenceFailure::from_http_status(&response));
+                return Err(InferenceFailure::from_http_response(
+                    response,
+                    &self.provider_identity,
+                )
+                .await);
             }
             response.json().await.map_err(provider_request_error)
         })
@@ -419,7 +435,9 @@ impl LlmProvider for AnthropicProvider {
         .map_err(provider_request_error)?;
 
         if !response.status().is_success() {
-            return Err(InferenceFailure::from_http_status(&response));
+            return Err(
+                InferenceFailure::from_http_response(response, &self.provider_identity).await,
+            );
         }
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));
@@ -563,10 +581,18 @@ impl LlmProvider for AnthropicProvider {
                                 }
                             }
                             "content_block_stop" => {
-                                // A content block has finished
-                                // If it was a tool use block, emit ToolUseComplete
-                                if let Some(completed) = state.tool_state.complete_block() {
-                                    return Some((Ok(completed), state));
+                                match serde_json::from_str::<StreamContentBlockStop>(&data) {
+                                    Ok(block_stop) => {
+                                        if let Some(settled) =
+                                            state.tool_state.settle_block(block_stop.index)
+                                        {
+                                            return Some((settled, state));
+                                        }
+                                    }
+                                    Err(error) => tracing::warn!(
+                                        %error,
+                                        "Failed to parse content_block_stop"
+                                    ),
                                 }
                             }
                             "message_delta" => {
@@ -627,6 +653,9 @@ impl LlmProvider for AnthropicProvider {
                                         "Stream ended with unprocessed data"
                                     );
                                 }
+                                if let Some(settled) = state.tool_state.take_settled() {
+                                    return Some((settled, state));
+                                }
                                 return Some((
                                     Ok(StreamChunk::Done {
                                         stop_reason: state.stop_reason.clone(),
@@ -671,7 +700,6 @@ struct AnthropicToolState {
 
 struct ActiveToolBlock {
     id: String,
-    #[allow(dead_code)]
     name: String,
     json_buffer: String,
 }
@@ -698,26 +726,69 @@ impl AnthropicToolState {
         self.blocks.get(&index)
     }
 
-    fn complete_block(&mut self) -> Option<StreamChunk> {
-        // Find a block that has a complete JSON buffer and remove it
-        let keys: Vec<usize> = self.blocks.keys().copied().collect();
-        for key in keys {
-            if let Some(block) = self.blocks.get(&key) {
-                // Try to parse the JSON buffer to check if it's complete
-                if let Ok(input) = serde_json::from_str::<serde_json::Value>(&block.json_buffer) {
-                    let id = block.id.clone();
-                    self.blocks.remove(&key);
-                    return Some(StreamChunk::ToolUseComplete { id, input });
-                }
-            }
-        }
-        None
+    fn settle_block(&mut self, index: usize) -> Option<anyhow::Result<StreamChunk>> {
+        let block = self.blocks.remove(&index)?;
+        Some(settle_anthropic_block(block))
     }
+
+    fn take_settled(&mut self) -> Option<anyhow::Result<StreamChunk>> {
+        let index = self.blocks.keys().copied().min()?;
+        self.settle_block(index)
+    }
+}
+
+fn settle_anthropic_block(block: ActiveToolBlock) -> anyhow::Result<StreamChunk> {
+    serde_json::from_str::<serde_json::Value>(&block.json_buffer)
+        .map(|input| StreamChunk::ToolUseComplete {
+            id: block.id.clone(),
+            input,
+        })
+        .map_err(|error| {
+            anyhow::Error::new(::contracts::MalformedToolArgumentsError::from_json_error(
+                &block.id,
+                &block.name,
+                block.json_buffer.len(),
+                &error,
+            ))
+        })
 }
 
 #[cfg(test)]
 mod cache_contract_tests {
     use super::*;
+
+    #[test]
+    fn content_block_stop_settles_valid_split_json() {
+        let mut state = AnthropicToolState::default();
+        state.start_block(3, "tool-3".into(), "search".into());
+        state.append_json(3, "{".into());
+        state.append_json(3, "\"query\":\"term\"}".into());
+
+        match state.settle_block(3).unwrap().unwrap() {
+            StreamChunk::ToolUseComplete { id, input } => {
+                assert_eq!(id, "tool-3");
+                assert_eq!(input, serde_json::json!({"query": "term"}));
+            }
+            chunk => panic!("unexpected chunk: {chunk:?}"),
+        }
+    }
+
+    #[test]
+    fn content_block_stop_emits_typed_error_for_invalid_json() {
+        let mut state = AnthropicToolState::default();
+        state.start_block(7, "tool-7".into(), "search".into());
+        state.append_json(7, "{invalid".into());
+
+        let error = state.settle_block(7).unwrap().unwrap_err();
+        let typed = error
+            .downcast_ref::<::contracts::MalformedToolArgumentsError>()
+            .unwrap();
+        assert_eq!(typed.tool_id, "tool-7");
+        assert_eq!(typed.tool_name, "search");
+        assert_eq!(typed.parse_kind, "json_syntax");
+        assert_eq!(typed.argument_bytes, 8);
+        assert!(state.take_settled().is_none());
+    }
 
     #[test]
     fn system_and_tool_breakpoints_are_stable_and_dynamic_messages_are_unmarked() {

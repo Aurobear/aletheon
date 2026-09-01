@@ -2364,6 +2364,11 @@
           "default": null,
           "description": "Optional static pricing for per-provider cost accounting. `None` = unpriced."
         },
+        "requires_credentials": {
+          "default": true,
+          "description": "Whether this provider requires an API credential. This is explicit\nprovider metadata rather than an endpoint/transport heuristic. Remote\nproviders default to the fail-closed value; local unauthenticated\nproviders must opt out deliberately.",
+          "type": "boolean"
+        },
         "transport": {
           "$ref": "#/$defs/Transport",
           "default": "auto"

@@ -34,6 +34,7 @@ fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
         name: "test-adapter".into(),
         base_url,
         api_key: "secret-api-key".into(),
+        requires_credentials: true,
         transport: cognit::config::Transport::Openai,
         models: vec!["test-model".into()],
         max_context_length: Some(128_000),
@@ -134,6 +135,8 @@ async fn provider_http_error_never_includes_response_body() {
         .await
         .unwrap_err()
         .to_string();
-    assert_eq!(error, "provider_unavailable");
+    assert!(error.starts_with("provider_unavailable"));
+    assert!(error.contains("provider=test-adapter"));
+    assert!(error.contains("http_status=500"));
     assert!(!error.contains(secret));
 }

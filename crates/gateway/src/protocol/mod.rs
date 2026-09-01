@@ -356,6 +356,10 @@ pub enum Command {
 pub struct SessionSnapshotQuery {
     pub session: SessionRef,
     pub after_cursor: Option<Cursor>,
+    /// Request an item-free baseline plus one bounded event page instead of a
+    /// full snapshot. This keeps long-session responses below the wire limit.
+    #[serde(default)]
+    pub paged: bool,
 }
 
 /// Read the authenticated daemon skill catalog.  The catalog is a projection
@@ -584,6 +588,10 @@ pub enum ProtocolError {
     Timeout,
     #[error("connection closed")]
     ConnectionClosed,
+    #[error(
+        "pending event buffer overflowed after dropping {dropped_progress_events} progress events"
+    )]
+    EventBufferOverflow { dropped_progress_events: u64 },
     #[error("wire frame exceeds the configured limit")]
     FrameTooLarge,
     #[error("provider rejected the request")]

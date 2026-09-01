@@ -15,6 +15,7 @@ use ratatui::{
 use serde::Deserialize;
 
 use super::{
+    chat::word_wrap_line,
     markdown,
     state::{AppState, UiItemStatus},
     term_compat::TermCaps,
@@ -197,61 +198,73 @@ fn render_conversation(area: Rect, buf: &mut Buffer, state: &AppState, caps: &Te
     // re-parsing every item's markdown on every frame (long sessions made the
     // TUI lag badly while a long answer streamed).
     let mut cache = state.conversation_render.borrow_mut();
-    if cache.0 != width {
-        cache.0 = width;
-        cache.1.clear();
+    if cache.width != width {
+        cache.width = width;
+        cache.items.clear();
+        cache.dirty = true;
     }
-    let mut lines = Vec::new();
-    let mut last_assistant_content: Option<&str> = None;
-    for item in items {
-        if item.kind == "user" {
-            last_assistant_content = None;
-            lines.push(Line::from(vec![
-                Span::styled("> ", Style::default().fg(theme.user_icon)),
-                Span::styled(item.content.clone(), Style::default().fg(theme.user_icon)),
-            ]));
-        } else {
-            if last_assistant_content == Some(item.content.as_str()) {
-                continue;
-            }
-            last_assistant_content = Some(item.content.as_str());
-            let rendered = if item.status != UiItemStatus::Streaming {
-                match cache.1.get(&item.id) {
-                    Some(cached) => cached.clone(),
-                    None => {
-                        let built = markdown::render_markdown(&item.content, width, caps);
-                        cache.1.insert(item.id.clone(), built.clone());
-                        built
-                    }
-                }
+    if cache.dirty {
+        let mut lines = Vec::new();
+        let mut last_assistant_content: Option<&str> = None;
+        for item in items {
+            if item.kind == "user" {
+                last_assistant_content = None;
+                lines.push(Line::from(vec![
+                    Span::styled("> ", Style::default().fg(theme.user_icon)),
+                    Span::styled(item.content.clone(), Style::default().fg(theme.user_icon)),
+                ]));
             } else {
-                markdown::render_markdown(&item.content, width, caps)
-            };
-            lines.extend(rendered);
+                if last_assistant_content == Some(item.content.as_str()) {
+                    continue;
+                }
+                last_assistant_content = Some(item.content.as_str());
+                if item.status != UiItemStatus::Streaming {
+                    if !cache.items.contains_key(&item.id) {
+                        let built = markdown::render_markdown(&item.content, width, caps);
+                        cache.items.insert(item.id.clone(), built);
+                    }
+                    lines.extend(
+                        cache
+                            .items
+                            .get(&item.id)
+                            .expect("conversation item was just cached")
+                            .iter()
+                            .cloned(),
+                    );
+                } else {
+                    lines.extend(markdown::render_markdown(&item.content, width, caps));
+                }
+            }
+            lines.push(Line::from(""));
         }
-        lines.push(Line::from(""));
+        append_work_trace(&mut lines, state, caps);
+        if lines.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No projected conversation yet",
+                Style::default().fg(theme.text_muted),
+            )));
+        }
+        let wrap_width = inner.width.max(1) as usize;
+        cache.wrapped_lines = lines
+            .into_iter()
+            .flat_map(|line| word_wrap_line(&line, wrap_width))
+            .collect();
+        cache.dirty = false;
     }
-    drop(cache);
-    append_work_trace(&mut lines, state, caps);
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "No projected conversation yet",
-            Style::default().fg(theme.text_muted),
-        )));
-    }
-    let wrapped_line_count = lines
-        .iter()
-        .map(|line| {
-            let width = inner.width.max(1) as usize;
-            line.width().max(1).div_ceil(width)
-        })
-        .sum::<usize>();
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-    let tail_scroll = wrapped_line_count
-        .saturating_sub(inner.height as usize)
+
+    let total_lines = cache.wrapped_lines.len();
+    let viewport_height = inner.height as usize;
+    let tail_scroll = total_lines
+        .saturating_sub(viewport_height)
         .min(u16::MAX as usize) as u16;
-    let scroll = tail_scroll.saturating_sub(state.conversation_scroll.min(tail_scroll));
-    paragraph.scroll((scroll, 0)).render(inner, buf);
+    let scroll = usize::from(state.conversation_scroll.min(tail_scroll));
+    let start = total_lines
+        .saturating_sub(viewport_height)
+        .saturating_sub(scroll);
+    let end = start.saturating_add(viewport_height).min(total_lines);
+    let visible_lines = cache.wrapped_lines[start..end].to_vec();
+    drop(cache);
+    Paragraph::new(visible_lines).render(inner, buf);
 }
 
 fn append_work_trace(lines: &mut Vec<Line<'static>>, state: &AppState, caps: &TermCaps) {
@@ -857,6 +870,33 @@ mod tests {
             per_frame.as_millis() < 25,
             "cached large-conversation render too slow: {per_frame:?}"
         );
+    }
+
+    #[test]
+    fn large_conversation_scrolling_reuses_composed_layout() {
+        let mut state = AppState::default();
+        for sequence in 1..=150u64 {
+            state.items.insert(
+                format!("assistant-{sequence}"),
+                UiItem {
+                    id: format!("assistant-{sequence}"),
+                    sequence,
+                    kind: "assistant".into(),
+                    content: format!("第 {sequence} 条长会话内容。{}", "缓存滚动验证".repeat(20)),
+                    status: UiItemStatus::Completed,
+                    collapsed: false,
+                },
+            );
+        }
+
+        let tail = rendered_text(120, 40, &state);
+        let first_layout = state.conversation_render.borrow().wrapped_lines.as_ptr();
+        state.conversation_scroll = 60;
+        let earlier = rendered_text(120, 40, &state);
+        let second_layout = state.conversation_render.borrow().wrapped_lines.as_ptr();
+
+        assert_ne!(tail, earlier);
+        assert_eq!(first_layout, second_layout, "scrolling rebuilt the layout");
     }
 
     fn rendered_text_with_selection(

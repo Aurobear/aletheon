@@ -51,6 +51,7 @@ impl Default for ProviderBuildOptions {
 pub(crate) struct ResolvedProviderDefinition {
     pub kind: ProviderKind,
     pub credential_env_name: String,
+    pub requires_credentials: bool,
     pub max_context_length: Option<usize>,
     pub pricing: Option<ProviderPricing>,
 }
@@ -71,6 +72,7 @@ pub(crate) fn resolve_provider_definition(
     Ok(ResolvedProviderDefinition {
         kind,
         credential_env_name: credential_env_name(&config.name),
+        requires_credentials: config.requires_credentials,
         max_context_length: config.max_context_length,
         pricing: config.pricing.clone(),
     })
@@ -83,7 +85,11 @@ pub fn create_provider(
     options: ProviderBuildOptions,
 ) -> Result<Arc<dyn LlmProvider>> {
     let resolved = resolve_provider_definition(config)?;
-    let api_key = resolve_api_key(config, &resolved.credential_env_name);
+    let api_key = resolve_api_key(
+        config,
+        &resolved.credential_env_name,
+        resolved.requires_credentials,
+    )?;
     let model_spec = model_catalog::resolve_spec(model, resolved.max_context_length)?;
     let max_tokens = model_spec
         .max_output_tokens
@@ -93,6 +99,7 @@ pub fn create_provider(
     let provider: Arc<dyn LlmProvider> = match resolved.kind {
         ProviderKind::Anthropic => {
             let provider = AnthropicProvider::new(&api_key, &model_spec.wire_id)
+                .with_provider_identity(&config.name)
                 .with_base_url(&config.base_url)
                 .with_timeouts(options.timeouts)
                 .with_max_tokens(max_tokens)
@@ -101,6 +108,7 @@ pub fn create_provider(
         }
         ProviderKind::OpenAi => {
             let provider = OpenAiProvider::new(&api_key, &model_spec.wire_id, &config.base_url)
+                .with_provider_identity(&config.name)
                 .with_timeouts(options.timeouts)
                 .with_max_tokens(max_tokens)
                 .with_max_context(model_spec.context_window_tokens)
@@ -109,6 +117,7 @@ pub fn create_provider(
         }
         ProviderKind::Ollama => {
             let provider = OllamaProvider::new(&model_spec.wire_id)
+                .with_provider_identity(&config.name)
                 .with_base_url(&config.base_url)
                 .with_timeouts(options.timeouts)?
                 .with_max_tokens(max_tokens)
@@ -215,11 +224,24 @@ fn credential_env_name(provider_name: &str) -> String {
     )
 }
 
-fn resolve_api_key(config: &ProviderConfig, env_name: &str) -> String {
-    if !config.api_key.is_empty() {
-        return config.api_key.clone();
+fn resolve_api_key(
+    config: &ProviderConfig,
+    env_name: &str,
+    requires_credentials: bool,
+) -> Result<String> {
+    let value = if !config.api_key.trim().is_empty() {
+        config.api_key.clone()
+    } else {
+        std::env::var(env_name).unwrap_or_default()
+    };
+    if requires_credentials && value.trim().is_empty() {
+        anyhow::bail!(
+            "provider '{}' requires credentials but neither api_key nor {} is configured",
+            config.name,
+            env_name
+        );
     }
-    std::env::var(env_name).unwrap_or_default()
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -231,6 +253,7 @@ mod tests {
             name: "local-provider".into(),
             base_url: base_url.into(),
             api_key: "test-key".into(),
+            requires_credentials: true,
             transport,
             models: vec!["model".into()],
             max_context_length: Some(32_768),
@@ -282,8 +305,23 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(resolved.credential_env_name, "LOCAL_PROVIDER_API_KEY");
+        assert!(resolved.requires_credentials);
         assert_eq!(resolved.max_context_length, Some(32_768));
         assert_eq!(resolved.pricing.unwrap().output_per_1k, 0.2);
+    }
+
+    #[test]
+    fn credential_requirement_is_explicit_and_fails_closed_only_when_required() {
+        let mut config = definition(Transport::Openai, "http://127.0.0.1:11434");
+        config.name = format!("missing-credential-{}", uuid::Uuid::new_v4());
+        config.api_key.clear();
+        let env_name = credential_env_name(&config.name);
+
+        let required = resolve_api_key(&config, &env_name, true).unwrap_err();
+        assert!(required.to_string().contains(&config.name));
+        assert!(required.to_string().contains(&env_name));
+
+        assert_eq!(resolve_api_key(&config, &env_name, false).unwrap(), "");
     }
 
     #[test]

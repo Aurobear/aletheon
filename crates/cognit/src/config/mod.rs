@@ -610,6 +610,12 @@ pub struct ProviderConfig {
     pub base_url: String,
     #[serde(default)]
     pub api_key: String,
+    /// Whether this provider requires an API credential. This is explicit
+    /// provider metadata rather than an endpoint/transport heuristic. Remote
+    /// providers default to the fail-closed value; local unauthenticated
+    /// providers must opt out deliberately.
+    #[serde(default = "default_provider_requires_credentials")]
+    pub requires_credentials: bool,
     #[serde(default)]
     pub transport: Transport,
     #[serde(default)]
@@ -631,6 +637,10 @@ pub struct ProviderConfig {
     /// directly and `Auto` never fabricates a cache figure.
     #[serde(default)]
     pub cache: ProviderCacheConfig,
+}
+
+fn default_provider_requires_credentials() -> bool {
+    true
 }
 
 /// Provider-level backpressure. Unlike turn admission this coordinates all

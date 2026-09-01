@@ -821,6 +821,7 @@ impl TypedApplicationPort for DaemonTypedApplication {
         &self,
         session: SessionRef,
         after: Option<Cursor>,
+        paged: bool,
     ) -> Result<serde_json::Value, ProtocolError> {
         let after_cursor = after
             .map(|cursor| ::contracts::protocol::client::EventCursor {
@@ -847,13 +848,31 @@ impl TypedApplicationPort for DaemonTypedApplication {
             )
             .await
             .map_err(Self::map_error)?;
-        serde_json::to_value(serde_json::json!({
-            "snapshot": snapshot,
-            "events": page.events,
-            "after": page.after,
-            "next": page.next,
-        }))
-        .map_err(Self::map_error)
+        if paged {
+            let baseline = ::contracts::protocol::client::SessionReadBaseline {
+                schema_version: snapshot.schema_version,
+                session: snapshot.session,
+                through: snapshot.through.clone(),
+                tasks: snapshot.tasks,
+                activities: snapshot.activities,
+            };
+            serde_json::to_value(serde_json::json!({
+                "baseline": baseline,
+                "events": page.events,
+                "after": page.after,
+                "next": page.next,
+                "caught_up": page.next == snapshot.through,
+            }))
+            .map_err(Self::map_error)
+        } else {
+            serde_json::to_value(serde_json::json!({
+                "snapshot": snapshot,
+                "events": page.events,
+                "after": page.after,
+                "next": page.next,
+            }))
+            .map_err(Self::map_error)
+        }
     }
 
     async fn query_sessions(&self) -> Result<serde_json::Value, ProtocolError> {

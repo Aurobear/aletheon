@@ -194,7 +194,9 @@ impl SelfLedger {
         };
         let event_prefix_json = serde_json::to_string(events)?;
         let checksum = bytes_checksum(event_prefix_json.as_bytes());
-        self.store.conn().execute(
+        let mut conn = self.store.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
             "INSERT OR REPLACE INTO self_snapshots
              (version, last_event_seq, event_prefix_json, checksum, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -206,6 +208,11 @@ impl SelfLedger {
                 created_at_ms,
             ],
         )?;
+        tx.execute(
+            "DELETE FROM self_snapshots WHERE version <> ?1",
+            params![last.current_version.0],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
