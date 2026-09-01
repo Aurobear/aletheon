@@ -160,6 +160,7 @@ crates/contracts/src/protocol/client.rs	struct	SessionForkParams	baseline	-	-	-
 crates/contracts/src/protocol/client.rs	struct	SessionInterruptParams	baseline	-	-	-
 crates/contracts/src/protocol/client.rs	struct	SessionListSnapshot	governed	contracts	interact,aletheon,runtime	docs/decisions/adr-runtime-authority-and-contract-governance.md#runtime-authorities
 crates/contracts/src/protocol/client.rs	struct	SessionParams	baseline	-	-	-
+crates/contracts/src/protocol/client.rs	struct	SessionReadBaseline	governed	contracts	interact,aletheon	docs/decisions/adr-runtime-authority-and-contract-governance.md#runtime-authorities
 crates/contracts/src/protocol/client.rs	struct	SessionReadSnapshot	governed	contracts	interact,aletheon,runtime	docs/decisions/adr-runtime-authority-and-contract-governance.md#runtime-authorities
 crates/contracts/src/protocol/client.rs	struct	SessionReplayParams	baseline	-	-	-
 crates/contracts/src/protocol/client.rs	struct	SkillInvokeParams	baseline	-	-	-
@@ -476,6 +477,7 @@ crates/contracts/src/types/llm_types.rs	enum	ToolDefinitionCanonicalizationError
 crates/contracts/src/types/llm_types.rs	struct	InferenceCapabilities	baseline	-	-	-
 crates/contracts/src/types/llm_types.rs	struct	InferenceUsage	baseline	-	-	-
 crates/contracts/src/types/llm_types.rs	struct	LlmResponse	baseline	-	-	-
+crates/contracts/src/types/llm_types.rs	struct	MalformedToolArgumentsError	governed	contracts	adapters-inference	docs/decisions/adr-runtime-authority-and-contract-governance.md#client-protocol-and-projections
 crates/contracts/src/types/llm_types.rs	struct	ModelInfo	baseline	-	-	-
 crates/contracts/src/types/llm_types.rs	struct	ModelRuntimeFacts	baseline	-	-	-
 crates/contracts/src/types/llm_types.rs	struct	ToolDefinition	baseline	-	-	-
