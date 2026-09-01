@@ -6,6 +6,7 @@
 //! in the Gateway.
 
 use std::ffi::CString;
+use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use ::contracts::protocol::client::{
 };
 use ::contracts::{Clock, ConnectionId, LocalOsPrincipal, PrincipalId, Timer};
 use anyhow::Result;
+use gateway::client::DEFAULT_MAX_FRAME_BYTES;
 use gateway::protocol::connection::{ConnectionProtocolState, NegotiatedProtocol, ProtocolAction};
 use gateway::protocol::{
     ProtocolError, WireRequest, WireResponse, WireResponseBody, PROTOCOL_VERSION,
@@ -32,6 +34,36 @@ use tracing::{error, info, warn};
 
 /// Per-connection event notification channel capacity.
 pub const CONNECTION_NOTIFICATION_CAPACITY: usize = 64;
+
+async fn read_bounded_line<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+    max_frame_bytes: usize,
+) -> io::Result<usize> {
+    line.clear();
+    loop {
+        let (take, done) = {
+            let buffer = reader.fill_buf().await?;
+            if buffer.is_empty() {
+                return Ok(line.len());
+            }
+            let newline = buffer.iter().position(|byte| *byte == b'\n');
+            let take = newline.map_or(buffer.len(), |position| position + 1);
+            if line.len().saturating_add(take) > max_frame_bytes {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "wire frame exceeds the configured limit",
+                ));
+            }
+            line.extend_from_slice(&buffer[..take]);
+            (take, newline.is_some())
+        };
+        reader.consume(take);
+        if done {
+            return Ok(line.len());
+        }
+    }
+}
 
 /// Authenticated role of a connected peer, derived from the OS process
 /// credentials and the executable argv.
@@ -603,6 +635,21 @@ async fn run_versioned_subscription<D: ConnectionDispatcher>(
             Ok(events) => events,
             Err(error) => {
                 tracing::warn!(%error, session = %subscription.session_id.0, "versioned subscription tail failed");
+                let message = bounded_subscription_error(&error.to_string());
+                let terminal = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "session.event",
+                    "params": ClientMessage::v1(ProtocolClientEvent::SubscriptionTerminal {
+                        cursor: cursor.clone(),
+                        // A durable cursor makes replay safe. This flag grants
+                        // permission to retry; it does not claim the repository
+                        // failure itself is transient.
+                        retryable: true,
+                        code: "subscription_tail_failed".to_owned(),
+                        message,
+                    }),
+                });
+                let _ = notify_tx.send(terminal.to_string()).await;
                 return;
             }
         };
@@ -624,6 +671,16 @@ async fn run_versioned_subscription<D: ConnectionDispatcher>(
                 return;
             }
         }
+    }
+}
+
+fn bounded_subscription_error(message: &str) -> String {
+    const MAX_CHARS: usize = 256;
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= MAX_CHARS {
+        normalized
+    } else {
+        normalized.chars().take(MAX_CHARS).collect()
     }
 }
 
@@ -876,7 +933,7 @@ impl<D: ConnectionDispatcher> UnixServer<D> {
     ) -> Result<()> {
         let (reader, mut writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
-        let mut line = String::new();
+        let mut line = Vec::new();
 
         // Debug subscriber receiver — populated when the client sends debug.subscribe.
         let mut debug_subscriber_rx: Option<mpsc::Receiver<DebugEvent>> = None;
@@ -895,20 +952,18 @@ impl<D: ConnectionDispatcher> UnixServer<D> {
                 // Read incoming requests from the client.
                 // Dispatch to a background task so the select loop continues
                 // forwarding notifications while the handler processes.
-                read_result = reader.read_line(&mut line) => {
+                read_result = read_bounded_line(&mut reader, &mut line, DEFAULT_MAX_FRAME_BYTES) => {
                     let n = read_result?;
                     if n == 0 {
                         break; // Connection closed
                     }
 
-                    let trimmed = line.trim().to_string();
-                    line.clear();
-                    if trimmed.is_empty() {
+                    if line.iter().all(u8::is_ascii_whitespace) {
                         continue;
                     }
 
                     // Parse JSON request and spawn handler in background
-                    let request: serde_json::Value = serde_json::from_str(&trimmed)?;
+                    let request: serde_json::Value = serde_json::from_slice(&line)?;
 
                     // The official socket accepts the typed Gateway envelope
                     // and the initialized, versioned client protocol used by
@@ -1211,8 +1266,42 @@ mod tests {
     use std::sync::Mutex;
 
     use ::contracts::paths::RuntimeEnvironment;
+    use tokio::io::AsyncReadExt;
 
     use super::*;
+
+    #[tokio::test]
+    async fn bounded_line_rejects_a_ten_megabyte_frame_before_full_allocation() {
+        let input = tokio::io::repeat(b'a')
+            .take(10 * 1024 * 1024)
+            .chain(tokio::io::repeat(b'\n').take(1));
+        let mut reader = BufReader::new(input);
+        let mut line = Vec::new();
+
+        let error = read_bounded_line(&mut reader, &mut line, DEFAULT_MAX_FRAME_BYTES)
+            .await
+            .expect_err("oversized frame must be rejected");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(line.len() <= DEFAULT_MAX_FRAME_BYTES);
+        assert!(line.capacity() <= DEFAULT_MAX_FRAME_BYTES);
+    }
+
+    #[tokio::test]
+    async fn bounded_line_accepts_a_normal_newline_terminated_frame() {
+        let input = br#"{"version":1}
+"#
+        .as_slice();
+        let mut reader = BufReader::new(input);
+        let mut line = Vec::new();
+
+        let read = read_bounded_line(&mut reader, &mut line, DEFAULT_MAX_FRAME_BYTES)
+            .await
+            .unwrap();
+
+        assert_eq!(read, input.len());
+        assert_eq!(line, input);
+    }
 
     #[derive(Default)]
     struct FakeActivationEnvironment {

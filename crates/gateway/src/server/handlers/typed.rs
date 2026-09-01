@@ -109,6 +109,7 @@ pub trait TypedApplicationPort: Send + Sync {
         &self,
         _session: SessionRef,
         _after: Option<crate::protocol::Cursor>,
+        _paged: bool,
     ) -> Result<serde_json::Value, ProtocolError> {
         Err(ProtocolError::UnknownSchema)
     }
@@ -391,7 +392,7 @@ impl TypedRouteHandler {
                         .unwrap_or_else(WireResponseBody::Error),
                     Query::SessionSnapshot(snapshot) => self
                         .application
-                        .query_session(snapshot.session, snapshot.after_cursor)
+                        .query_session(snapshot.session, snapshot.after_cursor, snapshot.paged)
                         .await
                         .map(WireResponseBody::Query)
                         .unwrap_or_else(WireResponseBody::Error),

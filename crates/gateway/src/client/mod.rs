@@ -17,12 +17,50 @@ use crate::protocol::{
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, timeout, Duration};
 
 /// Default maximum JSON-line frame accepted by the typed Gateway transport.
 /// A client must fail closed on an oversized frame instead of allocating an
 /// unbounded buffer for a peer-controlled payload.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 1024 * 1024;
+const PENDING_EVENT_CAPACITY: usize = 256;
+const RESERVED_CRITICAL_EVENT_CAPACITY: usize = 64;
+
+/// Deadlines for request classes that have materially different execution
+/// profiles. Most commands are admission/control operations and most queries
+/// are bounded projection reads; maintenance commands may legitimately perform
+/// longer durable work before returning their receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestDeadlines {
+    pub control: Duration,
+    pub query: Duration,
+    pub maintenance: Duration,
+}
+
+impl Default for RequestDeadlines {
+    fn default() -> Self {
+        Self {
+            control: Duration::from_secs(30),
+            query: Duration::from_secs(30),
+            maintenance: Duration::from_secs(300),
+        }
+    }
+}
+
+impl RequestDeadlines {
+    fn for_body(self, body: &WireRequestBody) -> Duration {
+        match body {
+            WireRequestBody::Query(_) => self.query,
+            WireRequestBody::Command(
+                Command::CompactSession(_)
+                | Command::ReviewTransaction(_)
+                | Command::ManageExtension(_)
+                | Command::RestoreWorkspaceCheckpoint(_),
+            ) => self.maintenance,
+            WireRequestBody::Command(_) => self.control,
+        }
+    }
+}
 
 /// Typed outcome of issuing a command.  `Created`/`Resumed` carry the
 /// server-assigned opaque reference; the client consumes it, never mints it.
@@ -187,6 +225,7 @@ impl<T: GatewayTransport> SessionSubscription<T> {
             .query(Query::SessionSnapshot(SessionSnapshotQuery {
                 session: self.session.clone(),
                 after_cursor: Some(self.cursor.clone()),
+                paged: false,
             }))
             .await?;
         if let Some(cursor) = cursor_from_projection(&value) {
@@ -238,6 +277,9 @@ pub struct UnixSocketTransport {
     max_frame_bytes: usize,
     next_request_id: u64,
     pending_events: std::collections::VecDeque<Event>,
+    dropped_progress_events: u64,
+    request_deadlines: RequestDeadlines,
+    requires_reconnect: bool,
 }
 
 impl UnixSocketTransport {
@@ -264,7 +306,21 @@ impl UnixSocketTransport {
             max_frame_bytes,
             next_request_id: 1,
             pending_events: std::collections::VecDeque::new(),
+            dropped_progress_events: 0,
+            request_deadlines: RequestDeadlines::default(),
+            requires_reconnect: false,
         })
+    }
+
+    /// Override request-class deadlines without changing correlation or
+    /// transport semantics.
+    pub fn with_request_deadlines(mut self, request_deadlines: RequestDeadlines) -> Self {
+        self.request_deadlines = request_deadlines;
+        self
+    }
+
+    pub fn dropped_progress_event_count(&self) -> u64 {
+        self.dropped_progress_events
     }
 
     async fn read_frame(&mut self) -> Result<Vec<u8>, ProtocolError> {
@@ -295,7 +351,49 @@ impl UnixSocketTransport {
         Ok(line)
     }
 
+    fn buffer_interleaved_event(&mut self, event: Event) -> Result<(), ProtocolError> {
+        let is_progress = matches!(event, Event::Progress(_));
+        let progress_capacity =
+            PENDING_EVENT_CAPACITY.saturating_sub(RESERVED_CRITICAL_EVENT_CAPACITY);
+        let progress_count = self
+            .pending_events
+            .iter()
+            .filter(|event| matches!(event, Event::Progress(_)))
+            .count();
+        if is_progress
+            && (progress_count >= progress_capacity
+                || self.pending_events.len() >= PENDING_EVENT_CAPACITY)
+        {
+            self.dropped_progress_events = self.dropped_progress_events.saturating_add(1);
+            self.requires_reconnect = true;
+            return Err(ProtocolError::EventBufferOverflow {
+                dropped_progress_events: self.dropped_progress_events,
+            });
+        }
+        if self.pending_events.len() >= PENDING_EVENT_CAPACITY {
+            if let Some(index) = self
+                .pending_events
+                .iter()
+                .position(|event| matches!(event, Event::Progress(_)))
+            {
+                self.pending_events.remove(index);
+                self.dropped_progress_events = self.dropped_progress_events.saturating_add(1);
+            } else {
+                self.requires_reconnect = true;
+                return Err(ProtocolError::EventBufferOverflow {
+                    dropped_progress_events: self.dropped_progress_events,
+                });
+            }
+        }
+        self.pending_events.push_back(event);
+        Ok(())
+    }
+
     async fn request(&mut self, body: WireRequestBody) -> Result<WireResponseBody, ProtocolError> {
+        if self.requires_reconnect {
+            return Err(ProtocolError::ConnectionClosed);
+        }
+        let deadline = self.request_deadlines.for_body(&body);
         let request_id = format!("gateway-{}", self.next_request_id);
         self.next_request_id = self.next_request_id.saturating_add(1);
         let request = WireRequest {
@@ -303,6 +401,25 @@ impl UnixSocketTransport {
             request_id: request_id.clone(),
             body,
         };
+        match timeout(deadline, self.request_inner(request, &request_id)).await {
+            Ok(result) => result,
+            Err(_) => {
+                // A timed-out request leaves the stream correlation state
+                // indeterminate: its response may still arrive later. Refuse
+                // all further reads/writes until an explicit reconnect replaces
+                // the stream, so that response can never be consumed by a new
+                // request or event poll.
+                self.requires_reconnect = true;
+                Err(ProtocolError::Timeout)
+            }
+        }
+    }
+
+    async fn request_inner(
+        &mut self,
+        request: WireRequest,
+        request_id: &str,
+    ) -> Result<WireResponseBody, ProtocolError> {
         let line = serde_json::to_vec(&request).map_err(|_| ProtocolError::UnknownSchema)?;
         if line.len() > self.max_frame_bytes {
             return Err(ProtocolError::FrameTooLarge);
@@ -330,7 +447,7 @@ impl UnixSocketTransport {
                 });
             }
             if let WireResponseBody::Event(event) = response.body {
-                self.pending_events.push_back(event);
+                self.buffer_interleaved_event(event)?;
                 continue;
             }
             if response.request_id != request_id {
@@ -398,6 +515,9 @@ impl GatewayTransport for UnixSocketTransport {
     }
 
     async fn next_event(&mut self) -> Result<Event, ProtocolError> {
+        if self.requires_reconnect {
+            return Err(ProtocolError::ConnectionClosed);
+        }
         if let Some(event) = self.pending_events.pop_front() {
             return Ok(event);
         }
@@ -428,6 +548,7 @@ impl ReconnectableGatewayTransport for UnixSocketTransport {
         self.reader = BufReader::new(reader);
         self.writer = writer;
         self.pending_events.clear();
+        self.requires_reconnect = false;
         Ok(())
     }
 }
@@ -750,6 +871,99 @@ mod tests {
             client.next_event().await.unwrap(),
             crate::protocol::Event::Progress(_)
         ));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn interleaved_event_buffer_preserves_terminal_events_at_capacity() {
+        use crate::protocol::{WireResponse, WireResponseBody};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixListener;
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bounded-events.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = Vec::new();
+            reader.read_until(b'\n', &mut line).await.unwrap();
+            let request: WireRequest = serde_json::from_slice(&line).unwrap();
+            for index in 0..192 {
+                let event = WireResponse {
+                    version: PROTOCOL_VERSION,
+                    request_id: format!("progress-{index}"),
+                    body: WireResponseBody::Event(Event::Progress(
+                        crate::protocol::RuntimeProgressEvent {
+                            kind: "client_event".into(),
+                            payload: serde_json::json!({"index": index}),
+                        },
+                    )),
+                };
+                writer
+                    .write_all(format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes())
+                    .await
+                    .unwrap();
+            }
+            for index in 0..64 {
+                let event = WireResponse {
+                    version: PROTOCOL_VERSION,
+                    request_id: format!("session-{index}"),
+                    body: WireResponseBody::Event(Event::SessionCreated {
+                        session: SessionRef(format!("session-{index}")),
+                    }),
+                };
+                writer
+                    .write_all(format!("{}\n", serde_json::to_string(&event).unwrap()).as_bytes())
+                    .await
+                    .unwrap();
+            }
+            let terminal = WireResponse {
+                version: PROTOCOL_VERSION,
+                request_id: "terminal".into(),
+                body: WireResponseBody::Event(Event::TurnSettled(TurnSettlement {
+                    turn: TurnRef("turn-1".into()),
+                    terminal: SettlementTerminal::Completed,
+                })),
+            };
+            writer
+                .write_all(format!("{}\n", serde_json::to_string(&terminal).unwrap()).as_bytes())
+                .await
+                .unwrap();
+            let response = WireResponse {
+                version: PROTOCOL_VERSION,
+                request_id: request.request_id,
+                body: WireResponseBody::Command(crate::protocol::CommandOutcome::Created {
+                    session: SessionRef("server-session".into()),
+                }),
+            };
+            writer
+                .write_all(format!("{}\n", serde_json::to_string(&response).unwrap()).as_bytes())
+                .await
+                .unwrap();
+        });
+
+        let transport = UnixSocketTransport::connect(&path).await.unwrap();
+        let mut client = GatewayClient::new(transport);
+        client
+            .send(Command::CreateSession(RequestSessionCreation {
+                principal_hint: None,
+                workspace: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(client.transport.dropped_progress_event_count(), 1);
+        let mut saw_terminal = false;
+        for _ in 0..PENDING_EVENT_CAPACITY {
+            if matches!(client.next_event().await.unwrap(), Event::TurnSettled(_)) {
+                saw_terminal = true;
+            }
+        }
+        assert!(
+            saw_terminal,
+            "terminal event must survive progress pressure"
+        );
         server.await.unwrap();
     }
 
