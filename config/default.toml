@@ -55,6 +55,7 @@ default = "general-agent"
 name = "lejurobot_deepseek"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
+requires_credentials = true
 transport = "openai"
 models = ["deepseek/deepseek-v4-flash[1m]"]
 
@@ -80,6 +81,7 @@ prefix_cache = "auto"
 name = "deepseek"
 base_url = "https://api.deepseek.com"
 api_key = ""
+requires_credentials = true
 transport = "openai"
 models = ["deepseek-v4-flash[1m]"]
 
@@ -98,6 +100,7 @@ prefix_cache = "auto"
 # name = "ollama"
 # base_url = "http://localhost:11434/v1"
 # api_key = "ollama"           # placeholder — Ollama ignores it
+# requires_credentials = false # explicit local unauthenticated provider
 # transport = "openai"
 # models = ["qwen2.5-coder"]
 # Unknown/private models must declare max_context_length explicitly; common

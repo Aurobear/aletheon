@@ -440,6 +440,7 @@ mod tests {
                     name: "executor".to_string(),
                     base_url: "https://api.openai.com".to_string(),
                     api_key: "sk-test".to_string(),
+                    requires_credentials: true,
                     transport: crate::config::Transport::Openai,
                     models: vec!["gpt-4o".to_string()],
                     max_context_length: None,

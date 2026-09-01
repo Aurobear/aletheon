@@ -16,6 +16,7 @@ pub struct OpenAiProvider {
     api_key: String,
     model: String,
     base_url: String,
+    provider_identity: String,
     max_context: usize,
     max_tokens: u32,
     request_timeout: Duration,
@@ -36,12 +37,18 @@ impl OpenAiProvider {
             api_key: api_key.into(),
             model: model.into(),
             base_url: base_url.into(),
+            provider_identity: "openai".into(),
             max_context: 128_000,
             max_tokens: 4096,
             request_timeout: Duration::from_millis(timeouts.request_timeout_ms),
             stream_idle_timeout: Duration::from_millis(timeouts.stream_idle_timeout_ms),
             cache_reporting: CacheReportingMode::Auto,
         }
+    }
+
+    pub fn with_provider_identity(mut self, identity: impl Into<String>) -> Self {
+        self.provider_identity = identity.into();
+        self
     }
 
     fn client(timeouts: &ProviderTimeoutConfig) -> Client {
@@ -531,7 +538,11 @@ impl LlmProvider for OpenAiProvider {
                 .map_err(provider_request_error)?;
 
             if !response.status().is_success() {
-                return Err(InferenceFailure::from_http_status(&response));
+                return Err(InferenceFailure::from_http_response(
+                    response,
+                    &self.provider_identity,
+                )
+                .await);
             }
             response.json().await.map_err(provider_request_error)
         })
@@ -664,7 +675,9 @@ impl LlmProvider for OpenAiProvider {
                     .unwrap_or(""),
                 "Streaming provider request rejected"
             );
-            return Err(InferenceFailure::from_http_status(&response));
+            return Err(
+                InferenceFailure::from_http_response(response, &self.provider_identity).await,
+            );
         }
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));
@@ -706,11 +719,8 @@ impl LlmProvider for OpenAiProvider {
                             let data = data.trim();
                             if data == "[DONE]" {
                                 // Emit any completed tool calls before signaling done.
-                                if let Some(completed) = tool_state.take_completed() {
-                                    return Some((
-                                        Ok(completed),
-                                        (byte_stream, buffer, tool_state),
-                                    ));
+                                if let Some(completed) = tool_state.take_settled() {
+                                    return Some((completed, (byte_stream, buffer, tool_state)));
                                 }
                                 let stop_reason = tool_state.final_stop_reason();
                                 return Some((
@@ -837,11 +847,8 @@ impl LlmProvider for OpenAiProvider {
                                     );
                                 }
                                 // Emit any completed tool calls
-                                if let Some(completed) = tool_state.take_completed() {
-                                    return Some((
-                                        Ok(completed),
-                                        (byte_stream, buffer, tool_state),
-                                    ));
+                                if let Some(completed) = tool_state.take_settled() {
+                                    return Some((completed, (byte_stream, buffer, tool_state)));
                                 }
                                 let stop_reason = tool_state.final_stop_reason();
                                 return Some((
@@ -876,7 +883,6 @@ struct ToolCallState {
 
 struct ActiveToolCall {
     id: String,
-    #[allow(dead_code)]
     name: String,
     arguments: String,
 }
@@ -903,20 +909,22 @@ impl ToolCallState {
         self.calls.get(&index)
     }
 
-    fn take_completed(&mut self) -> Option<StreamChunk> {
-        // Find the first call with complete JSON arguments and emit ToolUseComplete
-        let keys: Vec<usize> = self.calls.keys().copied().collect();
-        for key in keys {
-            if let Some(call) = self.calls.get(&key) {
-                // Try to parse the arguments as JSON to check if complete
-                if let Ok(input) = serde_json::from_str::<serde_json::Value>(&call.arguments) {
-                    let id = call.id.clone();
-                    self.calls.remove(&key);
-                    return Some(StreamChunk::ToolUseComplete { id, input });
-                }
-            }
-        }
-        None
+    fn take_settled(&mut self) -> Option<anyhow::Result<StreamChunk>> {
+        let key = self.calls.keys().copied().min()?;
+        let call = self.calls.remove(&key)?;
+        Some(
+            match serde_json::from_str::<serde_json::Value>(&call.arguments) {
+                Ok(input) => Ok(StreamChunk::ToolUseComplete { id: call.id, input }),
+                Err(error) => Err(anyhow::Error::new(
+                    ::contracts::MalformedToolArgumentsError::from_json_error(
+                        &call.id,
+                        &call.name,
+                        call.arguments.len(),
+                        &error,
+                    ),
+                )),
+            },
+        )
     }
 
     fn final_stop_reason(&self) -> StopReason {
@@ -932,6 +940,40 @@ impl ToolCallState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_tool_arguments_settle_only_after_terminal_json_is_complete() {
+        let mut state = ToolCallState::default();
+        state.start_call(0, "call-1".into(), "read_file".into());
+        state.append_args(0, "{".into());
+        state.append_args(0, "\"path\":\"README.md\"}".into());
+
+        match state.take_settled().unwrap().unwrap() {
+            StreamChunk::ToolUseComplete { id, input } => {
+                assert_eq!(id, "call-1");
+                assert_eq!(input, serde_json::json!({"path": "README.md"}));
+            }
+            chunk => panic!("unexpected chunk: {chunk:?}"),
+        }
+        assert!(state.take_settled().is_none());
+    }
+
+    #[test]
+    fn malformed_terminal_tool_arguments_emit_typed_bounded_error() {
+        let mut state = ToolCallState::default();
+        state.start_call(0, "call-1".into(), "read_file".into());
+        state.append_args(0, "{\"secret\":\"must-not-leak\"".into());
+
+        let error = state.take_settled().unwrap().unwrap_err();
+        let typed = error
+            .downcast_ref::<::contracts::MalformedToolArgumentsError>()
+            .unwrap();
+        assert_eq!(typed.tool_id, "call-1");
+        assert_eq!(typed.tool_name, "read_file");
+        assert_eq!(typed.parse_kind, "json_eof");
+        assert!(!error.to_string().contains("must-not-leak"));
+        assert!(state.take_settled().is_none());
+    }
 
     #[test]
     fn test_messages_to_chat_system() {

@@ -72,6 +72,7 @@ mod goal_runtime_tests {
             name: name.into(),
             base_url: "http://127.0.0.1:1".into(),
             api_key: String::new(),
+            requires_credentials: false,
             transport: Transport::Openai,
             models: vec!["model".into()],
             max_context_length: None,

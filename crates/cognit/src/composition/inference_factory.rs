@@ -231,6 +231,7 @@ mod tests {
             name: "local-provider".into(),
             base_url: base_url.into(),
             api_key: "test-key".into(),
+            requires_credentials: true,
             transport,
             models: vec!["model".into()],
             max_context_length: Some(32_768),
