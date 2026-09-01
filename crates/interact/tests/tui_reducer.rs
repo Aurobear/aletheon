@@ -489,7 +489,10 @@ fn a_session_003_local_state_loss_recovers_from_daemon_snapshot_and_ordered_page
         reduce(&mut recovered, UiAction::EventPage(page.clone())),
         vec![
             UiEffect::Render,
-            UiEffect::ReloadSnapshot(SessionId("session-1".into()))
+            UiEffect::SubscribeAfter(EventCursor {
+                sequence: 11,
+                event_id: Some("event-11".into())
+            })
         ]
     );
     assert!(reduce(&mut recovered, UiAction::EventPage(page)).is_empty());
