@@ -2,7 +2,7 @@
 
 use ::contracts::protocol::client::{
     ActivityKind, ActivitySnapshot, ActivityState, AgentEvent, ApprovalEvent, EventCursor,
-    ItemEvent, ItemPhase, SessionEventPage, SessionReadSnapshot, UiSnapshot,
+    ItemEvent, ItemPhase, SessionEventPage, SessionReadBaseline, SessionReadSnapshot, UiSnapshot,
 };
 use ::contracts::{EvaluationDecision, EvaluationReceiptRef, ItemPayload, ItemRecord};
 use serde::Serialize;
@@ -13,11 +13,20 @@ use super::state::{AppState, UiItem, UiItemStatus};
 pub enum UiAction {
     Snapshot(UiSnapshot),
     ReadSnapshot(SessionReadSnapshot),
+    ReadBaseline {
+        baseline: SessionReadBaseline,
+        reset_items: bool,
+    },
     EventPage(SessionEventPage),
     Item(ItemEvent),
     Approval(ApprovalEvent),
     Agent(AgentEvent),
     Reconnected(EventCursor),
+    SubscriptionTerminal {
+        cursor: EventCursor,
+        retryable: bool,
+        message: String,
+    },
     Failed(UiError),
     LiveActivity(LiveActivityEvent),
     /// Ephemeral assistant text that has not yet been committed as a durable
@@ -83,6 +92,7 @@ pub enum UiEffect {
 }
 
 pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
+    state.invalidate_conversation_render();
     match action {
         UiAction::Snapshot(snapshot) => {
             state.cursor = snapshot.cursor;
@@ -108,13 +118,20 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
             vec![UiEffect::Render]
         }
         UiAction::ReadSnapshot(snapshot) => reduce_read_snapshot(state, snapshot),
+        UiAction::ReadBaseline {
+            baseline,
+            reset_items,
+        } => reduce_read_baseline(state, baseline, reset_items),
         UiAction::EventPage(page) => reduce_event_page(state, page),
         UiAction::Item(event) => {
             if event.cursor.sequence <= state.cursor.sequence {
                 return Vec::new();
             }
-            apply_item_event(state, event);
-            vec![UiEffect::Render]
+            if apply_item_event(state, event) {
+                completed_item_protocol_error(state)
+            } else {
+                vec![UiEffect::Render]
+            }
         }
         UiAction::Approval(event) => {
             if advance(state, &event.cursor) {
@@ -148,6 +165,22 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
             effects.push(UiEffect::SubscribeAfter(state.cursor.clone()));
             effects
         }
+        UiAction::SubscriptionTerminal {
+            cursor,
+            retryable,
+            message,
+        } => {
+            if cursor.sequence > state.cursor.sequence {
+                state.cursor = cursor;
+            }
+            state.streaming = false;
+            state.last_error = Some(message.clone());
+            let mut effects = vec![UiEffect::AnnounceError(message), UiEffect::Render];
+            if retryable {
+                effects.push(UiEffect::SubscribeAfter(state.cursor.clone()));
+            }
+            effects
+        }
         UiAction::Failed(error) => {
             if let Some(cursor) = error.cursor {
                 if cursor.sequence > state.cursor.sequence {
@@ -173,6 +206,7 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
 /// identity; the V0 compatibility stream receives only a local generation
 /// that is never projected as durable truth.
 pub fn begin_live_turn(state: &mut AppState, turn_id: Option<::contracts::TurnId>) {
+    state.invalidate_conversation_render();
     let current = state.active_turn_id;
     if current != turn_id {
         clear_ephemeral_overlays(state);
@@ -276,6 +310,41 @@ fn reduce_read_snapshot(state: &mut AppState, snapshot: SessionReadSnapshot) -> 
         UiEffect::Render,
         UiEffect::SubscribeAfter(state.cursor.clone()),
     ]
+}
+
+fn reduce_read_baseline(
+    state: &mut AppState,
+    baseline: SessionReadBaseline,
+    reset_items: bool,
+) -> Vec<UiEffect> {
+    if baseline.schema_version != ::contracts::SESSION_READ_MODEL_SCHEMA_VERSION
+        || baseline
+            .tasks
+            .iter()
+            .any(|task| task.session_id != baseline.session.id)
+        || baseline.activities.iter().any(|activity| {
+            !baseline
+                .tasks
+                .iter()
+                .any(|task| task.task_id == activity.task_id)
+        })
+    {
+        return vec![UiEffect::AnnounceError(
+            "Session read baseline contains invalid projection data".into(),
+        )];
+    }
+    if reset_items || state.session_id.as_deref() != Some(baseline.session.id.0.as_str()) {
+        clear_ephemeral_overlays(state);
+        state.items.clear();
+        state.cursor = EventCursor::origin();
+    }
+    state.session_id = Some(baseline.session.id.0.clone());
+    state.projected_session = Some(baseline.session);
+    state.tasks = baseline.tasks;
+    reconcile_live_activities(state, baseline.activities);
+    project_runtime_accounting(state);
+    state.last_error = None;
+    vec![UiEffect::Render]
 }
 
 fn live_scope(state: &AppState) -> String {
@@ -706,19 +775,27 @@ fn reduce_event_page(state: &mut AppState, page: SessionEventPage) -> Vec<UiEffe
         ];
     }
 
+    let mut completed_item_missing = false;
     for event in page.events {
         match event {
-            ::contracts::protocol::client::ClientEvent::Item(item) => apply_item_event(state, item),
+            ::contracts::protocol::client::ClientEvent::Item(item) => {
+                completed_item_missing |= apply_item_event(state, item);
+            }
             ::contracts::protocol::client::ClientEvent::ApprovalRequested { cursor, .. } => {
                 state.cursor = cursor;
             }
             _ => unreachable!("event page was validated before mutation"),
         }
     }
-    vec![UiEffect::Render, UiEffect::ReloadSnapshot(page.session_id)]
+    if completed_item_missing {
+        return completed_item_protocol_error(state);
+    }
+    vec![UiEffect::Render, UiEffect::SubscribeAfter(page.next)]
 }
 
-fn apply_item_event(state: &mut AppState, event: ItemEvent) {
+/// Returns true when a completed event violates the projection contract by
+/// omitting its authoritative item.
+fn apply_item_event(state: &mut AppState, event: ItemEvent) -> bool {
     state.cursor = event.cursor;
     let id = event.item_id;
     match event.phase {
@@ -746,6 +823,8 @@ fn apply_item_event(state: &mut AppState, event: ItemEvent) {
                     clear_live_assistant_overlay(state, &item);
                 }
                 upsert_completed(state, item);
+            } else {
+                return true;
             }
         }
         ItemPhase::Failed => {
@@ -757,14 +836,24 @@ fn apply_item_event(state: &mut AppState, event: ItemEvent) {
             item.content = event.error.unwrap_or_else(|| "item failed".into());
         }
     }
+    false
+}
+
+fn completed_item_protocol_error(state: &mut AppState) -> Vec<UiEffect> {
+    let message = "Completed session item is missing its authoritative payload; reloading snapshot"
+        .to_string();
+    state.last_error = Some(message.clone());
+    let mut effects = vec![UiEffect::AnnounceError(message), UiEffect::Render];
+    if let Some(session_id) = state.session_id.clone() {
+        effects.push(UiEffect::ReloadSnapshot(::contracts::SessionId(session_id)));
+    }
+    effects
 }
 
 fn clear_ephemeral_overlays(state: &mut AppState) {
-    state.items.retain(|id, item| {
-        !id.starts_with("live:")
-            && !id.starts_with("local:")
-            && item.status != UiItemStatus::Streaming
-    });
+    state
+        .items
+        .retain(|id, _| !id.starts_with("live:") && !id.starts_with("local:"));
     state
         .activities
         .retain(|activity| !state.live_activity_ids.contains(&activity.activity_id));

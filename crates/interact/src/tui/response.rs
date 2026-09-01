@@ -25,6 +25,18 @@ pub fn handle_event(app: &mut TuiModel, params: &serde_json::Value) {
                         direct = %direct_error,
                         "Failed to deserialize ClientEvent params"
                     );
+                    let now = app.clock.mono_now();
+                    let should_announce = app
+                        .protocol_decode_notice_at
+                        .is_none_or(|last| now.0.saturating_sub(last.0) >= 5_000);
+                    if should_announce {
+                        const MESSAGE: &str =
+                            "Received a malformed runtime progress event; details were written to the diagnostic log";
+                        app.protocol_decode_notice_at = Some(now);
+                        app.app_state.last_error = Some(MESSAGE.to_string());
+                        app.system_notices
+                            .push(ChatRole::System, MESSAGE.to_string());
+                    }
                     return;
                 }
             }
@@ -54,7 +66,7 @@ pub fn handle_event(app: &mut TuiModel, params: &serde_json::Value) {
                 app.turn_cancel_requested = false;
                 app.app_state.last_terminal_status = None;
                 app.stream_ctrl.start_turn();
-                app.status.elapsed_secs = 0.0;
+                app.status.begin_elapsed_if_idle(app.clock.mono_now());
                 app.app_state.turn_tool_count = 0;
                 app.app_state.turn_activity = super::state::TurnActivity::default();
                 app.app_state.turn_input_tokens = 0;
@@ -247,6 +259,7 @@ pub fn handle_event(app: &mut TuiModel, params: &serde_json::Value) {
             }
             app.streaming = false;
             app.status.waiting = false;
+            app.status.finish_elapsed();
             app.app_state.streaming = false;
             app.turn_active = false;
             app.app_state.turn_active = false;
@@ -272,6 +285,7 @@ pub fn handle_event(app: &mut TuiModel, params: &serde_json::Value) {
             }
             app.streaming = false;
             app.status.waiting = false;
+            app.status.finish_elapsed();
             app.app_state.streaming = false;
             app.turn_active = false;
             app.app_state.turn_active = false;
@@ -544,17 +558,20 @@ pub(crate) fn apply_typed_projection_result(
     session_id: &str,
     result: serde_json::Value,
 ) {
+    let baseline = result.get("baseline").cloned().and_then(|value| {
+        serde_json::from_value::<::contracts::protocol::client::SessionReadBaseline>(value).ok()
+    });
     let snapshot = result.get("snapshot").cloned().and_then(|value| {
         serde_json::from_value::<::contracts::protocol::client::SessionReadSnapshot>(value).ok()
     });
-    let Some(snapshot) = snapshot else {
+    if baseline.is_none() && snapshot.is_none() {
         app.projection_polling = false;
         app.system_notices.push(
             ChatRole::System,
-            "Typed Gateway session snapshot rejected".to_string(),
+            "Typed Gateway session projection rejected".to_string(),
         );
         return;
-    };
+    }
     if app.app_state.session_id.as_deref() != Some(session_id) {
         app.app_state.reset_execution_target_for_session();
     }
@@ -562,11 +579,26 @@ pub(crate) fn apply_typed_projection_result(
     // server-assigned turn reference is the only safe correlation between a
     // submission and its later projection terminal; using merely the latest
     // completed task would let a stale snapshot settle a newer turn.
-    let projected_terminal = projected_terminal_status(app, &snapshot);
-    let effects = super::reducer::reduce(
-        &mut app.app_state,
-        super::reducer::UiAction::ReadSnapshot(snapshot),
-    );
+    let projected_terminal = match (baseline.as_ref(), snapshot.as_ref()) {
+        (Some(baseline), _) => projected_terminal_status(app, &baseline.tasks),
+        (_, Some(snapshot)) => projected_terminal_status(app, &snapshot.tasks),
+        (None, None) => None,
+    };
+    let effects = if let Some(baseline) = baseline {
+        let reset_items = app.projection_session_id.as_deref() != Some(session_id);
+        super::reducer::reduce(
+            &mut app.app_state,
+            super::reducer::UiAction::ReadBaseline {
+                baseline,
+                reset_items,
+            },
+        )
+    } else {
+        super::reducer::reduce(
+            &mut app.app_state,
+            super::reducer::UiAction::ReadSnapshot(snapshot.expect("projection checked above")),
+        )
+    };
     apply_projection_effects(app, effects);
     if app.app_state.session_id.as_deref() == Some(session_id) {
         app.projection_target_session_id = Some(session_id.to_owned());
@@ -607,6 +639,7 @@ pub(crate) fn apply_typed_projection_result(
         super::reducer::finish_live_turn(&mut app.app_state, status);
         app.streaming = false;
         app.status.waiting = false;
+        app.status.finish_elapsed();
         app.app_state.streaming = false;
         app.turn_active = false;
         app.active_turn_ref = None;
@@ -623,11 +656,10 @@ pub(crate) fn apply_typed_projection_result(
 /// correlation is not sufficient in production.
 fn projected_terminal_status(
     app: &TuiModel,
-    snapshot: &::contracts::protocol::client::SessionReadSnapshot,
+    tasks: &[::contracts::TaskSnapshot],
 ) -> Option<::contracts::TurnTerminalStatus> {
     if let Some(expected_turn) = app.active_turn_ref.as_deref() {
-        return snapshot
-            .tasks
+        return tasks
             .iter()
             .flat_map(|task| task.steps.iter())
             .find(|step| step.turn_id.0.to_string() == expected_turn)
@@ -654,8 +686,7 @@ fn projected_terminal_status(
     // submissions always populate `active_turn_ref` before polling.
     #[cfg(test)]
     {
-        return snapshot
-            .tasks
+        return tasks
             .iter()
             .filter(|task| task.active_turn_id.is_none())
             .find_map(|task| match task.phase {
@@ -1303,6 +1334,16 @@ fn apply_typed_protocol_event(app: &mut TuiModel, message: &serde_json::Value) -
         ProtocolEvent::ApprovalRequested { .. } => return true,
         ProtocolEvent::Agent(value) => UiAction::Agent(value),
         ProtocolEvent::Reconnected(value) => UiAction::Reconnected(value),
+        ProtocolEvent::SubscriptionTerminal {
+            cursor,
+            retryable,
+            message,
+            ..
+        } => UiAction::SubscriptionTerminal {
+            cursor,
+            retryable,
+            message,
+        },
         ProtocolEvent::CommandCompleted { .. } => return true,
         ProtocolEvent::Failed { cursor, message } => UiAction::Failed(UiError { cursor, message }),
         ProtocolEvent::TurnStarted {

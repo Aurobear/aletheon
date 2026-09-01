@@ -105,7 +105,10 @@ impl StreamController {
         self.thinking_buf.push_str(text);
         // Bounded tail: keep only last THINKING_VIEW_MAX bytes
         if self.thinking_buf.len() > THINKING_VIEW_MAX {
-            let excess = self.thinking_buf.len() - THINKING_VIEW_MAX;
+            let mut excess = self.thinking_buf.len() - THINKING_VIEW_MAX;
+            while !self.thinking_buf.is_char_boundary(excess) {
+                excess += 1;
+            }
             self.thinking_buf.drain(..excess);
         }
     }
@@ -379,5 +382,30 @@ mod tests {
 
         stream.start_turn();
         assert!(stream.thinking_collapsed());
+    }
+
+    #[test]
+    fn thinking_tail_truncation_aligns_to_utf8_boundaries() {
+        for (leading, overflow) in [
+            ("é", 1),
+            ("中", 1),
+            ("中", 2),
+            ("😀", 1),
+            ("😀", 2),
+            ("😀", 3),
+        ] {
+            let clock = Arc::new(TestClock::default());
+            let mut stream = StreamController::new(clock);
+            let initial_ascii = THINKING_VIEW_MAX - leading.len();
+
+            stream.push_thinking(&format!("{leading}{}", "a".repeat(initial_ascii)));
+            assert_eq!(stream.thinking_buf.len(), THINKING_VIEW_MAX);
+
+            stream.push_thinking(&"b".repeat(overflow));
+
+            assert!(stream.thinking_buf.len() <= THINKING_VIEW_MAX);
+            assert!(stream.thinking_buf.starts_with('a'));
+            assert!(stream.thinking_buf.ends_with(&"b".repeat(overflow)));
+        }
     }
 }

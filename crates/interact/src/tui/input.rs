@@ -1,15 +1,16 @@
 use std::{
     fs,
-    io::Write,
     path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 
 use ::contracts::WorkspacePolicy;
 
@@ -18,6 +19,7 @@ const INPUT_RETENTION_SECS: u64 = 30 * 24 * 60 * 60;
 const MAX_HISTORY_ENTRIES: usize = 50;
 const MAX_HISTORY_ENTRY_BYTES: usize = 128 * 1024;
 const MAX_DRAFT_BYTES: usize = 1_000_000;
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub struct CommandHistory {
     entries: Vec<String>,
@@ -108,6 +110,11 @@ struct PersistedInputState {
     draft: String,
 }
 
+pub(crate) struct PreparedInputState {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
 impl InputStateStore {
     pub fn for_workspace(workspace: &WorkspacePolicy) -> Self {
         let root = std::env::var_os("ALETHEON_STATE_HOME")
@@ -163,15 +170,16 @@ impl InputStateStore {
         (CommandHistory::from_entries(state.history), draft)
     }
 
-    pub fn save(&self, history: &CommandHistory, draft: &str) {
+    pub(crate) fn prepare_save(
+        &self,
+        history: &CommandHistory,
+        draft: &str,
+    ) -> Option<PreparedInputState> {
         let Some(path) = &self.path else {
-            return;
+            return None;
         };
         if draft.len() > MAX_DRAFT_BYTES {
-            return;
-        }
-        let Some(parent) = path.parent() else {
-            return;
+            return None;
         };
         let state = PersistedInputState {
             schema_version: HISTORY_SCHEMA_VERSION,
@@ -188,25 +196,40 @@ impl InputStateStore {
                 draft.to_owned()
             },
         };
-        let Ok(bytes) = serde_json::to_vec(&state) else {
+        let bytes = serde_json::to_vec(&state).ok()?;
+        Some(PreparedInputState {
+            path: path.clone(),
+            bytes,
+        })
+    }
+
+    pub(crate) async fn save_prepared(prepared: PreparedInputState) {
+        let Some(parent) = prepared.path.parent() else {
             return;
         };
-        if fs::create_dir_all(parent).is_err() || !prepare_private_directory(parent) {
+        if tokio::fs::create_dir_all(parent).await.is_err()
+            || !prepare_private_directory_async(parent).await
+        {
             return;
         }
-        if path.exists() && !private_regular_file(path) {
+        if tokio::fs::try_exists(&prepared.path).await.unwrap_or(false)
+            && !private_regular_file_async(&prepared.path).await
+        {
             return;
         }
-        let temp = path.with_extension(format!("{}.tmp", std::process::id()));
-        let mut options = fs::OpenOptions::new();
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temp = prepared
+            .path
+            .with_extension(format!("{}.{}.tmp", std::process::id(), sequence));
+        let mut options = tokio::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
         options.mode(0o600);
-        if let Ok(mut file) = options.open(&temp) {
-            if file.write_all(&bytes).is_ok() && file.sync_all().is_ok() {
-                let _ = fs::rename(&temp, path);
+        if let Ok(mut file) = options.open(&temp).await {
+            if file.write_all(&prepared.bytes).await.is_ok() && file.sync_all().await.is_ok() {
+                let _ = tokio::fs::rename(&temp, &prepared.path).await;
             }
-            let _ = fs::remove_file(temp);
+            let _ = tokio::fs::remove_file(temp).await;
         }
     }
 
@@ -222,6 +245,43 @@ impl InputStateStore {
     fn at_path(path: PathBuf) -> Self {
         Self { path: Some(path) }
     }
+}
+
+#[cfg(unix)]
+async fn prepare_private_directory_async(path: &std::path::Path) -> bool {
+    let Ok(metadata) = tokio::fs::symlink_metadata(path).await else {
+        return false;
+    };
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != nix::unistd::Uid::effective().as_raw()
+    {
+        return false;
+    }
+    tokio::fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .await
+        .is_ok()
+}
+
+#[cfg(not(unix))]
+async fn prepare_private_directory_async(_path: &std::path::Path) -> bool {
+    false
+}
+
+#[cfg(unix)]
+async fn private_regular_file_async(path: &std::path::Path) -> bool {
+    let Ok(metadata) = tokio::fs::symlink_metadata(path).await else {
+        return false;
+    };
+    metadata.is_file()
+        && !metadata.file_type().is_symlink()
+        && metadata.uid() == nix::unistd::Uid::effective().as_raw()
+        && metadata.mode() & 0o077 == 0
+}
+
+#[cfg(not(unix))]
+async fn private_regular_file_async(_path: &std::path::Path) -> bool {
+    false
 }
 
 fn unix_seconds() -> u64 {
@@ -240,25 +300,6 @@ fn looks_sensitive(value: &str) -> bool {
     ["api_key=", "apikey=", "token=", "password=", "secret="]
         .iter()
         .any(|marker| value.contains(marker))
-}
-
-#[cfg(unix)]
-fn prepare_private_directory(path: &std::path::Path) -> bool {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    if !metadata.is_dir()
-        || metadata.file_type().is_symlink()
-        || metadata.uid() != nix::unistd::Uid::effective().as_raw()
-    {
-        return false;
-    }
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).is_ok()
-}
-
-#[cfg(not(unix))]
-fn prepare_private_directory(_path: &std::path::Path) -> bool {
-    false
 }
 
 #[cfg(unix)]
@@ -281,14 +322,15 @@ fn private_regular_file(_path: &std::path::Path) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn u_input_002_history_and_draft_survive_store_reconstruction() {
+    #[tokio::test]
+    async fn u_input_002_history_and_draft_survive_store_reconstruction() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("input").join("state.json");
         let store = InputStateStore::at_path(path.clone());
         let mut history = CommandHistory::new();
         history.push("first prompt".into());
-        store.save(&history, "unfinished draft");
+        InputStateStore::save_prepared(store.prepare_save(&history, "unfinished draft").unwrap())
+            .await;
 
         let restarted = InputStateStore::at_path(path);
         let (mut loaded, draft) = restarted.load();
@@ -298,14 +340,19 @@ mod tests {
         assert_eq!(restarted.load().1, "");
     }
 
-    #[test]
-    fn sensitive_entries_are_redacted_from_persistence() {
+    #[tokio::test]
+    async fn sensitive_entries_are_redacted_from_persistence() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("input").join("state.json");
         let store = InputStateStore::at_path(path);
         let mut history = CommandHistory::new();
         history.push("token=do-not-store".into());
-        store.save(&history, "password=also-private");
+        InputStateStore::save_prepared(
+            store
+                .prepare_save(&history, "password=also-private")
+                .unwrap(),
+        )
+        .await;
         let (mut loaded, draft) = store.load();
         assert!(loaded.up().is_none());
         assert!(draft.is_empty());

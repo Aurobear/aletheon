@@ -1,6 +1,8 @@
 /// Terminal capability detection for broad Linux compatibility.
 ///
 /// Detects color depth, Unicode support, and provides ASCII fallbacks.
+use std::io::{self, Write};
+
 use ratatui::style::Color;
 
 /// Semantic color theme for the TUI.
@@ -212,6 +214,16 @@ impl TermCaps {
         } else {
             "-"
         }
+    }
+
+    /// Emit an OSC52 clipboard update as one coordinated terminal write.
+    /// The caller owns payload encoding; terminal I/O failures are never
+    /// converted into a false success notice.
+    pub fn write_osc52_clipboard(&self, encoded: &str) -> io::Result<()> {
+        let stdout = io::stdout();
+        let mut output = stdout.lock();
+        write!(output, "\x1b]52;c;{encoded}\x1b\\")?;
+        output.flush()
     }
 }
 

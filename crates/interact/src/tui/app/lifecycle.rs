@@ -6,7 +6,7 @@ use std::time::Duration;
 use ::contracts::Clock;
 use crossterm::event::Event;
 use gateway::client::{
-    CommandOutcome as GatewayCommandOutcome, GatewayClient, ReconnectPolicy, UnixSocketTransport,
+    CommandOutcome as GatewayCommandOutcome, GatewayClient, UnixSocketTransport,
 };
 use gateway::protocol::{
     CheckpointListQuery, Command, Query, RequestSessionCreation, RequestedExecutionTarget,
@@ -29,6 +29,7 @@ use super::super::{
 };
 use super::key_handler::{handle_key, handle_mouse};
 use super::submit::{refresh_typed_skill_catalog, submit_message, typed_workspace_rewind};
+use crate::tui::controller::PresentationConnectionState;
 
 fn scripted_followup_ready(
     initial_submit_pending: bool,
@@ -195,8 +196,18 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
     let test_start = app.clock.mono_now();
     let test_timeout = Duration::from_secs(test_config.test_timeout);
-    let mut needs_redraw = true;
-
+    // Paint a presentation-only loading frame before the first daemon RPC.
+    // Session identity and terminal truth remain unset until the typed response
+    // below succeeds, but a slow daemon can no longer leave a black terminal.
+    app.status.connected = false;
+    app.system_notices.push(
+        super::super::chat::Role::System,
+        "Connecting to the daemon session…".to_owned(),
+    );
+    app.sync_system_notices();
+    let loading_view = app.view();
+    TuiRenderer::draw(terminal, &loading_view, &mut frame_recorder)?;
+    app.mark_frame_rendered();
     // // Populate completion/help from the daemon-owned Skill catalog. The
     // registry retains its last valid catalog if a later refresh fails.
     // The top-level CLI chooses whether this terminal owns a fresh session,
@@ -210,6 +221,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             "typed Gateway session initialization failed; legacy Session RPC fallback is retired"
         ));
     }
+    app.status.connected = true;
+    app.system_notices.push(
+        super::super::chat::Role::System,
+        "Daemon session connected".to_owned(),
+    );
+    let mut needs_redraw = true;
     anyhow::ensure!(
         app.controller.has_typed_gateway(),
         "typed Gateway transport is required; legacy Session RPC fallback is retired"
@@ -225,6 +242,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         if app.input_dirty && app.clock.mono_now().0 >= app.input_persist_at.0 {
             app.persist_input_state();
         }
+        drive_input_persistence(&mut app).await;
         // Test timeout check
         if test_input.is_some()
             && (app.clock.mono_now().0 - test_start.0) >= test_timeout.as_millis() as u64
@@ -303,6 +321,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         // Production and tests drain only typed Gateway events. No local
         // JSON-RPC/socket compatibility pump is part of the TUI loop.
+        needs_redraw |= drive_gateway_reconnect(&mut app).await;
         needs_redraw |= drive_typed_events(&mut app, &mut event_recorder).await;
         drive_deferred_checkpoint_rewind(&mut app).await;
         // A projection response is a model mutation even when no live event
@@ -364,7 +383,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         }
 
         if app.streaming {
-            app.status.tick_spinner();
+            app.status.tick_spinner(app.clock.mono_now());
             needs_redraw = true;
         }
     }
@@ -372,7 +391,39 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     if app.input_dirty {
         app.persist_input_state();
     }
+    flush_input_persistence(&mut app).await;
     Ok(())
+}
+
+async fn drive_input_persistence(app: &mut TuiModel) {
+    if app
+        .input_persist_task
+        .as_ref()
+        .is_some_and(tokio::task::JoinHandle::is_finished)
+    {
+        if let Some(task) = app.input_persist_task.take() {
+            let _ = task.await;
+        }
+    }
+    if app.input_persist_task.is_none() {
+        if let Some(prepared) = app.pending_input_persist.take() {
+            app.input_persist_task = Some(tokio::spawn(async move {
+                crate::tui::input::InputStateStore::save_prepared(prepared).await;
+            }));
+        }
+    }
+}
+
+async fn flush_input_persistence(app: &mut TuiModel) {
+    loop {
+        drive_input_persistence(app).await;
+        if app.input_persist_task.is_none() && app.pending_input_persist.is_none() {
+            return;
+        }
+        if let Some(task) = app.input_persist_task.take() {
+            let _ = task.await;
+        }
+    }
 }
 
 async fn drive_agent_inspector_refresh(app: &mut TuiModel) {
@@ -402,7 +453,14 @@ async fn drive_typed_events(app: &mut TuiModel, recorder: &mut Option<EventRecor
         };
         let event = match result {
             Ok(Ok(event)) => event,
-            Ok(Err(gateway::protocol::ProtocolError::ConnectionClosed)) | Err(_) => break,
+            Ok(Err(gateway::protocol::ProtocolError::ConnectionClosed)) => {
+                enter_gateway_recovery(app);
+                changed = true;
+                break;
+            }
+            // One millisecond without an event is an idle poll, not a broken
+            // transport. Do not turn normal silence into reconnect churn.
+            Err(_) => break,
             Ok(Err(error)) => {
                 app.system_notices.push(
                     super::super::chat::Role::System,
@@ -428,6 +486,53 @@ async fn drive_typed_events(app: &mut TuiModel, recorder: &mut Option<EventRecor
     changed
 }
 
+fn enter_gateway_recovery(app: &mut TuiModel) {
+    if !app.controller.begin_reconnect() {
+        return;
+    }
+    app.status.connected = false;
+    // Presentation progress is now unknown. Stop animation without settling
+    // the authoritative turn; turn_active remains true until a durable terminal
+    // projection arrives after recovery.
+    app.streaming = false;
+    app.app_state.streaming = false;
+    app.projection_request_in_flight = false;
+    app.projection_polling = false;
+    app.system_notices.push(
+        super::super::chat::Role::System,
+        "Connection lost; reconnecting (current turn progress is unknown)".to_owned(),
+    );
+}
+
+async fn drive_gateway_reconnect(app: &mut TuiModel) -> bool {
+    if app.controller.connection_state != PresentationConnectionState::Recovering {
+        return false;
+    }
+    let Some(result) = app.controller.poll_reconnect().await else {
+        return false;
+    };
+    match result {
+        Ok(()) => {
+            app.status.connected = true;
+            app.projection_request_in_flight = false;
+            app.projection_polling = true;
+            app.projection_next_poll_at = ::contracts::MonoTime(0);
+            app.system_notices.push(
+                super::super::chat::Role::System,
+                "Connection restored; resuming after the last confirmed cursor".to_owned(),
+            );
+        }
+        Err(error) => {
+            app.status.connected = false;
+            app.system_notices.push(
+                super::super::chat::Role::System,
+                format!("Connection recovery failed: {error}"),
+            );
+        }
+    }
+    true
+}
+
 async fn drive_deferred_checkpoint_rewind(app: &mut TuiModel) {
     let Some(deferred) = app.deferred_checkpoint_rewind.take() else {
         return;
@@ -448,6 +553,9 @@ async fn drive_deferred_checkpoint_rewind(app: &mut TuiModel) {
 }
 
 async fn drive_session_projection(app: &mut TuiModel) -> bool {
+    if app.controller.connection_state != PresentationConnectionState::Connected {
+        return false;
+    }
     let Some(session_id) = app
         .projection_target_session_id
         .clone()
@@ -482,6 +590,7 @@ async fn drive_session_projection(app: &mut TuiModel) -> bool {
             gateway::protocol::Query::SessionSnapshot(gateway::protocol::SessionSnapshotQuery {
                 session: gateway::protocol::SessionRef(session_id.clone()),
                 after_cursor,
+                paged: true,
             });
         let result = {
             let client = app
@@ -489,20 +598,7 @@ async fn drive_session_projection(app: &mut TuiModel) -> bool {
                 .typed_gateway
                 .as_mut()
                 .expect("typed Gateway checked");
-            match client.query(query.clone()).await {
-                Ok(value) => Ok(value),
-                Err(gateway::protocol::ProtocolError::ConnectionClosed) => {
-                    // Reconnect only the presentation transport and replay
-                    // the authenticated projection query after the last
-                    // server-issued cursor. Runtime/session authority is not
-                    // recreated here and no local event replay is inferred.
-                    match client.reconnect(ReconnectPolicy::default()).await {
-                        Ok(()) => client.query(query).await,
-                        Err(error) => Err(error),
-                    }
-                }
-                Err(error) => Err(error),
-            }
+            client.query(query).await
         };
         match result {
             Ok(result) => {
@@ -511,10 +607,20 @@ async fn drive_session_projection(app: &mut TuiModel) -> bool {
             Err(error) => {
                 app.projection_request_in_flight = false;
                 app.projection_polling = false;
-                app.system_notices.push(
-                    super::super::chat::Role::System,
-                    format!("Typed Gateway projection query failed: {error}"),
-                );
+                if matches!(
+                    error,
+                    gateway::protocol::ProtocolError::ConnectionClosed
+                        | gateway::protocol::ProtocolError::Timeout
+                ) {
+                    enter_gateway_recovery(app);
+                } else {
+                    app.streaming = false;
+                    app.app_state.streaming = false;
+                    app.system_notices.push(
+                        super::super::chat::Role::System,
+                        format!("Typed Gateway projection query failed: {error}"),
+                    );
+                }
             }
         }
         app.projection_request_in_flight = false;
@@ -870,6 +976,7 @@ async fn typed_line_snapshot(
         .query(Query::SessionSnapshot(SessionSnapshotQuery {
             session: session.clone(),
             after_cursor: None,
+            paged: false,
         }))
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;

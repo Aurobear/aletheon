@@ -183,6 +183,7 @@ impl GatewayAcpEvents {
                     sequence: cursor.sequence,
                     event_id: cursor.event_id.clone(),
                 }),
+                paged: false,
             }))
             .await
             .map_err(|error| AcpError::Backend(error.to_string()))?;
